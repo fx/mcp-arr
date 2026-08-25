@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { deserializeMessage, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
 import { type JSONRPCMessage, LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it, vi } from "vitest";
+import { isCleanTermination } from "../scripts/platform-command.mjs";
 import { spawnStdioProcess, withDeadline } from "./support/spawned-stdio.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -53,7 +54,10 @@ describe("built stdio process", () => {
         jsonrpc: "2.0",
         method: "notifications/initialized",
       });
-      await expect(child.terminateGracefully()).resolves.toEqual({ code: 0, signal: null });
+      const termination = await child.terminateGracefully();
+      expect(isCleanTermination(termination)).toBe(true);
+      await expect(child.exit).resolves.toEqual(termination);
+      await expect(child.closed).resolves.toEqual(termination);
       const stdoutLines = child.stdout.split("\n");
       expect(stdoutLines).toHaveLength(2);
       expect(stdoutLines[1]).toBe("");
