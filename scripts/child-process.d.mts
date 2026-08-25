@@ -6,6 +6,11 @@ export interface ProcessExit {
   signal: NodeJS.Signals | null;
 }
 
+export interface ObserveChildProcessOptions {
+  onStdoutChunk?: (chunk: Buffer) => void;
+  onStderrChunk?: (chunk: Buffer) => void;
+}
+
 export interface ObservedChildProcess {
   exit: Promise<ProcessExit>;
   closed: Promise<ProcessExit>;
@@ -13,9 +18,13 @@ export interface ObservedChildProcess {
   readonly stderr: string;
 }
 
-export function waitForReadableDrain(stream: Readable): Promise<void>;
+export function consumeReadable(stream: Readable, onChunk: (chunk: Buffer) => void): Promise<void>;
 
-export function waitForChildCompletion(child: ChildProcessWithoutNullStreams): Promise<ProcessExit>;
+export function waitForChildCompletion(
+  child: ChildProcessWithoutNullStreams,
+  stdoutConsumed: Promise<void>,
+  stderrConsumed: Promise<void>,
+): Promise<ProcessExit>;
 
 export function waitForResponseOrExit<T>(
   response: Promise<T>,
@@ -23,4 +32,7 @@ export function waitForResponseOrExit<T>(
   label: string,
 ): Promise<T>;
 
-export function observeChildProcess(child: ChildProcessWithoutNullStreams): ObservedChildProcess;
+export function observeChildProcess(
+  child: ChildProcessWithoutNullStreams,
+  options?: ObserveChildProcessOptions,
+): ObservedChildProcess;

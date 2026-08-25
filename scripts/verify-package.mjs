@@ -92,7 +92,6 @@ async function verifyInstalledProcess(binPath, cwd) {
     env: process.env,
     stdio: ["pipe", "pipe", "pipe"],
   });
-  const observed = observeChildProcess(child);
   const readBuffer = new ReadBuffer();
   let resolveResponse;
   let rejectResponse;
@@ -100,22 +99,23 @@ async function verifyInstalledProcess(binPath, cwd) {
     resolveResponse = resolve;
     rejectResponse = reject;
   });
-
-  child.stdout.on("data", (chunk) => {
-    try {
-      readBuffer.append(chunk);
-      for (
-        let message = readBuffer.readMessage();
-        message !== null;
-        message = readBuffer.readMessage()
-      ) {
-        if ("id" in message && message.id === 1) {
-          resolveResponse(message);
+  const observed = observeChildProcess(child, {
+    onStdoutChunk: (chunk) => {
+      try {
+        readBuffer.append(chunk);
+        for (
+          let message = readBuffer.readMessage();
+          message !== null;
+          message = readBuffer.readMessage()
+        ) {
+          if ("id" in message && message.id === 1) {
+            resolveResponse(message);
+          }
         }
+      } catch (error) {
+        rejectResponse(error);
       }
-    } catch (error) {
-      rejectResponse(error);
-    }
+    },
   });
 
   try {

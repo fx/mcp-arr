@@ -1,10 +1,11 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { EventEmitter, once } from "node:events";
+import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import {
+  consumeReadable,
   observeChildProcess,
   waitForChildCompletion,
   waitForResponseOrExit,
@@ -64,9 +65,9 @@ describe("observeChildProcess", () => {
     }) as unknown as ChildProcessWithoutNullStreams;
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
-    stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
-    stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
-    const completion = waitForChildCompletion(child);
+    const stdoutConsumed = consumeReadable(stdout, (chunk) => stdoutChunks.push(chunk));
+    const stderrConsumed = consumeReadable(stderr, (chunk) => stderrChunks.push(chunk));
+    const completion = waitForChildCompletion(child, stdoutConsumed, stderrConsumed);
     let completed = false;
     void completion.then(() => {
       completed = true;
@@ -83,7 +84,7 @@ describe("observeChildProcess", () => {
     expect(Buffer.concat(stderrChunks).toString("utf8")).toBe("late stderr");
   });
 
-  it("handles readable streams that already ended", async () => {
+  it("handles readable streams that already finished consumption", async () => {
     const events = new EventEmitter();
     const stdout = new PassThrough();
     const stderr = new PassThrough();
@@ -91,16 +92,35 @@ describe("observeChildProcess", () => {
       stdout,
       stderr,
     }) as unknown as ChildProcessWithoutNullStreams;
-    stdout.resume();
-    stderr.resume();
-    const ended = Promise.all([once(stdout, "end"), once(stderr, "end")]);
+    const stdoutConsumed = consumeReadable(stdout, () => undefined);
+    const stderrConsumed = consumeReadable(stderr, () => undefined);
     stdout.end();
     stderr.end();
-    await ended;
+    await Promise.all([stdoutConsumed, stderrConsumed]);
 
-    const completion = waitForChildCompletion(child);
+    const completion = waitForChildCompletion(child, stdoutConsumed, stderrConsumed);
     events.emit("close", 0, null);
     await expect(completion).resolves.toEqual({ code: 0, signal: null });
+  });
+
+  it("propagates premature readable errors after process close", async () => {
+    const events = new EventEmitter();
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    const child = Object.assign(events, {
+      stdout,
+      stderr,
+    }) as unknown as ChildProcessWithoutNullStreams;
+    const stdoutConsumed = consumeReadable(stdout, () => undefined);
+    const stderrConsumed = consumeReadable(stderr, () => undefined);
+    const completion = waitForChildCompletion(child, stdoutConsumed, stderrConsumed);
+    const streamError = new Error("forced premature stream failure");
+    const rejected = expect(completion).rejects.toBe(streamError);
+
+    events.emit("close", 1, null);
+    stdout.destroy(streamError);
+    stderr.end();
+    await rejected;
   });
 
   it("preserves exit status and waits for buffered streams to close", async () => {

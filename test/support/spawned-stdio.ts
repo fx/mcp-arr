@@ -1,7 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
 import type { JSONRPCMessage, RequestId } from "@modelcontextprotocol/sdk/types.js";
-import { waitForChildCompletion } from "../../scripts/child-process.mjs";
+import { consumeReadable, waitForChildCompletion } from "../../scripts/child-process.mjs";
 
 export interface ProcessExit {
   code: number | null;
@@ -65,7 +65,14 @@ export class SpawnedStdioProcess {
       this.child.once("error", reject);
       this.child.once("exit", (code, signal) => resolve({ code, signal }));
     });
-    this.closed = waitForChildCompletion(this.child).then(
+    const stdoutConsumed = consumeReadable(this.child.stdout, (chunk) => {
+      this.stdoutChunks.push(chunk);
+      this.#decode(chunk);
+    });
+    const stderrConsumed = consumeReadable(this.child.stderr, (chunk) => {
+      this.stderrChunks.push(chunk);
+    });
+    this.closed = waitForChildCompletion(this.child, stdoutConsumed, stderrConsumed).then(
       (status) => {
         this.#finishClose(
           new Error(
@@ -88,11 +95,6 @@ export class SpawnedStdioProcess {
       }
       this.#pendingWrites.clear();
     });
-    this.child.stdout.on("data", (chunk: Buffer) => {
-      this.stdoutChunks.push(chunk);
-      this.#decode(chunk);
-    });
-    this.child.stderr.on("data", (chunk: Buffer) => this.stderrChunks.push(chunk));
   }
 
   get stdout(): string {

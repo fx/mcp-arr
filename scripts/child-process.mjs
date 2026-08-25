@@ -9,35 +9,21 @@ export function waitForResponseOrExit(response, exit, label) {
   ]);
 }
 
-export function waitForReadableDrain(stream) {
-  if (stream.readableEnded || stream.closed) {
-    return Promise.resolve();
+export async function consumeReadable(stream, onChunk) {
+  for await (const value of stream) {
+    const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    onChunk(chunk);
   }
-
-  return new Promise((resolve, reject) => {
-    const cleanup = () => {
-      stream.off("end", drained);
-      stream.off("close", drained);
-      stream.off("error", failed);
-    };
-    const drained = () => {
-      cleanup();
-      resolve();
-    };
-    const failed = (error) => {
-      cleanup();
-      reject(error);
-    };
-    stream.once("end", drained);
-    stream.once("close", drained);
-    stream.once("error", failed);
-    if (stream.readableEnded || stream.closed) {
-      drained();
-    }
-  });
 }
 
-export function waitForChildCompletion(child) {
+function captureResult(promise) {
+  return promise.then(
+    () => ({ error: undefined }),
+    (error) => ({ error }),
+  );
+}
+
+export function waitForChildCompletion(child, stdoutConsumed, stderrConsumed) {
   let spawnError;
   const processClosed = new Promise((resolve) => {
     child.once("error", (error) => {
@@ -48,27 +34,38 @@ export function waitForChildCompletion(child) {
 
   return Promise.all([
     processClosed,
-    waitForReadableDrain(child.stdout),
-    waitForReadableDrain(child.stderr),
-  ]).then(([status]) => {
+    captureResult(stdoutConsumed),
+    captureResult(stderrConsumed),
+  ]).then(([status, stdoutResult, stderrResult]) => {
     if (spawnError !== undefined) {
       throw spawnError;
+    }
+    if (stdoutResult.error !== undefined) {
+      throw stdoutResult.error;
+    }
+    if (stderrResult.error !== undefined) {
+      throw stderrResult.error;
     }
     return status;
   });
 }
 
-export function observeChildProcess(child) {
+export function observeChildProcess(child, options = {}) {
   const stdoutChunks = [];
   const stderrChunks = [];
   const exit = new Promise((resolve, reject) => {
     child.once("error", reject);
     child.once("exit", (code, signal) => resolve({ code, signal }));
   });
-
-  child.stdout.on("data", (chunk) => stdoutChunks.push(chunk));
-  child.stderr.on("data", (chunk) => stderrChunks.push(chunk));
-  const closed = waitForChildCompletion(child);
+  const stdoutConsumed = consumeReadable(child.stdout, (chunk) => {
+    stdoutChunks.push(chunk);
+    options.onStdoutChunk?.(chunk);
+  });
+  const stderrConsumed = consumeReadable(child.stderr, (chunk) => {
+    stderrChunks.push(chunk);
+    options.onStderrChunk?.(chunk);
+  });
+  const closed = waitForChildCompletion(child, stdoutConsumed, stderrConsumed);
 
   return {
     exit,
