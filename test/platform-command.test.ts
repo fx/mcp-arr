@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { observeChildProcess } from "../scripts/child-process.mjs";
+import { observeChildProcess, waitForResponseOrExit } from "../scripts/child-process.mjs";
 import { createPlatformCommand, isCleanTermination } from "../scripts/platform-command.mjs";
 
 describe("createPlatformCommand", () => {
@@ -67,13 +67,31 @@ describe("observeChildProcess", () => {
     expect(observed.stderr).toBe(payload);
   });
 
-  it("preserves spawn errors for exit and close observers", async () => {
+  it("propagates spawn errors while waiting for a response", async () => {
     const child = spawn(path.join(tmpdir(), `missing-mcp-arr-command-${process.pid}`), [], {
       stdio: ["pipe", "pipe", "pipe"],
     });
     const observed = observeChildProcess(child);
+    const response = new Promise<never>(() => undefined);
 
-    await expect(observed.exit).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      waitForResponseOrExit(response, observed.exit, "test response"),
+    ).rejects.toMatchObject({
+      code: "ENOENT",
+    });
     await expect(observed.closed).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects immediately when a process exits before its response", async () => {
+    const child = spawn(process.execPath, ["--input-type=module", "--eval", "process.exit(7)"], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const observed = observeChildProcess(child);
+    const response = new Promise<never>(() => undefined);
+
+    await expect(waitForResponseOrExit(response, observed.exit, "test response")).rejects.toThrow(
+      "Process exited before test response (code=7, signal=null)",
+    );
+    await expect(observed.closed).resolves.toEqual({ code: 7, signal: null });
   });
 });

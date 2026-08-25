@@ -10,7 +10,7 @@ import {
   serializeMessage,
 } from "@modelcontextprotocol/sdk/shared/stdio.js";
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
-import { observeChildProcess } from "./child-process.mjs";
+import { observeChildProcess, waitForResponseOrExit } from "./child-process.mjs";
 import { createPlatformCommand, isCleanTermination } from "./platform-command.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -131,7 +131,10 @@ async function verifyInstalledProcess(binPath, cwd) {
         },
       }),
     );
-    const response = await withDeadline(responsePromise, "installed package initialization");
+    const response = await withDeadline(
+      waitForResponseOrExit(responsePromise, observed.exit, "installed package initialization"),
+      "installed package initialization",
+    );
     assert(response.jsonrpc === "2.0" && response.id === 1, "Installed bin returned the wrong ID");
     assert(
       response.result?.serverInfo?.name === "mcp-arr",

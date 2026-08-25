@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { deserializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
+import { deserializeMessage, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
 import { type JSONRPCMessage, LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it, vi } from "vitest";
 import { spawnStdioProcess, withDeadline } from "./support/spawned-stdio.js";
@@ -112,6 +112,39 @@ describe("built stdio process", () => {
       await expect(child.closed).resolves.toEqual({ code: 0, signal: null });
       expect(child.stderr).toBe(payload);
     } finally {
+      await child.forceCleanup().catch(() => undefined);
+    }
+  });
+
+  it("keeps response waiters valid after exit until stdout closes", async () => {
+    const beforeExit: JSONRPCMessage = { jsonrpc: "2.0", id: 99, result: { phase: "before" } };
+    const afterExit: JSONRPCMessage = { jsonrpc: "2.0", id: 100, result: { phase: "after" } };
+    const framedResponses = serializeMessage(beforeExit) + serializeMessage(afterExit);
+    const script = `
+      process.stdin.once("data", () => {
+        process.stdout.write(${JSON.stringify(framedResponses)});
+        process.stdin.unref();
+      });
+    `;
+    const child = spawnNode(["--input-type=module", "--eval", script]);
+    child.child.stdout.pause();
+
+    try {
+      const pendingBeforeExit = child.response(99);
+      const pendingAfterExit = new Promise<JSONRPCMessage>((resolve, reject) => {
+        child.child.once("exit", () => {
+          child.response(100).then(resolve, reject);
+          child.child.stdout.resume();
+        });
+      });
+      await child.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+      await expect(child.exit).resolves.toEqual({ code: 0, signal: null });
+
+      await expect(pendingBeforeExit).resolves.toEqual(beforeExit);
+      await expect(pendingAfterExit).resolves.toEqual(afterExit);
+      await expect(child.closed).resolves.toEqual({ code: 0, signal: null });
+    } finally {
+      child.child.stdout.resume();
       await child.forceCleanup().catch(() => undefined);
     }
   });

@@ -51,6 +51,7 @@ export class SpawnedStdioProcess {
   readonly #pendingWrites = new Set<(error: unknown) => void>();
   #protocolError: unknown;
   #stdinError: unknown;
+  #isClosed = false;
 
   constructor(options: SpawnedStdioOptions) {
     this.#deadlineMs = options.deadlineMs ?? 2_000;
@@ -61,22 +62,20 @@ export class SpawnedStdioProcess {
     });
     this.exit = new Promise<ProcessExit>((resolve, reject) => {
       this.child.once("error", reject);
-      this.child.once("exit", (code, signal) => {
-        const exit = { code, signal };
-        for (const waiter of this.#waiters.values()) {
-          waiter.reject(
-            new Error(
-              `Process exited before the requested response (code=${String(code)}, signal=${String(signal)})`,
-            ),
-          );
-        }
-        this.#waiters.clear();
-        resolve(exit);
-      });
+      this.child.once("exit", (code, signal) => resolve({ code, signal }));
     });
     this.closed = new Promise<ProcessExit>((resolve, reject) => {
       this.child.once("error", reject);
       this.child.once("close", (code, signal) => {
+        this.#isClosed = true;
+        for (const waiter of this.#waiters.values()) {
+          waiter.reject(
+            new Error(
+              `Process closed before the requested response (code=${String(code)}, signal=${String(signal)})`,
+            ),
+          );
+        }
+        this.#waiters.clear();
         for (const rejectWrite of this.#pendingWrites) {
           rejectWrite(new Error("Spawned process stdin closed before the write completed"));
         }
@@ -163,8 +162,8 @@ export class SpawnedStdioProcess {
       this.#responses.delete(id);
       return Promise.resolve(message);
     }
-    if (this.child.exitCode !== null || this.child.signalCode !== null) {
-      return Promise.reject(new Error(`Process already exited before response ${String(id)}`));
+    if (this.#isClosed) {
+      return Promise.reject(new Error(`Process already closed before response ${String(id)}`));
     }
     if (this.#waiters.has(id)) {
       return Promise.reject(new Error(`Response ${String(id)} already has a pending waiter`));

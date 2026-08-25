@@ -12,4 +12,10 @@ export interface ObservedChildProcess {
   readonly stderr: string;
 }
 
+export function waitForResponseOrExit<T>(
+  response: Promise<T>,
+  exit: Promise<ProcessExit>,
+  label: string,
+): Promise<T>;
+
 export function observeChildProcess(child: ChildProcessWithoutNullStreams): ObservedChildProcess;

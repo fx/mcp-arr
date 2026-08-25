@@ -1,3 +1,14 @@
+export function waitForResponseOrExit(response, exit, label) {
+  return Promise.race([
+    response,
+    exit.then(({ code, signal }) => {
+      throw new Error(
+        `Process exited before ${label} (code=${String(code)}, signal=${String(signal)})`,
+      );
+    }),
+  ]);
+}
+
 export function observeChildProcess(child) {
   const stdoutChunks = [];
   const stderrChunks = [];
