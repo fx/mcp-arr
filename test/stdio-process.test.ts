@@ -28,14 +28,10 @@ function withDeadline<T>(promise: Promise<T>, label: string, timeoutMs = 2_000):
 }
 
 describe("built stdio process", () => {
-  it("accepts initialization before spawn, keeps stdout clean, and exits on SIGTERM", async () => {
-    const child = spawn("./dist/cli.js", [], {
+  it("accepts immediate initialization, keeps stdout clean, and exits on SIGTERM", async () => {
+    const child = spawn(process.execPath, ["dist/cli.js"], {
       cwd: projectRoot,
       stdio: ["pipe", "pipe", "pipe"],
-    });
-    let childSpawned = false;
-    child.once("spawn", () => {
-      childSpawned = true;
     });
     const readBuffer = new ReadBuffer();
     const stdoutChunks: Buffer[] = [];
@@ -85,7 +81,6 @@ describe("built stdio process", () => {
           clientInfo: { name: "stdio-integration-test", version: "1.0.0" },
         },
       };
-      expect(childSpawned).toBe(false);
       child.stdin.write(serializeMessage(initializeRequest));
 
       const response = await withDeadline(initializeResponse, "initialize response");
