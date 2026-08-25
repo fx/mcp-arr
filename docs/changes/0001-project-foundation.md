@@ -66,10 +66,10 @@ The [Architecture spec](../specs/architecture/) owns runtime, transport, environ
 
 ## Tasks
 
-- [ ] Scaffold the TypeScript package and stdio process
-  - [ ] Add package metadata, lockfile, strict compiler config, lint/typecheck/build commands, executable entrypoint, and Node version contract
-  - [ ] Connect the MCP server through stdio and route all diagnostics to stderr
-  - [ ] Add process-level startup/shutdown and stdout-framing tests
+- [x] Scaffold the TypeScript package and stdio process (PR #2)
+  - [x] Add package metadata, lockfile, strict compiler config, lint/typecheck/build commands, executable entrypoint, and Node version contract (PR #2)
+  - [x] Connect the MCP server through stdio and route all diagnostics to stderr (PR #2)
+  - [x] Add process-level startup/shutdown and stdout-framing tests (PR #2)
 - [ ] Implement environment and upstream adapter foundations
   - [ ] Parse optional URL/API-key pairs and reject incomplete or empty configuration
   - [ ] Normalize URL prefixes, inject `X-Api-Key`, enforce timeouts, and normalize safe errors
