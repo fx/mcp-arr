@@ -15,6 +15,11 @@ export interface SpawnedStdioOptions {
   deadlineMs?: number;
 }
 
+interface ResponseWaiter {
+  resolve: (message: JSONRPCMessage) => void;
+  reject: (error: unknown) => void;
+}
+
 export function withDeadline<T>(promise: Promise<T>, label: string, timeoutMs = 2_000): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), timeoutMs);
@@ -40,11 +45,8 @@ export class SpawnedStdioProcess {
 
   readonly #deadlineMs: number;
   readonly #readBuffer = new ReadBuffer();
-  readonly #responses = new Map<RequestId, JSONRPCMessage[]>();
-  readonly #waiters = new Map<
-    RequestId,
-    Array<{ resolve: (message: JSONRPCMessage) => void; reject: (error: unknown) => void }>
-  >();
+  readonly #responses = new Map<RequestId, JSONRPCMessage>();
+  readonly #waiters = new Map<RequestId, ResponseWaiter>();
   #protocolError: unknown;
 
   constructor(options: SpawnedStdioOptions) {
@@ -58,14 +60,12 @@ export class SpawnedStdioProcess {
       this.child.once("error", reject);
       this.child.once("exit", (code, signal) => {
         const exit = { code, signal };
-        for (const waiters of this.#waiters.values()) {
-          for (const waiter of waiters) {
-            waiter.reject(
-              new Error(
-                `Process exited before the requested response (code=${String(code)}, signal=${String(signal)})`,
-              ),
-            );
-          }
+        for (const waiter of this.#waiters.values()) {
+          waiter.reject(
+            new Error(
+              `Process exited before the requested response (code=${String(code)}, signal=${String(signal)})`,
+            ),
+          );
         }
         this.#waiters.clear();
         resolve(exit);
@@ -95,24 +95,28 @@ export class SpawnedStdioProcess {
     if (this.#protocolError !== undefined) {
       return Promise.reject(this.#protocolError);
     }
-    const queued = this.#responses.get(id);
-    const message = queued?.shift();
+    const message = this.#responses.get(id);
     if (message !== undefined) {
-      if (queued?.length === 0) {
-        this.#responses.delete(id);
-      }
+      this.#responses.delete(id);
       return Promise.resolve(message);
     }
     if (this.child.exitCode !== null || this.child.signalCode !== null) {
       return Promise.reject(new Error(`Process already exited before response ${String(id)}`));
     }
+    if (this.#waiters.has(id)) {
+      return Promise.reject(new Error(`Response ${String(id)} already has a pending waiter`));
+    }
 
+    let waiter: ResponseWaiter | undefined;
     const pending = new Promise<JSONRPCMessage>((resolve, reject) => {
-      const waiters = this.#waiters.get(id) ?? [];
-      waiters.push({ resolve, reject });
-      this.#waiters.set(id, waiters);
+      waiter = { resolve, reject };
+      this.#waiters.set(id, waiter);
     });
-    return withDeadline(pending, `response ${String(id)}`, timeoutMs);
+    return withDeadline(pending, `response ${String(id)}`, timeoutMs).finally(() => {
+      if (this.#waiters.get(id) === waiter) {
+        this.#waiters.delete(id);
+      }
+    });
   }
 
   async terminateGracefully(
@@ -152,25 +156,18 @@ export class SpawnedStdioProcess {
         if (id === null || id === undefined) {
           continue;
         }
-        const waiters = this.#waiters.get(id);
-        const waiter = waiters?.shift();
+        const waiter = this.#waiters.get(id);
         if (waiter !== undefined) {
-          if (waiters?.length === 0) {
-            this.#waiters.delete(id);
-          }
+          this.#waiters.delete(id);
           waiter.resolve(message);
           continue;
         }
-        const queued = this.#responses.get(id) ?? [];
-        queued.push(message);
-        this.#responses.set(id, queued);
+        this.#responses.set(id, message);
       }
     } catch (error) {
       this.#protocolError = error;
-      for (const waiters of this.#waiters.values()) {
-        for (const waiter of waiters) {
-          waiter.reject(error);
-        }
+      for (const waiter of this.#waiters.values()) {
+        waiter.reject(error);
       }
       this.#waiters.clear();
     }

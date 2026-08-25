@@ -42,6 +42,12 @@ describe("built stdio process", () => {
           serverInfo: { name: "mcp-arr", version: "0.1.0" },
         },
       });
+      await expect(child.response("absent", 10)).rejects.toThrow(
+        "Timed out waiting for response absent",
+      );
+      await expect(child.response("absent", 10)).rejects.toThrow(
+        "Timed out waiting for response absent",
+      );
 
       child.send({
         jsonrpc: "2.0",

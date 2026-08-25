@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -84,9 +84,7 @@ describe("versioned fixture contract", () => {
     temporaryDirectories.push(temporaryRoot);
     const relativePath = approvedFixtureInventory[0] ?? "";
     const fixturePath = path.join(temporaryRoot, relativePath);
-    await import("node:fs/promises").then(({ mkdir }) =>
-      mkdir(path.dirname(fixturePath), { recursive: true }),
-    );
+    await mkdir(path.dirname(fixturePath), { recursive: true });
     await writeFile(fixturePath, "{", "utf8");
     await expect(loadFixture(temporaryRoot, relativePath)).rejects.toThrow(
       "Fixture is not valid JSON",
