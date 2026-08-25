@@ -9,17 +9,25 @@ A local MCP server for Sonarr, Radarr, and Prowlarr.
 
 ## Install
 
-Install the package so your MCP host can launch its `mcp-arr` executable:
+Until a registry package is available, install the executable from a source checkout. Replace `REPOSITORY_URL` with this repository's checkout URL, then build it and install the resulting local package into a dedicated directory:
 
 ```sh
-npm install --global mcp-arr
+git clone REPOSITORY_URL mcp-arr
+cd mcp-arr
+npm ci
+npm run build
+cd ..
+mkdir mcp-arr-install
+cd mcp-arr-install
+npm init --yes
+npm install ../mcp-arr
 ```
 
-The server supports MCP over stdio only. Configure the host command as `mcp-arr` and pass instance settings through the command environment. For example:
+The server supports MCP over stdio only. Configure the host command as the absolute path to `mcp-arr-install/node_modules/.bin/mcp-arr` and pass instance settings through the command environment. For example:
 
 ```json
 {
-  "command": "mcp-arr",
+  "command": "/absolute/path/to/mcp-arr-install/node_modules/.bin/mcp-arr",
   "env": {
     "SONARR_URL": "https://sonarr.example.invalid/sonarr",
     "SONARR_API_KEY": "replace-with-sonarr-api-key",

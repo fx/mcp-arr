@@ -40,6 +40,7 @@ export function withDeadline<T>(promise: Promise<T>, label: string, timeoutMs = 
 export class SpawnedStdioProcess {
   readonly child: ChildProcessWithoutNullStreams;
   readonly exit: Promise<ProcessExit>;
+  readonly closed: Promise<ProcessExit>;
   readonly stdoutChunks: Buffer[] = [];
   readonly stderrChunks: Buffer[] = [];
 
@@ -47,7 +48,9 @@ export class SpawnedStdioProcess {
   readonly #readBuffer = new ReadBuffer();
   readonly #responses = new Map<RequestId, JSONRPCMessage>();
   readonly #waiters = new Map<RequestId, ResponseWaiter>();
+  readonly #pendingWrites = new Set<(error: unknown) => void>();
   #protocolError: unknown;
+  #stdinError: unknown;
 
   constructor(options: SpawnedStdioOptions) {
     this.#deadlineMs = options.deadlineMs ?? 2_000;
@@ -71,7 +74,24 @@ export class SpawnedStdioProcess {
         resolve(exit);
       });
     });
+    this.closed = new Promise<ProcessExit>((resolve, reject) => {
+      this.child.once("error", reject);
+      this.child.once("close", (code, signal) => {
+        for (const rejectWrite of this.#pendingWrites) {
+          rejectWrite(new Error("Spawned process stdin closed before the write completed"));
+        }
+        this.#pendingWrites.clear();
+        resolve({ code, signal });
+      });
+    });
 
+    this.child.stdin.on("error", (error: unknown) => {
+      this.#stdinError = error;
+      for (const reject of this.#pendingWrites) {
+        reject(error);
+      }
+      this.#pendingWrites.clear();
+    });
     this.child.stdout.on("data", (chunk: Buffer) => {
       this.stdoutChunks.push(chunk);
       this.#decode(chunk);
@@ -87,8 +107,43 @@ export class SpawnedStdioProcess {
     return Buffer.concat(this.stderrChunks).toString("utf8");
   }
 
-  send(message: JSONRPCMessage): void {
-    this.child.stdin.write(serializeMessage(message));
+  send(message: JSONRPCMessage): Promise<void> {
+    if (this.#stdinError !== undefined) {
+      return Promise.reject(this.#stdinError);
+    }
+    if (this.child.stdin.destroyed || !this.child.stdin.writable) {
+      return Promise.reject(new Error("Spawned process stdin is not writable"));
+    }
+
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const fail = (error: unknown) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        this.#pendingWrites.delete(fail);
+        reject(error);
+      };
+      this.#pendingWrites.add(fail);
+      try {
+        this.child.stdin.write(serializeMessage(message), (error) => {
+          if (error !== null && error !== undefined) {
+            this.#stdinError = error;
+            fail(error);
+            return;
+          }
+          if (!settled) {
+            settled = true;
+            this.#pendingWrites.delete(fail);
+            resolve();
+          }
+        });
+      } catch (error) {
+        this.#stdinError = error;
+        fail(error);
+      }
+    });
   }
 
   response(id: RequestId, timeoutMs = this.#deadlineMs): Promise<JSONRPCMessage> {
@@ -123,14 +178,15 @@ export class SpawnedStdioProcess {
     signal: NodeJS.Signals = "SIGTERM",
     timeoutMs = this.#deadlineMs,
   ): Promise<ProcessExit> {
-    if (this.child.exitCode !== null || this.child.signalCode !== null) {
-      return this.exit;
-    }
-    if (!this.child.kill(signal)) {
+    if (
+      this.child.exitCode === null &&
+      this.child.signalCode === null &&
+      !this.child.kill(signal)
+    ) {
       throw new Error(`Failed to send ${signal} to spawned process`);
     }
     try {
-      return await withDeadline(this.exit, "graceful process exit", timeoutMs);
+      return await this.#awaitClose("graceful process close", timeoutMs);
     } catch (error) {
       await this.forceCleanup().catch(() => undefined);
       throw error;
@@ -141,7 +197,12 @@ export class SpawnedStdioProcess {
     if (this.child.exitCode === null && this.child.signalCode === null) {
       this.child.kill("SIGKILL");
     }
-    return withDeadline(this.exit, "forced process cleanup", timeoutMs);
+    return this.#awaitClose("forced process cleanup", timeoutMs);
+  }
+
+  async #awaitClose(label: string, timeoutMs: number): Promise<ProcessExit> {
+    const [exit] = await withDeadline(Promise.all([this.exit, this.closed]), label, timeoutMs);
+    return exit;
   }
 
   #decode(chunk: Buffer): void {

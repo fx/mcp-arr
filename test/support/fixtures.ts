@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { isIP } from "node:net";
 import path from "node:path";
 
 export const approvedFixtureTuples = [
@@ -40,16 +41,95 @@ const secretKeyParts = [
   "token",
 ];
 
+const identifyingKeyParts = ["host", "instance", "ipaddress", "localaddress", "path", "user"];
+
+const identifyingKeys = new Set(["ip"]);
+
 const sensitiveValuePatterns: ReadonlyArray<readonly [string, RegExp]> = [
   ["email address", /\b[^\s@]+@[^\s@]+\.[^\s@]+\b/u],
   ["URL", /\b[a-z][a-z0-9+.-]*:\/\/[^\s]+/iu],
   ["home path", /(?:~\/|\/(?:home|users)\/[^/\s]+(?:\/|\b)|\/root(?:\/|\b))/iu],
+  ["absolute path", /(?:^|\s)\/[^\s]+/u],
   ["Windows path", /\b[a-z]:[\\/][^\s]*/iu],
   ["UNC path", /\\\\[^\\\s]+\\[^\\\s]+/u],
+  [
+    "hostname",
+    /(?:^|[^a-z0-9-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}(?:$|[^a-z0-9-])/iu,
+  ],
+  [
+    "internal hostname",
+    /(?:^|[^a-z0-9-])(?:localhost|[^\s.]+\.(?:internal|lan|local))(?:$|[^a-z0-9-])/iu,
+  ],
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function rejectDuplicateObjectKeys(source: string, relativePath: string): void {
+  const objectKeys: Array<Set<string> | undefined> = [];
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (character === "{") {
+      objectKeys.push(new Set());
+      continue;
+    }
+    if (character === "[") {
+      objectKeys.push(undefined);
+      continue;
+    }
+    if (character === "}" || character === "]") {
+      objectKeys.pop();
+      continue;
+    }
+    if (character !== '"') {
+      continue;
+    }
+
+    let end = index + 1;
+    while (end < source.length) {
+      if (source[end] === "\\") {
+        end += 2;
+        continue;
+      }
+      if (source[end] === '"') {
+        break;
+      }
+      end += 1;
+    }
+    if (end >= source.length) {
+      return;
+    }
+
+    const rawString = source.slice(index, end + 1);
+    index = end;
+    let next = end + 1;
+    while (/\s/u.test(source[next] ?? "")) {
+      next += 1;
+    }
+    const keys = objectKeys.at(-1);
+    if (source[next] !== ":" || keys === undefined) {
+      continue;
+    }
+
+    let key: string;
+    try {
+      key = JSON.parse(rawString) as string;
+    } catch {
+      return;
+    }
+    if (keys.has(key)) {
+      throw new Error(
+        `Fixture contains duplicate JSON object key ${JSON.stringify(key)}: ${relativePath}`,
+      );
+    }
+    keys.add(key);
+  }
+}
+
+function containsIpAddress(value: string): boolean {
+  return value.split(/[^0-9a-f:.]+/iu).some((candidate) => isIP(candidate) !== 0);
 }
 
 function requireString(record: Record<string, unknown>, key: string, location: string): string {
@@ -127,6 +207,12 @@ function validateSanitizedValue(value: unknown, location: string): void {
       if (secretKeyParts.some((part) => normalizedKey.includes(part))) {
         throw new Error(`Secret-bearing key is not allowed at ${location}.${key}`);
       }
+      if (
+        identifyingKeys.has(normalizedKey) ||
+        identifyingKeyParts.some((part) => normalizedKey.includes(part))
+      ) {
+        throw new Error(`Identifying key is not allowed at ${location}.${key}`);
+      }
       validateSanitizedValue(child, `${location}.${key}`);
     }
     return;
@@ -135,6 +221,9 @@ function validateSanitizedValue(value: unknown, location: string): void {
     return;
   }
 
+  if (containsIpAddress(value)) {
+    throw new Error(`Sensitive IP address is not allowed at ${location}`);
+  }
   for (const [description, pattern] of sensitiveValuePatterns) {
     if (pattern.test(value)) {
       throw new Error(`Sensitive ${description} is not allowed at ${location}`);
@@ -152,10 +241,11 @@ export function validateFixture<TBody = unknown>(
   if (!isRecord(value.metadata)) {
     throw new Error("Fixture metadata must be an object");
   }
-  if (!("body" in value) || !isRecord(value.body)) {
-    throw new Error("Fixture body must be an object");
+  if (!("body" in value) || (!isRecord(value.body) && !Array.isArray(value.body))) {
+    throw new Error("Fixture body must be an object or array");
   }
 
+  const body = value.body;
   const metadataRecord = value.metadata;
   const application = requireString(metadataRecord, "application", "metadata");
   const apiVersion = requireString(metadataRecord, "apiVersion", "metadata");
@@ -168,28 +258,29 @@ export function validateFixture<TBody = unknown>(
   validateFixturePath(options.filePath, options.fixtureRoot, metadata);
 
   const isSystemStatus = endpoint === `/api/${metadata.apiVersion}/system/status`;
-  if (isSystemStatus || "version" in value.body) {
-    const bodyVersion = requireString(value.body, "version", "body");
+  if (isSystemStatus && !isRecord(body)) {
+    throw new Error("Fixture system-status body must be an object");
+  }
+  if (isRecord(body) && (isSystemStatus || "version" in body)) {
+    const bodyVersion = requireString(body, "version", "body");
     if (bodyVersion !== metadata.version) {
       throw new Error(`Fixture body version does not match metadata: ${bodyVersion}`);
     }
   }
 
-  if (isSystemStatus) {
+  if (isSystemStatus && isRecord(body)) {
     const expectedAppName = `${metadata.application[0]?.toUpperCase()}${metadata.application.slice(1)}`;
-    if (value.body.appName !== expectedAppName) {
-      throw new Error(
-        `Fixture body appName does not match metadata: ${String(value.body.appName)}`,
-      );
+    if (body.appName !== expectedAppName) {
+      throw new Error(`Fixture body appName does not match metadata: ${String(body.appName)}`);
     }
   }
 
   const sanitizedMetadata = Object.fromEntries(
     Object.entries(metadataRecord).filter(([key]) => key !== "endpoint"),
   );
-  validateSanitizedValue({ metadata: sanitizedMetadata, body: value.body }, "fixture");
+  validateSanitizedValue({ metadata: sanitizedMetadata, body }, "fixture");
 
-  return { metadata, body: value.body as TBody };
+  return { metadata, body: body as TBody };
 }
 
 export async function loadFixture<TBody = unknown>(
@@ -201,6 +292,7 @@ export async function loadFixture<TBody = unknown>(
   }
   const filePath = path.join(fixtureRoot, relativePath);
   const source = await readFile(filePath, "utf8");
+  rejectDuplicateObjectKeys(source, relativePath);
   let value: unknown;
   try {
     value = JSON.parse(source);

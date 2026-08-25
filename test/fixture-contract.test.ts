@@ -79,6 +79,20 @@ describe("versioned fixture contract", () => {
     ]);
   });
 
+  it("accepts object or array response bodies and keeps status checks object-specific", () => {
+    const collectionFixture = validFixture();
+    (collectionFixture.metadata as Record<string, unknown>).endpoint = "/api/v3/series";
+    collectionFixture.body = [{ title: "Sanitized fixture" }];
+
+    expect(validate(collectionFixture, "sonarr/v3/4.0.19.2979/series.json").body).toEqual([
+      { title: "Sanitized fixture" },
+    ]);
+
+    const statusFixture = validFixture();
+    statusFixture.body = [];
+    expect(() => validate(statusFixture)).toThrow("Fixture system-status body must be an object");
+  });
+
   it("rejects malformed JSON and malformed or missing metadata", async () => {
     const temporaryRoot = await mkdtemp(path.join(tmpdir(), "mcp-arr-fixtures-"));
     temporaryDirectories.push(temporaryRoot);
@@ -88,6 +102,15 @@ describe("versioned fixture contract", () => {
     await writeFile(fixturePath, "{", "utf8");
     await expect(loadFixture(temporaryRoot, relativePath)).rejects.toThrow(
       "Fixture is not valid JSON",
+    );
+
+    const duplicateVersion = JSON.stringify(validFixture()).replace(
+      '"version":"4.0.19.2979"',
+      '"version":"4.0.19.2979","\\u0076ersion":"4.0.19.2979"',
+    );
+    await writeFile(fixturePath, duplicateVersion, "utf8");
+    await expect(loadFixture(temporaryRoot, relativePath)).rejects.toThrow(
+      'Fixture contains duplicate JSON object key "version"',
     );
 
     expect(() => validate(null)).toThrow("Fixture must be a JSON object");
@@ -141,14 +164,46 @@ describe("versioned fixture contract", () => {
     }
   });
 
-  it("rejects email, URL, home, Windows, and UNC path values", () => {
+  it("rejects recursive identifying fields", () => {
+    for (const key of [
+      "host",
+      "hostAddress",
+      "hostname",
+      "instance",
+      "instanceName",
+      "instanceType",
+      "internalHost",
+      "ip",
+      "ipAddress",
+      "path",
+      "user",
+      "userAgent",
+      "userId",
+      "username",
+    ]) {
+      const fixture = validFixture();
+      (fixture.body as Record<string, unknown>).nested = [{ safe: { [key]: "placeholder" } }];
+      expect(() => validate(fixture)).toThrow("Identifying key is not allowed");
+    }
+
+    const metadataFixture = validFixture();
+    (metadataFixture.metadata as Record<string, unknown>).hostname = "placeholder";
+    expect(() => validate(metadataFixture)).toThrow("Identifying key is not allowed");
+  });
+
+  it("rejects identifying and sensitive value patterns", () => {
     const unsafeValues = [
       ["email address", ["fixture", "example.invalid"].join("@")],
       ["URL", ["https:", "", "fixture.invalid", "path"].join("/")],
+      ["IP address", ["192", "0", "2", "1"].join(".")],
+      ["IP address", ["2001", "db8", "", "1"].join(":")],
+      ["hostname", ["fixture", "example", "invalid"].join(".")],
+      ["internal hostname", ["local", "host"].join("")],
       ["home path", ["", "home", "fixture", "data"].join("/")],
       ["home path", ["", "Users", "fixture", "data"].join("/")],
       ["home path", ["", "root", "fixture"].join("/")],
       ["home path", ["~", "fixture", "data"].join("/")],
+      ["absolute path", ["", "srv", "fixture", "data"].join("/")],
       ["Windows path", ["prefix=C:", "fixture", "data"].join("\\")],
       ["UNC path", `${"\\".repeat(2)}fixture\\share`],
     ] as const;

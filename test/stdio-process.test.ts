@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { deserializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
 import { type JSONRPCMessage, LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { spawnStdioProcess, withDeadline } from "./support/spawned-stdio.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -30,7 +30,7 @@ describe("built stdio process", () => {
           clientInfo: { name: "stdio-integration-test", version: "1.0.0" },
         },
       };
-      child.send(initializeRequest);
+      await child.send(initializeRequest);
 
       const response = await child.response(1);
       expect(response).toMatchObject({
@@ -49,7 +49,7 @@ describe("built stdio process", () => {
         "Timed out waiting for response absent",
       );
 
-      child.send({
+      await child.send({
         jsonrpc: "2.0",
         method: "notifications/initialized",
       });
@@ -88,8 +88,71 @@ describe("built stdio process", () => {
         code: 1,
         signal: null,
       });
+      await expect(withDeadline(child.closed, "fatal startup close")).resolves.toEqual({
+        code: 1,
+        signal: null,
+      });
       expect(child.stdout).toBe("");
       expect(child.stderr).toBe("mcp-arr: startup failed: forced startup failure\n");
+    } finally {
+      await child.forceCleanup().catch(() => undefined);
+    }
+  });
+
+  it("awaits close before exposing all buffered output", async () => {
+    const payload = "buffered diagnostic\n".repeat(4_096);
+    const child = spawnNode([
+      "--input-type=module",
+      "--eval",
+      `process.stderr.write(${JSON.stringify(payload)});`,
+    ]);
+
+    try {
+      await expect(child.exit).resolves.toEqual({ code: 0, signal: null });
+      await expect(child.closed).resolves.toEqual({ code: 0, signal: null });
+      expect(child.stderr).toBe(payload);
+    } finally {
+      await child.forceCleanup().catch(() => undefined);
+    }
+  });
+
+  it("rejects write callback and stream errors without uncaught stdin failures", async () => {
+    const notification: JSONRPCMessage = {
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+    };
+    const callbackChild = spawnNode(["--input-type=module", "--eval", "process.stdin.resume()"]);
+    const eventChild = spawnNode(["--input-type=module", "--eval", "process.stdin.resume()"]);
+
+    try {
+      const callbackError = new Error("forced write callback failure");
+      vi.spyOn(callbackChild.child.stdin, "write").mockImplementationOnce(((...args: unknown[]) => {
+        const callback = args.at(-1);
+        if (typeof callback === "function") {
+          queueMicrotask(() => callback(callbackError));
+        }
+        return false;
+      }) as typeof callbackChild.child.stdin.write);
+      await expect(callbackChild.send(notification)).rejects.toBe(callbackError);
+
+      const streamError = new Error("forced stdin stream failure");
+      expect(() => eventChild.child.stdin.emit("error", streamError)).not.toThrow();
+      await expect(eventChild.send(notification)).rejects.toBe(streamError);
+    } finally {
+      await Promise.all(
+        [callbackChild, eventChild].map((child) => child.forceCleanup().catch(() => undefined)),
+      );
+    }
+  });
+
+  it("rejects sends after stdin closes", async () => {
+    const child = spawnNode(["--input-type=module", "--eval", "undefined"]);
+
+    try {
+      await child.closed;
+      await expect(
+        child.send({ jsonrpc: "2.0", method: "notifications/initialized" }),
+      ).rejects.toThrow("Spawned process stdin is not writable");
     } finally {
       await child.forceCleanup().catch(() => undefined);
     }

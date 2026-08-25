@@ -10,6 +10,8 @@ import {
   serializeMessage,
 } from "@modelcontextprotocol/sdk/shared/stdio.js";
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
+import { observeChildProcess } from "./child-process.mjs";
+import { createPlatformCommand } from "./platform-command.mjs";
 
 const execFileAsync = promisify(execFile);
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -50,8 +52,9 @@ function withDeadline(promise, label, timeoutMs = 5_000) {
 }
 
 async function run(command, args, options) {
+  const invocation = createPlatformCommand(command, args);
   try {
-    return await execFileAsync(command, args, {
+    return await execFileAsync(invocation.executable, invocation.args, {
       ...options,
       encoding: "utf8",
       maxBuffer: 10 * 1024 * 1024,
@@ -83,13 +86,13 @@ function assertManifest(manifest) {
 }
 
 async function verifyInstalledProcess(binPath, cwd) {
-  const child = spawn(binPath, [], {
+  const invocation = createPlatformCommand(binPath, []);
+  const child = spawn(invocation.executable, invocation.args, {
     cwd,
     env: process.env,
     stdio: ["pipe", "pipe", "pipe"],
   });
-  const stdoutChunks = [];
-  const stderrChunks = [];
+  const observed = observeChildProcess(child);
   const readBuffer = new ReadBuffer();
   let resolveResponse;
   let rejectResponse;
@@ -97,13 +100,8 @@ async function verifyInstalledProcess(binPath, cwd) {
     resolveResponse = resolve;
     rejectResponse = reject;
   });
-  const exitPromise = new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code, signal) => resolve({ code, signal }));
-  });
 
   child.stdout.on("data", (chunk) => {
-    stdoutChunks.push(chunk);
     try {
       readBuffer.append(chunk);
       for (
@@ -119,7 +117,6 @@ async function verifyInstalledProcess(binPath, cwd) {
       rejectResponse(error);
     }
   });
-  child.stderr.on("data", (chunk) => stderrChunks.push(chunk));
 
   try {
     child.stdin.write(
@@ -147,22 +144,26 @@ async function verifyInstalledProcess(binPath, cwd) {
 
     child.stdin.write(serializeMessage({ jsonrpc: "2.0", method: "notifications/initialized" }));
     assert(child.kill("SIGTERM"), "Installed bin did not accept SIGTERM");
-    const exit = await withDeadline(exitPromise, "installed package shutdown");
+    const exit = await withDeadline(observed.exit, "installed package shutdown");
     assert(exit.code === 0 && exit.signal === null, "Installed bin did not terminate cleanly");
+    const closed = await withDeadline(observed.closed, "installed package stream close");
+    assert(
+      closed.code === exit.code && closed.signal === exit.signal,
+      "Installed bin close status did not match its exit status",
+    );
 
-    const stdout = Buffer.concat(stdoutChunks).toString("utf8");
-    const stdoutLines = stdout.split("\n");
+    const stdoutLines = observed.stdout.split("\n");
     assert(stdoutLines.length === 2 && stdoutLines[1] === "", "Installed bin polluted stdout");
     assert(
       JSON.stringify(deserializeMessage(stdoutLines[0] ?? "")) === JSON.stringify(response),
       "Installed bin emitted invalid MCP framing",
     );
-    assert(Buffer.concat(stderrChunks).toString("utf8") === "", "Installed bin wrote to stderr");
+    assert(observed.stderr === "", "Installed bin wrote to stderr");
   } finally {
     if (child.exitCode === null && child.signalCode === null) {
       child.kill("SIGKILL");
     }
-    await withDeadline(exitPromise, "installed package cleanup").catch(() => undefined);
+    await withDeadline(observed.closed, "installed package cleanup").catch(() => undefined);
   }
 }
 
