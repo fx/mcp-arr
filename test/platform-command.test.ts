@@ -1,8 +1,14 @@
-import { spawn } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { EventEmitter, once } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { observeChildProcess, waitForResponseOrExit } from "../scripts/child-process.mjs";
+import {
+  observeChildProcess,
+  waitForChildCompletion,
+  waitForResponseOrExit,
+} from "../scripts/child-process.mjs";
 import { createPlatformCommand, isCleanTermination } from "../scripts/platform-command.mjs";
 
 describe("createPlatformCommand", () => {
@@ -48,6 +54,55 @@ describe("isCleanTermination", () => {
 });
 
 describe("observeChildProcess", () => {
+  it("waits for readable drainage after process close", async () => {
+    const events = new EventEmitter();
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    const child = Object.assign(events, {
+      stdout,
+      stderr,
+    }) as unknown as ChildProcessWithoutNullStreams;
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+    stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+    const completion = waitForChildCompletion(child);
+    let completed = false;
+    void completion.then(() => {
+      completed = true;
+    });
+
+    events.emit("close", 0, null);
+    await Promise.resolve();
+    expect(completed).toBe(false);
+
+    stdout.end("late stdout");
+    stderr.end("late stderr");
+    await expect(completion).resolves.toEqual({ code: 0, signal: null });
+    expect(Buffer.concat(stdoutChunks).toString("utf8")).toBe("late stdout");
+    expect(Buffer.concat(stderrChunks).toString("utf8")).toBe("late stderr");
+  });
+
+  it("handles readable streams that already ended", async () => {
+    const events = new EventEmitter();
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    const child = Object.assign(events, {
+      stdout,
+      stderr,
+    }) as unknown as ChildProcessWithoutNullStreams;
+    stdout.resume();
+    stderr.resume();
+    const ended = Promise.all([once(stdout, "end"), once(stderr, "end")]);
+    stdout.end();
+    stderr.end();
+    await ended;
+
+    const completion = waitForChildCompletion(child);
+    events.emit("close", 0, null);
+    await expect(completion).resolves.toEqual({ code: 0, signal: null });
+  });
+
   it("preserves exit status and waits for buffered streams to close", async () => {
     const payload = "buffered package output\n".repeat(4_096);
     const child = spawn(

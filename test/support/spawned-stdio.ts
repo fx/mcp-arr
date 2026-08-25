@@ -1,6 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
 import type { JSONRPCMessage, RequestId } from "@modelcontextprotocol/sdk/types.js";
+import { waitForChildCompletion } from "../../scripts/child-process.mjs";
 
 export interface ProcessExit {
   code: number | null;
@@ -64,25 +65,21 @@ export class SpawnedStdioProcess {
       this.child.once("error", reject);
       this.child.once("exit", (code, signal) => resolve({ code, signal }));
     });
-    this.closed = new Promise<ProcessExit>((resolve, reject) => {
-      this.child.once("error", reject);
-      this.child.once("close", (code, signal) => {
-        this.#isClosed = true;
-        for (const waiter of this.#waiters.values()) {
-          waiter.reject(
-            new Error(
-              `Process closed before the requested response (code=${String(code)}, signal=${String(signal)})`,
-            ),
-          );
-        }
-        this.#waiters.clear();
-        for (const rejectWrite of this.#pendingWrites) {
-          rejectWrite(new Error("Spawned process stdin closed before the write completed"));
-        }
-        this.#pendingWrites.clear();
-        resolve({ code, signal });
-      });
-    });
+    this.closed = waitForChildCompletion(this.child).then(
+      (status) => {
+        this.#finishClose(
+          new Error(
+            `Process closed before the requested response (code=${String(status.code)}, signal=${String(status.signal)})`,
+          ),
+          new Error("Spawned process stdin closed before the write completed"),
+        );
+        return status;
+      },
+      (error: unknown) => {
+        this.#finishClose(error, error);
+        throw error;
+      },
+    );
 
     this.child.stdin.on("error", (error: unknown) => {
       this.#stdinError = error;
@@ -179,6 +176,18 @@ export class SpawnedStdioProcess {
         this.#waiters.delete(id);
       }
     });
+  }
+
+  #finishClose(waiterError: unknown, writeError: unknown): void {
+    this.#isClosed = true;
+    for (const waiter of this.#waiters.values()) {
+      waiter.reject(waiterError);
+    }
+    this.#waiters.clear();
+    for (const rejectWrite of this.#pendingWrites) {
+      rejectWrite(writeError);
+    }
+    this.#pendingWrites.clear();
   }
 
   async terminateGracefully(
