@@ -1,0 +1,12 @@
+{
+  "metadata": {
+    "application": "sonarr",
+    "apiVersion": "v3",
+    "version": "4.0.19.2979",
+    "endpoint": "/api/v3/system/status"
+  },
+  "body": {
+    "appName": "Sonarr",
+    "version": "4.0.19.2979"
+  }
+}

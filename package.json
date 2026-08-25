@@ -17,8 +17,9 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "test": "npm run build && vitest run",
+    "verify:package": "npm run build && node scripts/verify-package.mjs",
     "start": "node dist/cli.js",
-    "check": "npm run typecheck && npm run lint && npm test"
+    "check": "npm run typecheck && npm run lint && npm test && npm run verify:package"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
