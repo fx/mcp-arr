@@ -1,0 +1,12 @@
+{
+  "metadata": {
+    "application": "radarr",
+    "apiVersion": "v3",
+    "version": "6.3.0.10514",
+    "endpoint": "/api/v3/system/status"
+  },
+  "body": {
+    "appName": "Radarr",
+    "version": "6.3.0.10514"
+  }
+}

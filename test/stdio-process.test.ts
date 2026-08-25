@@ -1,74 +1,24 @@
-import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import {
-  deserializeMessage,
-  ReadBuffer,
-  serializeMessage,
-} from "@modelcontextprotocol/sdk/shared/stdio.js";
+import { deserializeMessage, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
 import { type JSONRPCMessage, LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { isCleanTermination } from "../scripts/platform-command.mjs";
+import { spawnStdioProcess, withDeadline } from "./support/spawned-stdio.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 
-function withDeadline<T>(promise: Promise<T>, label: string, timeoutMs = 2_000): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), timeoutMs);
-
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error: unknown) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
+function spawnNode(args: readonly string[]) {
+  return spawnStdioProcess({
+    executable: process.execPath,
+    args,
+    cwd: projectRoot,
+    env: process.env,
   });
 }
 
 describe("built stdio process", () => {
   it("accepts immediate initialization, keeps stdout clean, and exits on SIGTERM", async () => {
-    const child = spawn(process.execPath, ["dist/cli.js"], {
-      cwd: projectRoot,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    const readBuffer = new ReadBuffer();
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-
-    const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-      (resolve, reject) => {
-        child.once("error", reject);
-        child.once("exit", (code, signal) => resolve({ code, signal }));
-      },
-    );
-
-    let resolveInitialize: ((message: JSONRPCMessage) => void) | undefined;
-    let rejectInitialize: ((error: unknown) => void) | undefined;
-    const initializeResponse = new Promise<JSONRPCMessage>((resolve, reject) => {
-      resolveInitialize = resolve;
-      rejectInitialize = reject;
-    });
-
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdoutChunks.push(chunk);
-      try {
-        readBuffer.append(chunk);
-        for (
-          let message = readBuffer.readMessage();
-          message !== null;
-          message = readBuffer.readMessage()
-        ) {
-          if ("id" in message && message.id === 1) {
-            resolveInitialize?.(message);
-          }
-        }
-      } catch (error) {
-        rejectInitialize?.(error);
-      }
-    });
-    child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+    const child = spawnNode(["dist/cli.js"]);
 
     try {
       const initializeRequest: JSONRPCMessage = {
@@ -81,9 +31,9 @@ describe("built stdio process", () => {
           clientInfo: { name: "stdio-integration-test", version: "1.0.0" },
         },
       };
-      child.stdin.write(serializeMessage(initializeRequest));
+      await child.send(initializeRequest);
 
-      const response = await withDeadline(initializeResponse, "initialize response");
+      const response = await child.response(1);
       expect(response).toMatchObject({
         jsonrpc: "2.0",
         id: 1,
@@ -93,28 +43,28 @@ describe("built stdio process", () => {
           serverInfo: { name: "mcp-arr", version: "0.1.0" },
         },
       });
-
-      child.stdin.write(
-        serializeMessage({
-          jsonrpc: "2.0",
-          method: "notifications/initialized",
-        }),
+      await expect(child.response("absent", 10)).rejects.toThrow(
+        "Timed out waiting for response absent",
       );
-      expect(child.kill("SIGTERM")).toBe(true);
+      await expect(child.response("absent", 10)).rejects.toThrow(
+        "Timed out waiting for response absent",
+      );
 
-      const exit = await withDeadline(exitPromise, "graceful process exit");
-      expect(exit).toEqual({ code: 0, signal: null });
-      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
-      const stdoutLines = stdout.split("\n");
+      await child.send({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+      });
+      const termination = await child.terminateGracefully();
+      expect(isCleanTermination(termination)).toBe(true);
+      await expect(child.exit).resolves.toEqual(termination);
+      await expect(child.closed).resolves.toEqual(termination);
+      const stdoutLines = child.stdout.split("\n");
       expect(stdoutLines).toHaveLength(2);
       expect(stdoutLines[1]).toBe("");
       expect(deserializeMessage(stdoutLines[0] ?? "")).toEqual(response);
-      expect(Buffer.concat(stderrChunks).toString("utf8")).toBe("");
+      expect(child.stderr).toBe("");
     } finally {
-      if (child.exitCode === null && child.signalCode === null) {
-        child.kill("SIGKILL");
-      }
-      await withDeadline(exitPromise, "process cleanup").catch(() => undefined);
+      await child.forceCleanup().catch(() => undefined);
     }
   });
 
@@ -135,36 +85,143 @@ describe("built stdio process", () => {
         unrefStdin: () => process.stdin.unref(),
       });
     `;
-    const child = spawn(process.execPath, ["--input-type=module", "--eval", script], {
-      cwd: projectRoot,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
-
-    const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-      (resolve, reject) => {
-        child.once("error", reject);
-        child.once("exit", (code, signal) => resolve({ code, signal }));
-      },
-    );
+    const child = spawnNode(["--input-type=module", "--eval", script]);
 
     try {
-      await expect(withDeadline(exitPromise, "fatal startup exit")).resolves.toEqual({
+      await expect(withDeadline(child.exit, "fatal startup exit")).resolves.toEqual({
         code: 1,
         signal: null,
       });
-      expect(Buffer.concat(stdoutChunks).toString("utf8")).toBe("");
-      expect(Buffer.concat(stderrChunks).toString("utf8")).toBe(
-        "mcp-arr: startup failed: forced startup failure\n",
-      );
+      await expect(withDeadline(child.closed, "fatal startup close")).resolves.toEqual({
+        code: 1,
+        signal: null,
+      });
+      expect(child.stdout).toBe("");
+      expect(child.stderr).toBe("mcp-arr: startup failed: forced startup failure\n");
     } finally {
-      if (child.exitCode === null && child.signalCode === null) {
-        child.kill("SIGKILL");
-      }
-      await withDeadline(exitPromise, "fatal startup process cleanup").catch(() => undefined);
+      await child.forceCleanup().catch(() => undefined);
+    }
+  });
+
+  it("awaits close before exposing all buffered output", async () => {
+    const payload = "buffered diagnostic\n".repeat(4_096);
+    const child = spawnNode([
+      "--input-type=module",
+      "--eval",
+      `process.stderr.write(${JSON.stringify(payload)});`,
+    ]);
+
+    try {
+      await expect(child.exit).resolves.toEqual({ code: 0, signal: null });
+      await expect(child.closed).resolves.toEqual({ code: 0, signal: null });
+      expect(child.stderr).toBe(payload);
+    } finally {
+      await child.forceCleanup().catch(() => undefined);
+    }
+  });
+
+  it("keeps response waiters valid after exit until stdout closes", async () => {
+    const beforeExit: JSONRPCMessage = { jsonrpc: "2.0", id: 99, result: { phase: "before" } };
+    const afterExit: JSONRPCMessage = { jsonrpc: "2.0", id: 100, result: { phase: "after" } };
+    const framedResponses = serializeMessage(beforeExit) + serializeMessage(afterExit);
+    const script = `
+      process.stdin.once("data", () => {
+        process.stdout.write(${JSON.stringify(framedResponses)});
+        process.stdin.unref();
+      });
+    `;
+    const child = spawnNode(["--input-type=module", "--eval", script]);
+    child.child.stdout.pause();
+
+    try {
+      const pendingBeforeExit = child.response(99);
+      const pendingAfterExit = new Promise<JSONRPCMessage>((resolve, reject) => {
+        child.child.once("exit", () => {
+          child.response(100).then(resolve, reject);
+          child.child.stdout.resume();
+        });
+      });
+      await child.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+      await expect(child.exit).resolves.toEqual({ code: 0, signal: null });
+
+      await expect(pendingBeforeExit).resolves.toEqual(beforeExit);
+      await expect(pendingAfterExit).resolves.toEqual(afterExit);
+      await expect(child.closed).resolves.toEqual({ code: 0, signal: null });
+    } finally {
+      child.child.stdout.resume();
+      await child.forceCleanup().catch(() => undefined);
+    }
+  });
+
+  it("rejects write callback and stream errors without uncaught stdin failures", async () => {
+    const notification: JSONRPCMessage = {
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+    };
+    const callbackChild = spawnNode(["--input-type=module", "--eval", "process.stdin.resume()"]);
+    const eventChild = spawnNode(["--input-type=module", "--eval", "process.stdin.resume()"]);
+
+    try {
+      const callbackError = new Error("forced write callback failure");
+      vi.spyOn(callbackChild.child.stdin, "write").mockImplementationOnce(((...args: unknown[]) => {
+        const callback = args.at(-1);
+        if (typeof callback === "function") {
+          queueMicrotask(() => callback(callbackError));
+        }
+        return false;
+      }) as typeof callbackChild.child.stdin.write);
+      await expect(callbackChild.send(notification)).rejects.toBe(callbackError);
+
+      const streamError = new Error("forced stdin stream failure");
+      expect(() => eventChild.child.stdin.emit("error", streamError)).not.toThrow();
+      await expect(eventChild.send(notification)).rejects.toBe(streamError);
+    } finally {
+      await Promise.all(
+        [callbackChild, eventChild].map((child) => child.forceCleanup().catch(() => undefined)),
+      );
+    }
+  });
+
+  it("times out stalled stdin writes and cleans their pending state", async () => {
+    const notification: JSONRPCMessage = {
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+    };
+    const child = spawnNode(["--input-type=module", "--eval", "process.stdin.resume()"]);
+
+    try {
+      let completeWrite: ((error?: Error | null) => void) | undefined;
+      const write = vi.spyOn(child.child.stdin, "write").mockImplementationOnce(((
+        ...args: unknown[]
+      ) => {
+        const callback = args.at(-1);
+        if (typeof callback === "function") {
+          completeWrite = callback as (error?: Error | null) => void;
+        }
+        return false;
+      }) as typeof child.child.stdin.write);
+
+      await expect(child.send(notification, 10)).rejects.toThrow(
+        "Timed out waiting for spawned process stdin write",
+      );
+      completeWrite?.();
+      write.mockRestore();
+      await expect(child.send(notification)).resolves.toBeUndefined();
+    } finally {
+      await child.forceCleanup().catch(() => undefined);
+    }
+  });
+
+  it("rejects sends after stdin closes", async () => {
+    const child = spawnNode(["--input-type=module", "--eval", "undefined"]);
+
+    try {
+      await child.closed;
+      await expect(
+        child.send({ jsonrpc: "2.0", method: "notifications/initialized" }),
+      ).rejects.toThrow("Spawned process stdin is not writable");
+    } finally {
+      await child.forceCleanup().catch(() => undefined);
     }
   });
 });

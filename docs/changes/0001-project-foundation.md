@@ -74,11 +74,11 @@ The [Architecture spec](../specs/architecture/) owns runtime, transport, environ
   - [ ] Parse optional URL/API-key pairs and reject incomplete or empty configuration
   - [ ] Normalize URL prefixes, inject `X-Api-Key`, enforce timeouts, and normalize safe errors
   - [ ] Probe status/version for each configured application and record capability state
-- [ ] Establish project quality gates and packaging
-  - [ ] Add unit, fixture-contract, and stdio integration test infrastructure
-  - [ ] Add sanitized fixtures for the recorded minimum versions
-  - [ ] Add CI for install, build, typecheck, lint, and tests
-  - [ ] Document command-plus-environment MCP installation without adding a runtime config file
+- [x] Establish project quality gates and packaging (PR #3)
+  - [x] Add unit, fixture-contract, and stdio integration test infrastructure (PR #3)
+  - [x] Add sanitized fixtures for the recorded minimum versions (PR #3)
+  - [x] Add CI for install, build, typecheck, lint, and tests (PR #3)
+  - [x] Document command-plus-environment MCP installation without adding a runtime config file (PR #3)
 
 ## Open Questions
 

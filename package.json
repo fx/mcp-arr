@@ -16,9 +16,12 @@
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && node -e \"require('node:fs').chmodSync('dist/cli.js',0o755)\"",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
-    "test": "npm run build && vitest run",
+    "test:run": "vitest run",
+    "test": "npm run build && npm run test:run",
+    "verify:package:run": "node scripts/verify-package.mjs",
+    "verify:package": "npm run build && npm run verify:package:run",
     "start": "node dist/cli.js",
-    "check": "npm run typecheck && npm run lint && npm test"
+    "check": "npm run typecheck && npm run lint && npm run build && npm run test:run && npm run verify:package:run"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",

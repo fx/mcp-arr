@@ -1,0 +1,12 @@
+{
+  "metadata": {
+    "application": "prowlarr",
+    "apiVersion": "v1",
+    "version": "2.5.2.5491",
+    "endpoint": "/api/v1/system/status"
+  },
+  "body": {
+    "appName": "Prowlarr",
+    "version": "2.5.2.5491"
+  }
+}
