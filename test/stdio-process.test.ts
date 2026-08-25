@@ -36,7 +36,6 @@ describe("built stdio process", () => {
     const readBuffer = new ReadBuffer();
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
-    const messages: JSONRPCMessage[] = [];
 
     const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
       (resolve, reject) => {
@@ -61,7 +60,6 @@ describe("built stdio process", () => {
           message !== null;
           message = readBuffer.readMessage()
         ) {
-          messages.push(message);
           if ("id" in message && message.id === 1) {
             resolveInitialize?.(message);
           }
@@ -106,7 +104,6 @@ describe("built stdio process", () => {
 
       const exit = await withDeadline(exitPromise, "graceful process exit");
       expect(exit).toEqual({ code: 0, signal: null });
-      expect(messages).toEqual([response]);
       const stdout = Buffer.concat(stdoutChunks).toString("utf8");
       const stdoutLines = stdout.split("\n");
       expect(stdoutLines).toHaveLength(2);

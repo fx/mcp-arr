@@ -69,13 +69,15 @@ describe("createStdioRuntime", () => {
     expect(server.close).toHaveBeenCalledOnce();
   });
 
-  it("falls back to closing the transport when server cleanup fails", async () => {
-    const { dependencies, server, transport } = createDependencies();
+  it("propagates a server cleanup failure without retrying it", async () => {
+    const { dependencies, server } = createDependencies();
     const closeError = new Error("server close failed");
     vi.mocked(server.close).mockRejectedValueOnce(closeError);
     const runtime = createStdioRuntime(dependencies);
 
-    await expect(runtime.close()).rejects.toBe(closeError);
-    expect(transport.close).toHaveBeenCalledOnce();
+    const firstClose = runtime.close();
+    expect(runtime.close()).toBe(firstClose);
+    await expect(firstClose).rejects.toBe(closeError);
+    expect(server.close).toHaveBeenCalledOnce();
   });
 });

@@ -32,22 +32,7 @@ export function createStdioRuntime(
   let cleanupPromise: Promise<void> | undefined;
 
   const cleanup = (): Promise<void> => {
-    cleanupPromise ??= (async () => {
-      try {
-        await server.close();
-      } catch (serverError) {
-        try {
-          await transport.close();
-        } catch (transportError) {
-          throw new AggregateError(
-            [serverError, transportError],
-            "Failed to close the MCP server and stdio transport",
-          );
-        }
-        throw serverError;
-      }
-    })();
-
+    cleanupPromise ??= server.close();
     return cleanupPromise;
   };
 
