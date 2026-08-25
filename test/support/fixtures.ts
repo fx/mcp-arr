@@ -41,7 +41,7 @@ const secretKeyParts = [
   "token",
 ];
 
-const identifyingKeyParts = ["host", "instance", "ipaddress", "localaddress", "path", "user"];
+const identifyingKeyParts = ["host", "instance", "ipaddress", "localaddress", "user"];
 
 const identifyingKeys = new Set(["ip"]);
 
@@ -49,7 +49,8 @@ const sensitiveValuePatterns: ReadonlyArray<readonly [string, RegExp]> = [
   ["email address", /\b[^\s@]+@[^\s@]+\.[^\s@]+\b/u],
   ["URL", /\b[a-z][a-z0-9+.-]*:\/\/[^\s]+/iu],
   ["home path", /(?:~\/|\/(?:home|users)\/[^/\s]+(?:\/|\b)|\/root(?:\/|\b))/iu],
-  ["absolute path", /(?:^|\s)\/[^\s]+/u],
+  ["workspace path", /(?:^|\s)\/workspace(?:\/|\b)[^\s]*/iu],
+  ["sensitive path", /(?:^|\s)\/(?!media\/example(?:\/|$))[^\s]+/iu],
   ["Windows path", /\b[a-z]:[\\/][^\s]*/iu],
   ["UNC path", /\\\\[^\\\s]+\\[^\\\s]+/u],
   [

@@ -11,7 +11,7 @@ import {
 } from "@modelcontextprotocol/sdk/shared/stdio.js";
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { observeChildProcess } from "./child-process.mjs";
-import { createPlatformCommand } from "./platform-command.mjs";
+import { createPlatformCommand, isCleanTermination } from "./platform-command.mjs";
 
 const execFileAsync = promisify(execFile);
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -145,7 +145,7 @@ async function verifyInstalledProcess(binPath, cwd) {
     child.stdin.write(serializeMessage({ jsonrpc: "2.0", method: "notifications/initialized" }));
     assert(child.kill("SIGTERM"), "Installed bin did not accept SIGTERM");
     const exit = await withDeadline(observed.exit, "installed package shutdown");
-    assert(exit.code === 0 && exit.signal === null, "Installed bin did not terminate cleanly");
+    assert(isCleanTermination(exit), "Installed bin did not terminate cleanly");
     const closed = await withDeadline(observed.closed, "installed package stream close");
     assert(
       closed.code === exit.code && closed.signal === exit.signal,

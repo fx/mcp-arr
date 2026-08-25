@@ -145,6 +145,36 @@ describe("built stdio process", () => {
     }
   });
 
+  it("times out stalled stdin writes and cleans their pending state", async () => {
+    const notification: JSONRPCMessage = {
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+    };
+    const child = spawnNode(["--input-type=module", "--eval", "process.stdin.resume()"]);
+
+    try {
+      let completeWrite: ((error?: Error | null) => void) | undefined;
+      const write = vi.spyOn(child.child.stdin, "write").mockImplementationOnce(((
+        ...args: unknown[]
+      ) => {
+        const callback = args.at(-1);
+        if (typeof callback === "function") {
+          completeWrite = callback as (error?: Error | null) => void;
+        }
+        return false;
+      }) as typeof child.child.stdin.write);
+
+      await expect(child.send(notification, 10)).rejects.toThrow(
+        "Timed out waiting for spawned process stdin write",
+      );
+      completeWrite?.();
+      write.mockRestore();
+      await expect(child.send(notification)).resolves.toBeUndefined();
+    } finally {
+      await child.forceCleanup().catch(() => undefined);
+    }
+  });
+
   it("rejects sends after stdin closes", async () => {
     const child = spawnNode(["--input-type=module", "--eval", "undefined"]);
 

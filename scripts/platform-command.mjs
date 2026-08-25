@@ -1,3 +1,10 @@
+export function isCleanTermination(status, platform = process.platform) {
+  if (status.code === 0 && status.signal === null) {
+    return true;
+  }
+  return platform === "win32" && status.code === null && status.signal === "SIGTERM";
+}
+
 export function createPlatformCommand(
   executable,
   args,

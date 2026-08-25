@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { observeChildProcess } from "../scripts/child-process.mjs";
-import { createPlatformCommand } from "../scripts/platform-command.mjs";
+import { createPlatformCommand, isCleanTermination } from "../scripts/platform-command.mjs";
 
 describe("createPlatformCommand", () => {
   it("uses direct execution on POSIX platforms", () => {
@@ -30,6 +30,20 @@ describe("createPlatformCommand", () => {
       executable: "node.exe",
       args: ["server.js"],
     });
+  });
+});
+
+describe("isCleanTermination", () => {
+  it("requires a zero exit code without a signal on POSIX", () => {
+    expect(isCleanTermination({ code: 0, signal: null }, "linux")).toBe(true);
+    expect(isCleanTermination({ code: null, signal: "SIGTERM" }, "linux")).toBe(false);
+    expect(isCleanTermination({ code: 1, signal: null }, "linux")).toBe(false);
+  });
+
+  it("accepts documented Windows cmd-shim SIGTERM status", () => {
+    expect(isCleanTermination({ code: 0, signal: null }, "win32")).toBe(true);
+    expect(isCleanTermination({ code: null, signal: "SIGTERM" }, "win32")).toBe(true);
+    expect(isCleanTermination({ code: null, signal: "SIGKILL" }, "win32")).toBe(false);
   });
 });
 

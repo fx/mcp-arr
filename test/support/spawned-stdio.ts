@@ -107,7 +107,7 @@ export class SpawnedStdioProcess {
     return Buffer.concat(this.stderrChunks).toString("utf8");
   }
 
-  send(message: JSONRPCMessage): Promise<void> {
+  send(message: JSONRPCMessage, timeoutMs = this.#deadlineMs): Promise<void> {
     if (this.#stdinError !== undefined) {
       return Promise.reject(this.#stdinError);
     }
@@ -117,13 +117,23 @@ export class SpawnedStdioProcess {
 
     return new Promise<void>((resolve, reject) => {
       let settled = false;
-      const fail = (error: unknown) => {
+      const timer = setTimeout(
+        () => fail(new Error("Timed out waiting for spawned process stdin write")),
+        timeoutMs,
+      );
+      const settle = () => {
         if (settled) {
-          return;
+          return false;
         }
         settled = true;
+        clearTimeout(timer);
         this.#pendingWrites.delete(fail);
-        reject(error);
+        return true;
+      };
+      const fail = (error: unknown) => {
+        if (settle()) {
+          reject(error);
+        }
       };
       this.#pendingWrites.add(fail);
       try {
@@ -133,9 +143,7 @@ export class SpawnedStdioProcess {
             fail(error);
             return;
           }
-          if (!settled) {
-            settled = true;
-            this.#pendingWrites.delete(fail);
+          if (settle()) {
             resolve();
           }
         });

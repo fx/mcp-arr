@@ -23,7 +23,12 @@ npm init --yes
 npm install ../mcp-arr
 ```
 
-The server supports MCP over stdio only. Configure the host command as the absolute path to `mcp-arr-install/node_modules/.bin/mcp-arr` and pass instance settings through the command environment. For example:
+The server supports MCP over stdio only. Configure the host command using the installed executable's absolute path:
+
+- POSIX: `/absolute/path/to/mcp-arr-install/node_modules/.bin/mcp-arr`
+- Windows: `C:\absolute\path\to\mcp-arr-install\node_modules\.bin\mcp-arr.cmd`
+
+Pass instance settings through the command environment. The following host example uses the POSIX command path:
 
 ```json
 {

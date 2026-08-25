@@ -175,7 +175,6 @@ describe("versioned fixture contract", () => {
       "internalHost",
       "ip",
       "ipAddress",
-      "path",
       "user",
       "userAgent",
       "userId",
@@ -191,6 +190,14 @@ describe("versioned fixture contract", () => {
     expect(() => validate(metadataFixture)).toThrow("Identifying key is not allowed");
   });
 
+  it("allows schema path fields when their values are neutral", () => {
+    const fixture = validFixture();
+    (fixture.body as Record<string, unknown>).path = "/media/example";
+    (fixture.body as Record<string, unknown>).rootFolderPath = "/media/example/library";
+
+    expect(() => validate(fixture)).not.toThrow();
+  });
+
   it("rejects identifying and sensitive value patterns", () => {
     const unsafeValues = [
       ["email address", ["fixture", "example.invalid"].join("@")],
@@ -203,7 +210,9 @@ describe("versioned fixture contract", () => {
       ["home path", ["", "Users", "fixture", "data"].join("/")],
       ["home path", ["", "root", "fixture"].join("/")],
       ["home path", ["~", "fixture", "data"].join("/")],
-      ["absolute path", ["", "srv", "fixture", "data"].join("/")],
+      ["workspace path", ["", "workspace", "fixture", "data"].join("/")],
+      ["sensitive path", ["", "srv", "fixture", "data"].join("/")],
+      ["sensitive path", ["", "media", "private", "data"].join("/")],
       ["Windows path", ["prefix=C:", "fixture", "data"].join("\\")],
       ["UNC path", `${"\\".repeat(2)}fixture\\share`],
     ] as const;
