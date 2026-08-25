@@ -2,7 +2,9 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { PassThrough } from "node:stream";
+import { PassThrough, type Readable } from "node:stream";
+import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
+import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
 import {
   consumeReadable,
@@ -11,6 +13,38 @@ import {
   waitForResponseOrExit,
 } from "../scripts/child-process.mjs";
 import { createPlatformCommand, isCleanTermination } from "../scripts/platform-command.mjs";
+
+function controlledCloseBeforeRead(): {
+  stream: Readable;
+  closeWith: (chunk?: Buffer) => void;
+} {
+  const events = new EventEmitter();
+  const buffered: Buffer[] = [];
+  let finishIteration: (() => void) | undefined;
+  const iterationFinished = new Promise<void>((resolve) => {
+    finishIteration = resolve;
+  });
+  const stream = Object.assign(events, {
+    read: () => buffered.shift() ?? null,
+    [Symbol.asyncIterator]: () => ({
+      next: async () => {
+        await iterationFinished;
+        return { done: true as const, value: undefined };
+      },
+    }),
+  }) as unknown as Readable;
+
+  return {
+    stream,
+    closeWith: (chunk) => {
+      if (chunk !== undefined) {
+        buffered.push(chunk);
+      }
+      events.emit("close");
+      finishIteration?.();
+    },
+  };
+}
 
 describe("createPlatformCommand", () => {
   it("uses direct execution on POSIX platforms", () => {
@@ -55,6 +89,51 @@ describe("isCleanTermination", () => {
 });
 
 describe("observeChildProcess", () => {
+  it("drains buffered unread output after stream close before completion", async () => {
+    const events = new EventEmitter();
+    const stdout = controlledCloseBeforeRead();
+    const stderr = controlledCloseBeforeRead();
+    const child = Object.assign(events, {
+      stdout: stdout.stream,
+      stderr: stderr.stream,
+    }) as unknown as ChildProcessWithoutNullStreams;
+    const response: JSONRPCMessage = {
+      jsonrpc: "2.0",
+      id: 321,
+      result: { phase: "buffered-after-close" },
+    };
+    const framedResponse = serializeMessage(response);
+    const readBuffer = new ReadBuffer();
+    let resolveDecoded: ((message: JSONRPCMessage) => void) | undefined;
+    const decoded = new Promise<JSONRPCMessage>((resolve) => {
+      resolveDecoded = resolve;
+    });
+    const observed = observeChildProcess(child, {
+      onStdoutChunk: (chunk) => {
+        readBuffer.append(chunk);
+        const message = readBuffer.readMessage();
+        if (message !== null) {
+          resolveDecoded?.(message);
+        }
+      },
+    });
+    let finalized = false;
+    void observed.closed.then(() => {
+      finalized = true;
+    });
+
+    events.emit("close", 0, null);
+    stdout.closeWith(Buffer.from(framedResponse));
+    stderr.closeWith();
+
+    await expect(decoded).resolves.toEqual(response);
+    expect(finalized).toBe(false);
+    await expect(observed.closed).resolves.toEqual({ code: 0, signal: null });
+    expect(finalized).toBe(true);
+    expect(observed.stdout).toBe(framedResponse);
+    expect(observed.stderr).toBe("");
+  });
+
   it("waits for readable drainage after process close", async () => {
     const events = new EventEmitter();
     const stdout = new PassThrough();

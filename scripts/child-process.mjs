@@ -9,10 +9,41 @@ export function waitForResponseOrExit(response, exit, label) {
   ]);
 }
 
+function deliverChunk(value, onChunk) {
+  const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+  onChunk(chunk);
+}
+
+function drainReadable(stream, onValue) {
+  for (let value = stream.read(); value !== null; value = stream.read()) {
+    onValue(value);
+  }
+}
+
 export async function consumeReadable(stream, onChunk) {
-  for await (const value of stream) {
-    const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
-    onChunk(chunk);
+  let failure;
+  const captureChunk = (value) => {
+    try {
+      deliverChunk(value, onChunk);
+    } catch (error) {
+      failure ??= error;
+    }
+  };
+
+  try {
+    for await (const value of stream) {
+      captureChunk(value);
+    }
+  } catch (error) {
+    failure ??= error;
+  }
+
+  drainReadable(stream, captureChunk);
+  await new Promise((resolve) => setImmediate(resolve));
+  drainReadable(stream, captureChunk);
+
+  if (failure !== undefined) {
+    throw failure;
   }
 }
 
