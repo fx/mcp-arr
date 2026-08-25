@@ -1,0 +1,100 @@
+# Documentation Index
+# Auto-updated by /spec-writer and /project-management skills
+
+specs:
+  - name: acquisition-and-import
+    path: specs/acquisition-and-import/
+    description: Release search, grab, automatic search, and guarded manual import workflows
+    status: active
+  - name: activity-management
+    path: specs/activity-management/
+    description: Queue, history, blocklist, health, command, and job behavior
+    status: active
+  - name: architecture
+    path: specs/architecture/
+    description: Local stdio runtime, environment configuration, compatibility, and testing contracts
+    status: active
+  - name: configuration-reconciliation
+    path: specs/configuration-reconciliation/
+    description: Safe observation and reconciliation of upstream application configuration
+    status: active
+  - name: library-management
+    path: specs/library-management/
+    description: Sonarr and Radarr library discovery, query, monitoring, files, and mutations
+    status: active
+  - name: tool-contracts
+    path: specs/tool-contracts/
+    description: Stable typed MCP tools, plan/apply, references, errors, receipts, and jobs
+    status: active
+
+changes:
+  - id: "0001"
+    name: project-foundation
+    path: changes/0001-project-foundation.md
+    description: Scaffold TypeScript stdio runtime, environment configuration, adapters, tests, and CI
+    spec: architecture
+    status: draft
+    depends_on: []
+  - id: "0002"
+    name: tool-runtime
+    path: changes/0002-tool-runtime.md
+    description: Implement typed tool schemas, plan/apply, ephemeral references, receipts, and jobs
+    spec: tool-contracts
+    status: draft
+    depends_on: ["0001"]
+  - id: "0003"
+    name: library-queries
+    path: changes/0003-library-queries.md
+    description: Implement bounded Sonarr and Radarr lookup and library query views
+    spec: library-management
+    status: draft
+    depends_on: ["0001", "0002"]
+  - id: "0004"
+    name: activity-diagnostics
+    path: changes/0004-activity-diagnostics.md
+    description: Implement queue, history, blocklist, health, command, and diagnosis views
+    spec: activity-management
+    status: draft
+    depends_on: ["0001", "0002"]
+  - id: "0005"
+    name: release-search-and-grab
+    path: changes/0005-release-search-and-grab.md
+    description: Implement cached release search, opaque references, grab, and automatic search
+    spec: acquisition-and-import
+    status: draft
+    depends_on: ["0002", "0003"]
+  - id: "0006"
+    name: queue-resolution
+    path: changes/0006-queue-resolution.md
+    description: Implement typed tracked-download and pending-release queue transitions
+    spec: activity-management
+    status: draft
+    depends_on: ["0002", "0004"]
+  - id: "0007"
+    name: manual-import
+    path: changes/0007-manual-import.md
+    description: Implement candidate discovery, reprocessing, validation, import execution, and jobs
+    spec: acquisition-and-import
+    status: draft
+    depends_on: ["0002", "0003", "0004", "0006"]
+  - id: "0008"
+    name: configuration-reconciliation
+    path: changes/0008-configuration-reconciliation.md
+    description: Implement safe upstream configuration observation and lossless reconciliation
+    spec: configuration-reconciliation
+    status: draft
+    depends_on: ["0001", "0002"]
+  - id: "0009"
+    name: library-mutations
+    path: changes/0009-library-mutations.md
+    description: Implement typed add, monitoring, file, rename, move, and deletion workflows
+    spec: library-management
+    status: draft
+    depends_on: ["0002", "0003"]
+  - id: "0010"
+    name: history-and-blocklist-mutations
+    path: changes/0010-history-and-blocklist-mutations.md
+    description: Implement typed history-failure and single-record blocklist mutation workflows
+    spec: activity-management
+    status: draft
+    depends_on: ["0002", "0004"]
