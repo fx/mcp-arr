@@ -7,15 +7,18 @@ function createHarness(runtime: StdioRuntime): {
   listeners: Map<ShutdownSignal, () => void>;
   diagnostics: string[];
   exitCodes: number[];
+  stdinUnrefs: number[];
 } {
   const listeners = new Map<ShutdownSignal, () => void>();
   const diagnostics: string[] = [];
   const exitCodes: number[] = [];
+  const stdinUnrefs: number[] = [];
 
   return {
     listeners,
     diagnostics,
     exitCodes,
+    stdinUnrefs,
     dependencies: {
       createRuntime: () => runtime,
       addSignalListener: (signal, listener) => {
@@ -31,6 +34,9 @@ function createHarness(runtime: StdioRuntime): {
       },
       setExitCode: (code) => {
         exitCodes.push(code);
+      },
+      unrefStdin: () => {
+        stdinUnrefs.push(stdinUnrefs.length + 1);
       },
     },
   };
@@ -69,6 +75,7 @@ describe("runProcess", () => {
     expect(harness.listeners.size).toBe(0);
     expect(harness.diagnostics).toEqual([]);
     expect(harness.exitCodes).toEqual([]);
+    expect(harness.stdinUnrefs).toEqual([]);
   });
 
   it("reports fatal startup errors to stderr and cleans up", async () => {
@@ -80,6 +87,7 @@ describe("runProcess", () => {
 
     expect(harness.diagnostics).toEqual(["mcp-arr: startup failed: broken startup\n"]);
     expect(harness.exitCodes).toEqual([1]);
+    expect(harness.stdinUnrefs).toEqual([1]);
     expect(runtime.close).toHaveBeenCalledOnce();
     expect(harness.listeners.size).toBe(0);
   });
@@ -95,6 +103,7 @@ describe("runProcess", () => {
 
     expect(harness.diagnostics).toEqual(["mcp-arr: startup failed: construction failed\n"]);
     expect(harness.exitCodes).toEqual([1]);
+    expect(harness.stdinUnrefs).toEqual([1]);
     expect(runtime.close).not.toHaveBeenCalled();
     expect(harness.listeners.size).toBe(0);
   });
@@ -111,6 +120,7 @@ describe("runProcess", () => {
       expect(harness.diagnostics).toEqual(["mcp-arr: shutdown failed: broken shutdown\n"]);
     });
     expect(harness.exitCodes).toEqual([1]);
+    expect(harness.stdinUnrefs).toEqual([]);
     expect(runtime.close).toHaveBeenCalledOnce();
   });
 });

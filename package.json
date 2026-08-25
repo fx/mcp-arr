@@ -28,6 +28,7 @@
     "@biomejs/biome": "2.2.2",
     "@types/node": "20.19.11",
     "typescript": "5.9.2",
+    "vite": "6.4.3",
     "vitest": "3.2.7"
   }
 }

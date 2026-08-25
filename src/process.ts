@@ -8,6 +8,7 @@ export interface ProcessDependencies {
   removeSignalListener: (signal: ShutdownSignal, listener: () => void) => void;
   writeStderr: (message: string) => void;
   setExitCode: (code: number) => void;
+  unrefStdin: () => void;
 }
 
 const defaultDependencies: ProcessDependencies = {
@@ -19,6 +20,9 @@ const defaultDependencies: ProcessDependencies = {
   },
   setExitCode: (code) => {
     process.exitCode = code;
+  },
+  unrefStdin: () => {
+    process.stdin.unref();
   },
 };
 
@@ -67,6 +71,10 @@ export async function runProcess(
   } catch (error) {
     dependencies.writeStderr(`mcp-arr: startup failed: ${errorMessage(error)}\n`);
     dependencies.setExitCode(1);
-    await shutdown();
+    try {
+      await shutdown();
+    } finally {
+      dependencies.unrefStdin();
+    }
   }
 }

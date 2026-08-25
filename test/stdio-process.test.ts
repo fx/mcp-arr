@@ -117,4 +117,54 @@ describe("built stdio process", () => {
       await withDeadline(exitPromise, "process cleanup").catch(() => undefined);
     }
   });
+
+  it("exits after a fatal startup failure while stdin remains open", async () => {
+    const processModuleUrl = new URL("../dist/process.js", import.meta.url).href;
+    const script = `
+      import { runProcess } from ${JSON.stringify(processModuleUrl)};
+      process.stdin.ref();
+      await runProcess({
+        createRuntime: () => ({
+          start: async () => { throw new Error("forced startup failure"); },
+          close: async () => undefined,
+        }),
+        addSignalListener: (signal, listener) => process.once(signal, listener),
+        removeSignalListener: (signal, listener) => process.off(signal, listener),
+        writeStderr: (message) => process.stderr.write(message),
+        setExitCode: (code) => { process.exitCode = code; },
+        unrefStdin: () => process.stdin.unref(),
+      });
+    `;
+    const child = spawn(process.execPath, ["--input-type=module", "--eval", script], {
+      cwd: projectRoot,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+
+    const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      (resolve, reject) => {
+        child.once("error", reject);
+        child.once("exit", (code, signal) => resolve({ code, signal }));
+      },
+    );
+
+    try {
+      await expect(withDeadline(exitPromise, "fatal startup exit")).resolves.toEqual({
+        code: 1,
+        signal: null,
+      });
+      expect(Buffer.concat(stdoutChunks).toString("utf8")).toBe("");
+      expect(Buffer.concat(stderrChunks).toString("utf8")).toBe(
+        "mcp-arr: startup failed: forced startup failure\n",
+      );
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+      }
+      await withDeadline(exitPromise, "fatal startup process cleanup").catch(() => undefined);
+    }
+  });
 });
