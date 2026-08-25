@@ -1,0 +1,32 @@
+{
+  "name": "mcp-arr",
+  "version": "0.1.0",
+  "description": "A local MCP server for Sonarr, Radarr, and Prowlarr",
+  "type": "module",
+  "bin": {
+    "mcp-arr": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && node -e \"require('node:fs').chmodSync('dist/cli.js',0o755)\"",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "test": "npm run build && vitest run",
+    "start": "node dist/cli.js",
+    "check": "npm run typecheck && npm run lint && npm test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.2.2",
+    "@types/node": "20.19.11",
+    "typescript": "5.9.2",
+    "vitest": "3.2.7"
+  }
+}
