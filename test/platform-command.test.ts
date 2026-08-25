@@ -62,7 +62,46 @@ describe("createPlatformCommand", () => {
     const shim = ["C:", "tools", "npm.CMD"].join("\\");
     expect(createPlatformCommand(shim, ["install", "package.tgz"], "win32", "cmd.exe")).toEqual({
       executable: "cmd.exe",
-      args: ["/d", "/s", "/c", shim, "install", "package.tgz"],
+      args: ["/d", "/s", "/c", String.raw`"C:\tools\npm.CMD ^^^"install^^^" ^^^"package.tgz^^^""`],
+    });
+  });
+
+  it("escapes spaced Windows shim paths and arguments", () => {
+    const shim = ["C:", "Program Files", "node tools", "npm.cmd"].join("\\");
+    const archive = ["C:", "package files", "archive.tgz"].join("\\");
+
+    expect(createPlatformCommand(shim, ["install", archive], "win32", "cmd.exe")).toEqual({
+      executable: "cmd.exe",
+      args: [
+        "/d",
+        "/s",
+        "/c",
+        String.raw`"C:\Program^ Files\node^ tools\npm.cmd ^^^"install^^^" ^^^"C:\package^^^ files\archive.tgz^^^""`,
+      ],
+    });
+  });
+
+  it("escapes quotes in Windows shim arguments", () => {
+    const shim = ["C:", "tools", "runner.cmd"].join("\\");
+
+    expect(createPlatformCommand(shim, ['say "hello"'], "win32", "cmd.exe")).toEqual({
+      executable: "cmd.exe",
+      args: ["/d", "/s", "/c", String.raw`"C:\tools\runner.cmd ^^^"say^^^ \^^^"hello\^^^"^^^""`],
+    });
+  });
+
+  it("escapes Windows cmd metacharacters in shim arguments", () => {
+    const shim = ["C:", "tools", "runner.cmd"].join("\\");
+    const metacharacters = "safe & whoami | more <in >out ^caret %PATH% !value! (group)";
+
+    expect(createPlatformCommand(shim, [metacharacters], "win32", "cmd.exe")).toEqual({
+      executable: "cmd.exe",
+      args: [
+        "/d",
+        "/s",
+        "/c",
+        String.raw`"C:\tools\runner.cmd ^^^"safe^^^ ^^^&^^^ whoami^^^ ^^^|^^^ more^^^ ^^^<in^^^ ^^^>out^^^ ^^^^caret^^^ ^^^%PATH^^^%^^^ ^^^!value^^^!^^^ ^^^(group^^^)^^^""`,
+      ],
     });
   });
 
