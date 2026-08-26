@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { deserializeMessage, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
 import { type JSONRPCMessage, LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
@@ -6,6 +7,16 @@ import { isCleanTermination } from "../scripts/platform-command.mjs";
 import { spawnStdioProcess, withDeadline } from "./support/spawned-stdio.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
+/**
+ * Read here rather than through the server's own manifest helper: the built
+ * process has to agree with what the package declares, and sharing the helper
+ * would let both sides be wrong together.
+ */
+const manifestVersion = (
+  JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+    version: string;
+  }
+).version;
 const sonarrApiKey = "sonarr-secret-key";
 const instanceVariables: readonly string[] = [
   "SONARR_URL",
@@ -69,7 +80,7 @@ describe("built stdio process", () => {
         result: {
           protocolVersion: LATEST_PROTOCOL_VERSION,
           capabilities: {},
-          serverInfo: { name: "mcp-arr", version: "0.1.0" },
+          serverInfo: { name: "mcp-arr", version: manifestVersion },
         },
       });
       await expect(child.response("absent", 10)).rejects.toThrow(
