@@ -67,10 +67,10 @@ The [Library Management spec](../specs/library-management/#library-queries) owns
   - [x] Add missing/cutoff filters, calendar ranges, and bounded paging (PR #7)
   - [x] Add Sonarr episode-file and Radarr movie-file reads (PR #7)
   - [x] Add Radarr collection support and unsupported-view handling (PR #7)
-- [x] Register and verify `arr_library_query` (PR #PENDING)
-  - [x] Add typed view schemas, detail levels, pagination, and structured outputs (PR #PENDING)
-  - [x] Add stdio integration tests for each view and mixed configured-app state (PR #PENDING)
-  - [x] Add capability projection for all implemented views (PR #PENDING)
+- [x] Register and verify `arr_library_query` (PR #8)
+  - [x] Add typed view schemas, detail levels, pagination, and structured outputs (PR #8)
+  - [x] Add stdio integration tests for each view and mixed configured-app state (PR #8)
+  - [x] Add capability projection for all implemented views (PR #8)
 
 ## Open Questions
 
