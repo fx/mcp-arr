@@ -68,14 +68,14 @@ The [Tool Contracts spec](../specs/tool-contracts/) owns tool names, schemas, re
   - [x] Register all fifteen tools with strict inputs, declared outputs, annotations, and bounded defaults (PR #5)
   - [x] Implement application/result/error envelopes and partial-failure representation (PR #5)
   - [x] Add schema and protocol snapshot tests (PR #5)
-- [x] Implement ephemeral workflow state (PR #PENDING)
-  - [x] Add opaque reference, plan, apply-record, and job stores with type/application binding and expiration (PR #PENDING)
-  - [x] Add read-set fingerprints, stale-plan checks, and direct-apply validation hooks (PR #PENDING)
-  - [x] Add retry reconciliation states without automatic duplicate egress (PR #PENDING)
-- [x] Implement shared dispatch and job projection (PR #PENDING)
+- [x] Implement ephemeral workflow state (PR #6)
+  - [x] Add opaque reference, plan, apply-record, and job stores with type/application binding and expiration (PR #6)
+  - [x] Add read-set fingerprints, stale-plan checks, and direct-apply validation hooks (PR #6)
+  - [x] Add retry reconciliation states without automatic duplicate egress (PR #6)
+- [x] Implement shared dispatch and job projection (PR #6)
   - [x] Add the internal semantic registry and capability projection (PR #5)
-  - [x] Add normalized job status/cancellation mapping and terminal snapshots (PR #PENDING)
-  - [x] Add adversarial tests for cross-kind references, expiry, restart, stale plans, partial failure, and unknown outcomes (PR #PENDING)
+  - [x] Add normalized job status/cancellation mapping and terminal snapshots (PR #6)
+  - [x] Add adversarial tests for cross-kind references, expiry, restart, stale plans, partial failure, and unknown outcomes (PR #6)
 
 ## Open Questions
 
