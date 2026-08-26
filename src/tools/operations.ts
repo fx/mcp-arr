@@ -5,9 +5,12 @@ import type {
 } from "../adapters/registry.js";
 import { meetsMinimumVersion } from "../adapters/version.js";
 import type { ApplicationId } from "../applications.js";
+import type { PlanRecord, PreconditionRead } from "../state/plans.js";
+import type { WorkflowState } from "../state/workflow.js";
 import { createToolError, type ToolError } from "./errors.js";
+import { jobCancelHandler, jobCancelPreconditions, jobGetHandler } from "./jobs.js";
 import type { ProjectedToolName, ToolName } from "./names.js";
-import type { ItemOutcome } from "./results.js";
+import type { Effect, ItemOutcome } from "./results.js";
 import type { Continuation } from "./schemas/common.js";
 
 /**
@@ -39,8 +42,32 @@ export interface OperationInvocation {
    * The tool arguments, already validated against that tool's closed input
    * schema. The public schema is the type authority; a handler narrows to its
    * own variant rather than re-deriving one from a free-form bag.
+   *
+   * When the caller applied a recorded plan, this is the plan's stored intent
+   * with the resupplied transient secrets merged back in, so a handler never
+   * has to know which of the two apply forms the caller used.
    */
   readonly input: unknown;
+  /** The process-local stores; the only mutable state a handler may touch. */
+  readonly state: WorkflowState;
+  /** Set when this invocation is applying a recorded plan. */
+  readonly plan?: PlanRecord | undefined;
+}
+
+/**
+ * What plan mode discloses.
+ *
+ * The read-set is not here: the runtime obtains it from the operation's own
+ * {@link OperationDefinition.readPreconditions} reader, so the same reader
+ * produces the fingerprints a plan stores and the fingerprints a later apply is
+ * compared against. A handler cannot accidentally fingerprint one thing and
+ * validate another.
+ */
+export interface OperationPlan {
+  readonly requestedEffects: readonly Effect[];
+  /** Effects that follow only if the conditions the plan describes still hold. */
+  readonly predictedEffects: readonly Effect[];
+  readonly warnings?: readonly string[];
 }
 
 export type OperationOutcome =
@@ -50,8 +77,33 @@ export type OperationOutcome =
       readonly warnings?: readonly string[];
       readonly items?: readonly ItemOutcome[];
       readonly continuation?: Continuation;
+      /** Required in plan mode; the runtime records it and mints the reference. */
+      readonly plan?: OperationPlan;
+      /** The job reference this mutation started, when it started one. */
+      readonly job?: string;
+      /** Effects an apply actually requested, disclosed alongside the result. */
+      readonly effects?: readonly Effect[];
+      /**
+       * Set when the mutation ran but this server could not establish what it
+       * did — a lost answer, or an upstream request whose acknowledgement never
+       * arrived. The receipt then settles as outcome-unknown instead of
+       * succeeded, so a caller is never told a mutation succeeded that nothing
+       * confirmed, and the record stays reconcilable against upstream state.
+       */
+      readonly outcomeUnknown?: ToolError;
     }
   | { readonly status: "error"; readonly error: ToolError };
+
+/**
+ * Reads the current values a plan's validity depends on.
+ *
+ * One reader serves three purposes: it supplies the read set a plan
+ * fingerprints, it is re-run before a planned apply so a changed value produces
+ * `stale_plan`, and it is the immediate current-state validation a direct apply
+ * performs before sending anything upstream. An operation with no reader
+ * declares that nothing it depends on can change underneath it.
+ */
+export type PreconditionReader = (invocation: OperationInvocation) => Promise<PreconditionRead>;
 
 export type OperationHandler = (invocation: OperationInvocation) => Promise<OperationOutcome>;
 
@@ -78,12 +130,27 @@ interface OperationBlueprint<TId extends string> {
    */
   readonly minimumVersions: Readonly<Partial<Record<ApplicationId, string>>>;
   readonly sideEffect: OperationSideEffect;
+  /**
+   * Whether the operation has to reach the instance to answer.
+   *
+   * Job projection is process-local, so reading a job this server already
+   * observed — or reporting that its reference no longer resolves — is
+   * answerable with the instance switched off. Probing first would turn that
+   * local read into an `unavailable_application` error and hide the terminal
+   * snapshot the caller asked for.
+   */
+  readonly upstream: OperationUpstreamNeed;
   readonly handler: OperationHandler;
+  readonly readPreconditions: PreconditionReader | undefined;
 }
+
+export type OperationUpstreamNeed = "required" | "local_first";
 
 interface DefineOptions {
   readonly minimumVersions?: Readonly<Partial<Record<ApplicationId, string>>>;
   readonly handler?: OperationHandler;
+  readonly readPreconditions?: PreconditionReader;
+  readonly upstream?: OperationUpstreamNeed;
 }
 
 /**
@@ -129,7 +196,9 @@ function define<const TId extends string>(
     applications,
     minimumVersions: options.minimumVersions ?? {},
     sideEffect,
+    upstream: options.upstream ?? "required",
     handler: options.handler ?? unsupportedOperationHandler,
+    readPreconditions: options.readPreconditions,
   };
 }
 
@@ -271,7 +340,10 @@ const definitions = [
   ),
 
   // arr_job_get
-  define("job.get", "arr_job_get", undefined, every, "read"),
+  define("job.get", "arr_job_get", undefined, every, "read", {
+    upstream: "local_first",
+    handler: jobGetHandler,
+  }),
 
   // arr_search_start
   define("search.start.sonarr_episode", "arr_search_start", "sonarr_episode", sonarr, "start_job"),
@@ -423,7 +495,11 @@ const definitions = [
   ),
 
   // arr_job_cancel
-  define("job.cancel", "arr_job_cancel", undefined, every, "mutate"),
+  define("job.cancel", "arr_job_cancel", undefined, every, "mutate", {
+    upstream: "local_first",
+    handler: jobCancelHandler,
+    readPreconditions: jobCancelPreconditions,
+  }),
 ] as const;
 
 /** The typed internal identifiers. Never accepted from a caller. */

@@ -8,6 +8,7 @@ import {
   toolErrorForThrown,
   toolErrorForUpstreamFailure,
   toolErrorPolicy,
+  toolErrorProvesNoEffect,
   toolErrorSchema,
 } from "../src/tools/errors.js";
 
@@ -37,6 +38,24 @@ describe("tool error contract", () => {
     expect(recoverable).toContain("rate_limit");
     expect(recoverable).toContain("timeout");
     expect(recoverable).not.toContain("unsupported_capability");
+  });
+
+  it("treats only a demonstrated refusal as proof the mutation did not happen", () => {
+    const proven = toolErrorCodes.filter(toolErrorProvesNoEffect);
+
+    // Sent and refused, or never sent at all.
+    expect(proven).toContain("upstream_rejection");
+    expect(proven).toContain("upstream_authentication");
+    expect(proven).toContain("rate_limit");
+    expect(proven).toContain("invalid_input");
+    expect(proven).toContain("stale_plan");
+
+    // The request may have been received, applied, or both. Retrying any of
+    // these blindly is the duplicate mutation the receipt exists to prevent.
+    expect(proven).not.toContain("timeout");
+    expect(proven).not.toContain("unavailable_application");
+    expect(proven).not.toContain("unexpected_response");
+    expect(proven).not.toContain("partial_failure");
   });
 
   it("omits the application rather than serializing an undefined field", () => {

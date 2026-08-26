@@ -1,6 +1,19 @@
 import { z } from "zod";
+import {
+  jobCancelOutcomes,
+  jobResults,
+  jobStatuses,
+  terminalJobStatuses,
+} from "../../state/jobs.js";
 import { toolResultSchema } from "../results.js";
-import { jobReferenceSchema, mutationBaseShape, planApplySchema, variantUnion } from "./common.js";
+import {
+  applicationIdSchema,
+  isoDateTimeSchema,
+  jobReferenceSchema,
+  mutationBaseShape,
+  planApplySchema,
+  variantUnion,
+} from "./common.js";
 
 /**
  * Reads a normalized job projection. The reference is process-local, so a
@@ -26,5 +39,54 @@ export const jobCancelInputSchema = variantUnion(
   ]),
 );
 
-export const jobGetOutputSchema = toolResultSchema();
-export const jobCancelOutputSchema = toolResultSchema({ mutation: true });
+/** Progress is reported only when the application actually reports it. */
+export const jobProgressSchema = z.strictObject({
+  completed: z.int().min(0),
+  total: z.int().min(0),
+});
+
+/**
+ * What a job ended as. It is preserved for the process lifetime, so it remains
+ * readable after the application has discarded its own command record.
+ */
+export const jobTerminalSchema = z.strictObject({
+  status: z.enum(terminalJobStatuses),
+  result: z.enum(jobResults),
+  at: isoDateTimeSchema,
+});
+
+/**
+ * The projection both job tools return.
+ *
+ * The upstream command is identified by the name and id this server observed,
+ * never by a command payload a caller could resubmit, and the per-item outcomes
+ * travel in the shared item list rather than here.
+ */
+export const jobProjectionSchema = z.strictObject({
+  job: jobReferenceSchema,
+  application: applicationIdSchema,
+  command: z.strictObject({
+    name: z.string().min(1),
+    upstreamId: z.string().min(1),
+  }),
+  status: z.enum(jobStatuses),
+  progress: jobProgressSchema.optional(),
+  terminal: jobTerminalSchema.optional(),
+  /** Whether this server currently believes cancellation is possible at all. */
+  cancellable: z.boolean(),
+});
+
+export type JobProjection = z.infer<typeof jobProjectionSchema>;
+
+/** The same projection plus which of the five cancellation outcomes happened. */
+export const jobCancellationSchema = jobProjectionSchema.extend({
+  outcome: z.enum(jobCancelOutcomes),
+});
+
+export type JobCancellationProjection = z.infer<typeof jobCancellationSchema>;
+
+export const jobGetOutputSchema = toolResultSchema({ data: jobProjectionSchema });
+export const jobCancelOutputSchema = toolResultSchema({
+  data: jobCancellationSchema,
+  mutation: true,
+});

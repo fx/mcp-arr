@@ -3,6 +3,7 @@ import { createAdapterRegistry } from "../../src/adapters/registry.js";
 import { type ApplicationId, applicationDescriptors } from "../../src/applications.js";
 import { type EnvironmentRecord, parseEnvironment } from "../../src/config/environment.js";
 import type { FetchLike } from "../../src/http/client.js";
+import { createWorkflowState, type WorkflowState } from "../../src/state/workflow.js";
 import type { ToolContext } from "../../src/tools/dispatch.js";
 import type { ToolName } from "../../src/tools/names.js";
 import { createOperationRegistry, type OperationDefinition } from "../../src/tools/operations.js";
@@ -121,6 +122,8 @@ export interface TestContextOptions {
   readonly environment?: EnvironmentRecord;
   readonly fetch?: FetchLike;
   readonly operations?: readonly OperationDefinition[];
+  /** Reused so a test can seed the stores and then call through the tool. */
+  readonly state?: WorkflowState;
 }
 
 export function createTestToolContext(options: TestContextOptions = {}): ToolContext {
@@ -130,5 +133,6 @@ export function createTestToolContext(options: TestContextOptions = {}): ToolCon
       ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
     }),
     operations: createOperationRegistry(options.operations),
+    state: options.state ?? createWorkflowState(),
   };
 }

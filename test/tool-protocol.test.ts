@@ -218,7 +218,7 @@ describe("tool protocol surface", () => {
     expect(requested).toEqual([]);
   });
 
-  it("answers a plan-reference apply without reinterpreting it as a direct intent", async () => {
+  it("rejects a plan reference this process never issued without sending anything", async () => {
     const requested: string[] = [];
     const client = await connect(
       createTestToolContext({
@@ -242,7 +242,7 @@ describe("tool protocol surface", () => {
     expect(content.status).toBe("error");
     expect(content.applications).toEqual([]);
     expect((content.errors as Array<{ code: string }>).map((error) => error.code)).toEqual([
-      "unsupported_capability",
+      "stale_plan",
     ]);
   });
 

@@ -2,6 +2,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { describe, expect, it, vi } from "vitest";
 import type { AdapterRegistry } from "../src/adapters/registry.js";
 import { type EnvironmentConfiguration, parseEnvironment } from "../src/config/environment.js";
+import { createWorkflowState } from "../src/state/workflow.js";
 import {
   type ConnectableServer,
   createStdioRuntime,
@@ -40,6 +41,7 @@ function createDependencies(): {
   const registered: EnvironmentConfiguration[] = [];
   const contexts: ToolContext[] = [];
   const operations = createOperationRegistry();
+  const state = createWorkflowState();
 
   return {
     dependencies: {
@@ -53,6 +55,7 @@ function createDependencies(): {
         return registry;
       },
       createOperations: () => operations,
+      createState: () => state,
     },
     server,
     transport,

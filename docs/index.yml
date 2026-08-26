@@ -40,7 +40,7 @@ changes:
     path: changes/0002-tool-runtime.md
     description: Implement typed tool schemas, plan/apply, ephemeral references, receipts, and jobs
     spec: tool-contracts
-    status: draft
+    status: complete
     depends_on: ["0001"]
   - id: "0003"
     name: library-queries
