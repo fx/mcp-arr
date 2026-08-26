@@ -1,7 +1,8 @@
 import { z } from "zod";
 import type { ApplicationId } from "../applications.js";
 import { isUpstreamError, type UpstreamErrorKind } from "../http/errors.js";
-import { applicationIdSchema } from "./schemas/common.js";
+import type { ReferenceFailureReason } from "../state/references.js";
+import { applicationIdSchema, type ReferenceKind } from "./schemas/common.js";
 
 /**
  * The stable tool error vocabulary. A code is part of the public contract: a
@@ -38,6 +39,18 @@ interface ToolErrorPolicy {
    * carry no response body, header, URL, or credential.
    */
   readonly remediation: string;
+  /**
+   * Whether this failure proves the application did not act.
+   *
+   * A mutation that fails is only safe to retry when nothing can have happened
+   * upstream, so this is what decides whether a receipt settles as `failed` or
+   * as outcome-unknown. It is deliberately conservative: a request that was
+   * sent and whose answer this server could not make sense of proves nothing,
+   * so it is not a refusal. Every code has to state its answer, which is what
+   * makes a code added later face the question rather than inherit a default
+   * that would permit a duplicate mutation.
+   */
+  readonly provesNoEffect: boolean;
 }
 
 const toolErrorPolicies: Readonly<Record<ToolErrorCode, ToolErrorPolicy>> = {
@@ -45,56 +58,69 @@ const toolErrorPolicies: Readonly<Record<ToolErrorCode, ToolErrorPolicy>> = {
     recoverable: true,
     remediation:
       "Correct the arguments to match the tool's declared input schema and call it again.",
+    provesNoEffect: true,
   },
   unconfigured_application: {
     recoverable: false,
     remediation:
       "Set that application's URL and API-key environment variables and restart the server.",
+    provesNoEffect: true,
   },
   unsupported_capability: {
     recoverable: false,
     remediation: "Call arr_capabilities to list the operations this instance supports.",
+    provesNoEffect: true,
   },
   unavailable_application: {
     recoverable: true,
     remediation:
       "Confirm the instance is running and reachable, then retry; other applications are unaffected.",
+    provesNoEffect: false,
   },
   upstream_authentication: {
     recoverable: false,
     remediation: "Correct that application's API-key environment variable and restart the server.",
+    provesNoEffect: true,
   },
   upstream_rejection: {
     recoverable: true,
     remediation: "Adjust the requested values to satisfy the application's own validation.",
+    provesNoEffect: true,
   },
   rate_limit: {
     recoverable: true,
     remediation: "Wait before retrying and reduce the request rate or page size.",
+    provesNoEffect: true,
   },
   timeout: {
     recoverable: true,
     remediation: "Retry once; if it persists, reduce the page size or check instance load.",
+    provesNoEffect: false,
   },
   stale_reference: {
     recoverable: true,
     remediation: "Repeat the query that produced the reference and use the fresh one.",
+    provesNoEffect: true,
   },
   stale_plan: {
     recoverable: true,
     remediation: "Create a new plan for the same intent and apply that plan reference.",
+    provesNoEffect: true,
   },
   conflict: {
     recoverable: true,
     remediation: "Re-read the current state, resolve the conflicting change, then retry.",
+    provesNoEffect: true,
   },
   partial_failure: {
     recoverable: true,
     remediation: "Inspect the per-application and per-item outcomes and retry only the failures.",
+    provesNoEffect: false,
   },
   unexpected_response: {
     recoverable: false,
     remediation: "Check the application version against arr_capabilities and report the mismatch.",
+    provesNoEffect: false,
   },
 };
 
@@ -104,6 +130,17 @@ export function toolErrorPolicy(code: ToolErrorCode): ToolErrorPolicy {
 
 export function isRecoverableToolErrorCode(code: ToolErrorCode): boolean {
   return toolErrorPolicies[code].recoverable;
+}
+
+/**
+ * Whether a failed mutation can be retried without risking a duplicate.
+ *
+ * Only a failure that proves the application did not act qualifies. Everything
+ * else leaves the outcome unknown, which is what keeps a lost or unreadable
+ * answer from being mistaken for a refusal and re-sent.
+ */
+export function toolErrorProvesNoEffect(code: ToolErrorCode): boolean {
+  return toolErrorPolicies[code].provesNoEffect;
 }
 
 /**
@@ -179,6 +216,45 @@ export function toolErrorForUpstreamFailure(
   return createToolError({
     code: upstreamErrorCodes[failure.kind],
     message: failure.message,
+    application,
+  });
+}
+
+/**
+ * Explains why a process-local reference did not resolve.
+ *
+ * Every reason maps onto one of two codes, because every reason has one of two
+ * remedies: repeat the query that produced the reference, or create a new plan.
+ * The messages differ so a caller learns whether its reference is simply gone,
+ * belongs to a previous process lifetime, or was never one this server issued —
+ * without any of those distinctions becoming a new code to branch on.
+ */
+export function toolErrorForReferenceFailure(
+  reason: ReferenceFailureReason,
+  kind: ReferenceKind,
+  application?: ApplicationId,
+): ToolError {
+  const noun = kind.replaceAll("_", " ");
+  const describe = (): string => {
+    switch (reason) {
+      case "malformed":
+        return `that value is not a ${noun} reference this server issued`;
+      case "wrong_kind":
+        return `that reference is not a ${noun} reference`;
+      case "foreign_lifetime":
+        return `that ${noun} reference was issued before this server process started`;
+      case "unknown":
+        return `this server no longer holds that ${noun} reference`;
+      case "expired":
+        return `that ${noun} reference has expired`;
+    }
+  };
+
+  return createToolError({
+    // A plan that cannot be resolved and a plan whose preconditions moved are
+    // the same problem to the caller: the recorded plan is no longer usable.
+    code: kind === "plan" ? "stale_plan" : "stale_reference",
+    message: describe(),
     application,
   });
 }

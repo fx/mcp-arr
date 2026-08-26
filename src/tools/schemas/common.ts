@@ -132,6 +132,49 @@ export const planReferenceSchema = referenceSchema("plan");
 export const applyReferenceSchema = referenceSchema("apply");
 export const jobReferenceSchema = referenceSchema("job");
 
+/**
+ * Every input property whose values are opaque references.
+ *
+ * The shared dispatcher resolves an input's references before it selects an
+ * application, so it needs to know which properties hold one. It cannot infer
+ * that from the value: a Prowlarr search term and a provider field value are
+ * caller-authored text, and text that happens to look like a reference must
+ * still be searched for rather than resolved. Listing the properties keeps that
+ * distinction explicit, and a test derives the same list from the published
+ * JSON Schemas so this cannot drift away from what the tools actually accept.
+ */
+export const referenceProperties = [
+  "add",
+  "candidate",
+  "candidates",
+  "dependentMigration",
+  "episode",
+  "episodes",
+  "files",
+  "items",
+  "job",
+  "lookup",
+  "media",
+  "movie",
+  "movies",
+  "plan",
+  "qualityProfile",
+  "queue",
+  "records",
+  "releases",
+  "remove",
+  "rootFolder",
+  "series",
+  "tags",
+  "target",
+] as const;
+
+const referencePropertySet: ReadonlySet<string> = new Set(referenceProperties);
+
+export function isReferenceProperty(name: string): boolean {
+  return referencePropertySet.has(name);
+}
+
 /** An ISO-8601 calendar date, used for bounded date-window queries. */
 export const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/u, "must be an ISO-8601 date");
 

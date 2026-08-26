@@ -3,7 +3,14 @@ import * as z4mini from "zod/v4-mini";
 import { findToolDefinition, toolDefinitions } from "../src/tools/definitions.js";
 import { toolNames } from "../src/tools/names.js";
 import { operationDefinitions } from "../src/tools/operations.js";
-import { defaultPageSize, maxBulkItems, maxPageSize } from "../src/tools/schemas/common.js";
+import {
+  defaultPageSize,
+  isReferenceProperty,
+  maxBulkItems,
+  maxPageSize,
+  referencePrefixes,
+  referenceProperties,
+} from "../src/tools/schemas/common.js";
 import { sampleReferences, sampleToolInputs } from "./support/tool-context.js";
 
 function inputJsonSchema(name: (typeof toolNames)[number]): Record<string, unknown> {
@@ -67,6 +74,54 @@ function collectPropertyNames(node: unknown, found: Set<string>): void {
   }
   for (const value of Object.values(record)) {
     collectPropertyNames(value, found);
+  }
+}
+
+const referencePatterns = new Set(
+  Object.values(referencePrefixes).map((prefix) => `^${prefix}_[A-Za-z0-9_-]{8,64}$`),
+);
+
+function isReferenceNode(node: unknown): boolean {
+  if (typeof node !== "object" || node === null) {
+    return false;
+  }
+  const record = node as Record<string, unknown>;
+  if (typeof record.pattern === "string" && referencePatterns.has(record.pattern)) {
+    return true;
+  }
+  return (
+    isReferenceNode(record.items) || (record.anyOf as unknown[])?.some(isReferenceNode) === true
+  );
+}
+
+/**
+ * Collects the property names whose published schema is a reference.
+ *
+ * Derived from the JSON Schema a host actually receives rather than from the
+ * Zod source, so the dispatcher's allowlist is checked against the contract
+ * instead of against the code that produced it.
+ */
+function collectReferencePropertyNames(node: unknown, found: Set<string>): void {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      collectReferencePropertyNames(child, found);
+    }
+    return;
+  }
+  if (typeof node !== "object" || node === null) {
+    return;
+  }
+  const record = node as Record<string, unknown>;
+  const properties = record.properties;
+  if (typeof properties === "object" && properties !== null) {
+    for (const [key, value] of Object.entries(properties)) {
+      if (isReferenceNode(value)) {
+        found.add(key);
+      }
+    }
+  }
+  for (const value of Object.values(record)) {
+    collectReferencePropertyNames(value, found);
   }
 }
 
@@ -235,6 +290,22 @@ describe("published tool surface", () => {
         importMode: "auto",
       }).success,
     ).toBe(false);
+  });
+
+  it("lists every reference-bearing property the dispatcher has to resolve", () => {
+    const published = new Set<string>();
+    for (const definition of toolDefinitions) {
+      collectReferencePropertyNames(inputJsonSchema(definition.name), published);
+    }
+
+    // Equality in both directions: a property the schemas added but the
+    // dispatcher does not know about would silently skip resolution, and a
+    // property the dispatcher still lists after the schemas dropped it would be
+    // dead policy nothing checks.
+    expect([...published].sort()).toEqual([...referenceProperties].sort());
+    for (const name of published) {
+      expect(isReferenceProperty(name), name).toBe(true);
+    }
   });
 
   it("requires the explicit choices the specifications call out", () => {

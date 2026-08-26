@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import * as z4mini from "zod/v4-mini";
 import type { ApplicationCapability } from "../src/adapters/registry.js";
 import { applicationIds } from "../src/applications.js";
+import { createWorkflowState } from "../src/state/workflow.js";
 import { toolDefinitions } from "../src/tools/definitions.js";
 import { dispatchOperation } from "../src/tools/dispatch.js";
 import { toolNames } from "../src/tools/names.js";
@@ -246,6 +247,7 @@ describe("internal operation registry", () => {
       },
       mode: "read",
       input: {},
+      state: createWorkflowState(),
     });
 
     expect(outcome.status).toBe("error");

@@ -4,7 +4,7 @@ import { reportCapabilities } from "../src/tools/capabilities.js";
 import { findToolDefinition } from "../src/tools/definitions.js";
 import { capabilitiesToolName, projectedToolNames, toolNames } from "../src/tools/names.js";
 import type { OperationDefinition } from "../src/tools/operations.js";
-import { operationDefinitions } from "../src/tools/operations.js";
+import { isImplementedOperation, operationDefinitions } from "../src/tools/operations.js";
 import type { ToolResult } from "../src/tools/results.js";
 import {
   type CapabilityReport,
@@ -166,14 +166,15 @@ describe("arr_capabilities", () => {
     expect(prowlarrKeys).toContain("arr_activity_query/indexer_status");
     expect(prowlarrKeys).not.toContain("arr_library_query/series");
 
-    const expectedSonarr = operationDefinitions.filter((operation) =>
-      operation.applications.includes("sonarr"),
+    const expectedSonarr = operationDefinitions.filter(
+      (operation) =>
+        operation.applications.includes("sonarr") && !isImplementedOperation(operation),
     ).length;
     expect(sonarr.unimplementedOperations).toHaveLength(expectedSonarr);
     expect(sonarr.unimplementedOperations.every((entry) => entry.sideEffect.length > 0)).toBe(true);
   });
 
-  it("advertises no operation as supported while none has adapter behavior yet", async () => {
+  it("advertises exactly the operations that already have adapter behavior", async () => {
     const context = createTestToolContext({
       environment: allApplicationsEnvironment,
       fetch: async (url) => jsonResponse(fixtureBody(applicationForUrl(url))),
@@ -181,7 +182,13 @@ describe("arr_capabilities", () => {
 
     const result = await reportCapabilities(context, undefined);
     for (const application of ["sonarr", "radarr", "prowlarr"] as const) {
-      expect(reportFor(result, application).supportedOperations, application).toEqual([]);
+      // Job projection is process-local, so it is usable on every configured
+      // application before any domain adapter lands. Everything else still
+      // answers unsupported_capability and must not be advertised.
+      expect(reportFor(result, application).supportedOperations, application).toEqual([
+        { tool: "arr_job_get", sideEffect: "read" },
+        { tool: "arr_job_cancel", sideEffect: "mutate" },
+      ]);
     }
   });
 

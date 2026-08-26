@@ -66,6 +66,19 @@ export const receiptSchema = z.strictObject({
 export type Receipt = z.infer<typeof receiptSchema>;
 
 /**
+ * One value a plan's validity depends on, disclosed as a digest.
+ *
+ * The digest is what makes staleness decidable, and returning it lets a caller
+ * see which facts a plan is resting on. It is a one-way hash of state the same
+ * caller can read through the query tools, so it discloses nothing new — which
+ * is exactly why a read-set observation must never be a secret value.
+ */
+export const readSetFingerprintSchema = z.strictObject({
+  key: z.string().min(1).max(120),
+  digest: z.string().min(1).max(64),
+});
+
+/**
  * The mutation half of the envelope. Present only on mutation tools, and only
  * once a mutation actually runs; the fields are declared now so plan
  * references, job references, and receipts can be filled in without changing
@@ -74,6 +87,8 @@ export type Receipt = z.infer<typeof receiptSchema>;
 export const mutationDetailSchema = z.strictObject({
   requestedEffects: z.array(effectSchema),
   predictedEffects: z.array(effectSchema),
+  /** Returned by plan mode; the facts applying this plan will re-check. */
+  readSet: z.array(readSetFingerprintSchema).optional(),
   plan: planReferenceSchema.optional(),
   job: jobReferenceSchema.optional(),
   receipt: receiptSchema.optional(),

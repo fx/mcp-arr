@@ -58,6 +58,7 @@ interface ToolCallResult {
     content?: Array<{ type: string; text?: string }>;
     structuredContent?: {
       status?: string;
+      errors?: Array<{ code?: string; remediation?: string }>;
       applications?: Array<{
         application: string;
         status: string;
@@ -119,6 +120,43 @@ describe("built stdio tool surface", () => {
       ]);
       expect(outcomes[0]?.error?.remediation).toBeTruthy();
       expect(called.result?.content?.[0]?.type).toBe("text");
+
+      await child.terminateGracefully();
+      assertCleanStdout(child.stdout);
+      expect(child.stderr).toBe("");
+      expect(child.stdout).not.toContain(sonarrApiKey);
+    } finally {
+      await child.forceCleanup().catch(() => undefined);
+    }
+  });
+
+  it("answers both job tools locally with clean stdout and no upstream request", async () => {
+    const child = spawnServer();
+
+    try {
+      await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
+      // A freshly started server holds no job, so a syntactically valid
+      // reference is by definition one this process never issued. Answering it
+      // is entirely process-local: nothing is probed, and the envelope still
+      // conforms to the tool's published output schema.
+      const read = (await child.request(2, "tools/call", {
+        name: "arr_job_get",
+        arguments: { job: "job_00000001" },
+      })) as ToolCallResult;
+      const cancelled = (await child.request(3, "tools/call", {
+        name: "arr_job_cancel",
+        arguments: { mode: "apply", job: "job_00000001" },
+      })) as ToolCallResult;
+
+      for (const called of [read, cancelled]) {
+        expect(called.result?.isError).toBe(true);
+        expect(called.result?.structuredContent?.status).toBe("error");
+        expect(called.result?.structuredContent?.errors?.map((error) => error.code)).toEqual([
+          "stale_reference",
+        ]);
+        expect(called.result?.structuredContent?.errors?.[0]?.remediation).toBeTruthy();
+        expect(called.result?.content?.[0]?.type).toBe("text");
+      }
 
       await child.terminateGracefully();
       assertCleanStdout(child.stdout);
