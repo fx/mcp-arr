@@ -5,7 +5,7 @@
 Create the TypeScript/Node project, stdio MCP entrypoint, environment-only instance configuration, version probes, and standing CI/test foundation required by the [Architecture spec](../specs/architecture/).
 
 **Spec:** [Architecture](../specs/architecture/)
-**Status:** draft
+**Status:** complete
 **Depends On:** —
 
 ## Motivation
@@ -70,10 +70,10 @@ The [Architecture spec](../specs/architecture/) owns runtime, transport, environ
   - [x] Add package metadata, lockfile, strict compiler config, lint/typecheck/build commands, executable entrypoint, and Node version contract (PR #2)
   - [x] Connect the MCP server through stdio and route all diagnostics to stderr (PR #2)
   - [x] Add process-level startup/shutdown and stdout-framing tests (PR #2)
-- [ ] Implement environment and upstream adapter foundations
-  - [ ] Parse optional URL/API-key pairs and reject incomplete or empty configuration
-  - [ ] Normalize URL prefixes, inject `X-Api-Key`, enforce timeouts, and normalize safe errors
-  - [ ] Probe status/version for each configured application and record capability state
+- [x] Implement environment and upstream adapter foundations (PR #PENDING)
+  - [x] Parse optional URL/API-key pairs and reject incomplete or empty configuration (PR #PENDING)
+  - [x] Normalize URL prefixes, inject `X-Api-Key`, enforce timeouts, and normalize safe errors (PR #PENDING)
+  - [x] Probe status/version for each configured application and record capability state (PR #PENDING)
 - [x] Establish project quality gates and packaging (PR #3)
   - [x] Add unit, fixture-contract, and stdio integration test infrastructure (PR #3)
   - [x] Add sanitized fixtures for the recorded minimum versions (PR #3)

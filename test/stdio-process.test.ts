@@ -6,13 +6,42 @@ import { isCleanTermination } from "../scripts/platform-command.mjs";
 import { spawnStdioProcess, withDeadline } from "./support/spawned-stdio.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
+const sonarrApiKey = "sonarr-secret-key";
+const instanceVariables: readonly string[] = [
+  "SONARR_URL",
+  "SONARR_API_KEY",
+  "RADARR_URL",
+  "RADARR_API_KEY",
+  "PROWLARR_URL",
+  "PROWLARR_API_KEY",
+];
 
-function spawnNode(args: readonly string[]) {
+function without(env: NodeJS.ProcessEnv, names: readonly string[]): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(env).filter(([name]) => !names.includes(name)));
+}
+
+/**
+ * The built server rejects startup without a complete instance pair. Every
+ * inherited instance variable is dropped first so a developer's own settings
+ * cannot change what these tests observe, and nothing here reaches the network,
+ * so the reserved `.invalid` host is never contacted.
+ */
+const configuredEnvironment: NodeJS.ProcessEnv = {
+  ...without(process.env, instanceVariables),
+  SONARR_URL: "https://sonarr.example.invalid/sonarr",
+  SONARR_API_KEY: sonarrApiKey,
+};
+
+function environmentWithout(...names: readonly string[]): NodeJS.ProcessEnv {
+  return without(configuredEnvironment, names);
+}
+
+function spawnNode(args: readonly string[], env: NodeJS.ProcessEnv = configuredEnvironment) {
   return spawnStdioProcess({
     executable: process.execPath,
     args,
     cwd: projectRoot,
-    env: process.env,
+    env,
   });
 }
 
@@ -68,13 +97,56 @@ describe("built stdio process", () => {
     }
   });
 
+  it("rejects an unconfigured environment before opening a session", async () => {
+    const child = spawnNode(["dist/cli.js"], environmentWithout(...instanceVariables));
+
+    try {
+      await expect(withDeadline(child.exit, "unconfigured exit")).resolves.toEqual({
+        code: 1,
+        signal: null,
+      });
+      await expect(withDeadline(child.closed, "unconfigured close")).resolves.toEqual({
+        code: 1,
+        signal: null,
+      });
+      expect(child.stdout).toBe("");
+      expect(child.stderr).toContain("mcp-arr: startup failed: invalid environment configuration:");
+      expect(child.stderr).toContain("no application is configured");
+      expect(child.stderr).toContain("SONARR_URL");
+    } finally {
+      await child.forceCleanup().catch(() => undefined);
+    }
+  });
+
+  it("rejects an incomplete pair without echoing any configured value", async () => {
+    const child = spawnNode(["dist/cli.js"], environmentWithout("SONARR_API_KEY"));
+
+    try {
+      await expect(withDeadline(child.exit, "incomplete pair exit")).resolves.toEqual({
+        code: 1,
+        signal: null,
+      });
+      expect(child.stdout).toBe("");
+      expect(child.stderr).toBe(
+        "mcp-arr: startup failed: invalid environment configuration: " +
+          "SONARR_API_KEY is required when SONARR_URL is set\n",
+      );
+      expect(child.stderr).not.toContain(sonarrApiKey);
+      expect(child.stderr).not.toContain("sonarr.example.invalid");
+    } finally {
+      await child.forceCleanup().catch(() => undefined);
+    }
+  });
+
   it("exits after a fatal startup failure while stdin remains open", async () => {
     const processModuleUrl = new URL("../dist/process.js", import.meta.url).href;
     const script = `
       import { runProcess } from ${JSON.stringify(processModuleUrl)};
       process.stdin.ref();
       await runProcess({
+        loadConfiguration: () => ({ instances: [] }),
         createRuntime: () => ({
+          registry: { adapters: [], adapter: () => undefined, probe: async () => [] },
           start: async () => { throw new Error("forced startup failure"); },
           close: async () => undefined,
         }),
