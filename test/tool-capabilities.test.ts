@@ -2,12 +2,15 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { ApplicationId } from "../src/applications.js";
 import { reportCapabilities } from "../src/tools/capabilities.js";
 import { findToolDefinition } from "../src/tools/definitions.js";
+import { capabilitiesToolName, projectedToolNames, toolNames } from "../src/tools/names.js";
 import type { OperationDefinition } from "../src/tools/operations.js";
 import { operationDefinitions } from "../src/tools/operations.js";
 import type { ToolResult } from "../src/tools/results.js";
 import {
   type CapabilityReport,
   capabilitiesOutputSchema,
+  capabilityOperationSchema,
+  capabilityUnsupportedOperationSchema,
 } from "../src/tools/schemas/capabilities.js";
 import type { VersionedFixture } from "./support/fixtures.js";
 import {
@@ -255,6 +258,32 @@ describe("arr_capabilities", () => {
 
     expect(result.applications.map((outcome) => outcome.application)).toEqual(["prowlarr"]);
     expect(requested).toEqual(["http://prowlarr.example.invalid:9696/api/v1/system/status"]);
+  });
+
+  it("keeps the projected tool set in step with the published tool set", () => {
+    expect([...projectedToolNames].sort()).toEqual(
+      toolNames.filter((name) => name !== capabilitiesToolName).sort(),
+    );
+    expect(projectedToolNames).toHaveLength(toolNames.length - 1);
+    expect(projectedToolNames).not.toContain(capabilitiesToolName);
+    // The registry is the only producer of these entries, so it must agree.
+    for (const operation of operationDefinitions) {
+      expect(projectedToolNames, operation.id).toContain(operation.tool);
+    }
+  });
+
+  it("rejects the meta tool as an operation entry", () => {
+    const entry = { tool: capabilitiesToolName, sideEffect: "read" };
+
+    expect(capabilityOperationSchema.safeParse(entry).success).toBe(false);
+    expect(
+      capabilityUnsupportedOperationSchema.safeParse({ ...entry, requiredVersion: "1.0.0" })
+        .success,
+    ).toBe(false);
+    expect(
+      capabilityOperationSchema.safeParse({ tool: "arr_library_query", sideEffect: "read" })
+        .success,
+    ).toBe(true);
   });
 
   it("is handled by the registered arr_capabilities definition", async () => {

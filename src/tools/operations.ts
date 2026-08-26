@@ -6,7 +6,7 @@ import type {
 import { meetsMinimumVersion } from "../adapters/version.js";
 import type { ApplicationId } from "../applications.js";
 import { createToolError, type ToolError } from "./errors.js";
-import type { ToolName } from "./names.js";
+import type { ProjectedToolName, ToolName } from "./names.js";
 import type { ItemOutcome } from "./results.js";
 import type { Continuation } from "./schemas/common.js";
 
@@ -57,7 +57,12 @@ export type OperationHandler = (invocation: OperationInvocation) => Promise<Oper
 
 interface OperationBlueprint<TId extends string> {
   readonly id: TId;
-  readonly tool: ToolName;
+  /**
+   * The public tool that exposes this operation. Typed as a projected name so
+   * the meta tool cannot be declared here: `arr_capabilities` reports this
+   * inventory and is never an entry in it.
+   */
+  readonly tool: ProjectedToolName;
   /**
    * The public discriminator value that reaches this operation, or `undefined`
    * for a tool whose input carries no variant. This is the projection that
@@ -111,7 +116,7 @@ export function isImplementedOperation(operation: OperationDefinition): boolean 
 
 function define<const TId extends string>(
   id: TId,
-  tool: ToolName,
+  tool: ProjectedToolName,
   variant: string | undefined,
   applications: readonly ApplicationId[],
   sideEffect: OperationSideEffect,

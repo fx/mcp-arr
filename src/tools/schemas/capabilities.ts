@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { toolNames } from "../names.js";
+import { projectedToolNames } from "../names.js";
 import { operationSideEffects } from "../operations.js";
 import { toolResultSchema } from "../results.js";
 import { applicationFilterSchema } from "./common.js";
@@ -24,13 +24,13 @@ export type CapabilityState = (typeof capabilityStates)[number];
  * and variant a caller would invoke, never an internal operation identifier.
  */
 export const capabilityOperationSchema = z.strictObject({
-  tool: z.enum(toolNames),
+  tool: z.enum(projectedToolNames),
   variant: z.string().min(1).optional(),
   sideEffect: z.enum(operationSideEffects),
 });
 
 export const capabilityUnsupportedOperationSchema = z.strictObject({
-  tool: z.enum(toolNames),
+  tool: z.enum(projectedToolNames),
   variant: z.string().min(1).optional(),
   sideEffect: z.enum(operationSideEffects),
   /** The version this instance would need before the operation becomes usable. */
