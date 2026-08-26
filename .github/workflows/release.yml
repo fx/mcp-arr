@@ -1,0 +1,100 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+# Releases must never be cancelled part-way through: a run that has already
+# tagged but not yet published would leave a tag with no package behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # release-please acts through the App token minted below, never through the
+    # default workflow token, so this job needs no write scopes of its own.
+    permissions:
+      contents: read
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      # A pull request opened with the default GITHUB_TOKEN does not trigger
+      # other workflows, so the release pull request would merge without ever
+      # running CI. Acting as the App makes it an ordinary pull request.
+      - name: Mint a GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.RELEASE_PLEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_PRIVATE_KEY }}
+          # The job-level permissions block scopes GITHUB_TOKEN, not this token,
+          # so the App token is narrowed here instead: contents to tag and
+          # release, pull requests to groom the release pull request, issues to
+          # label it. A broader App installation grants this workflow nothing more.
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+      - name: Run release-please
+        id: release
+        uses: googleapis/release-please-action@v5
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    needs: release-please
+    # A release only exists once a maintainer has merged the release pull
+    # request, which is the human action that authorizes publication.
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # Required for npm OIDC trusted publishing; no registry token is stored.
+      id-token: write
+    env:
+      npm_config_engine_strict: "true"
+      npm_config_strict_peer_deps: "true"
+    steps:
+      - name: Check out the released tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          persist-credentials: false
+      # The gates run on the same Node.js version the CI workflow validates
+      # against, so a release is published only from a commit that has passed
+      # exactly the gates CI enforces.
+      - name: Set up Node.js for the quality gates
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20.x
+          package-manager-cache: false
+      - name: Install dependencies
+        run: npm ci
+      - name: Run quality gates
+        run: npm run check
+      # Trusted publishing requires npm >= 11.5.1 and Node.js >= 22.14.0
+      # (https://docs.npmjs.com/trusted-publishers). Node.js 24 bundles a new
+      # enough npm; the explicit upgrade keeps the floor from depending on
+      # whatever the runner image happens to ship.
+      - name: Set up Node.js for publishing
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Upgrade npm to a trusted-publishing capable release
+        run: npm install --global npm@^11.5.1
+      # Provenance is attached automatically when npm authenticates over OIDC,
+      # so no --provenance flag and no NPM_TOKEN are involved.
+      - name: Publish to npm
+        run: npm publish

@@ -87,6 +87,25 @@ The [Architecture spec](../specs/architecture/#packaging-and-release) owns packa
 - **Decision:** Keep the package a single root package rather than introducing a workspace.
   - **Why:** There is one artifact and no second package in prospect; a workspace would add release-please configuration surface for nothing.
 
+### Releasing
+
+**The automated path.** Every push to the default branch runs the `Release` workflow. release-please accumulates conventional commits into a release pull request carrying the version bump and the changelog entry; because that pull request is opened by the GitHub App rather than the default workflow token, the `CI` workflow runs on it like any other pull request. Nothing is published until a maintainer merges it. The merge produces the tag and the GitHub release, and only then does the publish job run — re-running `npm run check` on the released tag before `npm publish`.
+
+**Prerequisite: the App ID repository variable.** `RELEASE_PLEASE_PRIVATE_KEY` is already a repository secret. The App's numeric ID is not secret and is not stored yet; a maintainer must add it as the repository variable `RELEASE_PLEASE_APP_ID` (`gh variable set RELEASE_PLEASE_APP_ID --body <id>`, or Settings → Secrets and variables → Actions → Variables). Until it exists, the release job fails at the token step, which is also why the task verifying that a release pull request runs the quality-gate workflow remains open. The App must be installed on this repository with write access to contents, pull requests, and issues — release-please needs contents to tag and release, pull requests to open and groom the release pull request, and issues to label it.
+
+**Prerequisite: bootstrapping, which comes before the first release pull request.** npm can only attach a trusted publisher to a package that already exists, so the trusted publisher cannot be configured before `mcp-arr` has been published once. The whole bootstrap must complete **before the first release pull request is merged**, or the publish job runs against a package with no trusted publisher and fails after the tag has already been cut. In order:
+
+1. Land the package metadata — the license, repository, and registry fields, which npm's provenance validation requires.
+2. Publish the current version by hand from a clean checkout of the default branch: `npm ci && npm run check && npm publish`, authenticated interactively.
+3. Configure the trusted publisher on npmjs.com against this repository and `.github/workflows/release.yml`.
+4. Tag the published commit and create a GitHub release for it: `gh release create v0.1.0 --target <published commit> --title v0.1.0 --notes "Initial publication."`.
+
+Step 4 is what tells release-please where its history starts. It scans GitHub releases for a tag whose version matches the manifest entry — `0.1.0` — and treats that release's commit as the last released commit. With no such release it finds no prior release at all, walks the repository from its first commit, and generates a changelog backfilling changes 0001 through 0003, which the Non-Goals above rule out. The tag also keeps the published version, the tag, and the changelog in agreement, as the spec requires.
+
+Every release after that publishes over OIDC with no stored credential.
+
+**Runtime floors.** Trusted publishing requires npm 11.5.1 or later and Node.js 22.14.0 or later, so the publish step runs on Node.js 24 with npm upgraded explicitly. The quality gates ahead of it run on Node.js 20, the version CI validates, so the artifact that is published is the one those gates built. Provenance is attached automatically when npm authenticates over OIDC — there is no `--provenance` flag and no registry token anywhere in the repository.
+
 ### Non-Goals
 
 - Publishing any distribution channel other than npm — no container image, no standalone binary, no registry mirror.
@@ -101,18 +120,18 @@ The [Architecture spec](../specs/architecture/#packaging-and-release) owns packa
   - [x] Confirm the packed tarball contains only build output and the documents needed to configure the server, and extend the package verifier to assert the license and repository metadata are present
   - [x] Rewrite `README.md` around running the published package with `npx mcp-arr`, updating every host-configuration example to that invocation and demoting build-from-checkout to a contributor section
 - [ ] Add release automation
-  - [ ] Add release-please configuration and manifest for the root Node package
-  - [ ] Add a release workflow on the default branch that authenticates as the GitHub App and opens or updates the release pull request
+  - [x] Add release-please configuration and manifest for the root Node package
+  - [x] Add a release workflow on the default branch that authenticates as the GitHub App and opens or updates the release pull request
   - [ ] Verify the release pull request runs the standing quality-gate workflow
 - [ ] Publish to the registry
-  - [ ] Add a publish step that runs only when a release was created, publishing with provenance through OIDC trusted publishing
+  - [x] Add a publish step that runs only when a release was created, publishing with provenance through OIDC trusted publishing
   - [ ] Perform the first publication and record any manual step it required
   - [ ] Verify a clean host can install the published package and start the server over stdio
 
 ## Open Questions
 
-- [ ] The GitHub App ID is not present in the repository. `RELEASE_PLEASE_PRIVATE_KEY` is set, but minting an App token also needs the App's numeric ID, which is not secret and is normally a repository variable. Add it as a `RELEASE_PLEASE_APP_ID` variable, or supply the value to inline in the workflow. **This blocks the release automation task.**
-- [ ] Trusted publishing requires the package name to exist on the registry before the trusted publisher can be configured against it. Confirm whether the first publication will be performed manually by a maintainer, with automation taking over from the second release onward.
+- [x] **Resolved — the App ID is supplied as a repository variable.** Minting an App token needs the App's numeric ID alongside the `RELEASE_PLEASE_PRIVATE_KEY` secret. The ID is not secret, so the release workflow reads it from the repository variable `RELEASE_PLEASE_APP_ID` rather than inlining it. Creating that variable is a maintainer step; see [Releasing](#releasing).
+- [x] **Resolved — the first publication is performed manually, before the first release pull request is merged.** npm requires the package to exist before a trusted publisher can be configured against it, so a maintainer publishes the current version by hand and configures the trusted publisher, and only then lets a release pull request merge. Automation publishes every release after that; see [Releasing](#releasing).
 
 ## References
 
