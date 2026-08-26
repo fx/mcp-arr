@@ -3,7 +3,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { approvedFixtureInventory, loadFixture, validateFixture } from "./support/fixtures.js";
+import {
+  approvedFixtureInventory,
+  approvedFixtures,
+  fixturePathFor,
+  loadFixture,
+  validateFixture,
+} from "./support/fixtures.js";
 
 const fixtureRoot = fileURLToPath(new URL("./fixtures", import.meta.url));
 const temporaryDirectories: string[] = [];
@@ -52,31 +58,51 @@ afterEach(async () => {
 
 describe("versioned fixture contract", () => {
   it("contains exactly the approved fixtures and validates every file", async () => {
+    expect(approvedFixtureInventory).toEqual([
+      "sonarr/v3/4.0.19.2979/system-status.json",
+      "sonarr/v3/4.0.19.2979/series.json",
+      "sonarr/v3/4.0.19.2979/series-lookup.json",
+      "sonarr/v3/4.0.19.2979/episode.json",
+      "sonarr/v3/4.0.19.2979/episodefile.json",
+      "sonarr/v3/4.0.19.2979/wanted-missing.json",
+      "sonarr/v3/4.0.19.2979/wanted-cutoff.json",
+      "sonarr/v3/4.0.19.2979/calendar.json",
+      "radarr/v3/6.3.0.10514/system-status.json",
+      "radarr/v3/6.3.0.10514/movie.json",
+      "radarr/v3/6.3.0.10514/movie-lookup.json",
+      "radarr/v3/6.3.0.10514/collection.json",
+      "radarr/v3/6.3.0.10514/moviefile.json",
+      "radarr/v3/6.3.0.10514/wanted-missing.json",
+      "radarr/v3/6.3.0.10514/wanted-cutoff.json",
+      "radarr/v3/6.3.0.10514/calendar.json",
+      "prowlarr/v1/2.5.2.5491/system-status.json",
+    ]);
     await expect(listFiles(fixtureRoot)).resolves.toEqual([...approvedFixtureInventory].sort());
 
     const fixtures = await Promise.all(
       approvedFixtureInventory.map((relativePath) => loadFixture(fixtureRoot, relativePath)),
     );
-    expect(fixtures.map(({ metadata }) => metadata)).toEqual([
-      {
-        application: "sonarr",
-        apiVersion: "v3",
-        version: "4.0.19.2979",
-        endpoint: "/api/v3/system/status",
-      },
-      {
-        application: "radarr",
-        apiVersion: "v3",
-        version: "6.3.0.10514",
-        endpoint: "/api/v3/system/status",
-      },
-      {
-        application: "prowlarr",
-        apiVersion: "v1",
-        version: "2.5.2.5491",
-        endpoint: "/api/v1/system/status",
-      },
-    ]);
+    // Every file's declared metadata has to be the tuple and endpoint its own
+    // path stands for; the loader refuses anything else.
+    expect(fixtures.map(({ metadata }) => metadata)).toEqual(
+      approvedFixtures.map(({ application, apiVersion, version, endpoint }) => ({
+        application,
+        apiVersion,
+        version,
+        endpoint,
+      })),
+    );
+    expect(fixturePathFor("sonarr", "wanted/missing")).toBe(
+      "sonarr/v3/4.0.19.2979/wanted-missing.json",
+    );
+    expect(() => fixturePathFor("prowlarr", "series")).toThrow("No approved fixture");
+  });
+
+  it("rejects a fixture whose endpoint is not the one its file records", () => {
+    const fixture = validFixture();
+    (fixture.metadata as Record<string, unknown>).endpoint = "/api/v3/series";
+
+    expect(() => validate(fixture)).toThrow("Fixture endpoint does not match its file");
   });
 
   it("accepts object or array response bodies and keeps status checks object-specific", () => {
@@ -188,6 +214,25 @@ describe("versioned fixture contract", () => {
     const metadataFixture = validFixture();
     (metadataFixture.metadata as Record<string, unknown>).hostname = "placeholder";
     expect(() => validate(metadataFixture)).toThrow("Identifying key is not allowed");
+  });
+
+  it("allows a media file name but still rejects a hostname wearing one", () => {
+    const fixture = validFixture();
+    (fixture.body as Record<string, unknown>).nested = [
+      "Season 01/Example Series - S01E01 - Example Pilot Bluray-1080p.mkv",
+      "/media/example/movies/Example Movie (2021) Bluray-1080p.mkv",
+      "Example Subtitle Track.srt",
+    ];
+    expect(() => validate(fixture)).not.toThrow();
+
+    for (const disguised of [
+      ["fixture", "example", "invalid", "mkv"].join("."),
+      ["fixture", "example", "invalid"].join(".").concat(".mkv.bak"),
+    ]) {
+      const unsafe = validFixture();
+      (unsafe.body as Record<string, unknown>).nested = [disguised];
+      expect(() => validate(unsafe)).toThrow("Sensitive hostname is not allowed");
+    }
   });
 
   it("allows schema path fields when their values are neutral", () => {

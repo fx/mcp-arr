@@ -1,0 +1,177 @@
+{
+  "metadata": {
+    "application": "sonarr",
+    "apiVersion": "v3",
+    "version": "4.0.19.2979",
+    "endpoint": "/api/v3/series"
+  },
+  "body": [
+    {
+      "id": 12,
+      "title": "Example Series",
+      "sortTitle": "example series",
+      "status": "continuing",
+      "ended": false,
+      "overview": "A sanitized series overview recorded only to fix the payload shape",
+      "network": "Example Network",
+      "airTime": "21:00",
+      "year": 2019,
+      "runtime": 45,
+      "path": "/media/example/series/Example Series",
+      "rootFolderPath": "/media/example/series",
+      "qualityProfileId": 1,
+      "seasonFolder": true,
+      "monitored": true,
+      "monitorNewItems": "all",
+      "tvdbId": 100001,
+      "seriesType": "standard",
+      "titleSlug": "example-series",
+      "certification": "TV-14",
+      "genres": ["Drama", "Mystery"],
+      "tags": [3],
+      "added": "2024-01-05T12:00:00Z",
+      "ratings": {
+        "votes": 120,
+        "value": 8.1
+      },
+      "images": [],
+      "seasons": [
+        {
+          "seasonNumber": 1,
+          "monitored": true,
+          "statistics": {
+            "episodeFileCount": 2,
+            "episodeCount": 2,
+            "totalEpisodeCount": 2,
+            "sizeOnDisk": 2048,
+            "percentOfEpisodes": 100
+          }
+        },
+        {
+          "seasonNumber": 2,
+          "monitored": false,
+          "statistics": {
+            "episodeFileCount": 0,
+            "episodeCount": 1,
+            "totalEpisodeCount": 1,
+            "sizeOnDisk": 0,
+            "percentOfEpisodes": 0
+          }
+        }
+      ],
+      "statistics": {
+        "seasonCount": 2,
+        "episodeFileCount": 2,
+        "episodeCount": 3,
+        "totalEpisodeCount": 3,
+        "sizeOnDisk": 2048,
+        "releaseGroups": ["EXAMPLEGRP"],
+        "percentOfEpisodes": 100
+      }
+    },
+    {
+      "id": 13,
+      "title": "Example Anime",
+      "sortTitle": "example anime",
+      "status": "continuing",
+      "ended": false,
+      "overview": "A sanitized anime overview recorded only to fix the payload shape",
+      "network": "Example Broadcaster",
+      "airTime": "23:30",
+      "year": 2021,
+      "runtime": 24,
+      "path": "/media/example/series/Example Anime",
+      "rootFolderPath": "/media/example/series",
+      "qualityProfileId": 2,
+      "seasonFolder": true,
+      "monitored": true,
+      "monitorNewItems": "all",
+      "tvdbId": 100002,
+      "seriesType": "anime",
+      "titleSlug": "example-anime",
+      "certification": "TV-MA",
+      "genres": ["Animation"],
+      "tags": [],
+      "added": "2024-03-11T07:45:00Z",
+      "ratings": {
+        "votes": 90,
+        "value": 7.4
+      },
+      "images": [],
+      "seasons": [
+        {
+          "seasonNumber": 1,
+          "monitored": true,
+          "statistics": {
+            "episodeFileCount": 1,
+            "episodeCount": 1,
+            "totalEpisodeCount": 1,
+            "sizeOnDisk": 1024,
+            "percentOfEpisodes": 100
+          }
+        }
+      ],
+      "statistics": {
+        "seasonCount": 1,
+        "episodeFileCount": 1,
+        "episodeCount": 1,
+        "totalEpisodeCount": 1,
+        "sizeOnDisk": 1024,
+        "releaseGroups": ["EXAMPLEGRP"],
+        "percentOfEpisodes": 100
+      }
+    },
+    {
+      "id": 14,
+      "title": "Example Retired Series",
+      "sortTitle": "example retired series",
+      "status": "ended",
+      "ended": true,
+      "overview": "A sanitized ended-series overview recorded only to fix the payload shape",
+      "network": "Example Network",
+      "airTime": "20:00",
+      "year": 2011,
+      "runtime": 30,
+      "path": "/media/example/series/Example Retired Series",
+      "rootFolderPath": "/media/example/series",
+      "qualityProfileId": 1,
+      "seasonFolder": true,
+      "monitored": false,
+      "monitorNewItems": "none",
+      "tvdbId": 100003,
+      "seriesType": "standard",
+      "titleSlug": "example-retired-series",
+      "certification": "TV-PG",
+      "genres": ["Comedy"],
+      "tags": [3, 4],
+      "added": "2023-11-02T18:20:00Z",
+      "ratings": {
+        "votes": 40,
+        "value": 6.9
+      },
+      "images": [],
+      "seasons": [
+        {
+          "seasonNumber": 1,
+          "monitored": false,
+          "statistics": {
+            "episodeFileCount": 0,
+            "episodeCount": 0,
+            "totalEpisodeCount": 0,
+            "sizeOnDisk": 0,
+            "percentOfEpisodes": 0
+          }
+        }
+      ],
+      "statistics": {
+        "seasonCount": 1,
+        "episodeFileCount": 0,
+        "episodeCount": 0,
+        "totalEpisodeCount": 0,
+        "sizeOnDisk": 0,
+        "releaseGroups": ["EXAMPLEGRP"],
+        "percentOfEpisodes": 100
+      }
+    }
+  ]
+}

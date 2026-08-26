@@ -24,10 +24,76 @@ export interface VersionedFixture<TBody = unknown> {
   body: TBody;
 }
 
-export const approvedFixtureInventory = approvedFixtureTuples.map(
+/**
+ * The upstream routes this project records a fixture for, per application.
+ *
+ * Adding a route here is what authorizes a new fixture file: the file name, the
+ * approved inventory, and the endpoint each fixture must declare are all
+ * derived from this list, so a fixture cannot claim to be the response of one
+ * route while living under the name of another.
+ */
+const approvedRoutes: Readonly<Record<FixtureApplication, readonly string[]>> = {
+  sonarr: [
+    "system/status",
+    "series",
+    "series/lookup",
+    "episode",
+    "episodefile",
+    "wanted/missing",
+    "wanted/cutoff",
+    "calendar",
+  ],
+  radarr: [
+    "system/status",
+    "movie",
+    "movie/lookup",
+    "collection",
+    "moviefile",
+    "wanted/missing",
+    "wanted/cutoff",
+    "calendar",
+  ],
+  prowlarr: ["system/status"],
+};
+
+/** The file that records one route's response. */
+export function fixtureFileForRoute(route: string): string {
+  return `${route.replaceAll("/", "-")}.json`;
+}
+
+export interface ApprovedFixture {
+  readonly application: FixtureApplication;
+  readonly apiVersion: FixtureApiVersion;
+  readonly version: FixtureVersion;
+  readonly route: string;
+  readonly endpoint: string;
+  readonly relativePath: string;
+}
+
+export const approvedFixtures: readonly ApprovedFixture[] = approvedFixtureTuples.flatMap(
   ({ application, apiVersion, version }) =>
-    `${application}/${apiVersion}/${version}/system-status.json`,
+    approvedRoutes[application].map((route) => ({
+      application,
+      apiVersion,
+      version,
+      route,
+      endpoint: `/api/${apiVersion}/${route}`,
+      relativePath: `${application}/${apiVersion}/${version}/${fixtureFileForRoute(route)}`,
+    })),
 );
+
+export const approvedFixtureInventory = approvedFixtures.map(({ relativePath }) => relativePath);
+
+/** The recorded fixture for one application's route, for a test to load. */
+export function fixturePathFor(application: FixtureApplication, route: string): string {
+  const approved = approvedFixtures.find(
+    (candidate) => candidate.application === application && candidate.route === route,
+  );
+  if (approved === undefined) {
+    throw new Error(`No approved fixture for ${application} ${route}`);
+  }
+  return approved.relativePath;
+}
 
 const secretKeyParts = [
   "apikey",
@@ -62,6 +128,22 @@ const sensitiveValuePatterns: ReadonlyArray<readonly [string, RegExp]> = [
     /(?:^|[^a-z0-9-])(?:localhost|[^\s.]+\.(?:internal|lan|local))(?:$|[^a-z0-9-])/iu,
   ],
 ];
+
+/**
+ * Extensions a sanitized media file name may end in.
+ *
+ * A file name such as `Example Movie Bluray-1080p.mkv` is structurally
+ * indistinguishable from a hostname: a dotted label followed by two or more
+ * letters. Media-file fixtures cannot be recorded without one, so a trailing
+ * known media extension is removed before the hostname patterns run — and only
+ * the extension is, so `evil.example.mkv` still trips the hostname check.
+ */
+const mediaFileExtensions = ["mkv", "mp4", "m4v", "avi", "srt", "ass", "nfo"];
+
+const mediaFileExtensionPattern = new RegExp(
+  `\\.(?:${mediaFileExtensions.join("|")})(?![a-z0-9-])`,
+  "giu",
+);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -173,7 +255,7 @@ function validateFixturePath(
   filePath: string,
   fixtureRoot: string,
   metadata: FixtureMetadata,
-): void {
+): string {
   const relativePath = path.relative(path.resolve(fixtureRoot), path.resolve(filePath));
   const labels = relativePath.split(path.sep);
   if (relativePath.startsWith("..") || path.isAbsolute(relativePath) || labels.length !== 4) {
@@ -192,6 +274,23 @@ function validateFixturePath(
   }
   if (version !== metadata.version) {
     throw new Error(`Fixture version label does not match metadata: ${version}`);
+  }
+  return labels.join("/");
+}
+
+/**
+ * Holds a fixture to the one route its file name stands for, so a recorded
+ * response cannot drift onto a route it was never captured from.
+ */
+function validateApprovedRoute(relativePath: string, endpoint: string): void {
+  const approved = approvedFixtures.find((candidate) => candidate.relativePath === relativePath);
+  if (approved === undefined) {
+    throw new Error(`Fixture is not in the approved inventory: ${relativePath}`);
+  }
+  if (approved.endpoint !== endpoint) {
+    throw new Error(
+      `Fixture endpoint does not match its file: expected ${approved.endpoint}, got ${endpoint}`,
+    );
   }
 }
 
@@ -225,8 +324,9 @@ function validateSanitizedValue(value: unknown, location: string): void {
   if (containsIpAddress(value)) {
     throw new Error(`Sensitive IP address is not allowed at ${location}`);
   }
+  const scanned = value.replaceAll(mediaFileExtensionPattern, "");
   for (const [description, pattern] of sensitiveValuePatterns) {
-    if (pattern.test(value)) {
+    if (pattern.test(scanned)) {
       throw new Error(`Sensitive ${description} is not allowed at ${location}`);
     }
   }
@@ -256,7 +356,10 @@ export function validateFixture<TBody = unknown>(
   validateEndpoint(endpoint, tuple.apiVersion);
 
   const metadata: FixtureMetadata = { ...tuple, endpoint };
-  validateFixturePath(options.filePath, options.fixtureRoot, metadata);
+  validateApprovedRoute(
+    validateFixturePath(options.filePath, options.fixtureRoot, metadata),
+    endpoint,
+  );
 
   const isSystemStatus = endpoint === `/api/${metadata.apiVersion}/system/status`;
   if (isSystemStatus && !isRecord(body)) {

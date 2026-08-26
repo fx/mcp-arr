@@ -1,0 +1,98 @@
+{
+  "metadata": {
+    "application": "radarr",
+    "apiVersion": "v3",
+    "version": "6.3.0.10514",
+    "endpoint": "/api/v3/wanted/cutoff"
+  },
+  "body": {
+    "page": 1,
+    "pageSize": 2,
+    "sortKey": "sortTitle",
+    "sortDirection": "ascending",
+    "totalRecords": 1,
+    "records": [
+      {
+        "id": 8,
+        "title": "Example Movie",
+        "originalTitle": "Example Movie",
+        "sortTitle": "example movie",
+        "status": "released",
+        "overview": "A sanitized movie overview recorded only to fix the payload shape",
+        "year": 2021,
+        "runtime": 118,
+        "path": "/media/example/movies/Example Movie (2021)",
+        "rootFolderPath": "/media/example/movies",
+        "qualityProfileId": 2,
+        "monitored": true,
+        "minimumAvailability": "released",
+        "hasFile": true,
+        "sizeOnDisk": 2147483648,
+        "isAvailable": true,
+        "tmdbId": 200001,
+        "imdbId": "tt0000001",
+        "studio": "Example Studio",
+        "certification": "PG-13",
+        "genres": ["Drama"],
+        "tags": [7],
+        "added": "2024-02-01T09:30:00Z",
+        "inCinemas": "2021-06-01T00:00:00Z",
+        "physicalRelease": "2021-09-01T00:00:00Z",
+        "digitalRelease": "2021-08-01T00:00:00Z",
+        "popularity": 12.5,
+        "collection": {
+          "title": "Example Collection",
+          "tmdbId": 300001
+        },
+        "alternateTitles": [
+          {
+            "id": 1,
+            "sourceType": "tmdb",
+            "movieMetadataId": 8,
+            "title": "Example Movie Alternate"
+          }
+        ],
+        "originalLanguage": {
+          "id": 1,
+          "name": "English"
+        },
+        "ratings": {
+          "tmdb": {
+            "votes": 300,
+            "value": 7.5,
+            "type": "user"
+          }
+        },
+        "images": [],
+        "movieFile": {
+          "id": 501,
+          "movieId": 8,
+          "relativePath": "Example Movie (2021) Bluray-1080p.mkv",
+          "size": 2147483648,
+          "dateAdded": "2024-02-02T10:00:00Z",
+          "quality": {
+            "quality": {
+              "id": 7,
+              "name": "Bluray-1080p",
+              "source": "bluray",
+              "resolution": 1080
+            },
+            "revision": {
+              "version": 1,
+              "real": 0,
+              "isRepack": false
+            }
+          },
+          "languages": [
+            {
+              "id": 1,
+              "name": "English"
+            }
+          ],
+          "releaseGroup": "EXAMPLEGRP",
+          "edition": "Director Cut"
+        }
+      }
+    ]
+  }
+}

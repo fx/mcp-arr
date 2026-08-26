@@ -59,14 +59,14 @@ The [Library Management spec](../specs/library-management/#library-queries) owns
 
 ## Tasks
 
-- [ ] Implement normalized lookup and library adapters
-  - [ ] Add application-qualified media reference and summary/detail models
-  - [ ] Implement Sonarr and Radarr lookup and core library reads
-  - [ ] Add version-labelled fixture coverage for mapping and error cases
-- [ ] Implement wanted, calendar, collection, and file views
-  - [ ] Add missing/cutoff filters, calendar ranges, and bounded paging
-  - [ ] Add Sonarr episode-file and Radarr movie-file reads
-  - [ ] Add Radarr collection support and unsupported-view handling
+- [x] Implement normalized lookup and library adapters (PR #PENDING)
+  - [x] Add application-qualified media reference and summary/detail models (PR #PENDING)
+  - [x] Implement Sonarr and Radarr lookup and core library reads (PR #PENDING)
+  - [x] Add version-labelled fixture coverage for mapping and error cases (PR #PENDING)
+- [x] Implement wanted, calendar, collection, and file views (PR #PENDING)
+  - [x] Add missing/cutoff filters, calendar ranges, and bounded paging (PR #PENDING)
+  - [x] Add Sonarr episode-file and Radarr movie-file reads (PR #PENDING)
+  - [x] Add Radarr collection support and unsupported-view handling (PR #PENDING)
 - [ ] Register and verify `arr_library_query`
   - [ ] Add typed view schemas, detail levels, pagination, and structured outputs
   - [ ] Add stdio integration tests for each view and mixed configured-app state

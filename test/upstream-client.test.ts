@@ -97,6 +97,50 @@ describe("createUpstreamClient", () => {
     expect(calls[0]?.url).toBe("http://prowlarr.example.invalid:9696/api/v1/system/status");
   });
 
+  it("appends a query in a stable order and drops the parameters left unset", async () => {
+    const { client, calls } = harness(() => json([]));
+
+    await client.get("wanted/missing", {
+      pageSize: 25,
+      page: 1,
+      monitored: undefined,
+      includeSeries: true,
+    });
+
+    // Sorted by parameter name, so the same request always produces the same
+    // URL no matter how the adapter happened to build the object.
+    expect(calls[0]?.url).toBe(
+      "https://sonarr.example.invalid/sonarr/api/v3/wanted/missing?includeSeries=true&page=1&pageSize=25",
+    );
+
+    await client.get("series");
+    expect(calls[1]?.url).toBe("https://sonarr.example.invalid/sonarr/api/v3/series");
+
+    await client.get("series", {});
+    expect(calls[2]?.url).toBe("https://sonarr.example.invalid/sonarr/api/v3/series");
+  });
+
+  it("encodes a query value rather than letting it alter the request", async () => {
+    const { client, calls } = harness(() => json([]));
+
+    await client.get("series/lookup", { term: "a&b=c?d#e /f" });
+
+    const url = new URL(calls[0]?.url ?? "");
+    expect(url.pathname).toBe("/sonarr/api/v3/series/lookup");
+    expect([...url.searchParams.keys()]).toEqual(["term"]);
+    expect(url.searchParams.get("term")).toBe("a&b=c?d#e /f");
+  });
+
+  it("keeps a query value out of the failure it reports", async () => {
+    const term = "sensitive lookup term";
+    const { client } = harness(() => json({ message: `rejected ${apiKey}` }, 401));
+
+    const error = await captureError(client.get("series/lookup", { term }));
+    expect(error.kind).toBe("authentication");
+    expect(error.operation).toBe("series/lookup");
+    expect(`${error.message}\n${JSON.stringify(error.toJSON())}`).not.toContain(term);
+  });
+
   it("normalizes each upstream status into its own error kind", async () => {
     const expectations: ReadonlyArray<readonly [number, UpstreamErrorKind]> = [
       [400, "validation"],
