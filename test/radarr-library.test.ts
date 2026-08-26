@@ -6,6 +6,7 @@ import {
   fixtureBody,
   jsonResponse,
   libraryHarness,
+  lookupResults,
   mediaFiles,
   mediaItems,
   paging,
@@ -336,7 +337,7 @@ describe("radarr library reads", () => {
     expect(calls[0]?.url.searchParams.get("term")).toBe("example movie");
     expect(calls[0]?.init.method).toBe("GET");
 
-    expect(ok.data.items).toEqual([
+    expect(lookupResults(ok.data)).toEqual([
       {
         application: "radarr",
         title: "Example Movie",
