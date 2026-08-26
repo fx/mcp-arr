@@ -130,10 +130,17 @@ export interface ProjectionInput<TSource, TItem> {
  * Projects one bounded page out of an unpaged upstream collection.
  *
  * The projection stops as soon as it has filled the page and seen one further
- * match, so it neither maps nor retains records beyond the window, and it stops
- * unconditionally once {@link defaultScanLimit} records have been examined. A
- * truncated scan is disclosed as a warning instead of being reported as the end
- * of the result set, because the adapter genuinely does not know what follows.
+ * match, so it neither maps nor retains records beyond the window.
+ *
+ * The scan limit is a hard cap, not a hint. Once it is reached the page ends
+ * there and reports `hasMore: false`, because continuing would hand back a
+ * cursor that re-scans from the start and stops at the same place — a page that
+ * never advances. The truncation is stated as a warning instead, so a caller
+ * learns that records beyond the cap exist and that narrowing the query, rather
+ * than paging further, is what reaches them.
+ *
+ * A page that fills is always exactly `pageSize` long, which is what lets the
+ * service advance a cursor by whole pages.
  */
 export function projectPage<TSource, TItem>(
   input: ProjectionInput<TSource, TItem>,

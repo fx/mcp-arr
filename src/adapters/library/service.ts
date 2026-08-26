@@ -225,12 +225,18 @@ export async function runLibraryQuery(
     return { status: "error", error: toolErrorForThrown(error, application) };
   }
 
-  const returned = result.data.items.length;
+  // The next window advances by a whole page, never by however many records
+  // came back. An upstream-paged endpoint maps the offset back onto a 1-based
+  // page number, so a short-but-not-final page — the instance filtered some of
+  // its own records — would otherwise produce an unaligned offset that floors
+  // back onto the page just read, and the caller would page in circles. An
+  // adapter-side projection only reports more when it filled the page exactly,
+  // so for those two the two arithmetics agree.
   const continuation: Continuation = {
     pageSize,
-    returned,
+    returned: result.data.items.length,
     hasMore: result.hasMore,
-    ...(result.hasMore ? { cursor: encodePageCursor(digest, offset + returned) } : {}),
+    ...(result.hasMore ? { cursor: encodePageCursor(digest, offset + pageSize) } : {}),
   };
 
   return {

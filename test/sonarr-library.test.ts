@@ -393,6 +393,28 @@ describe("sonarr library reads", () => {
     expect(expectOk(monitoredOnly.outcome).data.items).toHaveLength(1);
   });
 
+  it("falls back to the series runtime when the episode reports none", async () => {
+    const [first, ...rest] = body("calendar") as readonly Record<string, unknown>[];
+    // Zero is how Sonarr says it does not know an episode's runtime.
+    const withoutRuntime = [{ ...first, runtime: 0 }, ...rest];
+
+    const { outcome } = await run(
+      {
+        view: "calendar",
+        detail: "summary",
+        start: "2019-04-01",
+        end: "2019-04-30",
+        paging: paging(25),
+      },
+      () => jsonResponse(withoutRuntime),
+    );
+
+    expect(calendarEvents(expectOk(outcome).data)[0]).toMatchObject({
+      start: "2019-04-01T20:00:00Z",
+      end: "2019-04-01T20:45:00.000Z",
+    });
+  });
+
   it("looks a series up without implying an add", async () => {
     const { outcome, calls } = await run(
       { view: "lookup", detail: "summary", term: "example series", paging: paging(25) },

@@ -59,6 +59,24 @@
       "monitored": false,
       "unverifiedSceneNumbering": false,
       "finaleType": "season"
+    },
+    {
+      "id": 1004,
+      "seriesId": 12,
+      "tvdbId": 900004,
+      "episodeFileId": 2003,
+      "seasonNumber": 2,
+      "episodeNumber": 2,
+      "absoluteEpisodeNumber": null,
+      "title": "Example Follow Up",
+      "airDate": "2020-05-10",
+      "airDateUtc": "2020-05-10T20:00:00Z",
+      "runtime": 45,
+      "overview": "A sanitized second-season episode overview recorded only to fix the payload shape",
+      "hasFile": true,
+      "monitored": true,
+      "unverifiedSceneNumbering": false,
+      "finaleType": null
     }
   ]
 }

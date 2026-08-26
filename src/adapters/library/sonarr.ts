@@ -282,6 +282,16 @@ function airedAt(episode: SonarrEpisode): string | undefined {
   return text(episode.airDateUtc) ?? text(episode.airDate);
 }
 
+/**
+ * A runtime long enough to give an event an end. Zero is how Sonarr says it
+ * does not know a runtime, so it has to fall through to the series' own rather
+ * than being taken as a real length of zero.
+ */
+function runtimeOf(value: number | null | undefined): number | undefined {
+  const runtime = count(value);
+  return runtime !== undefined && runtime > 0 ? runtime : undefined;
+}
+
 async function readList<TSchema extends z.ZodType>(
   client: UpstreamClient,
   route: string,
@@ -491,7 +501,7 @@ export async function listCalendar(
       return {
         media: mapEpisode(episode, request.detail),
         start,
-        end: endOf(start, count(episode.runtime) ?? count(episode.series?.runtime)),
+        end: endOf(start, runtimeOf(episode.runtime) ?? runtimeOf(episode.series?.runtime)),
         hasFile: flag(episode.hasFile) ?? false,
       };
     },

@@ -172,6 +172,37 @@ describe("library query bounds", () => {
     expect(harness.calls).toEqual([]);
   });
 
+  it("advances an upstream-paged cursor by a whole page, not by what came back", async () => {
+    // A page the instance filtered down to fewer records than asked for, with
+    // more still to come: the next cursor must ask for page 2, not floor back
+    // onto the page just read.
+    const short = {
+      page: 1,
+      pageSize: 5,
+      totalRecords: 12,
+      records: [{ id: 8, title: "Example Movie" }],
+    };
+
+    const first = expectOk(
+      await runLibraryQuery("radarr", libraryHarness("radarr", () => jsonResponse(short)).client, {
+        view: "missing_movies",
+        detail: "summary",
+        paging: paging(5),
+      }),
+    );
+    expect(first.continuation).toMatchObject({ pageSize: 5, returned: 1, hasMore: true });
+
+    const next = libraryHarness("radarr", () => jsonResponse({ ...short, page: 2, records: [] }));
+    expectOk(
+      await runLibraryQuery("radarr", next.client, {
+        view: "missing_movies",
+        detail: "summary",
+        paging: paging(5, first.continuation.cursor),
+      }),
+    );
+    expect(next.calls[0]?.url.searchParams.get("page")).toBe("2");
+  });
+
   it("bounds an unpaged upstream collection instead of returning all of it", async () => {
     const template = (await fixtureBody<readonly Record<string, unknown>[]>("sonarr", "series"))[0];
     const many = Array.from({ length: 200 }, (_unused, index) => ({
