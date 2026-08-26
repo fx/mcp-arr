@@ -128,6 +128,11 @@ interface ReferenceMinter {
  * order from the identity's own parts, so a page of episode files that all
  * belong to one series mints exactly one reference for it and nothing a caller
  * supplied can influence what two identities collapse to.
+ *
+ * Within one query an identity is either read as a record or merely named — a
+ * file's parent, a lookup match — and never both, so keeping the first token
+ * minted for a key cannot replace a record's fingerprint with an identity-only
+ * one.
  */
 function createReferenceMinter(references: ReferenceStore): ReferenceMinter {
   const minted = new Map<string, string>();
