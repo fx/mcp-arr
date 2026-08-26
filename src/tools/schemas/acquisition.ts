@@ -6,6 +6,7 @@ import {
   maxBulkItems,
   mediaReferenceSchema,
   mutationBaseShape,
+  planApplySchema,
   queryBaseShape,
   queueReferenceSchema,
   releaseReferenceSchema,
@@ -58,60 +59,67 @@ export const releaseSearchInputSchema = variantUnion(
  * point: a grab can only target something this server itself produced and can
  * still resolve.
  */
-export const releaseGrabInputSchema = z.strictObject({
-  ...mutationBaseShape,
-  releases: bulkReferences(releaseReferenceSchema),
-});
+export const releaseGrabInputSchema = variantUnion(
+  z.union([
+    z.strictObject({
+      ...mutationBaseShape,
+      releases: bulkReferences(releaseReferenceSchema),
+    }),
+    planApplySchema,
+  ]),
+);
 
 /**
  * Automatic search commands. These start upstream work and return a job
  * reference; reading wanted media stays in `arr_library_query` so a wanted-list
  * read never launches a search.
  */
+const searchStartIntentSchema = z.discriminatedUnion("target", [
+  z.strictObject({
+    target: z.literal("sonarr_episode"),
+    ...mutationBaseShape,
+    episodes: bulkReferences(mediaReferenceSchema),
+  }),
+  z.strictObject({
+    target: z.literal("sonarr_season"),
+    ...mutationBaseShape,
+    series: mediaReferenceSchema,
+    seasonNumber: seasonNumberSchema,
+  }),
+  z.strictObject({
+    target: z.literal("sonarr_series"),
+    ...mutationBaseShape,
+    series: mediaReferenceSchema,
+  }),
+  z.strictObject({
+    target: z.literal("radarr_movie"),
+    ...mutationBaseShape,
+    movies: bulkReferences(mediaReferenceSchema),
+  }),
+  z.strictObject({
+    target: z.literal("missing"),
+    ...mutationBaseShape,
+    applications: z
+      .array(z.enum(["sonarr", "radarr"]))
+      .min(1)
+      .max(2)
+      .optional(),
+    monitoredOnly: z.boolean(),
+  }),
+  z.strictObject({
+    target: z.literal("cutoff_unmet"),
+    ...mutationBaseShape,
+    applications: z
+      .array(z.enum(["sonarr", "radarr"]))
+      .min(1)
+      .max(2)
+      .optional(),
+    monitoredOnly: z.boolean(),
+  }),
+]);
+
 export const searchStartInputSchema = variantUnion(
-  z.discriminatedUnion("target", [
-    z.strictObject({
-      target: z.literal("sonarr_episode"),
-      ...mutationBaseShape,
-      episodes: bulkReferences(mediaReferenceSchema),
-    }),
-    z.strictObject({
-      target: z.literal("sonarr_season"),
-      ...mutationBaseShape,
-      series: mediaReferenceSchema,
-      seasonNumber: seasonNumberSchema,
-    }),
-    z.strictObject({
-      target: z.literal("sonarr_series"),
-      ...mutationBaseShape,
-      series: mediaReferenceSchema,
-    }),
-    z.strictObject({
-      target: z.literal("radarr_movie"),
-      ...mutationBaseShape,
-      movies: bulkReferences(mediaReferenceSchema),
-    }),
-    z.strictObject({
-      target: z.literal("missing"),
-      ...mutationBaseShape,
-      applications: z
-        .array(z.enum(["sonarr", "radarr"]))
-        .min(1)
-        .max(2)
-        .optional(),
-      monitoredOnly: z.boolean(),
-    }),
-    z.strictObject({
-      target: z.literal("cutoff_unmet"),
-      ...mutationBaseShape,
-      applications: z
-        .array(z.enum(["sonarr", "radarr"]))
-        .min(1)
-        .max(2)
-        .optional(),
-      monitoredOnly: z.boolean(),
-    }),
-  ]),
+  z.union([searchStartIntentSchema, planApplySchema]),
 );
 
 /**
@@ -163,11 +171,16 @@ export const importInspectInputSchema = variantUnion(
  * survives, and the candidate references are re-validated against current
  * upstream state immediately before the import command is submitted.
  */
-export const importExecuteInputSchema = z.strictObject({
-  ...mutationBaseShape,
-  candidates: bulkReferences(importCandidateReferenceSchema),
-  importMode: z.enum(["auto", "move", "copy"]),
-});
+export const importExecuteInputSchema = variantUnion(
+  z.union([
+    z.strictObject({
+      ...mutationBaseShape,
+      candidates: bulkReferences(importCandidateReferenceSchema),
+      importMode: z.enum(["auto", "move", "copy"]),
+    }),
+    planApplySchema,
+  ]),
+);
 
 export const releaseSearchOutputSchema = toolResultSchema();
 export const releaseGrabOutputSchema = toolResultSchema({ mutation: true });

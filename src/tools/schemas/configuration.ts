@@ -4,6 +4,7 @@ import {
   applicationIdSchema,
   configurationReferenceSchema,
   mutationBaseShape,
+  planApplyShape,
   queryBaseShape,
   variantUnion,
 } from "./common.js";
@@ -123,70 +124,82 @@ const reconcileBaseShape = {
  * accepted — testing a provider is its own typed intent, disclosed as an
  * open-world operation because it can contact external systems.
  */
+const configReconcileIntentSchema = z.discriminatedUnion("intent", [
+  z.strictObject({
+    intent: z.literal("reconcile_provider"),
+    ...reconcileBaseShape,
+    domain: providerDomainSchema,
+    /** Absent creates a new provider; present updates that one. */
+    target: configurationReferenceSchema.optional(),
+    fields: desiredFieldsSchema,
+    removeFields: removeFieldsSchema.optional(),
+    secrets: transientSecretsSchema.optional(),
+  }),
+  z.strictObject({
+    intent: z.literal("delete_provider"),
+    ...reconcileBaseShape,
+    domain: providerDomainSchema,
+    target: configurationReferenceSchema,
+  }),
+  z.strictObject({
+    intent: z.literal("test_provider"),
+    ...reconcileBaseShape,
+    domain: providerDomainSchema,
+    target: configurationReferenceSchema,
+    secrets: transientSecretsSchema.optional(),
+  }),
+  z.strictObject({
+    intent: z.literal("reconcile_profile"),
+    ...reconcileBaseShape,
+    domain: profileDomainSchema,
+    target: configurationReferenceSchema.optional(),
+    fields: desiredFieldsSchema,
+    removeFields: removeFieldsSchema.optional(),
+  }),
+  z.strictObject({
+    intent: z.literal("delete_profile"),
+    ...reconcileBaseShape,
+    domain: profileDomainSchema,
+    target: configurationReferenceSchema,
+    /** The replacement a dependent resource migrates to, when one is required. */
+    dependentMigration: configurationReferenceSchema.optional(),
+  }),
+  z.strictObject({
+    intent: z.literal("reconcile_resource"),
+    ...reconcileBaseShape,
+    domain: resourceDomainSchema,
+    target: configurationReferenceSchema.optional(),
+    fields: desiredFieldsSchema,
+    removeFields: removeFieldsSchema.optional(),
+  }),
+  z.strictObject({
+    intent: z.literal("delete_resource"),
+    ...reconcileBaseShape,
+    domain: resourceDomainSchema,
+    target: configurationReferenceSchema,
+  }),
+  z.strictObject({
+    /** Prowlarr application sync, whose full-sync level can remove remote indexers. */
+    intent: z.literal("reconcile_application_sync"),
+    ...mutationBaseShape,
+    application: z.literal("prowlarr"),
+    target: configurationReferenceSchema,
+    syncLevel: z.enum(["disabled", "add_only", "full_sync"]),
+  }),
+]);
+
+/**
+ * Applying a recorded reconciliation plan. A secret-bearing plan retains only
+ * the names of the secrets it needs, so the caller resupplies each value here
+ * for this request alone.
+ */
+const configReconcilePlanApplySchema = z.strictObject({
+  ...planApplyShape,
+  secrets: transientSecretsSchema.optional(),
+});
+
 export const configReconcileInputSchema = variantUnion(
-  z.discriminatedUnion("intent", [
-    z.strictObject({
-      intent: z.literal("reconcile_provider"),
-      ...reconcileBaseShape,
-      domain: providerDomainSchema,
-      /** Absent creates a new provider; present updates that one. */
-      target: configurationReferenceSchema.optional(),
-      fields: desiredFieldsSchema,
-      removeFields: removeFieldsSchema.optional(),
-      secrets: transientSecretsSchema.optional(),
-    }),
-    z.strictObject({
-      intent: z.literal("delete_provider"),
-      ...reconcileBaseShape,
-      domain: providerDomainSchema,
-      target: configurationReferenceSchema,
-    }),
-    z.strictObject({
-      intent: z.literal("test_provider"),
-      ...reconcileBaseShape,
-      domain: providerDomainSchema,
-      target: configurationReferenceSchema,
-      secrets: transientSecretsSchema.optional(),
-    }),
-    z.strictObject({
-      intent: z.literal("reconcile_profile"),
-      ...reconcileBaseShape,
-      domain: profileDomainSchema,
-      target: configurationReferenceSchema.optional(),
-      fields: desiredFieldsSchema,
-      removeFields: removeFieldsSchema.optional(),
-    }),
-    z.strictObject({
-      intent: z.literal("delete_profile"),
-      ...reconcileBaseShape,
-      domain: profileDomainSchema,
-      target: configurationReferenceSchema,
-      /** The replacement a dependent resource migrates to, when one is required. */
-      dependentMigration: configurationReferenceSchema.optional(),
-    }),
-    z.strictObject({
-      intent: z.literal("reconcile_resource"),
-      ...reconcileBaseShape,
-      domain: resourceDomainSchema,
-      target: configurationReferenceSchema.optional(),
-      fields: desiredFieldsSchema,
-      removeFields: removeFieldsSchema.optional(),
-    }),
-    z.strictObject({
-      intent: z.literal("delete_resource"),
-      ...reconcileBaseShape,
-      domain: resourceDomainSchema,
-      target: configurationReferenceSchema,
-    }),
-    z.strictObject({
-      /** Prowlarr application sync, whose full-sync level can remove remote indexers. */
-      intent: z.literal("reconcile_application_sync"),
-      ...mutationBaseShape,
-      application: z.literal("prowlarr"),
-      target: configurationReferenceSchema,
-      syncLevel: z.enum(["disabled", "add_only", "full_sync"]),
-    }),
-  ]),
+  z.union([configReconcileIntentSchema, configReconcilePlanApplySchema]),
 );
 
 export const configObserveOutputSchema = toolResultSchema();

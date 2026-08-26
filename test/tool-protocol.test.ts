@@ -218,6 +218,34 @@ describe("tool protocol surface", () => {
     expect(requested).toEqual([]);
   });
 
+  it("answers a plan-reference apply without reinterpreting it as a direct intent", async () => {
+    const requested: string[] = [];
+    const client = await connect(
+      createTestToolContext({
+        environment: allApplicationsEnvironment,
+        fetch: async (url) => {
+          requested.push(url);
+          return jsonResponse(fixtureBody(applicationForUrl(url)));
+        },
+      }),
+    );
+    await client.listTools();
+
+    const result = (await client.callTool({
+      name: "arr_library_change",
+      arguments: { mode: "apply", plan: "pln_00000001" },
+    })) as CallToolResult;
+
+    expect(requested).toEqual([]);
+    expect(result.isError).toBe(true);
+    const content = structured(result);
+    expect(content.status).toBe("error");
+    expect(content.applications).toEqual([]);
+    expect((content.errors as Array<{ code: string }>).map((error) => error.code)).toEqual([
+      "unsupported_capability",
+    ]);
+  });
+
   it("accepts every published tool's minimal arguments and answers with its own envelope", async () => {
     const client = await connect(fixtureContext());
     await client.listTools();

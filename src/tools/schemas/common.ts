@@ -169,12 +169,24 @@ export function variantUnion<TSchema extends z.ZodType>(union: TSchema): TSchema
   return union.meta({ type: "object" });
 }
 
-/**
- * Fields every mutation shares. `plan` lets apply mode reuse a previously
- * returned plan reference instead of restating the intent; supplying neither a
- * plan nor a complete intent is rejected by the variant's own schema.
- */
+/** Fields every direct mutation intent shares. */
 export const mutationBaseShape = {
   mode: modeSchema,
-  plan: planReferenceSchema.optional(),
 } as const;
+
+/**
+ * The alternative apply form: a plan reference instead of a restated intent.
+ *
+ * Apply mode accepts either a complete direct intent or a compatible plan
+ * reference, so this is its own union member rather than an optional field
+ * beside required intent fields — a `plan` that still required the intent
+ * could never actually replace it. The mode is fixed to `apply` because
+ * planning a plan reference has no meaning.
+ */
+export const planApplyShape = {
+  mode: z.literal("apply"),
+  plan: planReferenceSchema,
+} as const;
+
+/** The apply-from-plan form for a tool that carries no transient secrets. */
+export const planApplySchema = z.strictObject({ ...planApplyShape });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as z4mini from "zod/v4-mini";
 import type { ApplicationCapability } from "../src/adapters/registry.js";
 import { applicationIds } from "../src/applications.js";
 import { toolDefinitions } from "../src/tools/definitions.js";
@@ -35,22 +36,55 @@ function available(application: "sonarr" | "radarr" | "prowlarr", version: strin
 }
 
 /**
- * Enumerates the discriminator values a tool's own schema accepts, by probing
- * it with each registered variant plus a value no operation declares.
+ * Collects the discriminator values a tool's published JSON Schema declares.
+ *
+ * Reading the published schema rather than probing the parser is what makes
+ * this a contract check: a host and a calling model see exactly this set, so a
+ * registry variant missing from it is unreachable in practice.
  */
-function acceptsVariant(tool: (typeof toolNames)[number], variant: string): boolean {
+function declaredVariants(tool: (typeof toolNames)[number]): Set<string> {
   const definition = toolDefinitions.find((candidate) => candidate.name === tool);
-  if (definition?.discriminator === undefined) {
-    return false;
+  const discriminator = definition?.discriminator;
+  const found = new Set<string>();
+  if (definition === undefined || discriminator === undefined) {
+    return found;
   }
-  const discriminator = definition.discriminator;
-  const result = definition.inputSchema.safeParse({ [discriminator]: variant });
-  if (result.success) {
-    return true;
-  }
-  // A declared variant fails only on its own required fields; an undeclared
-  // one fails on the discriminator itself.
-  return !result.error.issues.some((issue) => issue.path[0] === discriminator);
+
+  const schema = z4mini.toJSONSchema(definition.inputSchema as never, {
+    target: "draft-7",
+    io: "input",
+  }) as unknown;
+
+  const visit = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        visit(child);
+      }
+      return;
+    }
+    if (typeof node !== "object" || node === null) {
+      return;
+    }
+    const record = node as Record<string, unknown>;
+    const properties = record.properties as Record<string, unknown> | undefined;
+    const property = properties?.[discriminator] as Record<string, unknown> | undefined;
+    if (typeof property?.const === "string") {
+      found.add(property.const);
+    }
+    if (Array.isArray(property?.enum)) {
+      for (const value of property.enum) {
+        if (typeof value === "string") {
+          found.add(value);
+        }
+      }
+    }
+    for (const value of Object.values(record)) {
+      visit(value);
+    }
+  };
+
+  visit(schema);
+  return found;
 }
 
 describe("internal operation registry", () => {
@@ -116,14 +150,9 @@ describe("internal operation registry", () => {
         continue;
       }
 
-      for (const variant of declared) {
-        expect(variant, definition.name).toBeDefined();
-        expect(
-          acceptsVariant(definition.name, variant ?? ""),
-          `${definition.name}/${variant}`,
-        ).toBe(true);
-      }
-      expect(acceptsVariant(definition.name, "not_a_variant")).toBe(false);
+      const published = declaredVariants(definition.name);
+      expect([...published].sort(), definition.name).toEqual([...declared].sort());
+      expect(published.has("not_a_variant"), definition.name).toBe(false);
     }
   });
 
@@ -246,6 +275,7 @@ describe("internal operation registry", () => {
       variant: "series",
       applications: undefined,
       mode: "read",
+      planReference: undefined,
       input: { view: "series" },
     });
 
@@ -270,6 +300,7 @@ describe("internal operation registry", () => {
       variant: "movies",
       applications: ["sonarr", "prowlarr"],
       mode: "read",
+      planReference: undefined,
       input: { view: "movies" },
     });
 
@@ -296,6 +327,7 @@ describe("internal operation registry", () => {
       variant: "series",
       applications: ["sonarr", "sonarr"],
       mode: "read",
+      planReference: undefined,
       input: { view: "series" },
     });
 
@@ -310,6 +342,7 @@ describe("internal operation registry", () => {
       variant: "library.query.series",
       applications: undefined,
       mode: "read",
+      planReference: undefined,
       input: {},
     });
 

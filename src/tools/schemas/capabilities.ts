@@ -43,8 +43,16 @@ export const capabilityReportSchema = z.strictObject({
   minimumVersion: z.string().min(1),
   /** The version the instance reported, absent when it was never reached. */
   version: z.string().min(1).optional(),
+  /** Operations this instance can run right now. */
   supportedOperations: z.array(capabilityOperationSchema),
+  /** Operations this instance would need a newer release to run. */
   unsupportedOperations: z.array(capabilityUnsupportedOperationSchema),
+  /**
+   * Operations this server publishes but has not implemented yet. Calling one
+   * returns `unsupported_capability`; the list shrinks as each domain change
+   * supplies its behavior.
+   */
+  unimplementedOperations: z.array(capabilityOperationSchema),
 });
 
 export type CapabilityReport = z.infer<typeof capabilityReportSchema>;

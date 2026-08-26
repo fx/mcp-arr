@@ -1,7 +1,11 @@
 import type { ApplicationCapability } from "../adapters/registry.js";
 import { type ApplicationId, applicationIds, describeApplication } from "../applications.js";
 import { capabilityFor, type ToolContext } from "./dispatch.js";
-import { checkOperationSupport, type OperationDefinition } from "./operations.js";
+import {
+  checkOperationSupport,
+  isImplementedOperation,
+  type OperationDefinition,
+} from "./operations.js";
 import { applicationOutcome, buildToolResult, type ToolResult } from "./results.js";
 import type { CapabilityReport, CapabilityState } from "./schemas/capabilities.js";
 
@@ -53,14 +57,23 @@ function warningsFor(capability: ApplicationCapability): readonly string[] {
 function projectOperations(
   capability: ApplicationCapability,
   operations: readonly OperationDefinition[],
-): Pick<CapabilityReport, "supportedOperations" | "unsupportedOperations"> {
+): Pick<
+  CapabilityReport,
+  "supportedOperations" | "unsupportedOperations" | "unimplementedOperations"
+> {
   const supportedOperations: CapabilityReport["supportedOperations"] = [];
   const unsupportedOperations: CapabilityReport["unsupportedOperations"] = [];
+  const unimplementedOperations: CapabilityReport["unimplementedOperations"] = [];
 
   for (const operation of operations) {
     const support = checkOperationSupport(operation, capability);
     if (support.status === "supported") {
-      supportedOperations.push(project(operation));
+      // Only an operation with real adapter behavior is advertised as usable;
+      // a declared one without a handler would answer unsupported_capability.
+      const target = isImplementedOperation(operation)
+        ? supportedOperations
+        : unimplementedOperations;
+      target.push(project(operation));
       continue;
     }
     if (
@@ -75,7 +88,7 @@ function projectOperations(
     }
   }
 
-  return { supportedOperations, unsupportedOperations };
+  return { supportedOperations, unsupportedOperations, unimplementedOperations };
 }
 
 export function buildCapabilityReport(

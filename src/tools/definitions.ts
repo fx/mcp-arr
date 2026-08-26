@@ -98,6 +98,14 @@ function readApplications(input: unknown): readonly ApplicationId[] | undefined 
   return isApplicationId(singular) ? [singular] : undefined;
 }
 
+function readPlanReference(input: unknown): string | undefined {
+  if (!isRecord(input)) {
+    return undefined;
+  }
+  const plan = input.plan;
+  return typeof plan === "string" ? plan : undefined;
+}
+
 function readMode(input: unknown): OperationMode {
   if (!isRecord(input)) {
     return "read";
@@ -139,6 +147,7 @@ function domainTool(options: DomainToolOptions): ToolDefinition {
         variant: readVariant(input, discriminator),
         applications: readApplications(input),
         mode: readMode(input),
+        planReference: readPlanReference(input),
         input,
       });
     },

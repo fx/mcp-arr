@@ -36,6 +36,12 @@ export interface DispatchRequest {
    */
   readonly applications: readonly ApplicationId[] | undefined;
   readonly mode: OperationMode;
+  /**
+   * Set when the caller applied a recorded plan instead of restating the
+   * intent. The intent then lives in the plan record rather than in the input,
+   * so dispatch cannot derive a variant from the arguments alone.
+   */
+  readonly planReference: string | undefined;
   readonly input: unknown;
 }
 
@@ -184,6 +190,21 @@ export async function dispatchOperation(
   context: ToolContext,
   request: DispatchRequest,
 ): Promise<ToolResult<unknown>> {
+  if (request.planReference !== undefined) {
+    // Resolving a plan reference needs the process-local plan store, which the
+    // change that owns ephemeral workflow state supplies. Until then the form
+    // validates and is answered honestly rather than silently reinterpreted as
+    // a direct intent.
+    return buildToolResult({
+      errors: [
+        createToolError({
+          code: "unsupported_capability",
+          message: `${request.tool}: applying a recorded plan reference is not implemented yet`,
+        }),
+      ],
+    });
+  }
+
   const operation = context.operations.find(request.tool, request.variant);
   if (operation === undefined) {
     return buildToolResult({

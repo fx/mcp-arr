@@ -8,6 +8,7 @@ import {
   maxBulkItems,
   mediaReferenceSchema,
   mutationBaseShape,
+  planApplySchema,
   queryBaseShape,
   queueReferenceSchema,
   variantUnion,
@@ -74,54 +75,56 @@ const queueSelection = bulkReferences(queueReferenceSchema);
  * delete flags have consequential precedence, and each intent compiles to
  * exactly one valid flag combination.
  */
+const queueResolveIntentSchema = z.discriminatedUnion("intent", [
+  z.strictObject({
+    /** Stops tracking without removal, blocklist, or category change. */
+    intent: z.literal("ignore_tracking"),
+    ...mutationBaseShape,
+    items: queueSelection,
+  }),
+  z.strictObject({
+    /** Requests deletion of the download client's payload data. */
+    intent: z.literal("remove_from_client_and_delete_data"),
+    ...mutationBaseShape,
+    items: queueSelection,
+  }),
+  z.strictObject({
+    intent: z.literal("blocklist_and_remove"),
+    ...mutationBaseShape,
+    items: queueSelection,
+    /** Explicit choice: there is no default replacement-search behavior. */
+    replacementSearch: z.enum(["allow", "suppress"]),
+  }),
+  z.strictObject({
+    /** Marks the item imported by category change, never by client removal. */
+    intent: z.literal("change_category_mark_imported"),
+    ...mutationBaseShape,
+    items: queueSelection,
+  }),
+  z.strictObject({
+    intent: z.literal("route_to_manual_import"),
+    ...mutationBaseShape,
+    items: queueSelection,
+  }),
+  z.strictObject({
+    intent: z.literal("force_pending_grab"),
+    ...mutationBaseShape,
+    items: queueSelection,
+  }),
+  z.strictObject({
+    intent: z.literal("remove_pending"),
+    ...mutationBaseShape,
+    items: queueSelection,
+  }),
+  z.strictObject({
+    intent: z.literal("blocklist_pending"),
+    ...mutationBaseShape,
+    items: queueSelection,
+  }),
+]);
+
 export const queueResolveInputSchema = variantUnion(
-  z.discriminatedUnion("intent", [
-    z.strictObject({
-      /** Stops tracking without removal, blocklist, or category change. */
-      intent: z.literal("ignore_tracking"),
-      ...mutationBaseShape,
-      items: queueSelection,
-    }),
-    z.strictObject({
-      /** Requests deletion of the download client's payload data. */
-      intent: z.literal("remove_from_client_and_delete_data"),
-      ...mutationBaseShape,
-      items: queueSelection,
-    }),
-    z.strictObject({
-      intent: z.literal("blocklist_and_remove"),
-      ...mutationBaseShape,
-      items: queueSelection,
-      /** Explicit choice: there is no default replacement-search behavior. */
-      replacementSearch: z.enum(["allow", "suppress"]),
-    }),
-    z.strictObject({
-      /** Marks the item imported by category change, never by client removal. */
-      intent: z.literal("change_category_mark_imported"),
-      ...mutationBaseShape,
-      items: queueSelection,
-    }),
-    z.strictObject({
-      intent: z.literal("route_to_manual_import"),
-      ...mutationBaseShape,
-      items: queueSelection,
-    }),
-    z.strictObject({
-      intent: z.literal("force_pending_grab"),
-      ...mutationBaseShape,
-      items: queueSelection,
-    }),
-    z.strictObject({
-      intent: z.literal("remove_pending"),
-      ...mutationBaseShape,
-      items: queueSelection,
-    }),
-    z.strictObject({
-      intent: z.literal("blocklist_pending"),
-      ...mutationBaseShape,
-      items: queueSelection,
-    }),
-  ]),
+  z.union([queueResolveIntentSchema, planApplySchema]),
 );
 
 /**
@@ -132,19 +135,21 @@ export const queueResolveInputSchema = variantUnion(
  * blocklist record only re-allows a release — it never deletes media. Clearing
  * every blocklist record is deliberately absent.
  */
+const activityChangeIntentSchema = z.discriminatedUnion("intent", [
+  z.strictObject({
+    intent: z.literal("mark_history_failed"),
+    ...mutationBaseShape,
+    records: bulkReferences(historyReferenceSchema),
+  }),
+  z.strictObject({
+    intent: z.literal("remove_blocklist_record"),
+    ...mutationBaseShape,
+    records: bulkReferences(blocklistReferenceSchema),
+  }),
+]);
+
 export const activityChangeInputSchema = variantUnion(
-  z.discriminatedUnion("intent", [
-    z.strictObject({
-      intent: z.literal("mark_history_failed"),
-      ...mutationBaseShape,
-      records: bulkReferences(historyReferenceSchema),
-    }),
-    z.strictObject({
-      intent: z.literal("remove_blocklist_record"),
-      ...mutationBaseShape,
-      records: bulkReferences(blocklistReferenceSchema),
-    }),
-  ]),
+  z.union([activityChangeIntentSchema, planApplySchema]),
 );
 
 export const activityQueryOutputSchema = toolResultSchema();

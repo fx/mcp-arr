@@ -97,6 +97,7 @@ describe("arr_capabilities", () => {
       minimumVersion: "6.3.0.10514",
       supportedOperations: [],
       unsupportedOperations: [],
+      unimplementedOperations: [],
     });
     expect("version" in reportFor(result, "radarr")).toBe(false);
     expect(result.applications[1]?.warnings).toEqual([
@@ -125,11 +126,12 @@ describe("arr_capabilities", () => {
 
     expect(result.status).toBe("ok");
     expect(reportFor(result, "sonarr").state).toBe("available");
-    expect(reportFor(result, "sonarr").supportedOperations.length).toBeGreaterThan(0);
+    expect(reportFor(result, "sonarr").unimplementedOperations.length).toBeGreaterThan(0);
     expect(reportFor(result, "radarr")).toMatchObject({
       state: "unavailable",
       supportedOperations: [],
       unsupportedOperations: [],
+      unimplementedOperations: [],
     });
 
     const serialized = JSON.stringify(result);
@@ -148,14 +150,14 @@ describe("arr_capabilities", () => {
     const sonarr = reportFor(result, "sonarr");
     const prowlarr = reportFor(result, "prowlarr");
 
-    const sonarrKeys = sonarr.supportedOperations.map(
+    const sonarrKeys = sonarr.unimplementedOperations.map(
       (operation) => `${operation.tool}/${operation.variant ?? "-"}`,
     );
     expect(sonarrKeys).toContain("arr_library_query/series");
     expect(sonarrKeys).not.toContain("arr_library_query/movies");
     expect(sonarrKeys).not.toContain("arr_activity_query/indexer_status");
 
-    const prowlarrKeys = prowlarr.supportedOperations.map(
+    const prowlarrKeys = prowlarr.unimplementedOperations.map(
       (operation) => `${operation.tool}/${operation.variant ?? "-"}`,
     );
     expect(prowlarrKeys).toContain("arr_activity_query/indexer_status");
@@ -164,10 +166,48 @@ describe("arr_capabilities", () => {
     const expectedSonarr = operationDefinitions.filter((operation) =>
       operation.applications.includes("sonarr"),
     ).length;
-    expect(sonarr.supportedOperations).toHaveLength(expectedSonarr);
-    expect(sonarr.supportedOperations.every((operation) => operation.sideEffect.length > 0)).toBe(
-      true,
+    expect(sonarr.unimplementedOperations).toHaveLength(expectedSonarr);
+    expect(sonarr.unimplementedOperations.every((entry) => entry.sideEffect.length > 0)).toBe(true);
+  });
+
+  it("advertises no operation as supported while none has adapter behavior yet", async () => {
+    const context = createTestToolContext({
+      environment: allApplicationsEnvironment,
+      fetch: async (url) => jsonResponse(fixtureBody(applicationForUrl(url))),
+    });
+
+    const result = await reportCapabilities(context, undefined);
+    for (const application of ["sonarr", "radarr", "prowlarr"] as const) {
+      expect(reportFor(result, application).supportedOperations, application).toEqual([]);
+    }
+  });
+
+  it("advertises an operation as supported once it has a real handler", async () => {
+    const base = operationDefinitions.find(
+      (operation) => operation.tool === "arr_library_query" && operation.variant === "series",
     );
+    if (base === undefined) {
+      throw new Error("Missing the series library operation");
+    }
+    const implemented: OperationDefinition = {
+      ...base,
+      handler: async () => ({ status: "ok", data: {} }),
+    };
+    const context = createTestToolContext({
+      environment: {
+        SONARR_URL: "https://sonarr.example.invalid/sonarr",
+        SONARR_API_KEY: testApiKeys.sonarr,
+      },
+      operations: [implemented],
+      fetch: async () => jsonResponse(fixtureBody("sonarr")),
+    });
+
+    const report = reportFor(await reportCapabilities(context, undefined), "sonarr");
+
+    expect(report.supportedOperations).toEqual([
+      { tool: "arr_library_query", variant: "series", sideEffect: "read" },
+    ]);
+    expect(report.unimplementedOperations).toEqual([]);
   });
 
   it("reports an operation that needs a newer release as unsupported", async () => {

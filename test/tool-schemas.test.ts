@@ -280,20 +280,48 @@ describe("published tool surface", () => {
     );
   });
 
-  it("accepts a plan reference in place of a restated intent", () => {
+  it("accepts a plan reference in place of a restated intent on every mutation tool", () => {
+    const planApply = { mode: "apply", plan: sampleReferences.plan };
+    const mutationTools = toolNames.filter((name) => "mode" in sampleToolInputs[name]);
+    expect(mutationTools).toHaveLength(8);
+
+    for (const name of mutationTools) {
+      expect(parseInput(name, planApply).success, name).toBe(true);
+      // Planning a plan reference has no meaning, so the form fixes the mode.
+      expect(parseInput(name, { mode: "plan", plan: sampleReferences.plan }).success, name).toBe(
+        false,
+      );
+      // A plan reference replaces the intent rather than accompanying it.
+      expect(
+        parseInput(name, { ...sampleFor(name), mode: "apply", plan: sampleReferences.plan })
+          .success,
+        name,
+      ).toBe(false);
+      expect(parseInput(name, { mode: "apply", plan: sampleReferences.job }).success, name).toBe(
+        false,
+      );
+    }
+
     expect(
-      parseInput("arr_release_grab", {
-        mode: "apply",
-        releases: [sampleReferences.release],
-        plan: sampleReferences.plan,
+      parseInput("arr_config_reconcile", {
+        ...planApply,
+        secrets: [{ name: "password", value: "resupplied" }],
       }).success,
     ).toBe(true);
     expect(
-      parseInput("arr_release_grab", {
-        mode: "apply",
-        releases: [sampleReferences.release],
-        plan: sampleReferences.job,
+      parseInput("arr_library_change", {
+        ...planApply,
+        secrets: [{ name: "password", value: "resupplied" }],
       }).success,
     ).toBe(false);
+  });
+
+  it("offers no plan-reference form on a read tool", () => {
+    const readTools = toolNames.filter((name) => !("mode" in sampleToolInputs[name]));
+    for (const name of readTools) {
+      expect(parseInput(name, { mode: "apply", plan: sampleReferences.plan }).success, name).toBe(
+        false,
+      );
+    }
   });
 });

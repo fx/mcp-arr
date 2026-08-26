@@ -8,6 +8,7 @@ import {
   mediaFileReferenceSchema,
   mediaReferenceSchema,
   mutationBaseShape,
+  planApplySchema,
   queryBaseShape,
   searchTermSchema,
   variantUnion,
@@ -147,57 +148,59 @@ const fileChangesSchema = z.strictObject({
  * files by omission. `rename` in plan mode is the rename preview — it returns
  * the proposed paths without starting a rename command.
  */
+const libraryChangeIntentSchema = z.discriminatedUnion("intent", [
+  z.strictObject({
+    intent: z.literal("add_media"),
+    ...mutationBaseShape,
+    application: mediaApplicationSchema,
+    /** A reference returned by the `lookup` view, never a raw upstream payload. */
+    lookup: mediaReferenceSchema,
+    rootFolder: configurationReferenceSchema,
+    qualityProfile: configurationReferenceSchema,
+    monitor: monitorSelectionSchema,
+    /** Explicit: adding a record never launches an acquisition search by default. */
+    searchOnAdd: z.boolean(),
+    tags: tagSelection.optional(),
+  }),
+  z.strictObject({
+    intent: z.literal("set_monitoring"),
+    ...mutationBaseShape,
+    items: mediaSelection,
+    monitored: z.boolean(),
+  }),
+  z.strictObject({
+    intent: z.literal("edit_media"),
+    ...mutationBaseShape,
+    items: mediaSelection,
+    changes: mediaChangesSchema,
+  }),
+  z.strictObject({
+    intent: z.literal("delete_media"),
+    ...mutationBaseShape,
+    items: mediaSelection,
+    deleteFiles: z.boolean(),
+    addImportListExclusion: z.boolean(),
+  }),
+  z.strictObject({
+    intent: z.literal("update_file_metadata"),
+    ...mutationBaseShape,
+    files: z.array(mediaFileReferenceSchema).min(1).max(maxBulkItems),
+    changes: fileChangesSchema,
+  }),
+  z.strictObject({
+    intent: z.literal("delete_file"),
+    ...mutationBaseShape,
+    files: z.array(mediaFileReferenceSchema).min(1).max(maxBulkItems),
+  }),
+  z.strictObject({
+    intent: z.literal("rename"),
+    ...mutationBaseShape,
+    items: mediaSelection,
+  }),
+]);
+
 export const libraryChangeInputSchema = variantUnion(
-  z.discriminatedUnion("intent", [
-    z.strictObject({
-      intent: z.literal("add_media"),
-      ...mutationBaseShape,
-      application: mediaApplicationSchema,
-      /** A reference returned by the `lookup` view, never a raw upstream payload. */
-      lookup: mediaReferenceSchema,
-      rootFolder: configurationReferenceSchema,
-      qualityProfile: configurationReferenceSchema,
-      monitor: monitorSelectionSchema,
-      /** Explicit: adding a record never launches an acquisition search by default. */
-      searchOnAdd: z.boolean(),
-      tags: tagSelection.optional(),
-    }),
-    z.strictObject({
-      intent: z.literal("set_monitoring"),
-      ...mutationBaseShape,
-      items: mediaSelection,
-      monitored: z.boolean(),
-    }),
-    z.strictObject({
-      intent: z.literal("edit_media"),
-      ...mutationBaseShape,
-      items: mediaSelection,
-      changes: mediaChangesSchema,
-    }),
-    z.strictObject({
-      intent: z.literal("delete_media"),
-      ...mutationBaseShape,
-      items: mediaSelection,
-      deleteFiles: z.boolean(),
-      addImportListExclusion: z.boolean(),
-    }),
-    z.strictObject({
-      intent: z.literal("update_file_metadata"),
-      ...mutationBaseShape,
-      files: z.array(mediaFileReferenceSchema).min(1).max(maxBulkItems),
-      changes: fileChangesSchema,
-    }),
-    z.strictObject({
-      intent: z.literal("delete_file"),
-      ...mutationBaseShape,
-      files: z.array(mediaFileReferenceSchema).min(1).max(maxBulkItems),
-    }),
-    z.strictObject({
-      intent: z.literal("rename"),
-      ...mutationBaseShape,
-      items: mediaSelection,
-    }),
-  ]),
+  z.union([libraryChangeIntentSchema, planApplySchema]),
 );
 
 export const libraryQueryOutputSchema = toolResultSchema();

@@ -97,6 +97,18 @@ export const unsupportedOperationHandler: OperationHandler = ({ application }) =
     }),
   });
 
+/**
+ * Whether an operation has real adapter behavior yet.
+ *
+ * Derived from the handler rather than a flag, so an operation becomes
+ * implemented exactly when its change supplies a handler and there is no
+ * separate marker to forget to flip. `arr_capabilities` uses this so it never
+ * advertises an operation that would answer `unsupported_capability`.
+ */
+export function isImplementedOperation(operation: OperationDefinition): boolean {
+  return operation.handler !== unsupportedOperationHandler;
+}
+
 function define<const TId extends string>(
   id: TId,
   tool: ToolName,
