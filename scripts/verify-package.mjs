@@ -17,6 +17,13 @@ const execFileAsync = promisify(execFile);
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const allowedFiles = [
   "README.md",
+  "dist/adapters/library/model.js",
+  "dist/adapters/library/paging.js",
+  "dist/adapters/library/parse.js",
+  "dist/adapters/library/radarr.js",
+  "dist/adapters/library/requests.js",
+  "dist/adapters/library/service.js",
+  "dist/adapters/library/sonarr.js",
   "dist/adapters/registry.js",
   "dist/adapters/version.js",
   "dist/applications.js",

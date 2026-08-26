@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "application": "sonarr",
+    "apiVersion": "v3",
+    "version": "4.0.19.2979",
+    "endpoint": "/api/v3/series/lookup"
+  },
+  "body": [
+    {
+      "id": 12,
+      "title": "Example Series",
+      "sortTitle": "example series",
+      "status": "continuing",
+      "ended": false,
+      "overview": "A sanitized series overview recorded only to fix the payload shape",
+      "network": "Example Network",
+      "airTime": "21:00",
+      "year": 2019,
+      "runtime": 45,
+      "path": "/media/example/series/Example Series",
+      "rootFolderPath": "/media/example/series",
+      "qualityProfileId": 1,
+      "seasonFolder": true,
+      "monitored": true,
+      "monitorNewItems": "all",
+      "tvdbId": 100001,
+      "seriesType": "standard",
+      "titleSlug": "example-series",
+      "certification": "TV-14",
+      "genres": ["Drama", "Mystery"],
+      "tags": [3],
+      "added": "2024-01-05T12:00:00Z",
+      "ratings": {
+        "votes": 120,
+        "value": 8.1
+      },
+      "images": [],
+      "seasons": [
+        {
+          "seasonNumber": 1,
+          "monitored": true,
+          "statistics": {
+            "episodeFileCount": 2,
+            "episodeCount": 2,
+            "totalEpisodeCount": 2,
+            "sizeOnDisk": 2048,
+            "percentOfEpisodes": 100
+          }
+        },
+        {
+          "seasonNumber": 2,
+          "monitored": false,
+          "statistics": {
+            "episodeFileCount": 0,
+            "episodeCount": 1,
+            "totalEpisodeCount": 1,
+            "sizeOnDisk": 0,
+            "percentOfEpisodes": 0
+          }
+        }
+      ],
+      "statistics": {
+        "seasonCount": 2,
+        "episodeFileCount": 2,
+        "episodeCount": 3,
+        "totalEpisodeCount": 3,
+        "sizeOnDisk": 2048,
+        "releaseGroups": ["EXAMPLEGRP"],
+        "percentOfEpisodes": 100
+      }
+    },
+    {
+      "id": 0,
+      "title": "Example New Series",
+      "sortTitle": "example new series",
+      "status": "upcoming",
+      "ended": false,
+      "overview": "A sanitized lookup overview recorded only to fix the payload shape",
+      "network": "Example Streamer",
+      "year": 2026,
+      "runtime": 50,
+      "monitored": false,
+      "tvdbId": 100004,
+      "seriesType": "standard",
+      "titleSlug": "example-new-series",
+      "certification": "TV-14",
+      "genres": ["Thriller"],
+      "tags": [],
+      "images": [],
+      "seasons": [
+        {
+          "seasonNumber": 1,
+          "monitored": false
+        }
+      ],
+      "statistics": {
+        "seasonCount": 1,
+        "episodeFileCount": 0,
+        "episodeCount": 0,
+        "totalEpisodeCount": 0,
+        "sizeOnDisk": 0,
+        "releaseGroups": ["EXAMPLEGRP"],
+        "percentOfEpisodes": 100
+      }
+    }
+  ]
+}

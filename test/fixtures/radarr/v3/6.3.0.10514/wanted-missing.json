@@ -1,0 +1,91 @@
+{
+  "metadata": {
+    "application": "radarr",
+    "apiVersion": "v3",
+    "version": "6.3.0.10514",
+    "endpoint": "/api/v3/wanted/missing"
+  },
+  "body": {
+    "page": 1,
+    "pageSize": 2,
+    "sortKey": "sortTitle",
+    "sortDirection": "ascending",
+    "totalRecords": 3,
+    "records": [
+      {
+        "id": 9,
+        "title": "Example Awaited Movie",
+        "originalTitle": "Example Awaited Movie",
+        "sortTitle": "example awaited movie",
+        "status": "announced",
+        "overview": "A sanitized upcoming movie overview recorded only to fix the payload shape",
+        "year": 2026,
+        "runtime": 0,
+        "path": "/media/example/movies/Example Awaited Movie (2026)",
+        "rootFolderPath": "/media/example/movies",
+        "qualityProfileId": 2,
+        "monitored": true,
+        "minimumAvailability": "announced",
+        "hasFile": false,
+        "sizeOnDisk": 0,
+        "isAvailable": false,
+        "tmdbId": 200002,
+        "imdbId": "tt0000002",
+        "studio": "Example Studio",
+        "certification": "PG",
+        "genres": ["Adventure"],
+        "tags": [],
+        "added": "2026-01-15T11:00:00Z",
+        "inCinemas": "2026-11-20T00:00:00Z",
+        "physicalRelease": null,
+        "digitalRelease": null,
+        "popularity": 4.2,
+        "collection": null,
+        "alternateTitles": [],
+        "originalLanguage": {
+          "id": 1,
+          "name": "English"
+        },
+        "ratings": {},
+        "images": []
+      },
+      {
+        "id": 11,
+        "title": "Example Missing Movie",
+        "originalTitle": "Example Missing Movie",
+        "sortTitle": "example missing movie",
+        "status": "released",
+        "overview": "A sanitized missing movie overview recorded only to fix the payload shape",
+        "year": 2004,
+        "runtime": 95,
+        "path": "/media/example/movies/Example Missing Movie (2004)",
+        "rootFolderPath": "/media/example/movies",
+        "qualityProfileId": 1,
+        "monitored": true,
+        "minimumAvailability": "released",
+        "hasFile": false,
+        "sizeOnDisk": 0,
+        "isAvailable": true,
+        "tmdbId": 200006,
+        "imdbId": "tt0000006",
+        "studio": "Example Studio",
+        "certification": "PG",
+        "genres": ["Comedy"],
+        "tags": [7],
+        "added": "2024-05-04T13:10:00Z",
+        "inCinemas": "2004-03-05T00:00:00Z",
+        "physicalRelease": "2004-08-10T00:00:00Z",
+        "digitalRelease": null,
+        "popularity": 1.1,
+        "collection": null,
+        "alternateTitles": [],
+        "originalLanguage": {
+          "id": 1,
+          "name": "English"
+        },
+        "ratings": {},
+        "images": []
+      }
+    ]
+  }
+}

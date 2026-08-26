@@ -17,6 +17,18 @@ export interface UpstreamClientOptions {
   readonly fetch?: FetchLike | undefined;
 }
 
+export type UpstreamQueryValue = string | number | boolean;
+
+/**
+ * The query parameters one upstream read may carry.
+ *
+ * Names are authored here in adapter code, never taken from a caller, and an
+ * `undefined` value drops its parameter rather than sending an empty one.
+ * Values may be caller-derived — a lookup term is — so they are percent-encoded
+ * and, deliberately, never reach an error message.
+ */
+export type UpstreamQuery = Readonly<Record<string, UpstreamQueryValue | undefined>>;
+
 export interface UpstreamClient {
   readonly application: ApplicationId;
   /**
@@ -26,7 +38,27 @@ export interface UpstreamClient {
    * still a configured value, so keep it out of tool results and diagnostics.
    */
   readonly apiBaseUrl: string;
-  get(path: string): Promise<unknown>;
+  get(path: string, query?: UpstreamQuery): Promise<unknown>;
+}
+
+/**
+ * Serializes a query into a percent-encoded search string.
+ *
+ * Parameters are emitted in sorted name order so the same request always
+ * produces the same URL regardless of how an adapter happened to build the
+ * object, and every value goes through `URLSearchParams`, so a term containing
+ * `&`, `#`, or `?` cannot alter the request it belongs to.
+ */
+function buildQueryString(query: UpstreamQuery): string {
+  const params = new URLSearchParams();
+  for (const name of Object.keys(query).sort()) {
+    const value = query[name];
+    if (value !== undefined) {
+      params.append(name, String(value));
+    }
+  }
+  const encoded = params.toString();
+  return encoded === "" ? "" : `?${encoded}`;
 }
 
 function discardBody(response: Response): void {
@@ -56,13 +88,16 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
     application,
     apiBaseUrl,
 
-    async get(path: string): Promise<unknown> {
+    async get(path: string, query?: UpstreamQuery): Promise<unknown> {
       const joined = joinUpstreamUrl(apiBaseUrl, path);
       if (!joined.ok) {
         throw new UpstreamError("invalid-request", { application, pathProblem: joined.problem });
       }
 
-      const url = joined.url;
+      // Appended after the path is validated and joined, and deliberately kept
+      // out of `operation` below: the route names the failure, while a query
+      // value can be caller-derived and must never reach a diagnostic.
+      const url = `${joined.url}${query === undefined ? "" : buildQueryString(query)}`;
       const controller = new AbortController();
       let timedOut = false;
       const timer = setTimeout(() => {

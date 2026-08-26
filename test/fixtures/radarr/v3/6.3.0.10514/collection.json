@@ -1,0 +1,53 @@
+{
+  "metadata": {
+    "application": "radarr",
+    "apiVersion": "v3",
+    "version": "6.3.0.10514",
+    "endpoint": "/api/v3/collection"
+  },
+  "body": [
+    {
+      "id": 21,
+      "title": "Example Collection",
+      "sortTitle": "example collection",
+      "tmdbId": 300001,
+      "overview": "A sanitized collection overview recorded only to fix the payload shape",
+      "monitored": true,
+      "qualityProfileId": 2,
+      "rootFolderPath": "/media/example/movies",
+      "searchOnAdd": false,
+      "minimumAvailability": "released",
+      "genres": ["Drama"],
+      "images": [],
+      "movies": [
+        {
+          "tmdbId": 200001,
+          "title": "Example Movie",
+          "monitored": true,
+          "year": 2021
+        },
+        {
+          "tmdbId": 200005,
+          "title": "Example Movie Sequel",
+          "monitored": false,
+          "year": 2024
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "title": "Example Dormant Collection",
+      "sortTitle": "example dormant collection",
+      "tmdbId": 300002,
+      "overview": "A sanitized dormant collection overview recorded only to fix the payload shape",
+      "monitored": false,
+      "qualityProfileId": 1,
+      "rootFolderPath": "/media/example/movies",
+      "searchOnAdd": false,
+      "minimumAvailability": "announced",
+      "genres": [],
+      "images": [],
+      "movies": []
+    }
+  ]
+}

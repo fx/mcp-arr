@@ -1,0 +1,51 @@
+{
+  "metadata": {
+    "application": "sonarr",
+    "apiVersion": "v3",
+    "version": "4.0.19.2979",
+    "endpoint": "/api/v3/wanted/cutoff"
+  },
+  "body": {
+    "page": 1,
+    "pageSize": 2,
+    "sortKey": "airDateUtc",
+    "sortDirection": "descending",
+    "totalRecords": 1,
+    "records": [
+      {
+        "id": 1001,
+        "seriesId": 12,
+        "tvdbId": 900001,
+        "episodeFileId": 2001,
+        "seasonNumber": 1,
+        "episodeNumber": 1,
+        "title": "Example Pilot",
+        "airDate": "2019-04-01",
+        "airDateUtc": "2019-04-01T20:00:00Z",
+        "runtime": 45,
+        "overview": "A sanitized episode overview recorded only to fix the payload shape",
+        "hasFile": true,
+        "monitored": true,
+        "absoluteEpisodeNumber": null,
+        "unverifiedSceneNumbering": false,
+        "finaleType": null,
+        "series": {
+          "id": 12,
+          "title": "Example Series",
+          "sortTitle": "example series",
+          "status": "continuing",
+          "monitored": true,
+          "runtime": 45,
+          "year": 2019,
+          "seriesType": "standard",
+          "titleSlug": "example-series",
+          "tvdbId": 100001,
+          "path": "/media/example/series/Example Series",
+          "qualityProfileId": 1,
+          "tags": [3],
+          "images": []
+        }
+      }
+    ]
+  }
+}

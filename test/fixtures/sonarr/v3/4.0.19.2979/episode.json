@@ -1,0 +1,82 @@
+{
+  "metadata": {
+    "application": "sonarr",
+    "apiVersion": "v3",
+    "version": "4.0.19.2979",
+    "endpoint": "/api/v3/episode"
+  },
+  "body": [
+    {
+      "id": 1001,
+      "seriesId": 12,
+      "tvdbId": 900001,
+      "episodeFileId": 2001,
+      "seasonNumber": 1,
+      "episodeNumber": 1,
+      "title": "Example Pilot",
+      "airDate": "2019-04-01",
+      "airDateUtc": "2019-04-01T20:00:00Z",
+      "runtime": 45,
+      "overview": "A sanitized episode overview recorded only to fix the payload shape",
+      "hasFile": true,
+      "monitored": true,
+      "absoluteEpisodeNumber": null,
+      "unverifiedSceneNumbering": false,
+      "finaleType": null
+    },
+    {
+      "id": 1002,
+      "seriesId": 13,
+      "tvdbId": 900002,
+      "episodeFileId": 2002,
+      "seasonNumber": 1,
+      "episodeNumber": 2,
+      "absoluteEpisodeNumber": 14,
+      "title": "Example Absolute Episode",
+      "airDate": "2021-07-14",
+      "airDateUtc": "2021-07-14T14:30:00Z",
+      "runtime": 24,
+      "overview": "A sanitized anime episode overview recorded only to fix the payload shape",
+      "hasFile": true,
+      "monitored": true,
+      "unverifiedSceneNumbering": false,
+      "finaleType": null
+    },
+    {
+      "id": 1003,
+      "seriesId": 12,
+      "tvdbId": 900003,
+      "episodeFileId": 0,
+      "seasonNumber": 2,
+      "episodeNumber": 1,
+      "absoluteEpisodeNumber": null,
+      "title": "Example Return",
+      "airDate": "2026-09-30",
+      "airDateUtc": "2026-09-30T20:00:00Z",
+      "runtime": 45,
+      "overview": "A sanitized unaired episode overview recorded only to fix the payload shape",
+      "hasFile": false,
+      "monitored": false,
+      "unverifiedSceneNumbering": false,
+      "finaleType": "season"
+    },
+    {
+      "id": 1004,
+      "seriesId": 12,
+      "tvdbId": 900004,
+      "episodeFileId": 2003,
+      "seasonNumber": 2,
+      "episodeNumber": 2,
+      "absoluteEpisodeNumber": null,
+      "title": "Example Follow Up",
+      "airDate": "2020-05-10",
+      "airDateUtc": "2020-05-10T20:00:00Z",
+      "runtime": 45,
+      "overview": "A sanitized second-season episode overview recorded only to fix the payload shape",
+      "hasFile": true,
+      "monitored": true,
+      "unverifiedSceneNumbering": false,
+      "finaleType": null
+    }
+  ]
+}
