@@ -119,6 +119,29 @@ The feature contracts are split across:
 - **WHEN** the test parses stdout
 - **THEN** every stdout message is valid MCP protocol output
 
+### Packaging and Release
+
+- The server MUST be distributed as a public package on the npm registry that a host can install and launch without cloning the repository.
+- The published package MUST contain the executable build output and the documents required to configure it, and MUST NOT contain sources, tests, or fixtures.
+- The project documentation MUST present running the published package as the default path, so a reader can configure a host without cloning or building the project.
+- The published package MUST declare its license and the repository it was built from.
+- Release versions MUST be derived from the merged commit history rather than edited by hand, and the version, changelog, and git tag MUST agree.
+- A release MUST NOT be published from a commit whose standing quality gates have not passed.
+- Publishing MUST require an explicit human action; automation MUST NOT publish a release on its own.
+- Publishing MUST NOT depend on a long-lived registry credential stored in the repository.
+
+#### Scenario: Install and run without the repository
+
+- **GIVEN** a host with a supported Node.js runtime and no checkout of this project
+- **WHEN** the host installs the published package and launches its command with instance environment variables
+- **THEN** the MCP server starts over stdio exactly as it does from a local build
+
+#### Scenario: Release awaits a human
+
+- **GIVEN** the automated release process has prepared a pending release for the accumulated commits
+- **WHEN** no maintainer has approved it
+- **THEN** nothing is published to the registry and the pending release remains available for review
+
 ## Design
 
 ### Architecture
@@ -162,3 +185,4 @@ None.
 | Date | Change | Document |
 |------|--------|----------|
 | 2026-08-25 | Initial desired-state specification created | [0001-project-foundation](../../changes/0001-project-foundation.md) |
+| 2026-08-26 | Packaging and release contract added for npm distribution | [0011-npm-publishing](../../changes/0011-npm-publishing.md) |

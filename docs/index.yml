@@ -27,6 +27,9 @@ specs:
     description: Stable typed MCP tools, plan/apply, references, errors, receipts, and jobs
     status: active
 
+# Implementation order: changes 0011 through 0014 are scheduled ahead of the
+# still-pending 0004 through 0010. 0011 establishes distribution; 0012 through
+# 0014 correct defects found testing the merged server against live instances.
 changes:
   - id: "0001"
     name: project-foundation
@@ -98,3 +101,31 @@ changes:
     spec: activity-management
     status: draft
     depends_on: ["0002", "0004"]
+  - id: "0011"
+    name: npm-publishing
+    path: changes/0011-npm-publishing.md
+    description: Publish the server to npm through release-please with provenance and no stored registry token
+    spec: architecture
+    status: draft
+    depends_on: []
+  - id: "0012"
+    name: published-tool-schemas
+    path: changes/0012-published-tool-schemas.md
+    description: Publish the argument contract for the thirteen tools that advertise an empty input schema
+    spec: tool-contracts
+    status: draft
+    depends_on: []
+  - id: "0013"
+    name: result-summary-fidelity
+    path: changes/0013-result-summary-fidelity.md
+    description: Carry error codes and remediation into result summaries and bound the capability report
+    spec: tool-contracts
+    status: draft
+    depends_on: []
+  - id: "0014"
+    name: calendar-anchoring
+    path: changes/0014-calendar-anchoring.md
+    description: Anchor calendar entries to the date that placed them in the requested window and name it
+    spec: library-management
+    status: draft
+    depends_on: []
