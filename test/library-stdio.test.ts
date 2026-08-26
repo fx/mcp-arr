@@ -240,6 +240,11 @@ interface CapabilitySnapshot {
   readonly views: readonly (string | undefined)[];
 }
 
+interface CapabilityAnswer {
+  readonly summary: string;
+  readonly byApplication: Record<string, CapabilitySnapshot>;
+}
+
 /**
  * The operator's first call, over the same launch path a host uses.
  *
@@ -248,9 +253,7 @@ interface CapabilitySnapshot {
  * and one that was never configured are three different reports, not one
  * hedged report.
  */
-async function capabilities(
-  instances: readonly FixtureInstance[],
-): Promise<Record<string, CapabilitySnapshot>> {
+async function capabilities(instances: readonly FixtureInstance[]): Promise<CapabilityAnswer> {
   const child = spawnBuiltServer(instanceEnvironment(instances), 10_000);
   try {
     await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
@@ -260,6 +263,7 @@ async function capabilities(
     })) as {
       result?: {
         isError?: boolean;
+        content?: Array<{ type: string; text?: string }>;
         structuredContent?: {
           applications?: Array<{
             application: string;
@@ -273,9 +277,9 @@ async function capabilities(
     };
 
     expect(called.result?.isError).toBe(false);
-    const snapshot: Record<string, CapabilitySnapshot> = {};
+    const byApplication: Record<string, CapabilitySnapshot> = {};
     for (const outcome of called.result?.structuredContent?.applications ?? []) {
-      snapshot[outcome.application] = {
+      byApplication[outcome.application] = {
         state: outcome.data?.state ?? "missing",
         views: (outcome.data?.supportedOperations ?? [])
           .filter((operation) => operation.tool === "arr_library_query")
@@ -289,7 +293,7 @@ async function capabilities(
     for (const running of instances) {
       expect(child.stdout).not.toContain(running.apiKey);
     }
-    return snapshot;
+    return { summary: called.result?.content?.[0]?.text ?? "", byApplication };
   } finally {
     await child.forceCleanup().catch(() => undefined);
   }
@@ -303,25 +307,44 @@ describe("arr_capabilities over stdio", () => {
     const missing = await instance("radarr", { unreachable: true });
 
     const sonarrOnly = await capabilities([sonarr]);
-    expect(sonarrOnly.sonarr?.state).toBe("available");
-    expect(sonarrOnly.sonarr?.views).toContain("series");
-    expect(sonarrOnly.radarr).toEqual({ state: "unconfigured", views: [] });
-    expect(sonarrOnly.prowlarr).toEqual({ state: "unconfigured", views: [] });
+    expect(sonarrOnly.byApplication.sonarr?.state).toBe("available");
+    expect(sonarrOnly.byApplication.sonarr?.views).toContain("series");
+    expect(sonarrOnly.byApplication.radarr).toEqual({ state: "unconfigured", views: [] });
+    expect(sonarrOnly.byApplication.prowlarr).toEqual({ state: "unconfigured", views: [] });
 
     const radarrOnly = await capabilities([radarr]);
-    expect(radarrOnly.radarr?.state).toBe("available");
-    expect(radarrOnly.radarr?.views).toContain("movies");
-    expect(radarrOnly.radarr?.views).not.toContain("series");
-    expect(radarrOnly.sonarr).toEqual({ state: "unconfigured", views: [] });
+    expect(radarrOnly.byApplication.radarr?.state).toBe("available");
+    expect(radarrOnly.byApplication.radarr?.views).toContain("movies");
+    expect(radarrOnly.byApplication.radarr?.views).not.toContain("series");
+    expect(radarrOnly.byApplication.sonarr).toEqual({ state: "unconfigured", views: [] });
 
     // All six variables set, which is the shape the README documents.
     const all = await capabilities([sonarr, radarr, prowlarr]);
-    expect(all.sonarr?.state).toBe("available");
-    expect(all.radarr?.state).toBe("available");
-    expect(all.prowlarr).toEqual({ state: "available", views: [] });
+    expect(all.byApplication.sonarr?.state).toBe("available");
+    expect(all.byApplication.radarr?.state).toBe("available");
+    expect(all.byApplication.prowlarr).toEqual({ state: "available", views: [] });
 
     const unreachable = await capabilities([sonarr, missing]);
-    expect(unreachable.sonarr?.state).toBe("available");
-    expect(unreachable.radarr).toEqual({ state: "unavailable", views: [] });
+    expect(unreachable.byApplication.sonarr?.state).toBe("available");
+    expect(unreachable.byApplication.radarr).toEqual({ state: "unavailable", views: [] });
+  }, 60_000);
+
+  it("says in its one-line summary what an operator would have to act on", async () => {
+    const sonarr = await instance("sonarr", { unreachable: true });
+    const radarr = await instance("radarr", { unreachable: true });
+
+    // The exact configuration an operator hits when the URLs are wrong or the
+    // instances are down. The summary is the line they read first, so it must
+    // not say "ok" while nothing is reachable.
+    const nothing = await capabilities([sonarr, radarr]);
+    expect(nothing.summary).toBe(
+      "arr_capabilities: no application available; sonarr unavailable, radarr unavailable, prowlarr unconfigured",
+    );
+
+    const working = await instance("sonarr");
+    const mixed = await capabilities([working, radarr]);
+    expect(mixed.summary).toBe(
+      "arr_capabilities: 1 of 3 application(s) available; sonarr available 4.0.19.2979, radarr unavailable, prowlarr unconfigured",
+    );
   }, 60_000);
 });

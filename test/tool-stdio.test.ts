@@ -164,7 +164,12 @@ describe("built stdio tool surface", () => {
         ["radarr", "ok", "unconfigured"],
         ["prowlarr", "ok", "unconfigured"],
       ]);
-      expect(called.result?.content?.[0]?.text).toContain("arr_capabilities");
+      // The summary has to agree with the structured half. Asserting only that
+      // it mentions the tool name is what let it claim "sonarr ok" while the
+      // report beside it said the instance was unreachable.
+      expect(called.result?.content?.[0]?.text).toBe(
+        "arr_capabilities: no application available; sonarr unavailable, radarr unconfigured, prowlarr unconfigured",
+      );
 
       await child.terminateGracefully();
       assertCleanProtocolStdout(child.stdout);

@@ -6,8 +6,18 @@ import {
   isImplementedOperation,
   type OperationDefinition,
 } from "./operations.js";
-import { applicationOutcome, buildToolResult, type ToolResult } from "./results.js";
-import type { CapabilityReport, CapabilityState } from "./schemas/capabilities.js";
+import {
+  type ApplicationOutcome,
+  applicationOutcome,
+  buildToolResult,
+  type ToolResult,
+  type ToolSummary,
+} from "./results.js";
+import {
+  type CapabilityReport,
+  type CapabilityState,
+  capabilityStates,
+} from "./schemas/capabilities.js";
 
 interface ProjectedOperation {
   readonly tool: CapabilityReport["supportedOperations"][number]["tool"];
@@ -138,3 +148,59 @@ export async function reportCapabilities(
 
   return buildToolResult<CapabilityReport>({ applications: outcomes });
 }
+
+/**
+ * Narrows an outcome's payload back to a capability report.
+ *
+ * The summary hooks receive the erased envelope, so the report is re-checked
+ * rather than cast; an outcome carrying anything else declines and falls back
+ * to the envelope's own status.
+ */
+function readCapabilityReport(value: unknown): CapabilityReport | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const state = (value as { state?: unknown }).state;
+  return (capabilityStates as readonly unknown[]).includes(state)
+    ? (value as CapabilityReport)
+    : undefined;
+}
+
+function describeCapability(report: CapabilityReport): string {
+  // The version is what turns "available" into something an operator can check
+  // against the instance they think they configured.
+  return report.state === "available" && report.version !== undefined
+    ? `available ${report.version}`
+    : report.state;
+}
+
+/**
+ * How `arr_capabilities` describes itself.
+ *
+ * Every application it reports is an `ok` outcome, because observing an
+ * unreachable instance is a successful observation — so the envelope's status
+ * is the one thing here that must not be printed. The summary reports the
+ * capability state the caller actually asked about, and leads with how many
+ * applications are usable rather than with the fact that the report itself
+ * succeeded. This is the first call an operator makes, and its one line has to
+ * be true of the instances rather than of the call.
+ */
+export const capabilitySummary: ToolSummary = {
+  lead(result: ToolResult<unknown>): string | undefined {
+    const reports = result.applications
+      .map((outcome) => readCapabilityReport(outcome.data))
+      .filter((report): report is CapabilityReport => report !== undefined);
+    if (reports.length === 0) {
+      return undefined;
+    }
+    const available = reports.filter((report) => report.state === "available").length;
+    return available === 0
+      ? "no application available"
+      : `${available} of ${reports.length} application(s) available`;
+  },
+
+  outcome(outcome: ApplicationOutcome<unknown>): string | undefined {
+    const report = readCapabilityReport(outcome.data);
+    return report === undefined ? undefined : describeCapability(report);
+  },
+};

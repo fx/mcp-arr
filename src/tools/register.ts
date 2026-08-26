@@ -57,7 +57,7 @@ export async function runTool(
   }
 
   const content: CallToolResult["content"] = [
-    { type: "text", text: summarizeToolResult(definition.name, result) },
+    { type: "text", text: summarizeToolResult(definition.name, result, definition.summary) },
   ];
 
   return {

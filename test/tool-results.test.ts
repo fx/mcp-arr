@@ -151,4 +151,48 @@ describe("tool result envelope", () => {
       "arr_activity_query: partial; sonarr ok, radarr unavailable; errors: partial_failure; 1 warning(s)",
     );
   });
+
+  it("reports how much a bounded read returned", () => {
+    const page = (returned: number, hasMore: boolean) =>
+      buildToolResult({
+        applications: [
+          applicationOutcome({
+            application: "sonarr",
+            status: "ok",
+            continuation: { pageSize: 25, returned, hasMore },
+          }),
+        ],
+      });
+
+    // An empty page and a full one must not read the same, or a wrong filter
+    // is indistinguishable from a working query.
+    expect(summarizeToolResult("arr_library_query", page(0, false))).toBe(
+      "arr_library_query: ok; sonarr ok (0 record(s))",
+    );
+    expect(summarizeToolResult("arr_library_query", page(25, true))).toBe(
+      "arr_library_query: ok; sonarr ok (25 record(s), more available)",
+    );
+  });
+
+  it("lets a tool word its own summary and falls back when it declines", () => {
+    const result = buildToolResult({
+      applications: [applicationOutcome({ application: "sonarr", status: "ok", data: {} })],
+    });
+
+    expect(
+      summarizeToolResult("arr_capabilities", result, {
+        lead: () => "no application available",
+        outcome: () => "unavailable",
+      }),
+    ).toBe("arr_capabilities: no application available; sonarr unavailable");
+
+    // A hook that declines leaves the envelope's own wording in place, so a
+    // tool never has to describe an outcome it does not recognize.
+    expect(
+      summarizeToolResult("arr_capabilities", result, {
+        lead: () => undefined,
+        outcome: () => undefined,
+      }),
+    ).toBe(summarizeToolResult("arr_capabilities", result));
+  });
 });
