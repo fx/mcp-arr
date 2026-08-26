@@ -5,7 +5,7 @@
 Create the TypeScript/Node project, stdio MCP entrypoint, environment-only instance configuration, version probes, and standing CI/test foundation required by the [Architecture spec](../specs/architecture/).
 
 **Spec:** [Architecture](../specs/architecture/)
-**Status:** draft
+**Status:** complete
 **Depends On:** —
 
 ## Motivation
@@ -56,6 +56,9 @@ The [Architecture spec](../specs/architecture/) owns runtime, transport, environ
 - **Decision:** Keep runtime state in memory.
   - **Why:** No database or local configuration persistence is required.
   - **Alternatives considered:** SQLite and config files were explicitly excluded.
+- **Decision:** Enforce credential redaction at the boundary that reaches a caller, not on the types that carry connection settings.
+  - **Why:** The parsed instance configuration and the upstream client must hold the API key and base URL, because no request can send `X-Api-Key` without them. Redaction therefore applies where a value would reach a caller: startup diagnostics, normalized upstream errors, and tool results.
+  - **Alternatives considered:** Hiding the fields behind non-enumerable descriptors or getters. Rejected because anything able to read the property can still leak it, so that obscures the boundary without narrowing it.
 
 ### Non-Goals
 
@@ -70,10 +73,10 @@ The [Architecture spec](../specs/architecture/) owns runtime, transport, environ
   - [x] Add package metadata, lockfile, strict compiler config, lint/typecheck/build commands, executable entrypoint, and Node version contract (PR #2)
   - [x] Connect the MCP server through stdio and route all diagnostics to stderr (PR #2)
   - [x] Add process-level startup/shutdown and stdout-framing tests (PR #2)
-- [ ] Implement environment and upstream adapter foundations
-  - [ ] Parse optional URL/API-key pairs and reject incomplete or empty configuration
-  - [ ] Normalize URL prefixes, inject `X-Api-Key`, enforce timeouts, and normalize safe errors
-  - [ ] Probe status/version for each configured application and record capability state
+- [x] Implement environment and upstream adapter foundations (PR #4)
+  - [x] Parse optional URL/API-key pairs and reject incomplete or empty configuration (PR #4)
+  - [x] Normalize URL prefixes, inject `X-Api-Key`, enforce timeouts, and normalize safe errors (PR #4)
+  - [x] Probe status/version for each configured application and record capability state (PR #4)
 - [x] Establish project quality gates and packaging (PR #3)
   - [x] Add unit, fixture-contract, and stdio integration test infrastructure (PR #3)
   - [x] Add sanitized fixtures for the recorded minimum versions (PR #3)

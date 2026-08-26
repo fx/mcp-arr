@@ -15,7 +15,7 @@
 
 | # | Change | Spec | Status | Depends On |
 |---|--------|------|--------|------------|
-| 0001 | [Project Foundation](changes/0001-project-foundation.md) | [Architecture](specs/architecture/) | draft | — |
+| 0001 | [Project Foundation](changes/0001-project-foundation.md) | [Architecture](specs/architecture/) | complete | — |
 | 0002 | [Typed Tool Runtime](changes/0002-tool-runtime.md) | [Tool Contracts](specs/tool-contracts/) | draft | 0001 |
 | 0003 | [Library Queries](changes/0003-library-queries.md) | [Library Management](specs/library-management/) | draft | 0001, 0002 |
 | 0004 | [Activity Diagnostics](changes/0004-activity-diagnostics.md) | [Activity Management](specs/activity-management/) | draft | 0001, 0002 |

@@ -1,9 +1,11 @@
+import { type EnvironmentConfiguration, loadEnvironment } from "./config/environment.js";
 import { createStdioRuntime, type StdioRuntime } from "./stdio.js";
 
 export type ShutdownSignal = "SIGINT" | "SIGTERM";
 
 export interface ProcessDependencies {
-  createRuntime: () => StdioRuntime;
+  loadConfiguration: () => EnvironmentConfiguration;
+  createRuntime: (configuration: EnvironmentConfiguration) => StdioRuntime;
   addSignalListener: (signal: ShutdownSignal, listener: () => void) => void;
   removeSignalListener: (signal: ShutdownSignal, listener: () => void) => void;
   writeStderr: (message: string) => void;
@@ -12,7 +14,8 @@ export interface ProcessDependencies {
 }
 
 const defaultDependencies: ProcessDependencies = {
-  createRuntime: createStdioRuntime,
+  loadConfiguration: () => loadEnvironment(),
+  createRuntime: (configuration) => createStdioRuntime(configuration),
   addSignalListener: (signal, listener) => process.once(signal, listener),
   removeSignalListener: (signal, listener) => process.off(signal, listener),
   writeStderr: (message) => {
@@ -66,7 +69,7 @@ export async function runProcess(
   }
 
   try {
-    runtime = dependencies.createRuntime();
+    runtime = dependencies.createRuntime(dependencies.loadConfiguration());
     await runtime.start();
   } catch (error) {
     dependencies.writeStderr(`mcp-arr: startup failed: ${errorMessage(error)}\n`);

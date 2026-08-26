@@ -17,7 +17,14 @@ const execFileAsync = promisify(execFile);
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const allowedFiles = [
   "README.md",
+  "dist/adapters/registry.js",
+  "dist/adapters/version.js",
+  "dist/applications.js",
   "dist/cli.js",
+  "dist/config/base-url.js",
+  "dist/config/environment.js",
+  "dist/http/client.js",
+  "dist/http/errors.js",
   "dist/process.js",
   "dist/server.js",
   "dist/stdio.js",
@@ -27,6 +34,28 @@ const strictNpmEnvironment = {
   ...process.env,
   npm_config_engine_strict: "true",
   npm_config_strict_peer_deps: "true",
+};
+const instanceVariables = [
+  "SONARR_URL",
+  "SONARR_API_KEY",
+  "RADARR_URL",
+  "RADARR_API_KEY",
+  "PROWLARR_URL",
+  "PROWLARR_API_KEY",
+];
+/**
+ * The server rejects startup without a complete instance pair. Inherited
+ * instance variables are dropped so a developer's own settings cannot change
+ * the verification, and these placeholders point at the reserved `.invalid`
+ * domain, which is never contacted because the verifier only initializes the
+ * MCP session.
+ */
+const instanceEnvironment = {
+  ...Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !instanceVariables.includes(name)),
+  ),
+  SONARR_URL: "https://sonarr.example.invalid/sonarr",
+  SONARR_API_KEY: "package-verification-placeholder",
 };
 
 function assert(condition, message) {
@@ -89,7 +118,7 @@ async function verifyInstalledProcess(binPath, cwd) {
   const invocation = createPlatformCommand(binPath, []);
   const child = spawn(invocation.executable, invocation.args, {
     cwd,
-    env: process.env,
+    env: instanceEnvironment,
     stdio: ["pipe", "pipe", "pipe"],
   });
   const readBuffer = new ReadBuffer();

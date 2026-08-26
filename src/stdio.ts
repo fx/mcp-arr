@@ -1,5 +1,7 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { type AdapterRegistry, createAdapterRegistry } from "./adapters/registry.js";
+import type { EnvironmentConfiguration } from "./config/environment.js";
 import { createServer } from "./server.js";
 
 export interface ConnectableServer {
@@ -8,6 +10,8 @@ export interface ConnectableServer {
 }
 
 export interface StdioRuntime {
+  /** Version-aware adapters for the configured applications. */
+  readonly registry: AdapterRegistry;
   start(): Promise<void>;
   close(): Promise<void>;
 }
@@ -15,16 +19,20 @@ export interface StdioRuntime {
 export interface StdioRuntimeDependencies {
   createServer: () => ConnectableServer;
   createTransport: () => Transport;
+  createRegistry: (configuration: EnvironmentConfiguration) => AdapterRegistry;
 }
 
 const defaultDependencies: StdioRuntimeDependencies = {
   createServer,
   createTransport: () => new StdioServerTransport(),
+  createRegistry: (configuration) => createAdapterRegistry(configuration),
 };
 
 export function createStdioRuntime(
+  configuration: EnvironmentConfiguration,
   dependencies: StdioRuntimeDependencies = defaultDependencies,
 ): StdioRuntime {
+  const registry = dependencies.createRegistry(configuration);
   const server = dependencies.createServer();
   const transport = dependencies.createTransport();
   let startPromise: Promise<void> | undefined;
@@ -37,6 +45,8 @@ export function createStdioRuntime(
   };
 
   return {
+    registry,
+
     start(): Promise<void> {
       if (closePromise !== undefined) {
         return Promise.reject(new Error("Cannot start a closed stdio runtime"));

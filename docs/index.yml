@@ -33,7 +33,7 @@ changes:
     path: changes/0001-project-foundation.md
     description: Scaffold TypeScript stdio runtime, environment configuration, adapters, tests, and CI
     spec: architecture
-    status: draft
+    status: complete
     depends_on: []
   - id: "0002"
     name: tool-runtime
