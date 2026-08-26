@@ -333,7 +333,10 @@ describe("internal operation registry", () => {
       input: { view: "series" },
     });
 
-    expect(requested).toHaveLength(1);
+    // One probe and one read: naming the application twice must not make the
+    // registered handler run against that instance a second time.
+    expect(requested.filter((url) => url.endsWith("/system/status"))).toHaveLength(1);
+    expect(requested.filter((url) => url.includes("/series"))).toHaveLength(1);
     expect(result.applications).toHaveLength(1);
   });
 

@@ -25,15 +25,24 @@ export function isMediaApplication(application: ApplicationId): application is M
   return application === "sonarr" || application === "radarr";
 }
 
-export const mediaKinds = [
-  "series",
-  "season",
-  "episode",
-  "episode_file",
-  "movie",
-  "collection",
-  "movie_file",
-] as const;
+/**
+ * The library records, as distinct from the files under them.
+ *
+ * The split is not decoration: a file's parent, a lookup match, and every
+ * published media view can only ever name a record, so the two sets are
+ * declared separately and `mediaKinds` is built from them. A kind added later
+ * has to be placed in one set or the other, which is what keeps it from
+ * silently widening a contract that was written against the whole list.
+ */
+export const mediaRecordKinds = ["series", "season", "episode", "movie", "collection"] as const;
+
+export const mediaFileKinds = ["episode_file", "movie_file"] as const;
+
+export const mediaKinds = [...mediaRecordKinds, ...mediaFileKinds] as const;
+
+export type MediaRecordKind = (typeof mediaRecordKinds)[number];
+
+export type MediaFileKind = (typeof mediaFileKinds)[number];
 
 export type MediaKind = (typeof mediaKinds)[number];
 
@@ -49,11 +58,24 @@ export interface MediaRef {
   readonly id: string;
 }
 
-export function mediaRef(
+/** An identity that names a library record rather than a file under one. */
+export interface MediaRecordRef extends MediaRef {
+  readonly kind: MediaRecordKind;
+}
+
+/**
+ * Builds an identity, keeping the kind the caller named.
+ *
+ * The kind is carried through as its own literal rather than widened to
+ * {@link MediaKind}, so a mapper that names a file where a record belongs — a
+ * parent, or the library record a lookup result matches — is a compile error
+ * instead of something the published schema has to catch at the boundary.
+ */
+export function mediaRef<TKind extends MediaKind>(
   application: MediaApplication,
-  kind: MediaKind,
+  kind: TKind,
   id: number | string,
-): MediaRef {
+): MediaRef & { readonly kind: TKind } {
   return { application, kind, id: String(id) };
 }
 
@@ -248,7 +270,7 @@ export interface MediaFileDetail {
 interface MediaFileBase {
   readonly ref: MediaRef;
   /** The series or movie this file belongs to, qualified the same way. */
-  readonly parent: MediaRef;
+  readonly parent: MediaRecordRef;
   readonly relativePath?: string | undefined;
   readonly sizeBytes?: number | undefined;
   readonly dateAdded?: string | undefined;
@@ -310,7 +332,7 @@ interface LookupResultBase {
    * reports one. It is the only link a lookup result carries: reading a lookup
    * result adds nothing and implies no add, which change 0009 owns.
    */
-  readonly existing?: MediaRef | undefined;
+  readonly existing?: MediaRecordRef | undefined;
   readonly detail?: MediaDetail | undefined;
 }
 

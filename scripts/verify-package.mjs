@@ -47,6 +47,7 @@ const allowedFiles = [
   "dist/tools/dispatch.js",
   "dist/tools/errors.js",
   "dist/tools/jobs.js",
+  "dist/tools/library.js",
   "dist/tools/names.js",
   "dist/tools/operations.js",
   "dist/tools/register.js",
@@ -57,6 +58,7 @@ const allowedFiles = [
   "dist/tools/schemas/common.js",
   "dist/tools/schemas/configuration.js",
   "dist/tools/schemas/jobs.js",
+  "dist/tools/schemas/library-results.js",
   "dist/tools/schemas/library.js",
   "package.json",
 ].sort();

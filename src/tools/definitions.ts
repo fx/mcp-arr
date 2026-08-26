@@ -1,11 +1,11 @@
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import type { z } from "zod";
 import { type ApplicationId, applicationIds } from "../applications.js";
-import { reportCapabilities } from "./capabilities.js";
+import { capabilitySummary, reportCapabilities } from "./capabilities.js";
 import { dispatchOperation, type ToolContext } from "./dispatch.js";
 import { type ToolName, toolNames } from "./names.js";
 import type { OperationMode } from "./operations.js";
-import type { ToolResult } from "./results.js";
+import type { ToolResult, ToolSummary } from "./results.js";
 import {
   importExecuteInputSchema,
   importExecuteOutputSchema,
@@ -59,6 +59,12 @@ export interface ToolDefinition {
    * never a value a caller can redirect.
    */
   readonly discriminator: string | undefined;
+  /**
+   * How this tool words its text summary, where the envelope's own status
+   * cannot say what happened. Absent for every tool whose per-application
+   * status already is the domain outcome.
+   */
+  readonly summary?: ToolSummary;
   handle(context: ToolContext, input: unknown): Promise<ToolResult<unknown>>;
 }
 
@@ -192,6 +198,7 @@ export const toolDefinitions: readonly ToolDefinition[] = [
     outputSchema: capabilitiesOutputSchema,
     annotations: { title: "Report application capabilities", ...readOnly },
     discriminator: undefined,
+    summary: capabilitySummary,
 
     handle(context: ToolContext, input: unknown): Promise<ToolResult<unknown>> {
       return reportCapabilities(context, readApplications(input));

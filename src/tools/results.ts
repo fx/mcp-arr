@@ -261,10 +261,51 @@ export function buildToolResult<TData>(input: ToolResultInput<TData> = {}): Tool
   };
 }
 
-function describeOutcome(outcome: ApplicationOutcome<unknown>): string {
+/**
+ * How one tool says what happened, where the envelope's own status cannot.
+ *
+ * An outcome's `status` describes the call, not the domain answer, and for
+ * almost every tool those coincide — a read that could not reach its instance
+ * is not an `ok` outcome. `arr_capabilities` is the deliberate exception: it
+ * reports an unreachable instance as an `ok` outcome whose data says
+ * `unavailable`, because observing that is exactly what was asked for. Printing
+ * the status there would tell an operator that everything is fine at the moment
+ * nothing is, so a tool that knows better supplies its own wording here.
+ *
+ * Both hooks may decline by returning `undefined`, which falls back to the
+ * envelope's own status, and both may only restate values the envelope already
+ * carries — the summary must never become a second, unredacted channel.
+ */
+export interface ToolSummary {
+  /** Replaces the leading overall status. */
+  lead?(result: ToolResult<unknown>): string | undefined;
+  /** Replaces one application's status with its domain state. */
+  outcome?(outcome: ApplicationOutcome<unknown>): string | undefined;
+}
+
+/**
+ * How much a bounded read returned.
+ *
+ * A summary that says only `ok` cannot be acted on: an operator checking a real
+ * instance needs to see that a view came back with nothing, which is the shape
+ * a wrong filter or an empty library takes.
+ */
+function describeRecords(outcome: ApplicationOutcome<unknown>): string {
+  const continuation = outcome.continuation;
+  if (continuation === undefined) {
+    return "";
+  }
+  return ` (${continuation.returned} record(s)${continuation.hasMore ? ", more available" : ""})`;
+}
+
+function describeItems(outcome: ApplicationOutcome<unknown>): string {
   const failedItems = (outcome.items ?? []).filter((item) => item.status === "error").length;
-  const suffix = failedItems === 0 ? "" : ` (${failedItems} item(s) failed)`;
-  return `${outcome.application} ${outcome.status}${suffix}`;
+  return failedItems === 0 ? "" : ` (${failedItems} item(s) failed)`;
+}
+
+function describeOutcome(outcome: ApplicationOutcome<unknown>, summary?: ToolSummary): string {
+  const state = summary?.outcome?.(outcome) ?? outcome.status;
+  return `${outcome.application} ${state}${describeRecords(outcome)}${describeItems(outcome)}`;
 }
 
 /**
@@ -272,10 +313,14 @@ function describeOutcome(outcome: ApplicationOutcome<unknown>): string {
  * only values already present in the envelope, so it cannot become a second,
  * unredacted channel.
  */
-export function summarizeToolResult(name: ToolName, result: ToolResult<unknown>): string {
-  const parts = [`${name}: ${result.status}`];
+export function summarizeToolResult(
+  name: ToolName,
+  result: ToolResult<unknown>,
+  summary?: ToolSummary,
+): string {
+  const parts = [`${name}: ${summary?.lead?.(result) ?? result.status}`];
   if (result.applications.length > 0) {
-    parts.push(result.applications.map(describeOutcome).join(", "));
+    parts.push(result.applications.map((outcome) => describeOutcome(outcome, summary)).join(", "));
   }
   if (result.errors.length > 0) {
     parts.push(`errors: ${result.errors.map((error) => error.code).join(", ")}`);

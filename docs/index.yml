@@ -47,7 +47,7 @@ changes:
     path: changes/0003-library-queries.md
     description: Implement bounded Sonarr and Radarr lookup and library query views
     spec: library-management
-    status: draft
+    status: complete
     depends_on: ["0001", "0002"]
   - id: "0004"
     name: activity-diagnostics

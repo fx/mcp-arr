@@ -1,7 +1,70 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
+import { fileURLToPath } from "node:url";
+import {
+  deserializeMessage,
+  ReadBuffer,
+  serializeMessage,
+} from "@modelcontextprotocol/sdk/shared/stdio.js";
 import type { JSONRPCMessage, RequestId } from "@modelcontextprotocol/sdk/types.js";
 import { consumeReadable, waitForChildCompletion } from "../../scripts/child-process.mjs";
+
+const projectRoot = fileURLToPath(new URL("../..", import.meta.url));
+
+/**
+ * The instance variables a spawned server must never inherit.
+ *
+ * A developer's own settings would otherwise decide what these tests observe,
+ * and — worse — could point a test at a real instance.
+ */
+export const instanceVariables: readonly string[] = [
+  "SONARR_URL",
+  "SONARR_API_KEY",
+  "RADARR_URL",
+  "RADARR_API_KEY",
+  "PROWLARR_URL",
+  "PROWLARR_API_KEY",
+];
+
+/** The process environment a host would launch the built server with. */
+export function serverEnvironment(instances: Readonly<Record<string, string>>): NodeJS.ProcessEnv {
+  return {
+    ...Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => !instanceVariables.includes(name)),
+    ),
+    ...instances,
+  };
+}
+
+/**
+ * Launches the built server exactly as a host would: the packaged entry point,
+ * a command environment, and stdio.
+ */
+export function spawnBuiltServer(
+  instances: Readonly<Record<string, string>>,
+  deadlineMs = 5_000,
+): SpawnedStdioProcess {
+  return spawnStdioProcess({
+    executable: process.execPath,
+    args: ["dist/cli.js"],
+    cwd: projectRoot,
+    env: serverEnvironment(instances),
+    deadlineMs,
+  });
+}
+
+/**
+ * Holds stdout to the protocol contract: every line it carries must be a
+ * decodable MCP message, and the stream must end on a message boundary.
+ */
+export function assertCleanProtocolStdout(stdout: string): void {
+  const lines = stdout.split("\n");
+  if (lines.at(-1) !== "") {
+    throw new Error("Server stdout did not end on a message boundary");
+  }
+  for (const line of lines.slice(0, -1)) {
+    deserializeMessage(line);
+  }
+}
 
 export interface ProcessExit {
   code: number | null;

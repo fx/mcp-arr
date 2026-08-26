@@ -1,43 +1,22 @@
-import { fileURLToPath } from "node:url";
-import { deserializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
 import { toolNames } from "../src/tools/names.js";
-import { spawnStdioProcess } from "./support/spawned-stdio.js";
+import { assertCleanProtocolStdout, spawnBuiltServer } from "./support/spawned-stdio.js";
 
-const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const sonarrApiKey = "sonarr-secret-key";
-const instanceVariables: readonly string[] = [
-  "SONARR_URL",
-  "SONARR_API_KEY",
-  "RADARR_URL",
-  "RADARR_API_KEY",
-  "PROWLARR_URL",
-  "PROWLARR_API_KEY",
-];
 
 /**
- * The built server rejects startup without a complete instance pair. Inherited
- * instance variables are dropped so a developer's own settings cannot change
- * what these tests observe, and the reserved `.invalid` host guarantees that no
- * request in this file can reach a real instance.
+ * The built server rejects startup without a complete instance pair, and the
+ * reserved `.invalid` host guarantees that no request in this file can reach a
+ * real instance.
  */
-const configuredEnvironment: NodeJS.ProcessEnv = {
-  ...Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => !instanceVariables.includes(name)),
-  ),
+const configuredInstance = {
   SONARR_URL: "https://sonarr.example.invalid/sonarr",
   SONARR_API_KEY: sonarrApiKey,
 };
 
-function spawnServer() {
-  return spawnStdioProcess({
-    executable: process.execPath,
-    args: ["dist/cli.js"],
-    cwd: projectRoot,
-    env: configuredEnvironment,
-    deadlineMs: 5_000,
-  });
+function spawnServer(deadlineMs = 5_000) {
+  return spawnBuiltServer(configuredInstance, deadlineMs);
 }
 
 interface ToolListResult {
@@ -69,14 +48,6 @@ interface ToolCallResult {
   };
 }
 
-function assertCleanStdout(stdout: string): void {
-  const lines = stdout.split("\n");
-  expect(lines.at(-1)).toBe("");
-  for (const line of lines.slice(0, -1)) {
-    expect(() => deserializeMessage(line)).not.toThrow();
-  }
-}
-
 describe("built stdio tool surface", () => {
   it("publishes the fifteen tools with their schemas and keeps stdout clean", async () => {
     const child = spawnServer();
@@ -95,7 +66,7 @@ describe("built stdio tool surface", () => {
       }
 
       await child.terminateGracefully();
-      assertCleanStdout(child.stdout);
+      assertCleanProtocolStdout(child.stdout);
       expect(child.stderr).toBe("");
     } finally {
       await child.forceCleanup().catch(() => undefined);
@@ -122,7 +93,7 @@ describe("built stdio tool surface", () => {
       expect(called.result?.content?.[0]?.type).toBe("text");
 
       await child.terminateGracefully();
-      assertCleanStdout(child.stdout);
+      assertCleanProtocolStdout(child.stdout);
       expect(child.stderr).toBe("");
       expect(child.stdout).not.toContain(sonarrApiKey);
     } finally {
@@ -159,7 +130,7 @@ describe("built stdio tool surface", () => {
       }
 
       await child.terminateGracefully();
-      assertCleanStdout(child.stdout);
+      assertCleanProtocolStdout(child.stdout);
       expect(child.stderr).toBe("");
       expect(child.stdout).not.toContain(sonarrApiKey);
     } finally {
@@ -168,13 +139,7 @@ describe("built stdio tool surface", () => {
   });
 
   it("answers arr_capabilities with structured content for every application", async () => {
-    const child = spawnStdioProcess({
-      executable: process.execPath,
-      args: ["dist/cli.js"],
-      cwd: projectRoot,
-      env: configuredEnvironment,
-      deadlineMs: 20_000,
-    });
+    const child = spawnServer(20_000);
 
     try {
       await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
@@ -199,10 +164,15 @@ describe("built stdio tool surface", () => {
         ["radarr", "ok", "unconfigured"],
         ["prowlarr", "ok", "unconfigured"],
       ]);
-      expect(called.result?.content?.[0]?.text).toContain("arr_capabilities");
+      // The summary has to agree with the structured half. Asserting only that
+      // it mentions the tool name is what let it claim "sonarr ok" while the
+      // report beside it said the instance was unreachable.
+      expect(called.result?.content?.[0]?.text).toBe(
+        "arr_capabilities: no application available; sonarr unavailable, radarr unconfigured, prowlarr unconfigured",
+      );
 
       await child.terminateGracefully();
-      assertCleanStdout(child.stdout);
+      assertCleanProtocolStdout(child.stdout);
       expect(child.stderr).toBe("");
       expect(child.stdout).not.toContain(sonarrApiKey);
       expect(child.stdout).not.toContain("sonarr.example.invalid");
