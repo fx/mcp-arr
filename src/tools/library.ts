@@ -5,8 +5,11 @@ import type {
   MediaFile,
   MediaItem,
   MediaKind,
+  MediaRecordKind,
+  MediaRecordRef,
   MediaRef,
   WantedItem,
+  WantedReason,
 } from "../adapters/library/model.js";
 import { mediaRefKey } from "../adapters/library/model.js";
 import { queryDigest } from "../adapters/library/paging.js";
@@ -18,9 +21,11 @@ import type { OperationHandler, OperationInvocation } from "./operations.js";
 import { type LibraryQueryInput, libraryQueryInputSchema } from "./schemas/library.js";
 import type {
   LibraryCalendarEvent,
+  LibraryFileOfKind,
   LibraryLookupResult,
   LibraryMediaFile,
   LibraryMediaRecord,
+  LibraryRecordOfKind,
   LibraryViewResult,
   LibraryWantedRecord,
 } from "./schemas/library-results.js";
@@ -113,10 +118,15 @@ function identityFingerprint(ref: MediaRef): string {
 interface ReferenceMinter {
   /** The opaque reference for one identity, minted once per query. */
   token(ref: MediaRef, fingerprint: string): string;
-  identity(ref: MediaRef): {
+  /**
+   * An identity this query named without reading it. Only a record can be
+   * named that way — a file's parent, a lookup match — so a file identity
+   * cannot be published here.
+   */
+  identity(ref: MediaRecordRef): {
     reference: string;
     application: MediaRef["application"];
-    kind: MediaKind;
+    kind: MediaRecordKind;
     id: string;
   };
 }
@@ -284,6 +294,41 @@ function publishMediaRecord(item: MediaItem, mint: ReferenceMinter): LibraryMedi
   };
 }
 
+/**
+ * Narrows a published record to the variants one view can contain.
+ *
+ * Which kind each view maps is a fact about the adapters that neither the
+ * normalized model nor the service carries in its types, and the published
+ * schema now states it per view. So it is checked here rather than asserted: a
+ * mismap fails at the site that produced it, naming the view and the kind,
+ * instead of surfacing one layer later as a result that merely did not conform.
+ */
+function recordOfKind<TKind extends LibraryMediaRecord["kind"]>(
+  item: MediaItem,
+  mint: ReferenceMinter,
+  kinds: readonly TKind[],
+): LibraryRecordOfKind<TKind> {
+  const record = publishMediaRecord(item, mint);
+  if (!kinds.some((kind) => kind === record.kind)) {
+    throw new Error(`a library view produced a ${record.kind} record where it cannot appear`);
+  }
+  // Sound because the check above compared the same discriminant the published
+  // union is keyed on; TypeScript cannot narrow a union by a generic literal.
+  return record as LibraryRecordOfKind<TKind>;
+}
+
+function fileOfKind<TKind extends LibraryMediaFile["kind"]>(
+  file: MediaFile,
+  mint: ReferenceMinter,
+  kind: TKind,
+): LibraryFileOfKind<TKind> {
+  const published = publishMediaFile(file, mint);
+  if (published.kind !== kind) {
+    throw new Error(`a library view produced a ${published.kind} where it cannot appear`);
+  }
+  return published as LibraryFileOfKind<TKind>;
+}
+
 function publishMediaFile(file: MediaFile, mint: ReferenceMinter): LibraryMediaFile {
   const base = {
     reference: mint.token(file.ref, mediaFileFingerprint(file)),
@@ -325,16 +370,33 @@ function publishMediaFile(file: MediaFile, mint: ReferenceMinter): LibraryMediaF
       };
 }
 
-function publishWanted(item: WantedItem, mint: ReferenceMinter): LibraryWantedRecord {
+/**
+ * Publishes one wanted record for the view that asked for it.
+ *
+ * Both the media kind and the reason are fixed by the view — the Sonarr wanted
+ * endpoints report episodes and the Radarr ones movies, and each endpoint
+ * answers one reason — so both are checked against what the adapter produced
+ * rather than copied through.
+ */
+function publishWanted<TKind extends LibraryMediaRecord["kind"], TReason extends WantedReason>(
+  item: WantedItem,
+  mint: ReferenceMinter,
+  kind: TKind,
+  reason: TReason,
+): LibraryWantedRecord<LibraryRecordOfKind<TKind>, TReason> {
+  if (item.wanted.reason !== reason) {
+    throw new Error(`a wanted view produced a ${item.wanted.reason} record where it cannot appear`);
+  }
   return {
-    media: publishMediaRecord(item.media, mint),
-    wanted: { reason: item.wanted.reason, expectedAt: item.wanted.expectedAt },
+    media: recordOfKind(item.media, mint, [kind]),
+    wanted: { reason, expectedAt: item.wanted.expectedAt },
   };
 }
 
 function publishCalendarEvent(event: CalendarEvent, mint: ReferenceMinter): LibraryCalendarEvent {
   return {
-    media: publishMediaRecord(event.media, mint),
+    // Sonarr dates episodes and Radarr dates movies; nothing else is dated.
+    media: recordOfKind(event.media, mint, ["episode", "movie"]),
     start: event.start,
     end: event.end,
     hasFile: event.hasFile,
@@ -380,34 +442,52 @@ function publishLookupResult(result: LookupResult, mint: ReferenceMinter): Libra
  * caller as a payload the declared output schema would reject.
  */
 function publishViewData(data: LibraryViewData, mint: ReferenceMinter): LibraryViewResult {
-  const media = (items: readonly MediaItem[]) =>
-    items.map((item) => publishMediaRecord(item, mint));
-  const files = (items: readonly MediaFile[]) => items.map((file) => publishMediaFile(file, mint));
-  const wanted = (items: readonly WantedItem[]) => items.map((item) => publishWanted(item, mint));
+  const media = <TKind extends LibraryMediaRecord["kind"]>(
+    items: readonly MediaItem[],
+    kind: TKind,
+  ) => items.map((item) => recordOfKind(item, mint, [kind]));
+  const files = <TKind extends LibraryMediaFile["kind"]>(
+    items: readonly MediaFile[],
+    kind: TKind,
+  ) => items.map((file) => fileOfKind(file, mint, kind));
+  const wanted = <TKind extends LibraryMediaRecord["kind"], TReason extends WantedReason>(
+    items: readonly WantedItem[],
+    kind: TKind,
+    reason: TReason,
+  ) => items.map((item) => publishWanted(item, mint, kind, reason));
 
   switch (data.view) {
     case "series":
-      return { view: "series", items: media(data.items) };
+      return { view: "series", items: media(data.items, "series") };
     case "seasons":
-      return { view: "seasons", items: media(data.items) };
+      return { view: "seasons", items: media(data.items, "season") };
     case "episodes":
-      return { view: "episodes", items: media(data.items) };
+      return { view: "episodes", items: media(data.items, "episode") };
     case "movies":
-      return { view: "movies", items: media(data.items) };
+      return { view: "movies", items: media(data.items, "movie") };
     case "collections":
-      return { view: "collections", items: media(data.items) };
+      return { view: "collections", items: media(data.items, "collection") };
     case "episode_files":
-      return { view: "episode_files", items: files(data.items) };
+      return { view: "episode_files", items: files(data.items, "episode_file") };
     case "movie_files":
-      return { view: "movie_files", items: files(data.items) };
+      return { view: "movie_files", items: files(data.items, "movie_file") };
     case "missing_episodes":
-      return { view: "missing_episodes", items: wanted(data.items) };
+      return {
+        view: "missing_episodes",
+        items: wanted(data.items, "episode", "missing"),
+      };
     case "cutoff_unmet_episodes":
-      return { view: "cutoff_unmet_episodes", items: wanted(data.items) };
+      return {
+        view: "cutoff_unmet_episodes",
+        items: wanted(data.items, "episode", "cutoff_unmet"),
+      };
     case "missing_movies":
-      return { view: "missing_movies", items: wanted(data.items) };
+      return { view: "missing_movies", items: wanted(data.items, "movie", "missing") };
     case "cutoff_unmet_movies":
-      return { view: "cutoff_unmet_movies", items: wanted(data.items) };
+      return {
+        view: "cutoff_unmet_movies",
+        items: wanted(data.items, "movie", "cutoff_unmet"),
+      };
     case "calendar":
       return {
         view: "calendar",

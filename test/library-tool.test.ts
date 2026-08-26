@@ -5,7 +5,7 @@ import { createWorkflowState, type WorkflowState } from "../src/state/workflow.j
 import { reportCapabilities } from "../src/tools/capabilities.js";
 import { findToolDefinition, type ToolDefinition } from "../src/tools/definitions.js";
 import type { ToolContext } from "../src/tools/dispatch.js";
-import type { ToolResult } from "../src/tools/results.js";
+import { applicationOutcome, buildToolResult, type ToolResult } from "../src/tools/results.js";
 import { defaultPageSize, maxPageSize } from "../src/tools/schemas/common.js";
 import { maxCalendarWindowDays } from "../src/tools/schemas/library.js";
 import type { LibraryViewResult } from "../src/tools/schemas/library-results.js";
@@ -495,5 +495,196 @@ describe("arr_library_query capability projection", () => {
         application,
       ).toEqual([]);
     }
+  });
+});
+
+/**
+ * Minimal valid published records, one per variant. They are written out rather
+ * than read from a query so the contract is checked against the schema itself,
+ * independently of what any fixture happens to contain.
+ */
+const records = {
+  series: {
+    kind: "series",
+    application: "sonarr",
+    reference: "med_00000001",
+    id: "12",
+    title: "Example Series",
+    monitoring: { monitored: true },
+    sonarr: {},
+  },
+  season: {
+    kind: "season",
+    application: "sonarr",
+    reference: "med_00000002",
+    id: "12/1",
+    title: "Season 1",
+    monitoring: { monitored: true },
+    sonarr: { seriesId: 12, seasonNumber: 1 },
+  },
+  episode: {
+    kind: "episode",
+    application: "sonarr",
+    reference: "med_00000003",
+    id: "1001",
+    title: "Example Pilot",
+    monitoring: { monitored: true },
+    sonarr: { seriesId: 12, seasonNumber: 1, episodeNumber: 1, hasFile: true },
+  },
+  movie: {
+    kind: "movie",
+    application: "radarr",
+    reference: "med_00000004",
+    id: "8",
+    title: "Example Movie",
+    monitoring: { monitored: true },
+    radarr: { hasFile: true },
+  },
+  collection: {
+    kind: "collection",
+    application: "radarr",
+    reference: "med_00000005",
+    id: "21",
+    title: "Example Collection",
+    monitoring: { monitored: true },
+    radarr: {},
+  },
+} as const;
+
+const seriesParent = {
+  reference: "med_00000001",
+  application: "sonarr",
+  kind: "series",
+  id: "12",
+} as const;
+
+const files = {
+  episode_file: {
+    kind: "episode_file",
+    application: "sonarr",
+    reference: "mfl_00000001",
+    id: "2001",
+    parent: seriesParent,
+    sonarr: { seriesId: 12, episodeIds: [1001] },
+  },
+  movie_file: {
+    kind: "movie_file",
+    application: "radarr",
+    reference: "mfl_00000002",
+    id: "501",
+    parent: { reference: "med_00000004", application: "radarr", kind: "movie", id: "8" },
+    radarr: { movieId: 8 },
+  },
+} as const;
+
+const lookupResult = {
+  application: "sonarr",
+  title: "Example Series",
+  sonarr: {},
+} as const;
+
+function wanted(media: unknown, reason: string): Record<string, unknown> {
+  return { media, wanted: { reason } };
+}
+
+function calendarEvent(media: unknown): Record<string, unknown> {
+  return { media, hasFile: true };
+}
+
+/** One published envelope carrying exactly this view and these items. */
+function envelopeFor(view: string, items: readonly unknown[]): unknown {
+  return buildToolResult({
+    applications: [
+      applicationOutcome({
+        application: view.endsWith("movies") || view.startsWith("movie") ? "radarr" : "sonarr",
+        status: "ok",
+        data: { view, items },
+      }),
+    ],
+  });
+}
+
+describe("arr_library_query output contract", () => {
+  /**
+   * Each view, the item variant it can return, and one it cannot. The wrong
+   * variant is always itself a valid published item — what must reject it is
+   * the view it was placed under, not its own shape.
+   */
+  const cases = [
+    { view: "series", valid: records.series, invalid: records.movie },
+    { view: "seasons", valid: records.season, invalid: records.series },
+    { view: "episodes", valid: records.episode, invalid: records.movie },
+    { view: "movies", valid: records.movie, invalid: records.series },
+    { view: "collections", valid: records.collection, invalid: records.movie },
+    { view: "episode_files", valid: files.episode_file, invalid: files.movie_file },
+    { view: "movie_files", valid: files.movie_file, invalid: files.episode_file },
+    {
+      view: "missing_episodes",
+      valid: wanted(records.episode, "missing"),
+      invalid: wanted(records.movie, "missing"),
+    },
+    {
+      view: "cutoff_unmet_episodes",
+      valid: wanted(records.episode, "cutoff_unmet"),
+      invalid: wanted(records.episode, "missing"),
+    },
+    {
+      view: "missing_movies",
+      valid: wanted(records.movie, "missing"),
+      invalid: wanted(records.episode, "missing"),
+    },
+    {
+      view: "cutoff_unmet_movies",
+      valid: wanted(records.movie, "cutoff_unmet"),
+      invalid: wanted(records.movie, "missing"),
+    },
+    {
+      view: "calendar",
+      valid: calendarEvent(records.episode),
+      invalid: calendarEvent(records.series),
+    },
+    { view: "lookup", valid: lookupResult, invalid: records.series },
+  ] as const;
+
+  it("covers every registered view", () => {
+    expect(cases.map((entry) => entry.view).sort()).toEqual([...libraryViews].sort());
+  });
+
+  it("accepts the item variant each view returns and rejects one it cannot", () => {
+    for (const { view, valid, invalid } of cases) {
+      // The published schema is what validates every envelope before it leaves
+      // the process, so a view that accepted the wrong variant would let an
+      // internal mismap ship as a well-formed result.
+      expect(
+        definition.outputSchema.safeParse(envelopeFor(view, [valid])).success,
+        `${view} accepts its own item`,
+      ).toBe(true);
+      expect(
+        definition.outputSchema.safeParse(envelopeFor(view, [invalid])).success,
+        `${view} rejects a foreign item`,
+      ).toBe(false);
+    }
+  });
+
+  it("never lets a file identity stand in for a record identity", () => {
+    // `parent` and a lookup's `existing` name library records. A file kind
+    // there would describe a file as the parent of a file.
+    const fileAsParent = {
+      ...files.episode_file,
+      parent: { ...seriesParent, kind: "episode_file" },
+    };
+    expect(
+      definition.outputSchema.safeParse(envelopeFor("episode_files", [fileAsParent])).success,
+    ).toBe(false);
+
+    const fileAsExisting = { ...lookupResult, existing: { ...seriesParent, kind: "movie_file" } };
+    expect(definition.outputSchema.safeParse(envelopeFor("lookup", [fileAsExisting])).success).toBe(
+      false,
+    );
+    expect(
+      definition.outputSchema.safeParse(
+        envelopeFor("lookup", [{ ...lookupResult, existing: seriesParent }]),
+      ).success,
+    ).toBe(true);
   });
 });

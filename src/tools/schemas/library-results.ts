@@ -1,8 +1,8 @@
 import { z } from "zod";
 import {
   configurationPointerKinds,
-  mediaKinds,
-  wantedReasons,
+  mediaRecordKinds,
+  type WantedReason,
 } from "../../adapters/library/model.js";
 import {
   mediaApplicationSchema,
@@ -64,12 +64,14 @@ const mediaDetailSchema = z.strictObject({
  * A record publishes these two fields at its own top level, alongside the
  * `kind` and `application` its variant already fixes; this object is the form
  * used where an identity is referred to from elsewhere — a file's parent, or
- * the library record a lookup result already matches.
+ * the library record a lookup result already matches. Both of those are library
+ * records, so the kind is drawn from the record kinds and a file kind cannot
+ * appear here at all.
  */
 const mediaIdentitySchema = z.strictObject({
   reference: mediaReferenceSchema,
   application: mediaApplicationSchema,
-  kind: z.enum(mediaKinds),
+  kind: z.enum(mediaRecordKinds),
   id: z.string(),
 });
 
@@ -183,6 +185,11 @@ export const libraryMediaRecordSchema = z.discriminatedUnion("kind", [
 
 export type LibraryMediaRecord = z.infer<typeof libraryMediaRecordSchema>;
 
+export type LibraryRecordOfKind<TKind extends LibraryMediaRecord["kind"]> = Extract<
+  LibraryMediaRecord,
+  { kind: TKind }
+>;
+
 const mediaFileDetailSchema = z.strictObject({
   path: z.string().optional(),
   customFormats: z.array(z.string()).optional(),
@@ -213,40 +220,72 @@ const mediaFileShape = {
   detail: mediaFileDetailSchema.optional(),
 } as const;
 
+const episodeFileSchema = z.strictObject({
+  kind: z.literal("episode_file"),
+  application: z.literal("sonarr"),
+  ...mediaFileShape,
+  sonarr: z.strictObject({
+    seriesId: z.number(),
+    seasonNumber: z.number().optional(),
+    episodeIds: z.array(z.number()),
+  }),
+});
+
+const movieFileSchema = z.strictObject({
+  kind: z.literal("movie_file"),
+  application: z.literal("radarr"),
+  ...mediaFileShape,
+  radarr: z.strictObject({ movieId: z.number(), edition: z.string().optional() }),
+});
+
 export const libraryMediaFileSchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    kind: z.literal("episode_file"),
-    application: z.literal("sonarr"),
-    ...mediaFileShape,
-    sonarr: z.strictObject({
-      seriesId: z.number(),
-      seasonNumber: z.number().optional(),
-      episodeIds: z.array(z.number()),
-    }),
-  }),
-  z.strictObject({
-    kind: z.literal("movie_file"),
-    application: z.literal("radarr"),
-    ...mediaFileShape,
-    radarr: z.strictObject({ movieId: z.number(), edition: z.string().optional() }),
-  }),
+  episodeFileSchema,
+  movieFileSchema,
 ]);
 
 export type LibraryMediaFile = z.infer<typeof libraryMediaFileSchema>;
 
-const wantedRecordSchema = z.strictObject({
-  media: libraryMediaRecordSchema,
-  wanted: z.strictObject({
-    reason: z.enum(wantedReasons),
-    /** When the record aired or released, where the application reports it. */
-    expectedAt: z.string().optional(),
-  }),
-});
+export type LibraryFileOfKind<TKind extends LibraryMediaFile["kind"]> = Extract<
+  LibraryMediaFile,
+  { kind: TKind }
+>;
 
-export type LibraryWantedRecord = z.infer<typeof wantedRecordSchema>;
+/**
+ * One wanted record, for the media a given view actually reports.
+ *
+ * Both the media variant and the reason are fixed by the view: the Sonarr
+ * wanted views report episodes and the Radarr ones movies, and each endpoint
+ * answers exactly one reason. Parameterizing rather than declaring the widest
+ * shape once is what keeps the published contract from claiming a
+ * missing-movies page might contain a cutoff-unmet episode.
+ */
+function wantedRecordSchema<TMedia extends z.ZodType, TReason extends WantedReason>(
+  media: TMedia,
+  reason: TReason,
+) {
+  return z.strictObject({
+    media,
+    wanted: z.strictObject({
+      reason: z.literal(reason),
+      /** When the record aired or released, where the application reports it. */
+      expectedAt: z.string().optional(),
+    }),
+  });
+}
+
+export type LibraryWantedRecord<
+  TMedia extends LibraryMediaRecord = LibraryMediaRecord,
+  TReason extends WantedReason = WantedReason,
+> = {
+  media: TMedia;
+  wanted: { reason: TReason; expectedAt?: string | undefined };
+};
+
+/** The calendar reports a dated Sonarr episode or a dated Radarr movie. */
+const calendarMediaSchema = z.discriminatedUnion("kind", [episodeRecordSchema, movieRecordSchema]);
 
 const calendarEventSchema = z.strictObject({
-  media: libraryMediaRecordSchema,
+  media: calendarMediaSchema,
   start: z.string().optional(),
   end: z.string().optional(),
   hasFile: z.boolean(),
@@ -294,22 +333,38 @@ export type LibraryLookupResult = z.infer<typeof libraryLookupResultSchema>;
 /**
  * What one view answers with, discriminated by the view the caller asked for.
  *
- * The members mirror the adapter service's own view union one for one, so a
- * view added there without a published shape here fails to compile rather than
- * returning a payload the declared output schema would reject at runtime.
+ * Each view declares the item variant it can actually return, not the widest
+ * one it belongs to. That is the whole point of validating the envelope against
+ * this schema before it leaves the process: a contract saying `series` might
+ * hold a movie could not catch an adapter that mapped one, and a mismap would
+ * ship as a well-formed result. The members mirror the adapter service's own
+ * view union one for one, so a view added there without a published shape here
+ * fails to compile rather than being rejected at runtime.
  */
 export const libraryViewResultSchema = z.discriminatedUnion("view", [
-  z.strictObject({ view: z.literal("series"), items: z.array(libraryMediaRecordSchema) }),
-  z.strictObject({ view: z.literal("seasons"), items: z.array(libraryMediaRecordSchema) }),
-  z.strictObject({ view: z.literal("episodes"), items: z.array(libraryMediaRecordSchema) }),
-  z.strictObject({ view: z.literal("movies"), items: z.array(libraryMediaRecordSchema) }),
-  z.strictObject({ view: z.literal("collections"), items: z.array(libraryMediaRecordSchema) }),
-  z.strictObject({ view: z.literal("episode_files"), items: z.array(libraryMediaFileSchema) }),
-  z.strictObject({ view: z.literal("movie_files"), items: z.array(libraryMediaFileSchema) }),
-  z.strictObject({ view: z.literal("missing_episodes"), items: z.array(wantedRecordSchema) }),
-  z.strictObject({ view: z.literal("cutoff_unmet_episodes"), items: z.array(wantedRecordSchema) }),
-  z.strictObject({ view: z.literal("missing_movies"), items: z.array(wantedRecordSchema) }),
-  z.strictObject({ view: z.literal("cutoff_unmet_movies"), items: z.array(wantedRecordSchema) }),
+  z.strictObject({ view: z.literal("series"), items: z.array(seriesRecordSchema) }),
+  z.strictObject({ view: z.literal("seasons"), items: z.array(seasonRecordSchema) }),
+  z.strictObject({ view: z.literal("episodes"), items: z.array(episodeRecordSchema) }),
+  z.strictObject({ view: z.literal("movies"), items: z.array(movieRecordSchema) }),
+  z.strictObject({ view: z.literal("collections"), items: z.array(collectionRecordSchema) }),
+  z.strictObject({ view: z.literal("episode_files"), items: z.array(episodeFileSchema) }),
+  z.strictObject({ view: z.literal("movie_files"), items: z.array(movieFileSchema) }),
+  z.strictObject({
+    view: z.literal("missing_episodes"),
+    items: z.array(wantedRecordSchema(episodeRecordSchema, "missing")),
+  }),
+  z.strictObject({
+    view: z.literal("cutoff_unmet_episodes"),
+    items: z.array(wantedRecordSchema(episodeRecordSchema, "cutoff_unmet")),
+  }),
+  z.strictObject({
+    view: z.literal("missing_movies"),
+    items: z.array(wantedRecordSchema(movieRecordSchema, "missing")),
+  }),
+  z.strictObject({
+    view: z.literal("cutoff_unmet_movies"),
+    items: z.array(wantedRecordSchema(movieRecordSchema, "cutoff_unmet")),
+  }),
   z.strictObject({ view: z.literal("calendar"), items: z.array(calendarEventSchema) }),
   z.strictObject({ view: z.literal("lookup"), items: z.array(libraryLookupResultSchema) }),
 ]);
