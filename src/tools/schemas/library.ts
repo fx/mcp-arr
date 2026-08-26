@@ -130,7 +130,7 @@ export const libraryQueryInputSchema = variantUnion(
         monitored: monitoredFilter,
       })
       .refine((value) => isUsableCalendarWindow(value.start, value.end), {
-        error: `start and end must be real dates, in order, and at most ${maxCalendarWindowDays} days apart`,
+        error: `start and end must be real dates, in order, and cover at most ${maxCalendarWindowDays} days including both bounds`,
       }),
     z.strictObject({
       /** Metadata lookup. Reading a lookup result never adds it to a library. */
