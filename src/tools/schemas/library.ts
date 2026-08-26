@@ -143,10 +143,13 @@ const fileChangesSchema = z.strictObject({
 /**
  * The typed library mutations.
  *
- * `delete_media` and `delete_file` require an explicit decision about physical
- * media: `deleteFiles` has no default, so removing a record can never remove
- * files by omission. `rename` in plan mode is the rename preview — it returns
- * the proposed paths without starting a rename command.
+ * `delete_media` removes a library record, which is a separate question from
+ * removing the media itself, so it requires an explicit `deleteFiles` and
+ * `addImportListExclusion` — neither has a default, and removing a record can
+ * therefore never remove files by omission. `delete_file` is itself the
+ * physical-deletion intent, so it has nothing left to decide and carries no
+ * such field. `rename` in plan mode is the rename preview — it returns the
+ * proposed paths without starting a rename command.
  */
 const libraryChangeIntentSchema = z.discriminatedUnion("intent", [
   z.strictObject({
