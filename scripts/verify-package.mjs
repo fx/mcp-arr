@@ -156,7 +156,7 @@ function assertManifest(manifest) {
   );
 }
 
-async function verifyInstalledProcess(binPath, cwd) {
+async function verifyInstalledProcess(binPath, cwd, expectedVersion) {
   const invocation = createPlatformCommand(binPath, []);
   const child = spawn(invocation.executable, invocation.args, {
     cwd,
@@ -210,6 +210,12 @@ async function verifyInstalledProcess(binPath, cwd) {
     assert(
       response.result?.serverInfo?.name === "mcp-arr",
       "Installed bin returned the wrong server",
+    );
+    // The advertised version is only trustworthy if it tracks what npm
+    // installed; a hardcoded literal silently freezes while releases move on.
+    assert(
+      response.result?.serverInfo?.version === expectedVersion,
+      `Installed bin reported version ${response.result?.serverInfo?.version}, not the installed manifest version ${expectedVersion}`,
     );
     assert(
       response.result?.protocolVersion === LATEST_PROTOCOL_VERSION,
@@ -300,7 +306,7 @@ try {
     ".bin",
     process.platform === "win32" ? "mcp-arr.cmd" : "mcp-arr",
   );
-  await verifyInstalledProcess(binPath, consumerDirectory);
+  await verifyInstalledProcess(binPath, consumerDirectory, installedManifest.version);
   process.stdout.write("Package verification passed\n");
 } finally {
   if (temporaryRoot !== undefined) {
