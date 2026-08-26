@@ -25,8 +25,10 @@ import {
   languageNames,
   mediaInfo,
   mediaInfoSchema,
+  optionalUpstreamId,
   pagedEnvelope,
   parseUpstream,
+  present,
   qualityWrapper,
   text,
   textList,
@@ -100,15 +102,19 @@ const seriesSchema = z.object({
 
 type SonarrSeries = z.infer<typeof seriesSchema>;
 
-/** A lookup result is a series resource whose `id` is 0 until it is added. */
-const lookupSchema = seriesSchema.extend({ id: upstreamNumber });
+/**
+ * A lookup result is a series resource whose `id` is 0 until it is added, so
+ * only its optionality is relaxed here. It stays the same integer identifier
+ * `seriesSchema` models, because it is what a media reference is built from.
+ */
+const lookupSchema = seriesSchema.extend({ id: optionalUpstreamId });
 
 const episodeSchema = z.object({
   id: upstreamId,
   seriesId: upstreamId,
   seasonNumber: upstreamId,
   episodeNumber: upstreamId,
-  absoluteEpisodeNumber: upstreamNumber,
+  absoluteEpisodeNumber: optionalUpstreamId,
   title: upstreamText,
   airDate: upstreamText,
   airDateUtc: upstreamText,
@@ -125,7 +131,7 @@ type SonarrEpisode = z.infer<typeof episodeSchema>;
 const episodeFileSchema = z.object({
   id: upstreamId,
   seriesId: upstreamId,
-  seasonNumber: upstreamNumber,
+  seasonNumber: optionalUpstreamId,
   episodeIds: z.array(upstreamId).nullish(),
   relativePath: upstreamText,
   path: upstreamText,
@@ -177,10 +183,13 @@ function mapSeries(series: SonarrSeries, detail: DetailLevel): MediaItem {
     monitoring: seriesMonitoring(series),
     status: text(series.status),
     added: text(series.added),
-    statistics: {
+    // Omitted rather than zeroed: a series whose instance reported no
+    // statistics has an unknown file count, and `fileCount: 0` would state
+    // that it has no files.
+    statistics: present({
       fileCount: count(series.statistics?.episodeFileCount),
       sizeOnDiskBytes: count(series.statistics?.sizeOnDisk),
-    },
+    }),
     qualityProfile:
       qualityProfileId === undefined
         ? undefined
@@ -190,7 +199,7 @@ function mapSeries(series: SonarrSeries, detail: DetailLevel): MediaItem {
         ? configurationPointer(application, "root_folder", rootFolderPath)
         : undefined,
     tags: (series.tags ?? undefined)?.map((tag) => configurationPointer(application, "tag", tag)),
-    detail: detail === "full" ? seriesDetail(series) : undefined,
+    detail: detail === "full" ? present(seriesDetail(series)) : undefined,
     sonarr: {
       kind: "series",
       seriesType: text(series.seriesType),
@@ -208,10 +217,10 @@ function mapSeason(series: SonarrSeries, season: z.infer<typeof seasonSchema>): 
     ref: seasonRef(application, series.id, season.seasonNumber),
     title: `${series.title} — Season ${season.seasonNumber}`,
     monitoring: { monitored: flag(season.monitored) ?? false },
-    statistics: {
+    statistics: present({
       fileCount: count(season.statistics?.episodeFileCount),
       sizeOnDiskBytes: count(season.statistics?.sizeOnDisk),
-    },
+    }),
     sonarr: {
       kind: "season",
       seriesId: series.id,
@@ -231,7 +240,7 @@ function mapEpisode(episode: SonarrEpisode, detail: DetailLevel): MediaItem {
     monitoring: { monitored: flag(episode.monitored) ?? false },
     detail:
       detail === "full"
-        ? { overview: text(episode.overview), runtimeMinutes: count(episode.runtime) }
+        ? present({ overview: text(episode.overview), runtimeMinutes: count(episode.runtime) })
         : undefined,
     sonarr: {
       kind: "episode",
@@ -263,12 +272,12 @@ function mapEpisodeFile(file: SonarrEpisodeFile, detail: DetailLevel): MediaFile
     releaseGroup: text(file.releaseGroup),
     detail:
       detail === "full"
-        ? {
+        ? present({
             path: text(file.path),
             customFormats: textList((file.customFormats ?? []).map((format) => format.name)),
             customFormatScore: count(file.customFormatScore),
             mediaInfo: mediaInfo(file.mediaInfo),
-          }
+          })
         : undefined,
     sonarr: {
       seriesId: file.seriesId,
@@ -334,7 +343,7 @@ export async function lookupSeries(
           existingId === undefined || existingId <= 0
             ? undefined
             : mediaRef(application, "series", existingId),
-        detail: request.detail === "full" ? seriesDetail(result) : undefined,
+        detail: request.detail === "full" ? present(seriesDetail(result)) : undefined,
         sonarr: {
           tvdbId: count(result.tvdbId),
           seriesType: text(result.seriesType),

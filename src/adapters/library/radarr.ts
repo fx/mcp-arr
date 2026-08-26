@@ -26,8 +26,10 @@ import {
   languageNames,
   mediaInfo,
   mediaInfoSchema,
+  optionalUpstreamId,
   pagedEnvelope,
   parseUpstream,
+  present,
   qualityWrapper,
   text,
   textList,
@@ -97,8 +99,12 @@ const movieSchema = z.object({
 
 type RadarrMovie = z.infer<typeof movieSchema>;
 
-/** A lookup result is a movie resource whose `id` is 0 until it is added. */
-const lookupSchema = movieSchema.extend({ id: upstreamNumber });
+/**
+ * A lookup result is a movie resource whose `id` is 0 until it is added, so
+ * only its optionality is relaxed here. It stays the same integer identifier
+ * `movieSchema` models, because it is what a media reference is built from.
+ */
+const lookupSchema = movieSchema.extend({ id: optionalUpstreamId });
 
 const collectionSchema = z.object({
   id: upstreamId,
@@ -165,6 +171,7 @@ function mapMovie(movie: RadarrMovie, detail: DetailLevel): MediaItem {
   const rootFolderPath = text(movie.rootFolderPath);
   const qualityProfileId = count(movie.qualityProfileId);
   const collection = movie.collection ?? undefined;
+  const hasFile = flag(movie.hasFile);
   return {
     application,
     ref: mediaRef(application, "movie", movie.id),
@@ -174,10 +181,13 @@ function mapMovie(movie: RadarrMovie, detail: DetailLevel): MediaItem {
     monitoring: { monitored: flag(movie.monitored) ?? false },
     status: text(movie.status),
     added: text(movie.added),
-    statistics: {
-      fileCount: flag(movie.hasFile) === true ? 1 : 0,
+    // Omitted rather than zeroed: a movie whose instance reported neither a
+    // file flag nor a size on disk has an unknown file count, and
+    // `fileCount: 0` would state that it has no file.
+    statistics: present({
+      fileCount: hasFile === undefined ? undefined : Number(hasFile),
       sizeOnDiskBytes: count(movie.sizeOnDisk),
-    },
+    }),
     qualityProfile:
       qualityProfileId === undefined
         ? undefined
@@ -187,19 +197,19 @@ function mapMovie(movie: RadarrMovie, detail: DetailLevel): MediaItem {
         ? configurationPointer(application, "root_folder", rootFolderPath)
         : undefined,
     tags: (movie.tags ?? undefined)?.map((tag) => configurationPointer(application, "tag", tag)),
-    detail: detail === "full" ? movieDetail(movie) : undefined,
+    detail: detail === "full" ? present(movieDetail(movie)) : undefined,
     radarr: {
       kind: "movie",
       tmdbId: count(movie.tmdbId),
       imdbId: text(movie.imdbId),
       minimumAvailability: text(movie.minimumAvailability),
-      hasFile: flag(movie.hasFile) ?? false,
+      hasFile: hasFile ?? false,
       studio: text(movie.studio),
       collection:
         collection === null || collection === undefined
           ? undefined
-          : { tmdbId: count(collection.tmdbId), title: text(collection.title) },
-      releaseDates: releaseDates(movie),
+          : present({ tmdbId: count(collection.tmdbId), title: text(collection.title) }),
+      releaseDates: present(releaseDates(movie)),
     },
   };
 }
@@ -233,7 +243,7 @@ function mapCollection(
     // how many movies it holds rather than carrying them.
     detail:
       detail === "full"
-        ? { overview: text(collection.overview), genres: textList(collection.genres) }
+        ? present({ overview: text(collection.overview), genres: textList(collection.genres) })
         : undefined,
     radarr: {
       kind: "collection",
@@ -257,12 +267,12 @@ function mapMovieFile(file: RadarrMovieFile, detail: DetailLevel): MediaFile {
     releaseGroup: text(file.releaseGroup),
     detail:
       detail === "full"
-        ? {
+        ? present({
             path: text(file.path),
             customFormats: textList((file.customFormats ?? []).map((format) => format.name)),
             customFormatScore: count(file.customFormatScore),
             mediaInfo: mediaInfo(file.mediaInfo),
-          }
+          })
         : undefined,
     radarr: { movieId: file.movieId, edition: text(file.edition) },
   };
@@ -310,7 +320,7 @@ export async function lookupMovies(
           existingId === undefined || existingId <= 0
             ? undefined
             : mediaRef(application, "movie", existingId),
-        detail: request.detail === "full" ? movieDetail(result) : undefined,
+        detail: request.detail === "full" ? present(movieDetail(result)) : undefined,
         radarr: {
           tmdbId: count(result.tmdbId),
           imdbId: text(result.imdbId),

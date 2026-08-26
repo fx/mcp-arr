@@ -16,6 +16,16 @@ import type { MediaApplication } from "./model.js";
 /** An identifier as upstream reports it. */
 export const upstreamId = z.number().int();
 
+/**
+ * An identifier or ordinal upstream may omit, null, or report as zero.
+ *
+ * It stays integral: a whole number is the only thing these fields ever are,
+ * and a fractional value that parsed cleanly here could reach a media
+ * reference, which is the identity every later change keys media on. Absence is
+ * a real answer; `1.5` is a payload this server does not understand.
+ */
+export const optionalUpstreamId = z.number().int().nullish();
+
 /** A string field that may be absent, null, or empty upstream. */
 export const upstreamText = z.string().nullish();
 
@@ -41,6 +51,19 @@ export function flag(value: boolean | null | undefined): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
+/**
+ * Keeps a nested record only when it has something to say.
+ *
+ * Every member of these records is optional, so one whose members are all
+ * absent carries no information — and returning it anyway would say the
+ * instance reported an empty thing rather than reporting nothing at all. The
+ * normalized model makes each such record optional precisely so "unknown" and
+ * "empty" stay distinguishable; this is what keeps them so.
+ */
+export function present<TRecord extends object>(record: TRecord): TRecord | undefined {
+  return Object.values(record).some((value) => value !== undefined) ? record : undefined;
+}
+
 /** Normalizes a list, dropping blank entries and an absent list alike. */
 export function textList(values: readonly (string | null | undefined)[] | null | undefined) {
   if (!Array.isArray(values)) {
@@ -57,9 +80,9 @@ export function textList(values: readonly (string | null | undefined)[] | null |
  */
 export function pagedEnvelope<TRecord extends z.ZodType>(record: TRecord) {
   return z.object({
-    page: upstreamNumber,
-    pageSize: upstreamNumber,
-    totalRecords: upstreamNumber,
+    page: optionalUpstreamId,
+    pageSize: optionalUpstreamId,
+    totalRecords: optionalUpstreamId,
     records: z.array(record),
   });
 }
@@ -113,13 +136,13 @@ export function mediaInfo(value: z.infer<typeof mediaInfoSchema>) {
   if (value === null || value === undefined) {
     return undefined;
   }
-  return {
+  return present({
     videoCodec: text(value.videoCodec),
     audioCodec: text(value.audioCodec),
     audioChannels: count(value.audioChannels),
     resolution: text(value.resolution),
     runTime: text(value.runTime),
-  };
+  });
 }
 
 export const customFormatList = z.array(z.object({ name: upstreamText })).nullish();

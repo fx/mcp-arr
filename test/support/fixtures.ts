@@ -130,7 +130,7 @@ const sensitiveValuePatterns: ReadonlyArray<readonly [string, RegExp]> = [
 ];
 
 /**
- * Extensions a sanitized media file name may end in.
+ * Extensions that a sanitized media file name may end in.
  *
  * A file name such as `Example Movie Bluray-1080p.mkv` is structurally
  * indistinguishable from a hostname: a dotted label followed by two or more

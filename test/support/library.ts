@@ -64,6 +64,21 @@ export async function fixtureBody<TBody = unknown>(
 }
 
 /**
+ * A recorded payload with some properties removed, for the case an instance
+ * simply does not report them.
+ */
+export function without(
+  record: Record<string, unknown>,
+  ...names: readonly string[]
+): Record<string, unknown> {
+  const copy = { ...record };
+  for (const name of names) {
+    delete copy[name];
+  }
+  return copy;
+}
+
+/**
  * The paging a request carries. The default matches the page size the
  * published tool schema applies when a caller omits one.
  */

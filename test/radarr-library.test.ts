@@ -12,6 +12,7 @@ import {
   paging,
   type UpstreamCall,
   wantedItems,
+  without,
 } from "./support/library.js";
 import { testApiKeys } from "./support/tool-context.js";
 
@@ -359,6 +360,47 @@ describe("radarr library reads", () => {
         radarr: { tmdbId: 200004, imdbId: "tt0000004", studio: "Example Other Studio" },
       },
     ]);
+  });
+
+  it("reports statistics it was never given as absent rather than as zero", async () => {
+    const [recorded] = body("movie") as readonly Record<string, unknown>[];
+    const silent = without(recorded ?? {}, "hasFile", "sizeOnDisk");
+
+    const page = expectOk(
+      (
+        await run({ view: "movies", detail: "summary", paging: paging(25) }, () =>
+          jsonResponse([silent]),
+        )
+      ).outcome,
+    );
+    expect(mediaItems(page.data)[0]?.statistics).toBeUndefined();
+    expect(JSON.stringify(mediaItems(page.data)[0])).not.toContain("fileCount");
+
+    // A movie the instance says has no file really does have none.
+    const known = expectOk(
+      (
+        await run({ view: "movies", detail: "summary", paging: paging(25) }, () =>
+          jsonResponse([{ ...silent, hasFile: false }]),
+        )
+      ).outcome,
+    );
+    expect(mediaItems(known.data)[0]?.statistics).toEqual({
+      fileCount: 0,
+      sizeOnDiskBytes: undefined,
+    });
+  });
+
+  it("refuses a lookup identifier that is not a whole number", async () => {
+    const results = body("movie/lookup") as readonly Record<string, unknown>[];
+
+    const { outcome } = await run(
+      { view: "lookup", detail: "summary", term: "example movie", paging: paging(25) },
+      () => jsonResponse(results.map((result) => ({ ...result, id: 1.5 }))),
+    );
+
+    // A fractional id would reach a media reference, which is the identity
+    // later changes key media on.
+    expect(expectError(outcome).code).toBe("unexpected_response");
   });
 
   it("normalizes every upstream failure and never quotes the key or the term", async () => {

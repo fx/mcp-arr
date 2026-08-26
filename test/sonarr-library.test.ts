@@ -12,6 +12,7 @@ import {
   paging,
   type UpstreamCall,
   wantedItems,
+  without,
 } from "./support/library.js";
 import { testApiKeys } from "./support/tool-context.js";
 
@@ -451,6 +452,63 @@ describe("sonarr library reads", () => {
         sonarr: { tvdbId: 100004, seriesType: "standard", network: "Example Streamer" },
       },
     ]);
+  });
+
+  it("reports statistics it was never given as absent rather than as zero", async () => {
+    const [recorded] = body("series") as readonly Record<string, unknown>[];
+    const series = recorded ?? {};
+    const seasons = (series.seasons as readonly Record<string, unknown>[]).map((season) =>
+      without(season, "statistics"),
+    );
+    const silent = { ...without(series, "statistics"), seasons };
+
+    const seriesPage = expectOk(
+      (
+        await run({ view: "series", detail: "summary", paging: paging(25) }, () =>
+          jsonResponse([silent]),
+        )
+      ).outcome,
+    );
+    // Not `fileCount: 0`: that would state the series has no files, which is
+    // a different claim from the instance having reported nothing.
+    expect(mediaItems(seriesPage.data)[0]?.statistics).toBeUndefined();
+    expect(JSON.stringify(mediaItems(seriesPage.data)[0])).not.toContain("fileCount");
+
+    const seasonPage = expectOk(
+      (
+        await run({ view: "seasons", detail: "summary", seriesId: 12, paging: paging(25) }, () =>
+          jsonResponse(silent),
+        )
+      ).outcome,
+    );
+    expect(mediaItems(seasonPage.data)[0]?.statistics).toBeUndefined();
+
+    // A figure the instance really did report survives, zero included.
+    const partial = { ...silent, statistics: { sizeOnDisk: 0 } };
+    const partialPage = expectOk(
+      (
+        await run({ view: "series", detail: "summary", paging: paging(25) }, () =>
+          jsonResponse([partial]),
+        )
+      ).outcome,
+    );
+    expect(mediaItems(partialPage.data)[0]?.statistics).toEqual({
+      fileCount: undefined,
+      sizeOnDiskBytes: 0,
+    });
+  });
+
+  it("refuses a lookup identifier that is not a whole number", async () => {
+    const results = body("series/lookup") as readonly Record<string, unknown>[];
+
+    const { outcome } = await run(
+      { view: "lookup", detail: "summary", term: "example series", paging: paging(25) },
+      () => jsonResponse(results.map((result) => ({ ...result, id: 1.5 }))),
+    );
+
+    // A fractional id would reach a media reference, which is the identity
+    // later changes key media on.
+    expect(expectError(outcome).code).toBe("unexpected_response");
   });
 
   it("normalizes every upstream failure and never quotes the key or the term", async () => {
