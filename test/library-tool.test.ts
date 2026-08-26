@@ -37,6 +37,10 @@ function parseInput(value: unknown) {
   return definition.inputSchema.safeParse(value);
 }
 
+function calendarWindow(start: string, end: string): boolean {
+  return parseInput({ view: "calendar", start, end }).success;
+}
+
 /**
  * Calls the registered tool the way its host does: validate against the
  * published schema first, then hand the parsed arguments to the definition.
@@ -120,17 +124,33 @@ describe("arr_library_query input schema", () => {
     expect(parseInput({ view: "series", media: [] }).success).toBe(false);
   });
 
-  it("bounds the calendar window and refuses an impossible date", () => {
-    const window = (start: string, end: string) =>
-      parseInput({ view: "calendar", start, end }).success;
-
-    expect(window("2026-01-01", "2026-01-01")).toBe(true);
-    expect(window("2026-01-01", "2026-12-31")).toBe(true);
-    expect(window("2026-01-02", "2026-01-01")).toBe(false);
-    expect(window("2026-01-01", "2027-01-02")).toBe(false);
-    expect(window("2026-02-30", "2026-03-01")).toBe(false);
-    expect(window("2026-13-01", "2026-13-02")).toBe(false);
+  it("bounds the calendar window", () => {
+    expect(calendarWindow("2026-01-01", "2026-01-01")).toBe(true);
+    expect(calendarWindow("2026-01-01", "2026-12-31")).toBe(true);
+    expect(calendarWindow("2026-01-02", "2026-01-01")).toBe(false);
+    expect(calendarWindow("2026-01-01", "2027-01-02")).toBe(false);
     expect(maxCalendarWindowDays).toBeGreaterThan(0);
+  });
+
+  it("refuses a calendar date that does not round-trip and keeps every real one", () => {
+    // Each of these is shaped correctly and rolls *forward* under `Date.parse`,
+    // so accepting one would query a different window than the caller asked
+    // for. The other bound is deliberately far enough away that the rolled-over
+    // date would still leave an in-order, in-bounds window — the date itself
+    // has to be what is rejected, not the window it happens to produce.
+    for (const impossible of ["2026-02-30", "2026-04-31", "2027-02-29", "2026-11-31"]) {
+      expect(calendarWindow(impossible, "2026-12-01"), impossible).toBe(false);
+      expect(calendarWindow("2026-01-01", impossible), impossible).toBe(false);
+    }
+    for (const malformed of ["2026-13-01", "2026-00-10", "2026-01-32", "2026-01-00"]) {
+      expect(calendarWindow(malformed, "2026-12-01"), malformed).toBe(false);
+      expect(calendarWindow("2026-01-01", malformed), malformed).toBe(false);
+    }
+
+    // Real dates, a leap day included, survive as both bounds untouched.
+    for (const real of ["2028-02-29", "2026-02-28", "2026-01-31", "2026-12-31"]) {
+      expect(calendarWindow(real, real), real).toBe(true);
+    }
   });
 });
 
@@ -313,6 +333,29 @@ describe("arr_library_query results", () => {
       monitored: true,
     });
     expect(mismatched.applications[0]?.error?.code).toBe("invalid_input");
+  });
+
+  it("forwards a calendar window to the instance exactly as it was supplied", async () => {
+    const context = await sonarrContext();
+    await call(context, { view: "calendar", start: "2028-02-29", end: "2028-03-01" });
+
+    // The bounds reach the instance byte for byte. A date this server had
+    // silently normalized would show up here as the date it was changed into.
+    const calendar = sonarr.searches.find((search) => search.route === "calendar");
+    expect(calendar?.query.get("start")).toBe("2028-02-29");
+    expect(calendar?.query.get("end")).toBe("2028-03-01");
+  });
+
+  it("refuses an impossible calendar date without contacting the instance", async () => {
+    const context = await sonarrContext();
+
+    for (const impossible of ["2026-02-30", "2026-13-01"]) {
+      const parsed = parseInput({ view: "calendar", start: impossible, end: "2026-12-01" });
+      expect(parsed.success, impossible).toBe(false);
+      // Nothing to dispatch: validation refused it, so no probe and no read.
+      expect(context.registry.adapter("sonarr")).toBeDefined();
+    }
+    expect(sonarr.requests).toEqual([]);
   });
 
   it("refuses a media reference this process never issued before sending anything", async () => {

@@ -453,7 +453,13 @@ function resolveUpstreamId(
     return { ok: false, error: invalid(invocation, `${property} must name a ${expected} record`) };
   }
 
-  const id = Number(entry.payload.snapshot.upstreamId);
+  // Matched before it is converted, because `Number` answers several strings
+  // that are not a plain identifier by quietly changing them — `""` becomes 0,
+  // `" 12 "` becomes 12, `"0x0c"` becomes 12. A composite identity such as a
+  // season's `12/3` has no single upstream id and is refused here rather than
+  // narrowed to one of its halves.
+  const upstreamId = entry.payload.snapshot.upstreamId;
+  const id = /^\d+$/u.test(upstreamId) ? Number(upstreamId) : Number.NaN;
   if (!Number.isSafeInteger(id)) {
     return { ok: false, error: invalid(invocation, `${property} does not name a single record`) };
   }

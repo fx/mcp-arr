@@ -34,16 +34,29 @@ export const maxCalendarWindowDays = 366;
 const dayMs = 86_400_000;
 
 /**
- * Whether a calendar window is usable.
+ * Reads one calendar bound, refusing a date that does not exist.
  *
- * The date schema only fixes the shape, so this is also where an impossible
- * date is caught: an unparsable bound has no width to measure and is refused
- * rather than sent upstream as text.
+ * The date schema fixes only the shape, and `Date.parse` answers a day that is
+ * shaped correctly but absent from its month by rolling it forward:
+ * `2026-02-30` becomes `2026-03-02`, and `2027-02-29` becomes `2027-03-01`.
+ * Accepting that would send the instance a different window than the caller
+ * asked for and report nothing, which is worse than refusing the input — so the
+ * parsed instant is formatted back and kept only when it is byte-identical to
+ * what arrived. Every real date round-trips unchanged.
  */
+function readCalendarBound(value: string): number | undefined {
+  const parsed = Date.parse(`${value}T00:00:00Z`);
+  if (Number.isNaN(parsed)) {
+    return undefined;
+  }
+  return new Date(parsed).toISOString().slice(0, 10) === value ? parsed : undefined;
+}
+
+/** Whether a calendar window names two real dates, in order, and is bounded. */
 function isUsableCalendarWindow(start: string, end: string): boolean {
-  const from = Date.parse(`${start}T00:00:00Z`);
-  const to = Date.parse(`${end}T00:00:00Z`);
-  if (Number.isNaN(from) || Number.isNaN(to) || to < from) {
+  const from = readCalendarBound(start);
+  const to = readCalendarBound(end);
+  if (from === undefined || to === undefined || to < from) {
     return false;
   }
   return to - from <= (maxCalendarWindowDays - 1) * dayMs;

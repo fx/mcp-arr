@@ -59,12 +59,19 @@ export interface FixtureInstanceOptions {
   readonly unreachable?: boolean;
 }
 
+export interface UpstreamSearch {
+  readonly route: string;
+  readonly query: URLSearchParams;
+}
+
 export interface FixtureInstance {
   readonly application: ApplicationId;
   readonly url: string;
   readonly apiKey: string;
   /** The relative routes this instance was asked for, in order. */
   readonly requests: readonly string[];
+  /** The same requests with their query parameters, for asserting what was sent. */
+  readonly searches: readonly UpstreamSearch[];
   close(): Promise<void>;
 }
 
@@ -97,6 +104,7 @@ export async function startFixtureInstance(
   const descriptor = describeApplication(application);
   const apiKey = `${application}-fixture-key`;
   const requests: string[] = [];
+  const searches: UpstreamSearch[] = [];
   const bodies = new Map<string, unknown>(
     await Promise.all(
       routes[application].map(
@@ -128,6 +136,7 @@ export async function startFixtureInstance(
     }
     const route = url.pathname.slice(prefix.length);
     requests.push(route);
+    searches.push({ route, query: url.searchParams });
 
     if (request.headers["x-api-key"] !== apiKey) {
       send(response, 401, { message: "unauthorized" });
@@ -160,6 +169,7 @@ export async function startFixtureInstance(
     url: `http://127.0.0.1:${address.port}`,
     apiKey,
     requests,
+    searches,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => (error === undefined ? resolve() : reject(error)));
