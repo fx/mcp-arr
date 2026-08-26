@@ -13,12 +13,41 @@ import {
   searchTermSchema,
   variantUnion,
 } from "./common.js";
+import { libraryViewResultSchema } from "./library-results.js";
 
 const monitoredFilter = z.boolean().optional();
 
 const mediaSelection = z.array(mediaReferenceSchema).min(1).max(maxBulkItems);
 
 const seasonNumberSchema = z.int().min(0).max(1000);
+
+/**
+ * The widest calendar window one call may ask for.
+ *
+ * Neither application pages its calendar endpoint, so the width of the window
+ * decides how much an instance is asked to assemble and send. A year covers
+ * every scheduling question this view exists to answer, and reaching further is
+ * a different query rather than a wider one.
+ */
+export const maxCalendarWindowDays = 366;
+
+const dayMs = 86_400_000;
+
+/**
+ * Whether a calendar window is usable.
+ *
+ * The date schema only fixes the shape, so this is also where an impossible
+ * date is caught: an unparsable bound has no width to measure and is refused
+ * rather than sent upstream as text.
+ */
+function isUsableCalendarWindow(start: string, end: string): boolean {
+  const from = Date.parse(`${start}T00:00:00Z`);
+  const to = Date.parse(`${end}T00:00:00Z`);
+  if (Number.isNaN(from) || Number.isNaN(to) || to < from) {
+    return false;
+  }
+  return to - from <= (maxCalendarWindowDays - 1) * dayMs;
+}
 
 /**
  * The typed library views. A view names a normalized concept rather than an
@@ -91,13 +120,18 @@ export const libraryQueryInputSchema = variantUnion(
       ...queryBaseShape,
       monitored: monitoredFilter,
     }),
-    z.strictObject({
-      view: z.literal("calendar"),
-      ...queryBaseShape,
-      start: isoDateSchema,
-      end: isoDateSchema,
-      monitored: monitoredFilter,
-    }),
+    z
+      .strictObject({
+        view: z.literal("calendar"),
+        ...queryBaseShape,
+        /** An inclusive date window, bounded by {@link maxCalendarWindowDays}. */
+        start: isoDateSchema,
+        end: isoDateSchema,
+        monitored: monitoredFilter,
+      })
+      .refine((value) => isUsableCalendarWindow(value.start, value.end), {
+        error: `start and end must be real dates, in order, and at most ${maxCalendarWindowDays} days apart`,
+      }),
     z.strictObject({
       /** Metadata lookup. Reading a lookup result never adds it to a library. */
       view: z.literal("lookup"),
@@ -206,5 +240,7 @@ export const libraryChangeInputSchema = variantUnion(
   z.union([libraryChangeIntentSchema, planApplySchema]),
 );
 
-export const libraryQueryOutputSchema = toolResultSchema();
+export type LibraryQueryInput = z.infer<typeof libraryQueryInputSchema>;
+
+export const libraryQueryOutputSchema = toolResultSchema({ data: libraryViewResultSchema });
 export const libraryChangeOutputSchema = toolResultSchema({ mutation: true });

@@ -36,6 +36,19 @@ function fixtureBody(application: ApplicationId): Record<string, unknown> {
   return fixture.body;
 }
 
+function operationKey(operation: { tool: string; variant?: string | undefined }): string {
+  return `${operation.tool}/${operation.variant ?? "-"}`;
+}
+
+/** Every operation a report projects onto its application, however it is grouped. */
+function projectedKeys(report: CapabilityReport): string[] {
+  return [
+    ...report.supportedOperations,
+    ...report.unsupportedOperations,
+    ...report.unimplementedOperations,
+  ].map(operationKey);
+}
+
 function reportFor(
   result: ToolResult<CapabilityReport>,
   application: ApplicationId,
@@ -153,16 +166,12 @@ describe("arr_capabilities", () => {
     const sonarr = reportFor(result, "sonarr");
     const prowlarr = reportFor(result, "prowlarr");
 
-    const sonarrKeys = sonarr.unimplementedOperations.map(
-      (operation) => `${operation.tool}/${operation.variant ?? "-"}`,
-    );
+    const sonarrKeys = projectedKeys(sonarr);
     expect(sonarrKeys).toContain("arr_library_query/series");
     expect(sonarrKeys).not.toContain("arr_library_query/movies");
     expect(sonarrKeys).not.toContain("arr_activity_query/indexer_status");
 
-    const prowlarrKeys = prowlarr.unimplementedOperations.map(
-      (operation) => `${operation.tool}/${operation.variant ?? "-"}`,
-    );
+    const prowlarrKeys = projectedKeys(prowlarr);
     expect(prowlarrKeys).toContain("arr_activity_query/indexer_status");
     expect(prowlarrKeys).not.toContain("arr_library_query/series");
 
@@ -181,14 +190,47 @@ describe("arr_capabilities", () => {
     });
 
     const result = await reportCapabilities(context, undefined);
+
+    // Job projection is process-local, so it is usable on every configured
+    // application. The library views are advertised exactly where the adapters
+    // model them, and Prowlarr has no media library so it advertises none.
+    expect(reportFor(result, "sonarr").supportedOperations.map(operationKey)).toEqual([
+      "arr_library_query/series",
+      "arr_library_query/seasons",
+      "arr_library_query/episodes",
+      "arr_library_query/episode_files",
+      "arr_library_query/missing_episodes",
+      "arr_library_query/cutoff_unmet_episodes",
+      "arr_library_query/calendar",
+      "arr_library_query/lookup",
+      "arr_job_get/-",
+      "arr_job_cancel/-",
+    ]);
+    expect(reportFor(result, "radarr").supportedOperations.map(operationKey)).toEqual([
+      "arr_library_query/movies",
+      "arr_library_query/collections",
+      "arr_library_query/movie_files",
+      "arr_library_query/missing_movies",
+      "arr_library_query/cutoff_unmet_movies",
+      "arr_library_query/calendar",
+      "arr_library_query/lookup",
+      "arr_job_get/-",
+      "arr_job_cancel/-",
+    ]);
+    expect(reportFor(result, "prowlarr").supportedOperations.map(operationKey)).toEqual([
+      "arr_job_get/-",
+      "arr_job_cancel/-",
+    ]);
+
+    // An implemented view is never also reported as declared-but-unimplemented.
     for (const application of ["sonarr", "radarr", "prowlarr"] as const) {
-      // Job projection is process-local, so it is usable on every configured
-      // application before any domain adapter lands. Everything else still
-      // answers unsupported_capability and must not be advertised.
-      expect(reportFor(result, application).supportedOperations, application).toEqual([
-        { tool: "arr_job_get", sideEffect: "read" },
-        { tool: "arr_job_cancel", sideEffect: "mutate" },
-      ]);
+      const report = reportFor(result, application);
+      expect(
+        report.unimplementedOperations
+          .map(operationKey)
+          .filter((key) => key.startsWith("arr_library_query/")),
+        application,
+      ).toEqual([]);
     }
   });
 

@@ -9,6 +9,7 @@ import type { PlanRecord, PreconditionRead } from "../state/plans.js";
 import type { WorkflowState } from "../state/workflow.js";
 import { createToolError, type ToolError } from "./errors.js";
 import { jobCancelHandler, jobCancelPreconditions, jobGetHandler } from "./jobs.js";
+import { libraryQueryHandler } from "./library.js";
 import type { ProjectedToolName, ToolName } from "./names.js";
 import type { Effect, ItemOutcome } from "./results.js";
 import type { Continuation } from "./schemas/common.js";
@@ -202,6 +203,13 @@ function define<const TId extends string>(
   };
 }
 
+/**
+ * Every `arr_library_query` view runs the same handler; the view it answers is
+ * carried by the caller's own discriminator, which the handler re-validates
+ * against the published schema rather than taking from this table.
+ */
+const libraryQuery: DefineOptions = { handler: libraryQueryHandler };
+
 const every = ["sonarr", "radarr", "prowlarr"] as const;
 const media = ["sonarr", "radarr"] as const;
 const sonarr = ["sonarr"] as const;
@@ -218,31 +226,68 @@ const prowlarr = ["prowlarr"] as const;
  */
 const definitions = [
   // arr_library_query
-  define("library.query.series", "arr_library_query", "series", sonarr, "read"),
-  define("library.query.seasons", "arr_library_query", "seasons", sonarr, "read"),
-  define("library.query.episodes", "arr_library_query", "episodes", sonarr, "read"),
-  define("library.query.episode_files", "arr_library_query", "episode_files", sonarr, "read"),
-  define("library.query.missing_episodes", "arr_library_query", "missing_episodes", sonarr, "read"),
+  define("library.query.series", "arr_library_query", "series", sonarr, "read", libraryQuery),
+  define("library.query.seasons", "arr_library_query", "seasons", sonarr, "read", libraryQuery),
+  define("library.query.episodes", "arr_library_query", "episodes", sonarr, "read", libraryQuery),
+  define(
+    "library.query.episode_files",
+    "arr_library_query",
+    "episode_files",
+    sonarr,
+    "read",
+    libraryQuery,
+  ),
+  define(
+    "library.query.missing_episodes",
+    "arr_library_query",
+    "missing_episodes",
+    sonarr,
+    "read",
+    libraryQuery,
+  ),
   define(
     "library.query.cutoff_unmet_episodes",
     "arr_library_query",
     "cutoff_unmet_episodes",
     sonarr,
     "read",
+    libraryQuery,
   ),
-  define("library.query.movies", "arr_library_query", "movies", radarr, "read"),
-  define("library.query.collections", "arr_library_query", "collections", radarr, "read"),
-  define("library.query.movie_files", "arr_library_query", "movie_files", radarr, "read"),
-  define("library.query.missing_movies", "arr_library_query", "missing_movies", radarr, "read"),
+  define("library.query.movies", "arr_library_query", "movies", radarr, "read", libraryQuery),
+  define(
+    "library.query.collections",
+    "arr_library_query",
+    "collections",
+    radarr,
+    "read",
+    libraryQuery,
+  ),
+  define(
+    "library.query.movie_files",
+    "arr_library_query",
+    "movie_files",
+    radarr,
+    "read",
+    libraryQuery,
+  ),
+  define(
+    "library.query.missing_movies",
+    "arr_library_query",
+    "missing_movies",
+    radarr,
+    "read",
+    libraryQuery,
+  ),
   define(
     "library.query.cutoff_unmet_movies",
     "arr_library_query",
     "cutoff_unmet_movies",
     radarr,
     "read",
+    libraryQuery,
   ),
-  define("library.query.calendar", "arr_library_query", "calendar", media, "read"),
-  define("library.query.lookup", "arr_library_query", "lookup", media, "read"),
+  define("library.query.calendar", "arr_library_query", "calendar", media, "read", libraryQuery),
+  define("library.query.lookup", "arr_library_query", "lookup", media, "read", libraryQuery),
 
   // arr_activity_query
   define("activity.query.queue_status", "arr_activity_query", "queue_status", media, "read"),

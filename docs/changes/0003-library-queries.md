@@ -5,7 +5,7 @@
 Implement bounded Sonarr and Radarr lookup, library, wanted, calendar, collection, and file queries through `arr_library_query` as defined by the [Library Management spec](../specs/library-management/).
 
 **Spec:** [Library Management](../specs/library-management/)
-**Status:** draft
+**Status:** complete
 **Depends On:** 0001, 0002
 
 ## Motivation
@@ -67,10 +67,10 @@ The [Library Management spec](../specs/library-management/#library-queries) owns
   - [x] Add missing/cutoff filters, calendar ranges, and bounded paging (PR #7)
   - [x] Add Sonarr episode-file and Radarr movie-file reads (PR #7)
   - [x] Add Radarr collection support and unsupported-view handling (PR #7)
-- [ ] Register and verify `arr_library_query`
-  - [ ] Add typed view schemas, detail levels, pagination, and structured outputs
-  - [ ] Add stdio integration tests for each view and mixed configured-app state
-  - [ ] Add capability projection for all implemented views
+- [x] Register and verify `arr_library_query` (PR #PENDING)
+  - [x] Add typed view schemas, detail levels, pagination, and structured outputs (PR #PENDING)
+  - [x] Add stdio integration tests for each view and mixed configured-app state (PR #PENDING)
+  - [x] Add capability projection for all implemented views (PR #PENDING)
 
 ## Open Questions
 
