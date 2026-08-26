@@ -102,4 +102,35 @@ describe("joinUpstreamUrl", () => {
       "must not contain empty or relative segments",
     );
   });
+
+  it("refuses every traversal representation URL parsing would resolve", () => {
+    const base = "https://sonarr.example.invalid/prefix/api/v3";
+    const traversals = [
+      "%2e%2e/%2e%2e/status",
+      "%2E%2E/admin",
+      "%2e/status",
+      "..\\..\\status",
+      "system\\..\\..\\admin",
+    ];
+
+    for (const traversal of traversals) {
+      expect(() => joinUpstreamUrl(base, traversal)).toThrow(
+        "Upstream path must not change the resolved URL",
+      );
+      // Each one is rejected precisely because URL parsing rewrites it.
+      expect(new URL(`${base}/${traversal}`).href).not.toBe(`${base}/${traversal}`);
+    }
+
+    // The dot-dot forms leave the configured prefix outright.
+    for (const traversal of ["%2e%2e/%2e%2e/status", "%2E%2E/admin", "..\\..\\status"]) {
+      expect(new URL(`${base}/${traversal}`).pathname.startsWith("/prefix/api/v3/")).toBe(false);
+    }
+  });
+
+  it("keeps an already-encoded segment that resolves unchanged", () => {
+    const base = "https://sonarr.example.invalid/api/v3";
+    expect(joinUpstreamUrl(base, `movie/lookup/${encodeURIComponent("a title")}`)).toBe(
+      "https://sonarr.example.invalid/api/v3/movie/lookup/a%20title",
+    );
+  });
 });

@@ -48,6 +48,13 @@ export function normalizeBaseUrl(raw: string): BaseUrlResult {
 /**
  * Appends a relative upstream path to an already normalized base, keeping the
  * base path prefix intact and refusing anything that could escape it.
+ *
+ * The literal segment checks alone are not enough: WHATWG URL parsing resolves
+ * percent-encoded dot segments and treats a backslash as a separator, so
+ * `%2e%2e/` and `..\` escape the prefix once the string reaches `fetch`. The
+ * result is therefore re-parsed and required to survive unchanged, which
+ * rejects every such representation while leaving an already-encoded segment
+ * such as `lookup%20term` intact.
  */
 export function joinUpstreamUrl(base: string, path: string): string {
   const trimmed = path.replace(/^\/+|\/+$/gu, "");
@@ -62,5 +69,16 @@ export function joinUpstreamUrl(base: string, path: string): string {
     throw new Error(`Upstream path must not contain empty or relative segments: ${path}`);
   }
 
-  return `${base.replace(/\/+$/u, "")}/${segments.join("/")}`;
+  const joined = `${base.replace(/\/+$/u, "")}/${segments.join("/")}`;
+  let resolved: URL;
+  try {
+    resolved = new URL(joined);
+  } catch {
+    throw new Error(`Upstream path does not produce a valid URL: ${path}`);
+  }
+  if (resolved.href !== joined) {
+    throw new Error(`Upstream path must not change the resolved URL: ${path}`);
+  }
+
+  return joined;
 }
