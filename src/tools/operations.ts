@@ -481,7 +481,11 @@ export interface OperationRegistry {
 }
 
 function registryKey(tool: ToolName, variant: string | undefined): string {
-  return `${tool} ${variant ?? ""}`;
+  // Escaped rather than embedded: a raw NUL in the source is invisible in an
+  // editor and can be stripped by tooling, which would silently let keys
+  // collide. No tool name or variant can contain it, so it stays the
+  // separator that cannot occur inside either half.
+  return `${tool}\u0000${variant ?? ""}`;
 }
 
 export function createOperationRegistry(
