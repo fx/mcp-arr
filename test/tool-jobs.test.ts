@@ -141,10 +141,32 @@ describe("arr_job_get", () => {
     expect(requested).toEqual([]);
   });
 
-  it("rejects a reference from a previous process lifetime", async () => {
+  it("tells a caller its reference was never one this server issued", async () => {
     const { context, requested } = harness();
 
     const result = await callTool(context, "arr_job_get", { job: "job_neverissuedneverissue" });
+
+    expect(result.status).toBe("error");
+    expect(result.errors.map((error) => error.code)).toEqual(["stale_reference"]);
+    // Not "the server restarted": nothing about this value was ever a job
+    // reference, and sending the caller after a restart it never saw is worse
+    // than telling it the argument is wrong.
+    expect(result.errors[0]?.message).toContain("never issued");
+    expect(result.errors[0]?.message).not.toContain("before this server process started");
+    expect(requested).toEqual([]);
+  });
+
+  it("distinguishes a job reference this server issued before it restarted", async () => {
+    const { context, requested } = harness();
+    const previous = createWorkflowState({ clock: createManualClock(0) });
+    const stranded = previous.jobs.project({
+      application: "sonarr",
+      command,
+      observation: { state: "started" },
+      cancellation: { supported: false },
+    }).reference;
+
+    const result = await callTool(context, "arr_job_get", { job: stranded });
 
     expect(result.status).toBe("error");
     expect(result.errors.map((error) => error.code)).toEqual(["stale_reference"]);

@@ -227,7 +227,7 @@ describe("job projection", () => {
 
     expect(jobs.resolve("job_neverissuedneverissued")).toEqual({
       ok: false,
-      reason: "foreign_lifetime",
+      reason: "malformed",
     });
     expect(jobs.observe("rel_00000001", { state: "started" })).toEqual({
       ok: false,
@@ -333,7 +333,7 @@ describe("job cancellation", () => {
     const { jobs } = store();
     const cancellation = await jobs.cancel("job_neverissuedneverissued");
 
-    expect(cancellation).toEqual({ unresolved: "foreign_lifetime" });
+    expect(cancellation).toEqual({ unresolved: "malformed" });
   });
 
   it("stops offering cancellation once the job has ended", async () => {

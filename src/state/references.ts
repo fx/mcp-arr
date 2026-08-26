@@ -4,7 +4,7 @@ import type { ApplyRecord } from "./apply-records.js";
 import type { Clock } from "./clock.js";
 import type { JobRecord } from "./jobs.js";
 import type { PlanRecord } from "./plans.js";
-import { createLifetimeId, lifetimeOfToken, mintToken } from "./tokens.js";
+import { createLifetimeId, mintToken, readTokenLifetime } from "./tokens.js";
 
 const minute = 60_000;
 
@@ -288,7 +288,15 @@ export function createReferenceStore(options: ReferenceStoreOptions): ReferenceS
     if (claimed !== kind) {
       return { ok: false, reason: "wrong_kind", kind };
     }
-    if (lifetimeOfToken(token, referencePrefixes[kind]) !== lifetimeId) {
+    // A token that cannot be parsed and a token from another process are
+    // different answers with different remedies, so they never share a branch:
+    // one means the value was never a reference, the other means it was ours
+    // and the server has restarted since.
+    const lifetime = readTokenLifetime(token, referencePrefixes[kind]);
+    if (lifetime.status === "malformed") {
+      return { ok: false, reason: "malformed", kind };
+    }
+    if (lifetime.lifetimeId !== lifetimeId) {
       return { ok: false, reason: "foreign_lifetime", kind };
     }
 
@@ -315,6 +323,14 @@ export function createReferenceStore(options: ReferenceStoreOptions): ReferenceS
     mint(input: MintInput): ReferenceEntry {
       const now = clock.now();
       const lifetimeMs = input.lifetimeMs ?? referenceLifetimes[input.kind];
+      // The same collapse as an unparsable token, one layer down: a NaN
+      // lifetime makes `now + lifetimeMs` NaN, which never compares as expired
+      // and reads as non-finite — so a broken input would be indistinguishable
+      // from a deliberate never-expires entry, and would silently take up a
+      // slot in the bucket reserved for those.
+      if (!(Number.isFinite(lifetimeMs) || lifetimeMs === Number.POSITIVE_INFINITY)) {
+        throw new RangeError("A reference lifetime must be finite or positive infinity");
+      }
       const reference = mintToken(referencePrefixes[input.kind], lifetimeId);
       const entry: ReferenceEntry = {
         reference,

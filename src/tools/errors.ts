@@ -238,7 +238,7 @@ export function toolErrorForReferenceFailure(
   const describe = (): string => {
     switch (reason) {
       case "malformed":
-        return `that value is not a ${noun} reference this server issued`;
+        return `that value was never issued as a ${noun} reference by this server`;
       case "wrong_kind":
         return `that reference is not a ${noun} reference`;
       case "foreign_lifetime":

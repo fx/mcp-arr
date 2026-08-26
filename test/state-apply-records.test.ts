@@ -343,7 +343,7 @@ describe("apply record store", () => {
 
     expect(applies.resolve("apl_neverissuedneverissued")).toEqual({
       ok: false,
-      reason: "foreign_lifetime",
+      reason: "malformed",
     });
     expect(
       await applies.reconcile("job_00000001", async () => ({ status: "indeterminate" })),

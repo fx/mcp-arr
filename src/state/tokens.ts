@@ -13,6 +13,15 @@ const lifetimeRandomBytes = 6;
 
 const lifetimeLength = 8;
 
+/** Base64url is four characters per three bytes, with no padding. */
+const tokenRandomLength = Math.ceil((tokenRandomBytes * 4) / 3);
+
+/** The exact body every minted token has: a lifetime segment then randomness. */
+const tokenBodyPattern = new RegExp(
+  `^[A-Za-z0-9_-]{${String(lifetimeLength + tokenRandomLength)}}$`,
+  "u",
+);
+
 function base64url(bytes: Buffer): string {
   return bytes.toString("base64url");
 }
@@ -35,17 +44,34 @@ export function mintToken(prefix: string, lifetimeId: string): string {
 }
 
 /**
- * Reads the lifetime segment of a token, or `undefined` when the token is not
- * shaped like one this server minted. It deliberately extracts nothing else:
- * the remainder is random and stands for nothing on its own.
+ * What a token's lifetime segment says, or that it has none to read.
+ *
+ * The two are kept apart on purpose. "This is not a token I mint" and "this is
+ * my token from a previous process" call for different remediation — invent a
+ * correct argument versus repeat the query after a restart — so collapsing
+ * them into one absent value would make one of the two answers a lie.
  */
-export function lifetimeOfToken(token: string, prefix: string): string | undefined {
+export type TokenLifetimeRead =
+  | { readonly status: "read"; readonly lifetimeId: string }
+  | { readonly status: "malformed" };
+
+/**
+ * Reads the lifetime segment of a token.
+ *
+ * The whole body is checked against the exact shape {@link mintToken} produces,
+ * not merely for being long enough: a value that is the right length by
+ * coincidence still carries no lifetime this server ever wrote. Nothing else is
+ * extracted — the remainder is random and stands for nothing on its own.
+ */
+export function readTokenLifetime(token: string, prefix: string): TokenLifetimeRead {
   const head = `${prefix}_`;
   if (!token.startsWith(head)) {
-    return undefined;
+    return { status: "malformed" };
   }
   const body = token.slice(head.length);
-  return body.length > lifetimeLength ? body.slice(0, lifetimeLength) : undefined;
+  return tokenBodyPattern.test(body)
+    ? { status: "read", lifetimeId: body.slice(0, lifetimeLength) }
+    : { status: "malformed" };
 }
 
 function canonicalize(value: unknown): string {

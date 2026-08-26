@@ -92,19 +92,29 @@ describe("opaque reference store", () => {
     expect(store.resolve(release.reference, "release").ok).toBe(true);
   });
 
-  it("refuses a token invented by the caller", () => {
+  it("calls a token it never could have minted malformed, not foreign", () => {
     const { store } = storeAt();
+    const malformed = [
+      // No prefix at all.
+      "not-a-reference",
+      // The right prefix, but a body no minted token ever has. Telling the
+      // caller its reference predates a restart would send it looking for a
+      // server event that never happened.
+      "rel_forgedforgedforged",
+      "rel_00000001",
+      `rel_${"a".repeat(29)}`,
+      `rel_${"a".repeat(31)}`,
+      // The right length, but not the alphabet base64url produces.
+      `rel_${"a".repeat(29)}!`,
+    ];
 
-    expect(store.resolve("rel_forgedforgedforged", "release")).toEqual({
-      ok: false,
-      reason: "foreign_lifetime",
-      kind: "release",
-    });
-    expect(store.resolve("not-a-reference", "release")).toEqual({
-      ok: false,
-      reason: "malformed",
-      kind: "release",
-    });
+    for (const token of malformed) {
+      expect(store.resolve(token, "release"), token).toEqual({
+        ok: false,
+        reason: "malformed",
+        kind: "release",
+      });
+    }
   });
 
   it("refuses a reference minted in a previous process lifetime", () => {
@@ -113,11 +123,30 @@ describe("opaque reference store", () => {
     const entry = mintRelease(previous.store);
 
     expect(previous.store.resolve(entry.reference, "release").ok).toBe(true);
+    // Well formed and genuinely ours, just from before the restart. This is the
+    // one case whose remediation is "the server restarted, ask again".
     expect(restarted.store.resolve(entry.reference, "release")).toEqual({
       ok: false,
       reason: "foreign_lifetime",
       kind: "release",
     });
+  });
+
+  it("refuses a lifetime that is neither finite nor deliberately endless", () => {
+    const { store } = storeAt();
+    const mint = (lifetimeMs: number) =>
+      store.mint({
+        kind: "release",
+        applications: ["sonarr"],
+        lifetimeMs,
+        payload: () => ({ kind: "domain", snapshot: snapshot() }),
+      });
+
+    // NaN would never compare as expired and would read as non-finite, making a
+    // broken lifetime indistinguishable from an intentional never-expiring one.
+    expect(() => mint(Number.NaN)).toThrow(RangeError);
+    expect(() => mint(Number.POSITIVE_INFINITY)).not.toThrow();
+    expect(() => mint(1_000)).not.toThrow();
   });
 
   it("expires on the injected clock rather than on elapsed real time", () => {
