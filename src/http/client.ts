@@ -19,7 +19,12 @@ export interface UpstreamClientOptions {
 
 export interface UpstreamClient {
   readonly application: ApplicationId;
-  /** The resolved versioned API base, exposed for diagnostics and tests. */
+  /**
+   * The resolved versioned API base, exposed so adapters and tests can assert
+   * which instance a request targets. It carries no credential — the API key
+   * stays captured in the closure and is only ever sent as a header — but it is
+   * still a configured value, so keep it out of tool results and diagnostics.
+   */
   readonly apiBaseUrl: string;
   get(path: string): Promise<unknown>;
 }

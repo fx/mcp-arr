@@ -7,6 +7,14 @@ import { describeBaseUrlProblem, normalizeBaseUrl } from "./base-url.js";
 
 export type EnvironmentRecord = Readonly<Record<string, string | undefined>>;
 
+/**
+ * One application's resolved connection settings.
+ *
+ * This type deliberately carries the API key and base URL in plain enumerable
+ * fields: no request can send `X-Api-Key` without them. Redaction is enforced
+ * where a value would reach a caller — startup diagnostics, normalized upstream
+ * errors, and tool results — not here. Do not log or serialize this record.
+ */
 export interface InstanceConfiguration {
   readonly application: ApplicationId;
   readonly baseUrl: string;

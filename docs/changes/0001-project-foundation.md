@@ -56,6 +56,9 @@ The [Architecture spec](../specs/architecture/) owns runtime, transport, environ
 - **Decision:** Keep runtime state in memory.
   - **Why:** No database or local configuration persistence is required.
   - **Alternatives considered:** SQLite and config files were explicitly excluded.
+- **Decision:** Enforce credential redaction at the boundary that reaches a caller, not on the types that carry connection settings.
+  - **Why:** The parsed instance configuration and the upstream client must hold the API key and base URL, because no request can send `X-Api-Key` without them. Redaction therefore applies where a value would reach a caller: startup diagnostics, normalized upstream errors, and tool results.
+  - **Alternatives considered:** Hiding the fields behind non-enumerable descriptors or getters. Rejected because anything able to read the property can still leak it, so that obscures the boundary without narrowing it.
 
 ### Non-Goals
 
