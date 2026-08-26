@@ -26,7 +26,9 @@ Related behavior:
 - Domain variants MUST use typed discriminated unions rather than arbitrary operation names or argument objects.
 - A published input schema MUST be an object schema that describes every argument the tool accepts, and a tool that accepts arguments MUST NOT publish a schema declaring none.
 - Domain variants MUST be published as declared alternatives of that object schema, so a caller can discover every variant and its arguments without invoking the tool.
-- The schema a tool publishes and the schema it validates against MUST be the same contract; a tool MUST NOT enforce a constraint it did not publish.
+- The input schema a tool publishes MUST be the schema its arguments are validated against, so no argument object is refused for a schema-level constraint the caller was never shown.
+
+This parity is about the argument schema only. Rejections that a schema cannot express — an expired or wrong-kind reference, an unsupported application or version, a bulk combination the upstream handler cannot process, or any current-state precondition — remain governed by the specification that owns them.
 - The server MUST NOT expose a generic HTTP, upstream endpoint, provider action, command-name, or filesystem-path dispatcher.
 
 #### Scenario: Reject an unknown operation

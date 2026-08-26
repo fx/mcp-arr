@@ -35,7 +35,7 @@ Additionally, because the defect is a wrong value rather than a failure:
 
 - Fixtures MUST include a movie whose candidate dates differ and whose matching date is not the one the current precedence selects, so the defect cannot return silently.
 
-### Functional requirements
+### Functional Requirements
 
 The [Library Management spec](../specs/library-management/#library-queries) owns calendar anchoring and disclosure, and its scenarios are this change's acceptance criteria. What implementing them requires of this change:
 

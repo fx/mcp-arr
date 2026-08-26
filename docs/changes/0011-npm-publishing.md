@@ -29,7 +29,7 @@ Skipping or weakening any of these rules to land the PR MUST be treated as a bug
 
 The existing package verifier already installs the built tarball and drives the installed binary over stdio. That verifier is this change's primary regression test and MUST continue to pass; publishing MUST NOT be wired in a way that bypasses it.
 
-### Functional requirements
+### Functional Requirements
 
 The [Architecture spec](../specs/architecture/#packaging-and-release) owns packaging, release, and publication behavior. Its scenarios are this change's acceptance criteria and are not restated here. What implementing them requires of this change:
 

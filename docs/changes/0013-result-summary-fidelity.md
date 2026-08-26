@@ -35,7 +35,7 @@ Additionally, because the defect is in text a caller reads rather than in struct
 
 - Tests MUST assert the summary text itself, not only the structured result beside it.
 
-### Functional requirements
+### Functional Requirements
 
 The [Tool Contracts spec](../specs/tool-contracts/#error-contract) owns what a summary must convey, and the [Capabilities section](../specs/tool-contracts/#capabilities) owns bounded capability reporting. Their scenarios are this change's acceptance criteria. What implementing them requires of this change:
 

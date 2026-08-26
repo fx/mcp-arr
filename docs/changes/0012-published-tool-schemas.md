@@ -39,7 +39,7 @@ Additionally, because a test that asserted the wrong property is what allowed th
 - The regression test MUST read the schema the running server publishes over the protocol, not an in-process conversion of the schema object.
 - It MUST assert that each tool accepting arguments publishes them, and MUST fail against the current implementation before the fix.
 
-### Functional requirements
+### Functional Requirements
 
 The [Tool Contracts spec](../specs/tool-contracts/#stable-typed-surface) owns what a published schema must describe, and its scenarios are this change's acceptance criteria. What implementing them requires of this change:
 
