@@ -946,3 +946,149 @@ describe("reference validation before dispatch", () => {
     expect(handled).toHaveLength(1);
   });
 });
+
+/**
+ * Ordering a caller chose must never decide whether a mutation is sent again.
+ *
+ * These assert on the injected fetch rather than on the envelope, so the
+ * handler performs a real upstream request: a duplicate would show up as a
+ * second non-probe URL even if the result envelope looked identical.
+ */
+describe("caller-controlled ordering", () => {
+  const mutationPath = "indexer";
+  let handled: OperationInvocation[];
+  let harness: Harness;
+
+  function sending(base: OperationDefinition): OperationDefinition {
+    return {
+      ...base,
+      readPreconditions: async () => ({ status: "ok", observations: [] }),
+      handler: async (invocation): Promise<OperationOutcome> => {
+        handled.push(invocation);
+        if (invocation.mode === "plan") {
+          return { status: "ok", plan: { requestedEffects: [], predictedEffects: [] } };
+        }
+        // The stand-in for the mutation's egress, reached only in apply mode.
+        // Only `get` exists on the upstream client so far, and what matters
+        // here is that a request leaves the process at all.
+        await invocation.adapter.client.get(mutationPath);
+        return { status: "ok", data: { applied: true } };
+      },
+    };
+  }
+
+  /** Every upstream request that was not the version probe. */
+  function mutations(): string[] {
+    return harness.requested.filter((url) => !url.endsWith("/system/status"));
+  }
+
+  beforeEach(() => {
+    handled = [];
+    harness = createHarness([], []);
+  });
+
+  function useOperation(operation: OperationDefinition): void {
+    harness = createHarness([sending(operation)], handled);
+  }
+
+  it("returns the existing receipt when the same secrets arrive in a different order", async () => {
+    useOperation(baseOperation("arr_config_reconcile", "reconcile_provider"));
+    const secrets = [
+      { name: "apiKey", value: password },
+      { name: "password", value: "second-secret" },
+    ];
+    const planReference =
+      mutationOf(
+        await dispatchOperation(
+          harness.context,
+          requestFor({
+            tool: "arr_config_reconcile",
+            variant: "reconcile_provider",
+            mode: "plan",
+            applications: ["sonarr"],
+            input: {
+              intent: "reconcile_provider",
+              mode: "plan",
+              application: "sonarr",
+              domain: "indexers",
+              fields: [{ name: "baseUrl", value: "https://indexer.example.invalid" }],
+              secrets,
+            },
+          }),
+        ),
+      ).plan ?? "";
+
+    const applyWith = (resupplied: typeof secrets) =>
+      dispatchOperation(
+        harness.context,
+        requestFor({
+          tool: "arr_config_reconcile",
+          mode: "apply",
+          planReference,
+          input: { mode: "apply", plan: planReference, secrets: resupplied },
+        }),
+      );
+
+    const first = await applyWith(secrets);
+    const reordered = await applyWith([...secrets].reverse());
+
+    expect(mutations()).toHaveLength(1);
+    expect(handled.filter((invocation) => invocation.mode === "apply")).toHaveLength(1);
+    expect(mutationOf(reordered).receipt).toEqual(mutationOf(first).receipt);
+    expect(reordered.applications[0]?.warnings.join(" ")).toContain("nothing was sent again");
+  });
+
+  it("returns the existing receipt when the same references arrive in a different order", async () => {
+    useOperation(baseOperation("arr_library_change", "set_monitoring"));
+    const first = harness.mediaReference();
+    const second = harness.mediaReference();
+
+    const applyWith = (items: readonly string[]) =>
+      dispatchOperation(
+        harness.context,
+        requestFor({
+          tool: "arr_library_change",
+          variant: "set_monitoring",
+          mode: "apply",
+          input: { intent: "set_monitoring", mode: "apply", items, monitored: true },
+        }),
+      );
+
+    const ordered = await applyWith([first, second]);
+    const reversed = await applyWith([second, first]);
+    // Naming the same item twice is still one mutation, not a third.
+    const duplicated = await applyWith([second, first, second]);
+
+    expect(mutations()).toHaveLength(1);
+    expect(mutationOf(reversed).receipt).toEqual(mutationOf(ordered).receipt);
+    expect(mutationOf(duplicated).receipt).toEqual(mutationOf(ordered).receipt);
+  });
+
+  it("still tells two genuinely different mutations apart", async () => {
+    useOperation(baseOperation("arr_library_change", "set_monitoring"));
+    const first = harness.mediaReference();
+    const second = harness.mediaReference();
+
+    const one = await dispatchOperation(
+      harness.context,
+      requestFor({
+        tool: "arr_library_change",
+        variant: "set_monitoring",
+        mode: "apply",
+        input: { intent: "set_monitoring", mode: "apply", items: [first], monitored: true },
+      }),
+    );
+    const other = await dispatchOperation(
+      harness.context,
+      requestFor({
+        tool: "arr_library_change",
+        variant: "set_monitoring",
+        mode: "apply",
+        input: { intent: "set_monitoring", mode: "apply", items: [first, second], monitored: true },
+      }),
+    );
+
+    expect(mutations()).toHaveLength(2);
+    expect(mutationOf(other).receipt?.reference).not.toBe(mutationOf(one).receipt?.reference);
+  });
+});

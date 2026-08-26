@@ -5,7 +5,7 @@ import type { ApplyRecordState } from "../tools/results.js";
 import type { Clock } from "./clock.js";
 import { readTransientSecrets } from "./plans.js";
 import type { ReferenceEntry, ReferenceFailureReason, ReferenceStore } from "./references.js";
-import { fingerprint } from "./tokens.js";
+import { canonicalJson, fingerprint } from "./tokens.js";
 
 /**
  * The in-memory receipt for one mutation.
@@ -36,6 +36,44 @@ export interface ApplyRecord {
   readonly job?: string | undefined;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Rewrites a value so nothing a caller chose about ordering can be seen.
+ *
+ * Every collection a mutation intent carries is a set in meaning — the queue
+ * items to resolve, the releases to grab, the fields to reconcile, the secrets
+ * to resupply — and none of the published schemas gives an array's order a
+ * meaning. So naming the same two items in the other order is the same
+ * mutation, and it has to reach the same receipt; if it did not, the reordered
+ * repeat would miss the record and be sent upstream a second time, which is
+ * exactly the duplicate the receipt exists to prevent.
+ *
+ * Duplicates collapse for the same reason: naming one item twice does not ask
+ * for two mutations. Object property order needs no handling here because
+ * {@link canonicalJson} already sorts keys.
+ */
+function orderIndependent(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    const unique = new Map<string, unknown>();
+    for (const item of value) {
+      const canonical = orderIndependent(item);
+      unique.set(canonicalJson(canonical), canonical);
+    }
+    return [...unique.entries()]
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([, item]) => item);
+  }
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, orderIndependent(item)]),
+    );
+  }
+  return value;
+}
+
 /**
  * Derives the identity of an apply.
  *
@@ -46,22 +84,23 @@ export interface ApplyRecord {
  * arrived, not what it is changing: an intent that was planned first and the
  * same intent supplied directly must land on one receipt, or the second route
  * would send the mutation a second time.
+ *
+ * What remains is then made independent of every ordering the caller controls;
+ * see {@link orderIndependent}.
  */
 export function applyIntentKey(input: BeginApplyInput): string {
-  const canonical =
-    typeof input.intent === "object" && input.intent !== null && !Array.isArray(input.intent)
-      ? identifyingFields(input.intent as Record<string, unknown>)
-      : input.intent;
-
   return fingerprint({
     tool: input.tool,
     variant: input.variant ?? null,
     application: input.application,
-    intent: canonical,
+    intent: orderIndependent(identifyingFields(input.intent)),
   });
 }
 
-function identifyingFields(intent: Record<string, unknown>): Record<string, unknown> {
+function identifyingFields(intent: unknown): unknown {
+  if (!isRecord(intent)) {
+    return intent;
+  }
   const { mode: _mode, secrets: _secrets, ...identifying } = intent;
   const names = readTransientSecrets(intent).map((secret) => secret.name);
   return names.length === 0 ? identifying : { ...identifying, secrets: names };

@@ -56,6 +56,79 @@ describe("apply intent keys", () => {
     );
   });
 
+  it("ignores every ordering the caller chose", () => {
+    const base = applyIntentKey({
+      ...begin,
+      intent: {
+        ...intent,
+        items: ["med_00000001", "med_00000002"],
+        secrets: [
+          { name: "apiKey", value: "a" },
+          { name: "password", value: "b" },
+        ],
+      },
+    });
+
+    // The same mutation, named in the other order. Missing this receipt would
+    // send a non-idempotent mutation upstream a second time.
+    expect(
+      applyIntentKey({
+        ...begin,
+        intent: {
+          ...intent,
+          items: ["med_00000002", "med_00000001"],
+          secrets: [
+            { name: "password", value: "b" },
+            { name: "apiKey", value: "a" },
+          ],
+        },
+      }),
+    ).toBe(base);
+
+    // Naming one item twice does not ask for two mutations.
+    expect(
+      applyIntentKey({
+        ...begin,
+        intent: {
+          ...intent,
+          items: ["med_00000002", "med_00000001", "med_00000002"],
+          secrets: [
+            { name: "apiKey", value: "a" },
+            { name: "password", value: "b" },
+          ],
+        },
+      }),
+    ).toBe(base);
+  });
+
+  it("reorders nested collections too, not just the top-level ones", () => {
+    const ordered = {
+      intent: "edit_media",
+      mode: "apply",
+      items: ["med_00000001"],
+      changes: { tags: { add: ["cfg_00000001", "cfg_00000002"] } },
+    };
+    const reordered = {
+      ...ordered,
+      changes: { tags: { add: ["cfg_00000002", "cfg_00000001"] } },
+    };
+
+    expect(applyIntentKey({ ...begin, intent: ordered })).toBe(
+      applyIntentKey({ ...begin, intent: reordered }),
+    );
+  });
+
+  it("still separates two genuinely different collections", () => {
+    const one = applyIntentKey({ ...begin, intent: { ...intent, items: ["med_00000001"] } });
+    const two = applyIntentKey({
+      ...begin,
+      intent: { ...intent, items: ["med_00000001", "med_00000002"] },
+    });
+    const other = applyIntentKey({ ...begin, intent: { ...intent, items: ["med_00000003"] } });
+
+    expect(new Set([one, two, other]).size).toBe(3);
+  });
+
   it("ignores secret values so a receipt never depends on a credential", () => {
     const withSecret = {
       intent: "reconcile_provider",
