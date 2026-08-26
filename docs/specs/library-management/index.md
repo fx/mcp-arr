@@ -18,12 +18,20 @@ Shared tool behavior is owned by [Tool Contracts](../tool-contracts/).
 - `arr_library_query` MUST support typed views for Radarr movies, collections, movie files, missing movies, cutoff-unmet movies, and calendar entries.
 - Library queries MUST support application filtering, identifier filtering, monitored-state filtering, bounded pagination, and supported detail levels.
 - A view unsupported by the selected application MUST return an unsupported-capability error.
+- A calendar entry MUST be anchored to the date that placed it inside the requested window, and its anchor MUST fall within that window.
+- Where a media record has several candidate dates, a calendar entry MUST identify which of them it was anchored to.
 
 #### Scenario: Query missing media
 
 - **GIVEN** Sonarr and Radarr are configured
 - **WHEN** missing media is queried for both applications
 - **THEN** bounded Sonarr episode results and Radarr movie results are returned with their application identity
+
+#### Scenario: Anchor a movie with several release dates
+
+- **GIVEN** a Radarr movie whose cinema, digital, and physical release dates differ, and only its physical release falls inside the requested calendar window
+- **WHEN** the calendar is queried for that window
+- **THEN** the entry is anchored to the physical release date and names it as the anchor, rather than reporting a date outside the requested window
 
 ### Lookup and Add
 
@@ -127,3 +135,4 @@ None.
 |------|--------|----------|
 | 2026-08-25 | Initial desired-state specification created | [0003-library-queries](../../changes/0003-library-queries.md) |
 | 2026-08-25 | Library-mutation implementation planned | [0009-library-mutations](../../changes/0009-library-mutations.md) |
+| 2026-08-26 | Calendar entries required to anchor inside the requested window and name their anchor | [0014-calendar-anchoring](../../changes/0014-calendar-anchoring.md) |

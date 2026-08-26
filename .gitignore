@@ -3,3 +3,6 @@ dist/
 coverage/
 *.tgz
 .DS_Store
+
+# Local MCP host configuration. Holds real instance URLs and API keys.
+.mcp.json

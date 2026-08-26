@@ -24,6 +24,9 @@ Related behavior:
 - Each tool MUST publish a closed input schema and a declared output schema.
 - Tool inputs MUST reject unknown properties.
 - Domain variants MUST use typed discriminated unions rather than arbitrary operation names or argument objects.
+- A published input schema MUST be an object schema that describes every argument the tool accepts, and a tool that accepts arguments MUST NOT publish a schema declaring none.
+- Domain variants MUST be published as declared alternatives of that object schema, so a caller can discover every variant and its arguments without invoking the tool.
+- The schema a tool publishes and the schema it validates against MUST be the same contract; a tool MUST NOT enforce a constraint it did not publish.
 - The server MUST NOT expose a generic HTTP, upstream endpoint, provider action, command-name, or filesystem-path dispatcher.
 
 #### Scenario: Reject an unknown operation
@@ -32,11 +35,18 @@ Related behavior:
 - **WHEN** the tool is invoked
 - **THEN** validation fails before any upstream request is sent
 
+#### Scenario: Discover a tool's variants without calling it
+
+- **GIVEN** a caller has listed the available tools and has never invoked them
+- **WHEN** it reads the published input schema of a tool that accepts typed variants
+- **THEN** every accepted variant and its arguments are described there, and no variant is discoverable only by triggering a validation error
+
 ### Capabilities
 
 - `arr_capabilities` MUST report configured applications, detected versions, API versions, supported domain operations, and degraded or unavailable status.
 - `arr_capabilities` MUST report unconfigured applications without requiring dummy credentials.
 - Capability results MUST distinguish unconfigured, unavailable, unsupported, and available states.
+- A capability result MUST be bounded by default, summarizing rather than enumerating operations an instance cannot currently perform, and MUST enumerate them only when the caller asks for that detail.
 
 #### Scenario: One application is unavailable
 
@@ -61,7 +71,15 @@ Related behavior:
 
 - Tool execution errors MUST use stable error codes for invalid input, unconfigured application, unsupported capability, unavailable application, upstream authentication, upstream rejection, rate limit, timeout, stale reference, stale plan, conflict, partial failure, and unexpected response.
 - Recoverable tool errors MUST include a safe remediation hint.
+- An error result's text summary MUST carry the stable error code and the remediation hint, because a caller may see only the summary when a call reports failure.
+- A text summary MUST NOT describe an outcome more favorably than the structured result it accompanies.
 - Raw upstream bodies, headers, URLs containing credentials, stack traces, and API keys MUST NOT be returned.
+
+#### Scenario: Read an error from the summary alone
+
+- **GIVEN** a caller invokes a tool whose selected variant the target application does not support
+- **WHEN** the caller reads only the result's text summary
+- **THEN** the summary names the error code and the remediation hint rather than reporting an unqualified failure
 
 #### Scenario: Recover from an expired release reference
 
@@ -175,3 +193,5 @@ None.
 | Date | Change | Document |
 |------|--------|----------|
 | 2026-08-25 | Initial desired-state specification created | [0002-tool-runtime](../../changes/0002-tool-runtime.md) |
+| 2026-08-26 | Published input schemas required to describe every accepted variant | [0012-published-tool-schemas](../../changes/0012-published-tool-schemas.md) |
+| 2026-08-26 | Error summaries required to carry code and remediation; capability results bounded | [0013-result-summary-fidelity](../../changes/0013-result-summary-fidelity.md) |
