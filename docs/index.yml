@@ -106,7 +106,7 @@ changes:
     path: changes/0011-npm-publishing.md
     description: Publish the server to npm through release-please with provenance and no stored registry token
     spec: architecture
-    status: draft
+    status: complete
     depends_on: []
   - id: "0012"
     name: published-tool-schemas
