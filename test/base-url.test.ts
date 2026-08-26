@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   type BaseUrlProblem,
   describeBaseUrlProblem,
+  describeUpstreamPathProblem,
   joinUpstreamUrl,
   normalizeBaseUrl,
+  type UpstreamPathProblem,
 } from "../src/config/base-url.js";
 
 function normalized(raw: string): string {
@@ -12,6 +14,22 @@ function normalized(raw: string): string {
     throw new Error(`Expected ${raw} to normalize, got ${result.problem}`);
   }
   return result.baseUrl;
+}
+
+function joined(base: string, path: string): string {
+  const result = joinUpstreamUrl(base, path);
+  if (!result.ok) {
+    throw new Error(`Expected ${path} to join, got ${result.problem}`);
+  }
+  return result.url;
+}
+
+function pathProblemOf(base: string, path: string): UpstreamPathProblem {
+  const result = joinUpstreamUrl(base, path);
+  if (result.ok) {
+    throw new Error(`Expected ${path} to be rejected, got ${result.url}`);
+  }
+  return result.problem;
 }
 
 function problemOf(raw: string): BaseUrlProblem {
@@ -73,34 +91,22 @@ describe("normalizeBaseUrl", () => {
 describe("joinUpstreamUrl", () => {
   it("appends relative paths while keeping the base prefix", () => {
     const base = "https://sonarr.example.invalid/sonarr";
-    expect(joinUpstreamUrl(base, "/api/v3")).toBe("https://sonarr.example.invalid/sonarr/api/v3");
-    expect(joinUpstreamUrl(`${base}/api/v3`, "system/status")).toBe(
+    expect(joined(base, "/api/v3")).toBe("https://sonarr.example.invalid/sonarr/api/v3");
+    expect(joined(`${base}/api/v3`, "system/status")).toBe(
       "https://sonarr.example.invalid/sonarr/api/v3/system/status",
     );
-    expect(joinUpstreamUrl(`${base}/`, "series")).toBe(
-      "https://sonarr.example.invalid/sonarr/series",
-    );
+    expect(joined(`${base}/`, "series")).toBe("https://sonarr.example.invalid/sonarr/series");
   });
 
   it("refuses paths that could escape or reshape the base", () => {
     const base = "https://sonarr.example.invalid/sonarr";
-    expect(() => joinUpstreamUrl(base, "")).toThrow("Upstream path must not be empty");
-    expect(() => joinUpstreamUrl(base, "///")).toThrow("Upstream path must not be empty");
-    expect(() => joinUpstreamUrl(base, "system/status?apikey=secret")).toThrow(
-      "must not contain a query string or fragment",
-    );
-    expect(() => joinUpstreamUrl(base, "system#fragment")).toThrow(
-      "must not contain a query string or fragment",
-    );
-    expect(() => joinUpstreamUrl(base, "../api/v3")).toThrow(
-      "must not contain empty or relative segments",
-    );
-    expect(() => joinUpstreamUrl(base, "system//status")).toThrow(
-      "must not contain empty or relative segments",
-    );
-    expect(() => joinUpstreamUrl(base, "./status")).toThrow(
-      "must not contain empty or relative segments",
-    );
+    expect(pathProblemOf(base, "")).toBe("empty");
+    expect(pathProblemOf(base, "///")).toBe("empty");
+    expect(pathProblemOf(base, "system/status?apikey=secret")).toBe("query-or-fragment");
+    expect(pathProblemOf(base, "system#fragment")).toBe("query-or-fragment");
+    expect(pathProblemOf(base, "../api/v3")).toBe("relative-segment");
+    expect(pathProblemOf(base, "system//status")).toBe("relative-segment");
+    expect(pathProblemOf(base, "./status")).toBe("relative-segment");
   });
 
   it("refuses every traversal representation URL parsing would resolve", () => {
@@ -114,9 +120,7 @@ describe("joinUpstreamUrl", () => {
     ];
 
     for (const traversal of traversals) {
-      expect(() => joinUpstreamUrl(base, traversal)).toThrow(
-        "Upstream path must not change the resolved URL",
-      );
+      expect(pathProblemOf(base, traversal)).toBe("rewritten");
       // Each one is rejected precisely because URL parsing rewrites it.
       expect(new URL(`${base}/${traversal}`).href).not.toBe(`${base}/${traversal}`);
     }
@@ -127,10 +131,33 @@ describe("joinUpstreamUrl", () => {
     }
   });
 
+  it("reports an unparseable result rather than throwing", () => {
+    expect(pathProblemOf("not-a-base", "system/status")).toBe("unparseable");
+  });
+
   it("keeps an already-encoded segment that resolves unchanged", () => {
     const base = "https://sonarr.example.invalid/api/v3";
-    expect(joinUpstreamUrl(base, `movie/lookup/${encodeURIComponent("a title")}`)).toBe(
+    expect(joined(base, `movie/lookup/${encodeURIComponent("a title")}`)).toBe(
       "https://sonarr.example.invalid/api/v3/movie/lookup/a%20title",
     );
+  });
+
+  it("never embeds the supplied path in a problem description", () => {
+    const problems: readonly UpstreamPathProblem[] = [
+      "empty",
+      "query-or-fragment",
+      "relative-segment",
+      "unparseable",
+      "rewritten",
+    ];
+    const descriptions = problems.map((problem) => describeUpstreamPathProblem(problem));
+
+    expect(new Set(descriptions).size).toBe(problems.length);
+    for (const description of descriptions) {
+      expect(description).toMatch(/^must /u);
+    }
+    // A rejection returns a discriminant, so there is no message to leak into.
+    const rejected = joinUpstreamUrl("https://host.invalid", "secret/../token?key=value");
+    expect(rejected).toEqual({ ok: false, problem: "query-or-fragment" });
   });
 });

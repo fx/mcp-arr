@@ -45,6 +45,29 @@ export function normalizeBaseUrl(raw: string): BaseUrlResult {
   return { ok: true, baseUrl: `${url.protocol}//${url.host}${pathPrefix}` };
 }
 
+export type UpstreamPathProblem =
+  | "empty"
+  | "query-or-fragment"
+  | "relative-segment"
+  | "unparseable"
+  | "rewritten";
+
+export type UpstreamPathResult =
+  | { readonly ok: true; readonly url: string }
+  | { readonly ok: false; readonly problem: UpstreamPathProblem };
+
+const pathProblemDescriptions: Readonly<Record<UpstreamPathProblem, string>> = {
+  empty: "must not be empty",
+  "query-or-fragment": "must not contain a query string or fragment",
+  "relative-segment": "must not contain empty or relative segments",
+  unparseable: "must produce a valid URL",
+  rewritten: "must not change the resolved URL",
+};
+
+export function describeUpstreamPathProblem(problem: UpstreamPathProblem): string {
+  return pathProblemDescriptions[problem];
+}
+
 /**
  * Appends a relative upstream path to an already normalized base, keeping the
  * base path prefix intact and refusing anything that could escape it.
@@ -55,18 +78,21 @@ export function normalizeBaseUrl(raw: string): BaseUrlResult {
  * result is therefore re-parsed and required to survive unchanged, which
  * rejects every such representation while leaving an already-encoded segment
  * such as `lookup%20term` intact.
+ *
+ * A rejection reports a typed problem rather than throwing, so no caller
+ * supplied path is ever embedded in a message that could reach a log.
  */
-export function joinUpstreamUrl(base: string, path: string): string {
+export function joinUpstreamUrl(base: string, path: string): UpstreamPathResult {
   const trimmed = path.replace(/^\/+|\/+$/gu, "");
   if (trimmed === "") {
-    throw new Error("Upstream path must not be empty");
+    return { ok: false, problem: "empty" };
   }
   if (/[?#]/u.test(trimmed)) {
-    throw new Error(`Upstream path must not contain a query string or fragment: ${path}`);
+    return { ok: false, problem: "query-or-fragment" };
   }
   const segments = trimmed.split("/");
   if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
-    throw new Error(`Upstream path must not contain empty or relative segments: ${path}`);
+    return { ok: false, problem: "relative-segment" };
   }
 
   const joined = `${base.replace(/\/+$/u, "")}/${segments.join("/")}`;
@@ -74,11 +100,11 @@ export function joinUpstreamUrl(base: string, path: string): string {
   try {
     resolved = new URL(joined);
   } catch {
-    throw new Error(`Upstream path does not produce a valid URL: ${path}`);
+    return { ok: false, problem: "unparseable" };
   }
   if (resolved.href !== joined) {
-    throw new Error(`Upstream path must not change the resolved URL: ${path}`);
+    return { ok: false, problem: "rewritten" };
   }
 
-  return joined;
+  return { ok: true, url: joined };
 }

@@ -1,6 +1,8 @@
 import type { ApplicationId } from "../applications.js";
+import { describeUpstreamPathProblem, type UpstreamPathProblem } from "../config/base-url.js";
 
 export const upstreamErrorKinds = [
+  "invalid-request",
   "unavailable",
   "timeout",
   "authentication",
@@ -14,18 +16,27 @@ export type UpstreamErrorKind = (typeof upstreamErrorKinds)[number];
 
 export interface UpstreamErrorDetails {
   readonly application: ApplicationId;
-  /** The relative upstream route, such as `system/status`. Never a full URL. */
-  readonly operation: string;
+  /**
+   * The relative upstream route, such as `system/status`. Never a full URL, and
+   * omitted only when the request was rejected before a route was resolved.
+   */
+  readonly operation?: string | undefined;
   readonly status?: number | undefined;
   readonly timeoutMs?: number | undefined;
+  /**
+   * Why a path was unusable. A typed discriminant rather than a free string, so
+   * a caller-supplied path can never be smuggled into the message.
+   */
+  readonly pathProblem?: UpstreamPathProblem | undefined;
 }
 
 export interface SerializedUpstreamError {
   readonly name: string;
   readonly kind: UpstreamErrorKind;
   readonly application: ApplicationId;
-  readonly operation: string;
+  readonly operation: string | undefined;
   readonly status: number | undefined;
+  readonly pathProblem: UpstreamPathProblem | undefined;
   readonly message: string;
 }
 
@@ -34,8 +45,17 @@ function describeStatus(status: number | undefined): string {
 }
 
 function formatMessage(kind: UpstreamErrorKind, details: UpstreamErrorDetails): string {
-  const subject = `${details.application}: the request to ${details.operation}`;
+  const subject =
+    details.operation === undefined
+      ? `${details.application}: the request`
+      : `${details.application}: the request to ${details.operation}`;
   switch (kind) {
+    case "invalid-request":
+      return `${details.application}: the request was not sent because its path ${
+        details.pathProblem === undefined
+          ? "is unusable"
+          : describeUpstreamPathProblem(details.pathProblem)
+      }`;
     case "unavailable":
       return `${subject} could not reach the instance`;
     case "timeout":
@@ -63,8 +83,9 @@ function formatMessage(kind: UpstreamErrorKind, details: UpstreamErrorDetails): 
 export class UpstreamError extends Error {
   readonly kind: UpstreamErrorKind;
   readonly application: ApplicationId;
-  readonly operation: string;
+  readonly operation: string | undefined;
   readonly status: number | undefined;
+  readonly pathProblem: UpstreamPathProblem | undefined;
 
   constructor(kind: UpstreamErrorKind, details: UpstreamErrorDetails) {
     super(formatMessage(kind, details));
@@ -73,6 +94,7 @@ export class UpstreamError extends Error {
     this.application = details.application;
     this.operation = details.operation;
     this.status = details.status;
+    this.pathProblem = details.pathProblem;
   }
 
   toJSON(): SerializedUpstreamError {
@@ -82,6 +104,7 @@ export class UpstreamError extends Error {
       application: this.application,
       operation: this.operation,
       status: this.status,
+      pathProblem: this.pathProblem,
       message: this.message,
     };
   }

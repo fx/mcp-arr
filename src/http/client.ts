@@ -1,5 +1,5 @@
 import type { ApplicationId } from "../applications.js";
-import { joinUpstreamUrl } from "../config/base-url.js";
+import { describeUpstreamPathProblem, joinUpstreamUrl } from "../config/base-url.js";
 import { UpstreamError, type UpstreamErrorKind, upstreamErrorKindForStatus } from "./errors.js";
 
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
@@ -45,7 +45,11 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
   }
 
   const application = options.application;
-  const apiBaseUrl = joinUpstreamUrl(options.baseUrl, options.apiBasePath);
+  const apiBase = joinUpstreamUrl(options.baseUrl, options.apiBasePath);
+  if (!apiBase.ok) {
+    throw new RangeError(`Upstream API base path ${describeUpstreamPathProblem(apiBase.problem)}`);
+  }
+  const apiBaseUrl = apiBase.url;
   const fetchImpl: FetchLike = options.fetch ?? ((input, init) => fetch(input, init));
 
   return {
@@ -53,7 +57,12 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
     apiBaseUrl,
 
     async get(path: string): Promise<unknown> {
-      const url = joinUpstreamUrl(apiBaseUrl, path);
+      const joined = joinUpstreamUrl(apiBaseUrl, path);
+      if (!joined.ok) {
+        throw new UpstreamError("invalid-request", { application, pathProblem: joined.problem });
+      }
+
+      const url = joined.url;
       const controller = new AbortController();
       let timedOut = false;
       const timer = setTimeout(() => {

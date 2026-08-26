@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { describeUpstreamPathProblem, type UpstreamPathProblem } from "../src/config/base-url.js";
 import {
   createUpstreamClient,
   defaultUpstreamTimeoutMs,
@@ -167,6 +168,44 @@ describe("createUpstreamClient", () => {
     expect(readError.message).not.toContain(apiKey);
   });
 
+  it("normalizes an unusable path into an UpstreamError instead of a raw Error", async () => {
+    const { client, calls } = harness(() => json({ version: "4.0.19.2979" }));
+    const unusable: ReadonlyArray<readonly [string, UpstreamPathProblem]> = [
+      ["", "empty"],
+      ["system/status?apikey=secret", "query-or-fragment"],
+      ["../../admin", "relative-segment"],
+      ["%2e%2e/%2e%2e/admin", "rewritten"],
+    ];
+
+    for (const [path, problem] of unusable) {
+      const rejection = client.get(path);
+      await expect(rejection).rejects.toBeInstanceOf(UpstreamError);
+      const error = await captureError(rejection);
+      expect(error.kind).toBe("invalid-request");
+      expect(error.pathProblem).toBe(problem);
+      expect(error.operation).toBeUndefined();
+      expect(error.status).toBeUndefined();
+      // The unusable path never reaches the message or the serialized form.
+      expect(`${error.message}\n${JSON.stringify(error.toJSON())}`).not.toContain("secret");
+      expect(error.message).toContain(describeUpstreamPathProblem(problem));
+    }
+
+    // Nothing was ever dispatched.
+    expect(calls).toEqual([]);
+  });
+
+  it("rejects an unusable API base path at construction", () => {
+    expect(() =>
+      createUpstreamClient({
+        application: "sonarr",
+        baseUrl: "https://sonarr.example.invalid",
+        apiBasePath: "/api/../admin",
+        apiKey,
+        fetch: async () => json({}),
+      }),
+    ).toThrow("Upstream API base path must not contain empty or relative segments");
+  });
+
   it("rejects a non-finite or non-positive timeout at construction", () => {
     for (const timeoutMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
       expect(() =>
@@ -232,6 +271,7 @@ describe("UpstreamError", () => {
       application: "radarr",
       operation: "system/status",
       status: 400,
+      pathProblem: undefined,
       message: error.message,
     });
     expect(isUpstreamError(error)).toBe(true);
@@ -253,7 +293,29 @@ describe("UpstreamError", () => {
     expect(new Set(messages).size).toBe(upstreamErrorKinds.length);
     for (const message of messages) {
       expect(message).toContain("prowlarr");
-      expect(message).toContain("system/status");
     }
+    // Every kind but invalid-request names the route it was attempting.
+    for (const [index, message] of messages.entries()) {
+      if (upstreamErrorKinds[index] !== "invalid-request") {
+        expect(message).toContain("system/status");
+      }
+    }
+  });
+
+  it("describes an unusable path without a route and without the path", () => {
+    const withProblem = new UpstreamError("invalid-request", {
+      application: "sonarr",
+      pathProblem: "query-or-fragment",
+    });
+    expect(withProblem.message).toBe(
+      "sonarr: the request was not sent because its path must not contain a query string or fragment",
+    );
+    expect(withProblem.operation).toBeUndefined();
+
+    const withoutProblem = new UpstreamError("invalid-request", { application: "sonarr" });
+    expect(withoutProblem.message).toBe(
+      "sonarr: the request was not sent because its path is unusable",
+    );
+    expect(withoutProblem.pathProblem).toBeUndefined();
   });
 });
