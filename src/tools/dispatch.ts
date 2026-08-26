@@ -65,6 +65,34 @@ function describeUnsupported(
     : `${application}: this ${tool} variant requires version ${requiredVersion} or newer`;
 }
 
+function unsupportedOutcome(
+  application: ApplicationId,
+  tool: ToolName,
+  requiredVersion: string | undefined,
+): ApplicationOutcome<unknown> {
+  return applicationOutcome({
+    application,
+    status: "unsupported",
+    error: createToolError({
+      code: "unsupported_capability",
+      message: describeUnsupported(application, tool, requiredVersion),
+      application,
+    }),
+  });
+}
+
+function unconfiguredOutcome(application: ApplicationId): ApplicationOutcome<unknown> {
+  return applicationOutcome({
+    application,
+    status: "unconfigured",
+    error: createToolError({
+      code: "unconfigured_application",
+      message: `${application}: no instance is configured`,
+      application,
+    }),
+  });
+}
+
 async function runOperation(
   context: ToolContext,
   request: DispatchRequest,
@@ -72,30 +100,19 @@ async function runOperation(
   application: ApplicationId,
 ): Promise<ApplicationOutcome<unknown>> {
   if (!operation.applications.includes(application)) {
-    return applicationOutcome({
-      application,
-      status: "unsupported",
-      error: createToolError({
-        code: "unsupported_capability",
-        message: describeUnsupported(application, request.tool, undefined),
-        application,
-      }),
-    });
+    return unsupportedOutcome(application, request.tool, undefined);
   }
 
-  const capability = await capabilityFor(context, application);
-  const support = checkOperationSupport(operation, capability);
+  // Resolved before probing so an unconfigured application costs no request,
+  // and so the handler below receives an adapter the type system has narrowed.
+  const adapter = context.registry.adapter(application);
+  if (adapter === undefined) {
+    return unconfiguredOutcome(application);
+  }
 
+  const support = checkOperationSupport(operation, await adapter.probe());
   if (support.status === "unconfigured") {
-    return applicationOutcome({
-      application,
-      status: "unconfigured",
-      error: createToolError({
-        code: "unconfigured_application",
-        message: `${application}: no instance is configured`,
-        application,
-      }),
-    });
+    return unconfiguredOutcome(application);
   }
   if (support.status === "unavailable") {
     return applicationOutcome({
@@ -105,28 +122,7 @@ async function runOperation(
     });
   }
   if (support.status === "unsupported") {
-    return applicationOutcome({
-      application,
-      status: "unsupported",
-      error: createToolError({
-        code: "unsupported_capability",
-        message: describeUnsupported(application, request.tool, support.requiredVersion),
-        application,
-      }),
-    });
-  }
-
-  const adapter = context.registry.adapter(application);
-  if (adapter === undefined) {
-    return applicationOutcome({
-      application,
-      status: "unconfigured",
-      error: createToolError({
-        code: "unconfigured_application",
-        message: `${application}: no instance is configured`,
-        application,
-      }),
-    });
+    return unsupportedOutcome(application, request.tool, support.requiredVersion);
   }
 
   let outcome: Awaited<ReturnType<typeof operation.handler>>;

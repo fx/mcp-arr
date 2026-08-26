@@ -21,6 +21,14 @@ function fallbackResult(reason: string): ToolResult<never> {
   });
 }
 
+function conformingContent(
+  definition: ToolDefinition,
+  result: ToolResult<unknown>,
+): Record<string, unknown> | undefined {
+  const parsed = definition.outputSchema.safeParse(result);
+  return parsed.success && isRecord(parsed.data) ? parsed.data : undefined;
+}
+
 /**
  * Runs one tool and converts its envelope into an MCP result.
  *
@@ -42,15 +50,11 @@ export async function runTool(
     result = fallbackResult(`${definition.name}: the call failed unexpectedly`);
   }
 
-  const parsed = definition.outputSchema.safeParse(result);
-  const conforming =
-    parsed.success && isRecord(parsed.data)
-      ? parsed.data
-      : (() => {
-          result = fallbackResult(`${definition.name}: produced a non-conforming result`);
-          const retry = definition.outputSchema.safeParse(result);
-          return retry.success && isRecord(retry.data) ? retry.data : undefined;
-        })();
+  let structuredContent = conformingContent(definition, result);
+  if (structuredContent === undefined) {
+    result = fallbackResult(`${definition.name}: produced a non-conforming result`);
+    structuredContent = conformingContent(definition, result);
+  }
 
   const content: CallToolResult["content"] = [
     { type: "text", text: summarizeToolResult(definition.name, result) },
@@ -58,7 +62,7 @@ export async function runTool(
 
   return {
     content,
-    ...(conforming === undefined ? {} : { structuredContent: conforming }),
+    ...(structuredContent === undefined ? {} : { structuredContent }),
     isError: result.status === "error",
   };
 }
