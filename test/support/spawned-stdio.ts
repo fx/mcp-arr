@@ -180,6 +180,44 @@ export class SpawnedStdioProcess {
     });
   }
 
+  /**
+   * Sends a request and awaits its response. The waiter is registered before
+   * the write so a response that arrives immediately is never missed.
+   */
+  async request(
+    id: RequestId,
+    method: string,
+    params?: Record<string, unknown>,
+    timeoutMs = this.#deadlineMs,
+  ): Promise<JSONRPCMessage> {
+    const pending = this.response(id, timeoutMs);
+    await this.send({
+      jsonrpc: "2.0",
+      id,
+      method,
+      ...(params === undefined ? {} : { params }),
+    } as JSONRPCMessage);
+    return pending;
+  }
+
+  /**
+   * Completes the MCP initialization handshake so later requests are handled
+   * rather than rejected as premature.
+   */
+  async initializeSession(
+    id: RequestId,
+    protocolVersion: string,
+    clientName = "spawned-stdio-test",
+  ): Promise<JSONRPCMessage> {
+    const response = await this.request(id, "initialize", {
+      protocolVersion,
+      capabilities: {},
+      clientInfo: { name: clientName, version: "1.0.0" },
+    });
+    await this.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+    return response;
+  }
+
   #finishClose(waiterError: unknown, writeError: unknown): void {
     this.#isClosed = true;
     for (const waiter of this.#waiters.values()) {

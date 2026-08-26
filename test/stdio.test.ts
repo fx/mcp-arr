@@ -7,6 +7,8 @@ import {
   createStdioRuntime,
   type StdioRuntimeDependencies,
 } from "../src/stdio.js";
+import type { ToolContext } from "../src/tools/dispatch.js";
+import { createOperationRegistry } from "../src/tools/operations.js";
 
 const configuration = parseEnvironment({
   SONARR_URL: "https://sonarr.example.invalid/sonarr",
@@ -19,6 +21,7 @@ function createDependencies(): {
   transport: Transport;
   registry: AdapterRegistry;
   registered: EnvironmentConfiguration[];
+  contexts: ToolContext[];
 } {
   const transport: Transport = {
     start: vi.fn(async () => undefined),
@@ -35,20 +38,27 @@ function createDependencies(): {
     probe: async () => [],
   };
   const registered: EnvironmentConfiguration[] = [];
+  const contexts: ToolContext[] = [];
+  const operations = createOperationRegistry();
 
   return {
     dependencies: {
-      createServer: () => server,
+      createServer: (context) => {
+        contexts.push(context);
+        return server;
+      },
       createTransport: () => transport,
       createRegistry: (received) => {
         registered.push(received);
         return registry;
       },
+      createOperations: () => operations,
     },
     server,
     transport,
     registry,
     registered,
+    contexts,
   };
 }
 
@@ -59,6 +69,15 @@ describe("createStdioRuntime", () => {
 
     expect(runtime.registry).toBe(registry);
     expect(registered).toEqual([configuration]);
+  });
+
+  it("hands the server a context carrying the registry and the operation inventory", () => {
+    const { dependencies, registry, contexts } = createDependencies();
+    createStdioRuntime(configuration, dependencies);
+
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0]?.registry).toBe(registry);
+    expect(contexts[0]?.operations.operations.length).toBeGreaterThan(0);
   });
 
   it("wires real adapters for the configured applications by default", () => {
