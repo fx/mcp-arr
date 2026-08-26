@@ -27,7 +27,7 @@ Changes 0011 through 0014 are scheduled ahead of the still-pending 0004 through 
 | 0008 | [Configuration Reconciliation](changes/0008-configuration-reconciliation.md) | [Configuration Reconciliation](specs/configuration-reconciliation/) | draft | 0001, 0002 |
 | 0009 | [Library Mutations](changes/0009-library-mutations.md) | [Library Management](specs/library-management/) | draft | 0002, 0003 |
 | 0010 | [History and Blocklist Mutations](changes/0010-history-and-blocklist-mutations.md) | [Activity Management](specs/activity-management/) | draft | 0002, 0004 |
-| 0011 | [npm Publishing](changes/0011-npm-publishing.md) | [Architecture](specs/architecture/) | draft | — |
+| 0011 | [npm Publishing](changes/0011-npm-publishing.md) | [Architecture](specs/architecture/) | complete | — |
 | 0012 | [Published Tool Schemas](changes/0012-published-tool-schemas.md) | [Tool Contracts](specs/tool-contracts/) | draft | — |
 | 0013 | [Result Summary Fidelity](changes/0013-result-summary-fidelity.md) | [Tool Contracts](specs/tool-contracts/) | draft | — |
 | 0014 | [Calendar Anchoring](changes/0014-calendar-anchoring.md) | [Library Management](specs/library-management/) | draft | — |
