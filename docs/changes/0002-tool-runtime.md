@@ -64,16 +64,16 @@ The [Tool Contracts spec](../specs/tool-contracts/) owns tool names, schemas, re
 
 ## Tasks
 
-- [ ] Define the public tool and result schemas
-  - [ ] Register all fifteen tools with strict inputs, declared outputs, annotations, and bounded defaults
-  - [ ] Implement application/result/error envelopes and partial-failure representation
-  - [ ] Add schema and protocol snapshot tests
+- [x] Define the public tool and result schemas (PR #5)
+  - [x] Register all fifteen tools with strict inputs, declared outputs, annotations, and bounded defaults (PR #5)
+  - [x] Implement application/result/error envelopes and partial-failure representation (PR #5)
+  - [x] Add schema and protocol snapshot tests (PR #5)
 - [ ] Implement ephemeral workflow state
   - [ ] Add opaque reference, plan, apply-record, and job stores with type/application binding and expiration
   - [ ] Add read-set fingerprints, stale-plan checks, and direct-apply validation hooks
   - [ ] Add retry reconciliation states without automatic duplicate egress
 - [ ] Implement shared dispatch and job projection
-  - [ ] Add the internal semantic registry and capability projection
+  - [x] Add the internal semantic registry and capability projection (PR #5)
   - [ ] Add normalized job status/cancellation mapping and terminal snapshots
   - [ ] Add adversarial tests for cross-kind references, expiry, restart, stale plans, partial failure, and unknown outcomes
 

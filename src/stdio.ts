@@ -3,6 +3,8 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { type AdapterRegistry, createAdapterRegistry } from "./adapters/registry.js";
 import type { EnvironmentConfiguration } from "./config/environment.js";
 import { createServer } from "./server.js";
+import type { ToolContext } from "./tools/dispatch.js";
+import { createOperationRegistry } from "./tools/operations.js";
 
 export interface ConnectableServer {
   connect(transport: Transport): Promise<void>;
@@ -17,15 +19,17 @@ export interface StdioRuntime {
 }
 
 export interface StdioRuntimeDependencies {
-  createServer: () => ConnectableServer;
+  createServer: (context: ToolContext) => ConnectableServer;
   createTransport: () => Transport;
   createRegistry: (configuration: EnvironmentConfiguration) => AdapterRegistry;
+  createOperations: () => ToolContext["operations"];
 }
 
 const defaultDependencies: StdioRuntimeDependencies = {
   createServer,
   createTransport: () => new StdioServerTransport(),
   createRegistry: (configuration) => createAdapterRegistry(configuration),
+  createOperations: () => createOperationRegistry(),
 };
 
 export function createStdioRuntime(
@@ -33,7 +37,10 @@ export function createStdioRuntime(
   dependencies: StdioRuntimeDependencies = defaultDependencies,
 ): StdioRuntime {
   const registry = dependencies.createRegistry(configuration);
-  const server = dependencies.createServer();
+  const server = dependencies.createServer({
+    registry,
+    operations: dependencies.createOperations(),
+  });
   const transport = dependencies.createTransport();
   let startPromise: Promise<void> | undefined;
   let closePromise: Promise<void> | undefined;

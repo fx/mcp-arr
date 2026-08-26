@@ -1,0 +1,534 @@
+import type {
+  ApplicationAdapter,
+  ApplicationCapability,
+  UpstreamFailure,
+} from "../adapters/registry.js";
+import { meetsMinimumVersion } from "../adapters/version.js";
+import type { ApplicationId } from "../applications.js";
+import { createToolError, type ToolError } from "./errors.js";
+import type { ProjectedToolName, ToolName } from "./names.js";
+import type { ItemOutcome } from "./results.js";
+import type { Continuation } from "./schemas/common.js";
+
+/**
+ * How consequential an operation is. The classification drives the honest MCP
+ * annotations on the tool that exposes it and the effects a plan must
+ * disclose; it is not a substitute for runtime validation.
+ */
+export const operationSideEffects = [
+  "read",
+  "external",
+  "start_job",
+  "mutate",
+  "destructive",
+] as const;
+
+export type OperationSideEffect = (typeof operationSideEffects)[number];
+
+/**
+ * How the caller asked for the operation to run. Read operations have no mode
+ * of their own; mutation tools pass the caller's `mode` straight through.
+ */
+export type OperationMode = "read" | "plan" | "apply";
+
+export interface OperationInvocation {
+  readonly application: ApplicationId;
+  readonly adapter: ApplicationAdapter;
+  readonly mode: OperationMode;
+  /**
+   * The tool arguments, already validated against that tool's closed input
+   * schema. The public schema is the type authority; a handler narrows to its
+   * own variant rather than re-deriving one from a free-form bag.
+   */
+  readonly input: unknown;
+}
+
+export type OperationOutcome =
+  | {
+      readonly status: "ok";
+      readonly data?: unknown;
+      readonly warnings?: readonly string[];
+      readonly items?: readonly ItemOutcome[];
+      readonly continuation?: Continuation;
+    }
+  | { readonly status: "error"; readonly error: ToolError };
+
+export type OperationHandler = (invocation: OperationInvocation) => Promise<OperationOutcome>;
+
+interface OperationBlueprint<TId extends string> {
+  readonly id: TId;
+  /**
+   * The public tool that exposes this operation. Typed as a projected name so
+   * the meta tool cannot be declared here: `arr_capabilities` reports this
+   * inventory and is never an entry in it.
+   */
+  readonly tool: ProjectedToolName;
+  /**
+   * The public discriminator value that reaches this operation, or `undefined`
+   * for a tool whose input carries no variant. This is the projection that
+   * lets `arr_capabilities` answer "which tool call works here" without ever
+   * revealing or accepting an internal identifier.
+   */
+  readonly variant: string | undefined;
+  readonly applications: readonly ApplicationId[];
+  /**
+   * Per-application minimum versions, used only where an operation needs a
+   * newer release than the application's own recorded minimum. An absent entry
+   * means the application's recorded minimum is sufficient.
+   */
+  readonly minimumVersions: Readonly<Partial<Record<ApplicationId, string>>>;
+  readonly sideEffect: OperationSideEffect;
+  readonly handler: OperationHandler;
+}
+
+interface DefineOptions {
+  readonly minimumVersions?: Readonly<Partial<Record<ApplicationId, string>>>;
+  readonly handler?: OperationHandler;
+}
+
+/**
+ * The handler every operation starts with. Changes 0003 through 0010 replace
+ * these one at a time; until then the tool surface is fully published and fully
+ * validated, and a call that survives validation is honestly reported as not
+ * yet implemented rather than silently succeeding.
+ */
+export const unsupportedOperationHandler: OperationHandler = ({ application }) =>
+  Promise.resolve({
+    status: "error",
+    error: createToolError({
+      code: "unsupported_capability",
+      message: `${application}: this operation is declared but not implemented yet`,
+      application,
+    }),
+  });
+
+/**
+ * Whether an operation has real adapter behavior yet.
+ *
+ * Derived from the handler rather than a flag, so an operation becomes
+ * implemented exactly when its change supplies a handler and there is no
+ * separate marker to forget to flip. `arr_capabilities` uses this so it never
+ * advertises an operation that would answer `unsupported_capability`.
+ */
+export function isImplementedOperation(operation: OperationDefinition): boolean {
+  return operation.handler !== unsupportedOperationHandler;
+}
+
+function define<const TId extends string>(
+  id: TId,
+  tool: ProjectedToolName,
+  variant: string | undefined,
+  applications: readonly ApplicationId[],
+  sideEffect: OperationSideEffect,
+  options: DefineOptions = {},
+): OperationBlueprint<TId> {
+  return {
+    id,
+    tool,
+    variant,
+    applications,
+    minimumVersions: options.minimumVersions ?? {},
+    sideEffect,
+    handler: options.handler ?? unsupportedOperationHandler,
+  };
+}
+
+const every = ["sonarr", "radarr", "prowlarr"] as const;
+const media = ["sonarr", "radarr"] as const;
+const sonarr = ["sonarr"] as const;
+const radarr = ["radarr"] as const;
+const prowlarr = ["prowlarr"] as const;
+
+/**
+ * The internal semantic operation inventory.
+ *
+ * This table is a policy source, not a surface: it is never published as a
+ * tool, and no public schema accepts one of its identifiers. It exists so that
+ * variant registration, adapter dispatch, version gating, and capability
+ * projection all read the same list instead of drifting apart.
+ */
+const definitions = [
+  // arr_library_query
+  define("library.query.series", "arr_library_query", "series", sonarr, "read"),
+  define("library.query.seasons", "arr_library_query", "seasons", sonarr, "read"),
+  define("library.query.episodes", "arr_library_query", "episodes", sonarr, "read"),
+  define("library.query.episode_files", "arr_library_query", "episode_files", sonarr, "read"),
+  define("library.query.missing_episodes", "arr_library_query", "missing_episodes", sonarr, "read"),
+  define(
+    "library.query.cutoff_unmet_episodes",
+    "arr_library_query",
+    "cutoff_unmet_episodes",
+    sonarr,
+    "read",
+  ),
+  define("library.query.movies", "arr_library_query", "movies", radarr, "read"),
+  define("library.query.collections", "arr_library_query", "collections", radarr, "read"),
+  define("library.query.movie_files", "arr_library_query", "movie_files", radarr, "read"),
+  define("library.query.missing_movies", "arr_library_query", "missing_movies", radarr, "read"),
+  define(
+    "library.query.cutoff_unmet_movies",
+    "arr_library_query",
+    "cutoff_unmet_movies",
+    radarr,
+    "read",
+  ),
+  define("library.query.calendar", "arr_library_query", "calendar", media, "read"),
+  define("library.query.lookup", "arr_library_query", "lookup", media, "read"),
+
+  // arr_activity_query
+  define("activity.query.queue_status", "arr_activity_query", "queue_status", media, "read"),
+  define("activity.query.queue", "arr_activity_query", "queue", media, "read"),
+  define("activity.query.queue_details", "arr_activity_query", "queue_details", media, "read"),
+  define("activity.query.history", "arr_activity_query", "history", every, "read"),
+  define("activity.query.blocklist", "arr_activity_query", "blocklist", media, "read"),
+  define("activity.query.health", "arr_activity_query", "health", every, "read"),
+  define("activity.query.commands", "arr_activity_query", "commands", every, "read"),
+  define("activity.query.disk_space", "arr_activity_query", "disk_space", media, "read"),
+  define("activity.query.indexer_status", "arr_activity_query", "indexer_status", prowlarr, "read"),
+  define(
+    "activity.query.indexer_statistics",
+    "arr_activity_query",
+    "indexer_statistics",
+    prowlarr,
+    "read",
+  ),
+
+  // arr_release_search
+  define(
+    "release.search.sonarr_episode",
+    "arr_release_search",
+    "sonarr_episode",
+    sonarr,
+    "external",
+  ),
+  define("release.search.sonarr_season", "arr_release_search", "sonarr_season", sonarr, "external"),
+  define("release.search.radarr_movie", "arr_release_search", "radarr_movie", radarr, "external"),
+  define(
+    "release.search.prowlarr_aggregate",
+    "arr_release_search",
+    "prowlarr_aggregate",
+    prowlarr,
+    "external",
+  ),
+
+  // arr_import_inspect
+  define("import.inspect.queue_item", "arr_import_inspect", "queue_item", media, "read"),
+  define("import.inspect.library_context", "arr_import_inspect", "library_context", media, "read"),
+  define(
+    "import.inspect.candidate_reprocess",
+    "arr_import_inspect",
+    "candidate_reprocess",
+    media,
+    "read",
+  ),
+
+  // arr_config_observe
+  define("config.observe.indexers", "arr_config_observe", "indexers", every, "read"),
+  define(
+    "config.observe.download_clients",
+    "arr_config_observe",
+    "download_clients",
+    every,
+    "read",
+  ),
+  define("config.observe.applications", "arr_config_observe", "applications", prowlarr, "read"),
+  define("config.observe.notifications", "arr_config_observe", "notifications", every, "read"),
+  define("config.observe.import_lists", "arr_config_observe", "import_lists", media, "read"),
+  define("config.observe.metadata", "arr_config_observe", "metadata", media, "read"),
+  define("config.observe.proxies", "arr_config_observe", "proxies", every, "read"),
+  define(
+    "config.observe.quality_profiles",
+    "arr_config_observe",
+    "quality_profiles",
+    media,
+    "read",
+  ),
+  define("config.observe.custom_formats", "arr_config_observe", "custom_formats", media, "read"),
+  define(
+    "config.observe.release_profiles",
+    "arr_config_observe",
+    "release_profiles",
+    sonarr,
+    "read",
+  ),
+  define("config.observe.delay_profiles", "arr_config_observe", "delay_profiles", media, "read"),
+  define("config.observe.app_profiles", "arr_config_observe", "app_profiles", prowlarr, "read"),
+  define("config.observe.tags", "arr_config_observe", "tags", every, "read"),
+  define("config.observe.root_folders", "arr_config_observe", "root_folders", media, "read"),
+  define(
+    "config.observe.remote_path_mappings",
+    "arr_config_observe",
+    "remote_path_mappings",
+    media,
+    "read",
+  ),
+  define(
+    "config.observe.import_list_exclusions",
+    "arr_config_observe",
+    "import_list_exclusions",
+    media,
+    "read",
+  ),
+
+  // arr_job_get
+  define("job.get", "arr_job_get", undefined, every, "read"),
+
+  // arr_search_start
+  define("search.start.sonarr_episode", "arr_search_start", "sonarr_episode", sonarr, "start_job"),
+  define("search.start.sonarr_season", "arr_search_start", "sonarr_season", sonarr, "start_job"),
+  define("search.start.sonarr_series", "arr_search_start", "sonarr_series", sonarr, "start_job"),
+  define("search.start.radarr_movie", "arr_search_start", "radarr_movie", radarr, "start_job"),
+  define("search.start.missing", "arr_search_start", "missing", media, "start_job"),
+  define("search.start.cutoff_unmet", "arr_search_start", "cutoff_unmet", media, "start_job"),
+
+  // arr_release_grab
+  define("release.grab", "arr_release_grab", undefined, every, "start_job"),
+
+  // arr_queue_resolve
+  define("queue.resolve.ignore_tracking", "arr_queue_resolve", "ignore_tracking", media, "mutate"),
+  define(
+    "queue.resolve.remove_from_client_and_delete_data",
+    "arr_queue_resolve",
+    "remove_from_client_and_delete_data",
+    media,
+    "destructive",
+  ),
+  define(
+    "queue.resolve.blocklist_and_remove",
+    "arr_queue_resolve",
+    "blocklist_and_remove",
+    media,
+    "destructive",
+  ),
+  define(
+    "queue.resolve.change_category_mark_imported",
+    "arr_queue_resolve",
+    "change_category_mark_imported",
+    media,
+    "mutate",
+  ),
+  define(
+    "queue.resolve.route_to_manual_import",
+    "arr_queue_resolve",
+    "route_to_manual_import",
+    media,
+    "mutate",
+  ),
+  define(
+    "queue.resolve.force_pending_grab",
+    "arr_queue_resolve",
+    "force_pending_grab",
+    media,
+    "start_job",
+  ),
+  define("queue.resolve.remove_pending", "arr_queue_resolve", "remove_pending", media, "mutate"),
+  define(
+    "queue.resolve.blocklist_pending",
+    "arr_queue_resolve",
+    "blocklist_pending",
+    media,
+    "mutate",
+  ),
+
+  // arr_activity_change
+  define(
+    "activity.change.mark_history_failed",
+    "arr_activity_change",
+    "mark_history_failed",
+    media,
+    "mutate",
+  ),
+  define(
+    "activity.change.remove_blocklist_record",
+    "arr_activity_change",
+    "remove_blocklist_record",
+    media,
+    "mutate",
+  ),
+
+  // arr_import_execute
+  define("import.execute", "arr_import_execute", undefined, media, "destructive"),
+
+  // arr_library_change
+  define("library.change.add_media", "arr_library_change", "add_media", media, "mutate"),
+  define("library.change.set_monitoring", "arr_library_change", "set_monitoring", media, "mutate"),
+  define("library.change.edit_media", "arr_library_change", "edit_media", media, "mutate"),
+  define("library.change.delete_media", "arr_library_change", "delete_media", media, "destructive"),
+  define(
+    "library.change.update_file_metadata",
+    "arr_library_change",
+    "update_file_metadata",
+    media,
+    "mutate",
+  ),
+  define("library.change.delete_file", "arr_library_change", "delete_file", media, "destructive"),
+  define("library.change.rename", "arr_library_change", "rename", media, "destructive"),
+
+  // arr_config_reconcile
+  define(
+    "config.reconcile.reconcile_provider",
+    "arr_config_reconcile",
+    "reconcile_provider",
+    every,
+    "mutate",
+  ),
+  define(
+    "config.reconcile.delete_provider",
+    "arr_config_reconcile",
+    "delete_provider",
+    every,
+    "destructive",
+  ),
+  define(
+    "config.reconcile.test_provider",
+    "arr_config_reconcile",
+    "test_provider",
+    every,
+    "external",
+  ),
+  define(
+    "config.reconcile.reconcile_profile",
+    "arr_config_reconcile",
+    "reconcile_profile",
+    every,
+    "mutate",
+  ),
+  define(
+    "config.reconcile.delete_profile",
+    "arr_config_reconcile",
+    "delete_profile",
+    every,
+    "destructive",
+  ),
+  define(
+    "config.reconcile.reconcile_resource",
+    "arr_config_reconcile",
+    "reconcile_resource",
+    every,
+    "mutate",
+  ),
+  define(
+    "config.reconcile.delete_resource",
+    "arr_config_reconcile",
+    "delete_resource",
+    every,
+    "destructive",
+  ),
+  define(
+    "config.reconcile.reconcile_application_sync",
+    "arr_config_reconcile",
+    "reconcile_application_sync",
+    prowlarr,
+    "mutate",
+  ),
+
+  // arr_job_cancel
+  define("job.cancel", "arr_job_cancel", undefined, every, "mutate"),
+] as const;
+
+/** The typed internal identifiers. Never accepted from a caller. */
+export type OperationId = (typeof definitions)[number]["id"];
+
+export type OperationDefinition = OperationBlueprint<OperationId>;
+
+export const operationDefinitions: readonly OperationDefinition[] = definitions;
+
+export type OperationSupport =
+  | { readonly status: "supported" }
+  | { readonly status: "unconfigured" }
+  | { readonly status: "unavailable"; readonly failure: UpstreamFailure }
+  | {
+      readonly status: "unsupported";
+      readonly reason: "application" | "version";
+      readonly requiredVersion?: string;
+    };
+
+/**
+ * Decides whether one application can run one operation right now.
+ *
+ * Application membership is checked before anything version-specific so a
+ * request naming an application the operation was never defined for is
+ * rejected without probing that instance at all.
+ */
+export function checkOperationSupport(
+  operation: OperationDefinition,
+  capability: ApplicationCapability,
+): OperationSupport {
+  if (!operation.applications.includes(capability.application)) {
+    return { status: "unsupported", reason: "application" };
+  }
+  if (capability.status === "unconfigured") {
+    return { status: "unconfigured" };
+  }
+  if (capability.status === "unavailable") {
+    return { status: "unavailable", failure: capability.failure };
+  }
+  if (capability.status === "unsupported") {
+    return { status: "unsupported", reason: "version", requiredVersion: capability.minimumVersion };
+  }
+
+  const required = operation.minimumVersions[capability.application];
+  if (required !== undefined && !meetsMinimumVersion(capability.version, required)) {
+    return { status: "unsupported", reason: "version", requiredVersion: required };
+  }
+  return { status: "supported" };
+}
+
+export interface OperationRegistry {
+  readonly operations: readonly OperationDefinition[];
+  /**
+   * The only lookup the tool layer has. It is keyed by a public tool name and
+   * a public variant, so no caller-supplied string can name an internal
+   * operation identifier.
+   */
+  find(tool: ToolName, variant: string | undefined): OperationDefinition | undefined;
+  forTool(tool: ToolName): readonly OperationDefinition[];
+}
+
+function registryKey(tool: ToolName, variant: string | undefined): string {
+  // Escaped rather than embedded: a raw NUL in the source is invisible in an
+  // editor and can be stripped by tooling, which would silently let keys
+  // collide. No tool name or variant can contain it, so it stays the
+  // separator that cannot occur inside either half.
+  return `${tool}\u0000${variant ?? ""}`;
+}
+
+export function createOperationRegistry(
+  operations: readonly OperationDefinition[] = operationDefinitions,
+): OperationRegistry {
+  const byKey = new Map<string, OperationDefinition>();
+  const byTool = new Map<ToolName, OperationDefinition[]>();
+  const seenIds = new Set<string>();
+
+  for (const operation of operations) {
+    if (seenIds.has(operation.id)) {
+      throw new Error(`Duplicate operation id: ${operation.id}`);
+    }
+    seenIds.add(operation.id);
+
+    const key = registryKey(operation.tool, operation.variant);
+    if (byKey.has(key)) {
+      throw new Error(`Duplicate operation variant: ${operation.tool}/${operation.variant ?? "-"}`);
+    }
+    byKey.set(key, operation);
+
+    const existing = byTool.get(operation.tool);
+    if (existing === undefined) {
+      byTool.set(operation.tool, [operation]);
+    } else {
+      existing.push(operation);
+    }
+  }
+
+  return {
+    operations,
+
+    find(tool: ToolName, variant: string | undefined): OperationDefinition | undefined {
+      return byKey.get(registryKey(tool, variant));
+    },
+
+    forTool(tool: ToolName): readonly OperationDefinition[] {
+      return byTool.get(tool) ?? [];
+    },
+  };
+}
