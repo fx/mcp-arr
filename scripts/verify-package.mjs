@@ -15,7 +15,9 @@ import { createPlatformCommand, isCleanTermination } from "./platform-command.mj
 
 const execFileAsync = promisify(execFile);
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
+const canonicalRepository = "https://github.com/fx/mcp-arr";
 const allowedFiles = [
+  "LICENSE",
   "README.md",
   "dist/adapters/library/model.js",
   "dist/adapters/library/paging.js",
@@ -140,6 +142,14 @@ function assertManifest(manifest) {
     "Packed manifest must expose dist/cli.js as the mcp-arr bin",
   );
   assert(manifest.engines?.node === ">=20", "Packed manifest must require Node.js >=20");
+  assert(manifest.license === "MIT", "Packed manifest must declare the MIT license");
+  const repositoryUrl =
+    typeof manifest.repository === "string" ? manifest.repository : manifest.repository?.url;
+  assert(typeof repositoryUrl === "string", "Packed manifest must declare its repository");
+  assert(
+    repositoryUrl.replace(/^git\+/u, "").replace(/\.git$/u, "") === canonicalRepository,
+    `Packed manifest repository must be ${canonicalRepository}, not ${repositoryUrl}`,
+  );
   assert(
     Array.isArray(manifest.files) && manifest.files.length === 1 && manifest.files[0] === "dist",
     "Packed manifest files allowlist must contain only dist",

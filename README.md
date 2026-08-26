@@ -7,32 +7,16 @@ A local MCP server for Sonarr, Radarr, and Prowlarr.
 - Node.js 20 or newer
 - One or more supported applications with a complete base-URL/API-key pair
 
-## Install
+There is nothing to clone, install, or build. `npx` downloads the published package on first use and runs its executable.
 
-Until a registry package is available, install the executable from a source checkout. Replace `REPOSITORY_URL` with this repository's checkout URL, then build it and install the resulting local package into a dedicated directory:
+## Configure your host
 
-```sh
-git clone REPOSITORY_URL mcp-arr
-cd mcp-arr
-npm ci
-npm run build
-cd ..
-mkdir mcp-arr-install
-cd mcp-arr-install
-npm init --yes
-npm install ../mcp-arr
-```
-
-The server supports MCP over stdio only. Configure the host command using the installed executable's absolute path:
-
-- POSIX: `/absolute/path/to/mcp-arr-install/node_modules/.bin/mcp-arr`
-- Windows: `C:\absolute\path\to\mcp-arr-install\node_modules\.bin\mcp-arr.cmd`
-
-Pass instance settings through the command environment. The following host example uses the POSIX command path:
+The server supports MCP over stdio only. Point the host at `npx` and let it launch the published package:
 
 ```json
 {
-  "command": "/absolute/path/to/mcp-arr-install/node_modules/.bin/mcp-arr",
+  "command": "npx",
+  "args": ["-y", "mcp-arr"],
   "env": {
     "SONARR_URL": "https://sonarr.example.invalid/sonarr",
     "SONARR_API_KEY": "replace-with-sonarr-api-key",
@@ -44,7 +28,21 @@ Pass instance settings through the command environment. The following host examp
 }
 ```
 
-Each application is optional, but its URL and API key must be provided together. Configure at least one complete pair. The example hosts use the reserved `.invalid` domain and the keys are placeholders; replace them with values for your instances.
+The package name and its executable are both `mcp-arr`, so `npx -y mcp-arr` resolves the package and runs the server directly. `-y` accepts npx's install prompt up front, which a host launching the server non-interactively cannot answer.
+
+On Windows, a host that spawns the command without a shell needs `npx.cmd` rather than `npx`, or `"command": "cmd"` with `"args": ["/c", "npx", "-y", "mcp-arr"]`.
+
+To run the same command yourself — to check the server starts before wiring up a host — export the instance variables and run:
+
+```sh
+npx -y mcp-arr
+```
+
+It waits for MCP traffic on stdin and writes nothing to stdout until a client speaks to it. Stop it with Ctrl-C.
+
+## Instance settings
+
+Pass instance settings through the command environment. Each application is optional, but its URL and API key must be provided together. Configure at least one complete pair. The example hosts above use the reserved `.invalid` domain and the keys are placeholders; replace them with values for your instances.
 
 The URL is the instance's own base URL, including any path prefix a reverse proxy adds — `https://media.example/sonarr`, not the API path. The API key is the one under Settings → General in each application. Instance settings are read once at startup, so changing one means restarting the server.
 
@@ -72,3 +70,36 @@ All fifteen tools are published with their full input and output schemas, but on
 Every other tool validates its arguments and then answers `unsupported_capability`, which `arr_capabilities` lists under `unimplementedOperations`. Prowlarr has no media library, so no `arr_library_query` view is offered for it.
 
 Library records are returned with an opaque `reference`. That reference — not an upstream identifier — is what the views that take a parent (`seasons`, `episodes`, `episode_files`, `movie_files`) and the identifier filter (`media`) accept, so read the parent view first and pass the reference back. References are held in memory, expire after fifteen minutes, and do not survive a restart; a stale one is reported as `stale_reference` and is recovered by repeating the query that produced it.
+
+## Development
+
+This section is for working on the server itself. Running it does not require any of it.
+
+Clone the repository, install dependencies, and build:
+
+```sh
+git clone https://github.com/fx/mcp-arr.git
+cd mcp-arr
+npm ci
+npm run build
+```
+
+Run the local build with the same instance variables a host would pass:
+
+```sh
+npm start
+```
+
+`npm run check` runs the full gate — type check, lint, build, tests, and package verification. The package verifier packs the tarball, installs it into a throwaway consumer, and drives the installed executable over stdio, so it catches packaging regressions the unit tests cannot.
+
+To point a host at a checkout instead of the published package, install the built package into a dedicated directory and use the installed executable's absolute path:
+
+```sh
+mkdir ../mcp-arr-install
+cd ../mcp-arr-install
+npm init --yes
+npm install ../mcp-arr
+```
+
+- POSIX: `/absolute/path/to/mcp-arr-install/node_modules/.bin/mcp-arr`
+- Windows: `C:\absolute\path\to\mcp-arr-install\node_modules\.bin\mcp-arr.cmd`

@@ -2,6 +2,21 @@
   "name": "mcp-arr",
   "version": "0.1.0",
   "description": "A local MCP server for Sonarr, Radarr, and Prowlarr",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fx/mcp-arr.git"
+  },
+  "homepage": "https://github.com/fx/mcp-arr#readme",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "sonarr",
+    "radarr",
+    "prowlarr",
+    "arr",
+    "stdio"
+  ],
   "type": "module",
   "bin": {
     "mcp-arr": "dist/cli.js"
@@ -9,6 +24,10 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "engines": {
     "node": ">=20"
   },

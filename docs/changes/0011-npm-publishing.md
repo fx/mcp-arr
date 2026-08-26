@@ -96,10 +96,10 @@ The [Architecture spec](../specs/architecture/#packaging-and-release) owns packa
 
 ## Tasks
 
-- [ ] Prepare the package for publication
-  - [ ] Add `license`, `repository`, `homepage`, and `keywords` to package metadata, and add the MIT `LICENSE` file
-  - [ ] Confirm the packed tarball contains only build output and the documents needed to configure the server, and extend the package verifier to assert the license and repository metadata are present
-  - [ ] Rewrite `README.md` around running the published package with `npx mcp-arr`, updating every host-configuration example to that invocation and demoting build-from-checkout to a contributor section
+- [x] Prepare the package for publication
+  - [x] Add `license`, `repository`, `homepage`, and `keywords` to package metadata, and add the MIT `LICENSE` file
+  - [x] Confirm the packed tarball contains only build output and the documents needed to configure the server, and extend the package verifier to assert the license and repository metadata are present
+  - [x] Rewrite `README.md` around running the published package with `npx mcp-arr`, updating every host-configuration example to that invocation and demoting build-from-checkout to a contributor section
 - [ ] Add release automation
   - [ ] Add release-please configuration and manifest for the root Node package
   - [ ] Add a release workflow on the default branch that authenticates as the GitHub App and opens or updates the release pull request
