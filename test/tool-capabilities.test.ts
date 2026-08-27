@@ -152,6 +152,14 @@ describe("arr_capabilities", () => {
 
     const boundedSonarr = reportFor(bounded, "sonarr");
     const fullSonarr = reportFor(full, "sonarr");
+
+    // At the bounded default the two lists are absent and the counts answer
+    // for them; at full detail the lists are present and each one is exactly
+    // as long as the count that stood in for it.
+    expect(boundedSonarr.unimplementedOperations).toBeUndefined();
+    expect(boundedSonarr.unsupportedOperations).toBeUndefined();
+    expect(typeof boundedSonarr.unimplementedOperationCount).toBe("number");
+    expect(typeof boundedSonarr.unsupportedOperationCount).toBe("number");
     expect(fullSonarr.unimplementedOperations).toHaveLength(
       boundedSonarr.unimplementedOperationCount,
     );
@@ -162,8 +170,12 @@ describe("arr_capabilities", () => {
     expect(capabilitiesOutputSchema.safeParse(bounded).success).toBe(true);
     expect(capabilitiesOutputSchema.safeParse(full).success).toBe(true);
 
-    // The payload is the point: the enumeration dominates the report today.
-    expect(JSON.stringify(bounded).length).toBeLessThan(JSON.stringify(full).length / 2);
+    // The payload is the point, but only the direction of the difference is an
+    // invariant. How much smaller the bounded report is depends on how much of
+    // the inventory is still unimplemented, and that shrinks with every domain
+    // change that lands, so a ratio here would fail for reasons that have
+    // nothing to do with bounding.
+    expect(JSON.stringify(bounded).length).toBeLessThan(JSON.stringify(full).length);
   });
 
   it("reports an unconfigured application without contacting anything", async () => {
