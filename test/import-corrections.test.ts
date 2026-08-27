@@ -338,6 +338,11 @@ describe("reprocessing a correction", () => {
     );
 
     expect(result.status).toBe("absent");
+    // The typed error the rest of this surface gives for a target that has
+    // gone, with the remedy a caller can act on.
+    if (result.status === "absent") {
+      expect(result.error.code).toBe("stale_reference");
+    }
     expect(running.posted).toEqual([]);
   });
 
@@ -683,6 +688,11 @@ describe("validating immediately before an import", () => {
     });
 
     expect(result).toMatchObject({ status: "refused", refusal: { kind: "absent" } });
+    // Carried rather than restated: validation reports the same reason the
+    // scan does, so a caller is told to re-read the query it came from.
+    if (result.status === "refused" && result.refusal.kind === "absent") {
+      expect(result.refusal.error.code).toBe("stale_reference");
+    }
     expect(running.posted).toEqual([]);
   });
 });

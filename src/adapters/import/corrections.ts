@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { UpstreamClient } from "../../http/client.js";
+import type { ToolError } from "../../tools/errors.js";
 import {
   matchOption,
   type NamedOption,
@@ -340,8 +341,9 @@ export async function checkFreeSpace(
 
 /** Why an import may not start, or nothing where it may. */
 export type ImportRefusal =
-  | { readonly kind: "absent" }
-  | { readonly kind: "unmapped" }
+  /** Carries the typed error the rest of this surface gives for a gone target. */
+  | { readonly kind: "absent"; readonly error: ToolError }
+  | { readonly kind: "unmapped"; readonly error: ToolError }
   | { readonly kind: "existing_file" }
   | { readonly kind: "rejected"; readonly rejections: readonly ImportRejection[] }
   | { readonly kind: "stale"; readonly moved: readonly string[] }
@@ -417,7 +419,13 @@ export async function validateForImport(
     request.patch,
   );
   if (reprocessed.status !== "ok") {
-    return { status: "refused", refusal: { kind: reprocessed.status } };
+    // The reason it gives is carried rather than restated: a target that has
+    // gone already has a typed error with a remedy, and inventing a second one
+    // here would tell a caller something the rest of the surface does not.
+    return {
+      status: "refused",
+      refusal: { kind: reprocessed.status, error: reprocessed.error },
+    };
   }
   const candidate = reprocessed.candidate;
 

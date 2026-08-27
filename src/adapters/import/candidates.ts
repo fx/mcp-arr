@@ -794,10 +794,17 @@ export interface UpstreamMappingPatch {
 
 export type ReprocessResult =
   | { readonly status: "ok"; readonly candidate: ImportCandidate }
-  /** The queue row, the library record, or the file itself is gone. */
-  | { readonly status: "absent" }
+  /**
+   * The queue row, the library record, or the file itself is gone.
+   *
+   * Carries the same typed error a scan gives for the same thing, for the same
+   * reason: a target that has gone is a domain answer with a remedy — read the
+   * query the reference came from again — while a timeout, an authentication
+   * failure and a 5xx stay what they are and are thrown.
+   */
+  | { readonly status: "absent"; readonly error: ToolError }
   /** The origin exists but names no location, so there is nothing to reprocess. */
-  | { readonly status: "unmapped" };
+  | { readonly status: "unmapped"; readonly error: ToolError };
 
 /**
  * Re-decides one candidate with a corrected mapping.
@@ -832,7 +839,7 @@ export async function reprocessCandidate(
           seasonNumber: origin.seasonNumber,
         });
   if (!resolved.ok) {
-    return { status: resolved.reason };
+    return { status: resolved.reason, error: scanRefusal(application, resolved.reason) };
   }
   const context = resolved.context;
 
@@ -847,7 +854,9 @@ export async function reprocessCandidate(
     return path !== undefined && fileIdentity(path) === identity;
   });
   if (row === undefined) {
-    return { status: "absent" };
+    // The folder still answers and this file is not in it, which is the file
+    // having gone rather than the scan having failed.
+    return { status: "absent", error: scanRefusal(application, "absent") };
   }
 
   const answered = parseUpstream(
@@ -858,10 +867,12 @@ export async function reprocessCandidate(
   );
   const decided = answered[0];
   if (decided === undefined) {
-    return { status: "absent" };
+    return { status: "absent", error: scanRefusal(application, "absent") };
   }
   const candidate = mapCandidate(context, decided);
-  return candidate === undefined ? { status: "absent" } : { status: "ok", candidate };
+  return candidate === undefined
+    ? { status: "absent", error: scanRefusal(application, "absent") }
+    : { status: "ok", candidate };
 }
 
 /**
