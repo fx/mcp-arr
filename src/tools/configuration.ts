@@ -61,12 +61,24 @@ export interface PublishedView {
 }
 
 /**
- * Mints one reference per configuration record, reusing the token within a
- * call.
+ * Mints the references one published envelope carries.
  *
- * A record and the tags it points at are minted the same way, so a tag a
- * provider carries and the same tag read from the tags domain resolve to one
- * reference rather than two names for one row.
+ * The contract has two halves, and only the first is an identity guarantee.
+ *
+ * *Within one envelope*, one upstream row is one token: the minter caches by
+ * application, domain, and identifier, so a tag two providers both carry, or a
+ * record and a pointer at it in the same answer, are the same string. A caller
+ * may compare tokens inside one result and conclude that two of them name one
+ * row.
+ *
+ * *Across calls*, they differ. Every call mints afresh, and the store issues a
+ * new random token each time, so reading the same tag twice yields two tokens.
+ * Both resolve, and neither invalidates the other — a reference records the
+ * application, domain, and identifier it stands for, and nothing about a later
+ * one changes that. What a caller may not do is key a cache on a token and
+ * expect the next call's token to hit it, or compare tokens *between* results
+ * to decide whether two rows are the same; that question is answered by asking
+ * this server, not by string equality.
  *
  * The detail carries both vocabularies on purpose. `arr_library_change`
  * resolves a configuration reference by the pointer kind a library record uses

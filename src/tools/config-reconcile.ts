@@ -259,8 +259,10 @@ function reconcileEffects(
  *
  * The adapter's diff names the record it describes, and any record a pointer
  * now points at, by the identity it resolved. Neither may reach a result: the
- * token is what a caller holds, and minting here goes through the same store
- * the observation mints into, so one row is one reference.
+ * token is what a caller holds. One minter serves the whole diff, so a record
+ * and a pointer at that same record carry one token here — which is a claim
+ * about this envelope and not about the next one; see the minter's own
+ * contract.
  */
 function publishDiff(invocation: OperationInvocation, diff: ConfigurationDiff): unknown {
   const mint = referenceMinter(invocation.state.references);
@@ -952,7 +954,9 @@ async function applySync(
   }
 
   // One minter for this envelope, so the mapping a payload names and the
-  // mapping its own settlement names are the same token.
+  // mapping its own settlement names are the same token. Across envelopes they
+  // would differ, which is why it has to be one minter here rather than two
+  // that happen to read the same store.
   const mint = referenceMinter(invocation.state.references);
 
   return {

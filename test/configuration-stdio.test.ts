@@ -171,15 +171,24 @@ describe("arr_config_observe over stdio", () => {
       // answer has crossed a transport.
       expect(indexer?.secrets.map((secret) => secret.name)).toContain("apiKey");
       expect(JSON.stringify(provider.data)).not.toContain("CANARY");
-      // A tag a provider carries is a reference too, and it is the same one the
-      // tags domain answers with.
-      // A tag a provider carries is a reference too. It is a token of the same
-      // kind rather than the same token: references are minted per call, so two
-      // calls name one row twice without either naming the row itself.
+      // A tag a provider carries is a reference too, minted the same way.
       expect(indexer?.tags?.every((tag) => tag.startsWith("cfg_"))).toBe(true);
       expect(resource.data?.records.every((record) => record.reference.startsWith("cfg_"))).toBe(
         true,
       );
+
+      // Across calls a token is not an identity: reading the same domain again
+      // mints again, so two answers name one row with two tokens. A caller
+      // comparing tokens between results would conclude these are different
+      // rows, which is why nothing here invites it to.
+      const again = onlyOutcome(
+        (await observe(child, 5, { domain: "tags", applications: ["sonarr"] })).envelope
+          .applications,
+      );
+      const first = resource.data?.records.map((record) => record.reference) ?? [];
+      const second = again.data?.records.map((record) => record.reference) ?? [];
+      expect(second).toHaveLength(first.length);
+      expect(second.some((reference) => first.includes(reference))).toBe(false);
 
       await child.terminateGracefully();
       assertCleanProtocolStdout(child.stdout);
