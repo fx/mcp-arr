@@ -287,7 +287,13 @@ const calendarMediaSchema = z.discriminatedUnion("kind", [episodeRecordSchema, m
 
 const calendarEventSchema = z.strictObject({
   media: calendarMediaSchema,
-  /** The date that placed the entry in the requested window. */
+  /**
+   * The date the entry is anchored to: the one that placed it inside the
+   * requested window, or — where the application returned a record none of
+   * whose candidate dates falls inside that window — its earliest candidate,
+   * which lies outside it. `radarr.anchor` names which date this is, so the
+   * two cases stay distinguishable.
+   */
   start: z.string().optional(),
   end: z.string().optional(),
   hasFile: z.boolean(),

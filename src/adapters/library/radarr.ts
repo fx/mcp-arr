@@ -501,8 +501,10 @@ export async function listWantedMovies(
  * `unmonitored` is set, so an unfiltered query asks for both and a
  * monitored-state filter is applied on top of what comes back.
  *
- * Each entry is anchored against the window the caller asked for rather than by
- * a fixed release-date precedence; see {@link calendarAnchor}.
+ * Each entry's anchor is selected against the window the caller asked for
+ * rather than by a fixed release-date precedence; see {@link calendarAnchor},
+ * which also defines what a record with no candidate inside the window
+ * anchors to.
  */
 export async function listCalendar(
   client: UpstreamClient,
