@@ -87,7 +87,7 @@ changes:
     path: changes/0008-configuration-reconciliation.md
     description: Implement safe upstream configuration observation and lossless reconciliation
     spec: configuration-reconciliation
-    status: draft
+    status: complete
     depends_on: ["0001", "0002"]
   - id: "0009"
     name: library-mutations

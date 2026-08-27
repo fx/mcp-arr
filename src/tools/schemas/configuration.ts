@@ -10,6 +10,10 @@ import {
   queryBaseShape,
   variantUnion,
 } from "./common.js";
+import {
+  configurationReconcileDataSchema,
+  configurationViewSchema,
+} from "./configuration-results.js";
 
 /**
  * Provider domains share a dynamic upstream schema; profile and resource
@@ -246,5 +250,8 @@ export const configReconcileInputSchema = variantUnion(
   z.union([configReconcileIntentSchema, configReconcilePlanApplySchema]),
 );
 
-export const configObserveOutputSchema = toolResultSchema();
-export const configReconcileOutputSchema = toolResultSchema({ mutation: true });
+export const configObserveOutputSchema = toolResultSchema({ data: configurationViewSchema });
+export const configReconcileOutputSchema = toolResultSchema({
+  mutation: true,
+  data: configurationReconcileDataSchema,
+});

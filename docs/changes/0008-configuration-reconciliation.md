@@ -5,7 +5,7 @@
 Implement sanitized configuration observation and lossless desired-state reconciliation for upstream providers, profiles, formats, tags, roots, paths, lists, and Prowlarr applications as defined by the [Configuration Reconciliation spec](../specs/configuration-reconciliation/).
 
 **Spec:** [Configuration Reconciliation](../specs/configuration-reconciliation/)
-**Status:** draft
+**Status:** complete
 **Depends On:** 0001, 0002
 
 ## Motivation
@@ -79,10 +79,10 @@ The [Configuration Reconciliation spec](../specs/configuration-reconciliation/) 
   - [x] Observe remote mappings and model Disabled/AddOnly/FullSync/tag behavior
   - [x] Plan explicit additions, updates, removals, and stale mappings
   - [x] Apply and verify per-item outcomes without claiming atomicity
-- [ ] Register and verify configuration tools
-  - [ ] Add typed variants to `arr_config_observe` and `arr_config_reconcile`
-  - [ ] Add version-labelled adapter fixtures and stdio tests for every supported family
-  - [ ] Add capability and unsupported-version coverage
+- [x] Register and verify configuration tools
+  - [x] Add typed variants to `arr_config_observe` and `arr_config_reconcile`
+  - [x] Add version-labelled adapter fixtures and stdio tests for every supported family
+  - [x] Add capability and unsupported-version coverage
 
 ## Open Questions
 

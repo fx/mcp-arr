@@ -16,6 +16,8 @@ import {
 } from "./acquisition.js";
 import { activityQueryHandler } from "./activity.js";
 import { activityChangeHandler, activityChangePreconditions } from "./activity-change.js";
+import { configReconcileHandler, configReconcilePreconditions } from "./config-reconcile.js";
+import { configObserveHandler } from "./configuration.js";
 import { createToolError, type ToolError } from "./errors.js";
 import { jobCancelHandler, jobCancelPreconditions, jobGetHandler } from "./jobs.js";
 import { libraryQueryHandler } from "./library.js";
@@ -265,6 +267,30 @@ function define<const TId extends string>(
  * against the published schema rather than taking from this table.
  */
 const libraryQuery: DefineOptions = { handler: libraryQueryHandler };
+
+/**
+ * Every `arr_config_observe` domain runs the same handler, for the same reason
+ * the library views do: the domain is carried by the caller's own
+ * discriminator, which the handler re-validates against the published schema.
+ */
+const configObserve: DefineOptions = { handler: configObserveHandler };
+
+/**
+ * Every implemented `arr_config_reconcile` intent runs the same handler behind
+ * the same precondition reader, for the reason the library and activity
+ * mutations do: pairing them here rather than per variant is what makes a
+ * desired-state write unreachable without the reader that resolves its target,
+ * validates every pointer it names, and builds the resource it would send.
+ *
+ * The three deletions carry neither. Deleting a referenced resource needs the
+ * dependent-migration behaviour the spec describes, no task of this change
+ * built it, and an intent registered with the handler and without that would
+ * delete without the check that makes deleting safe.
+ */
+const configReconcile: DefineOptions = {
+  handler: configReconcileHandler,
+  readPreconditions: configReconcilePreconditions,
+};
 
 /**
  * Every `arr_release_search` target runs the same handler, for the same reason
@@ -517,44 +543,97 @@ const definitions = [
   ),
 
   // arr_config_observe
-  define("config.observe.indexers", "arr_config_observe", "indexers", every, "read"),
+  define("config.observe.indexers", "arr_config_observe", "indexers", every, "read", configObserve),
   define(
     "config.observe.download_clients",
     "arr_config_observe",
     "download_clients",
     every,
     "read",
+    configObserve,
   ),
-  define("config.observe.applications", "arr_config_observe", "applications", prowlarr, "read"),
-  define("config.observe.notifications", "arr_config_observe", "notifications", every, "read"),
-  define("config.observe.import_lists", "arr_config_observe", "import_lists", media, "read"),
-  define("config.observe.metadata", "arr_config_observe", "metadata", media, "read"),
-  define("config.observe.proxies", "arr_config_observe", "proxies", every, "read"),
+  define(
+    "config.observe.applications",
+    "arr_config_observe",
+    "applications",
+    prowlarr,
+    "read",
+    configObserve,
+  ),
+  define(
+    "config.observe.notifications",
+    "arr_config_observe",
+    "notifications",
+    every,
+    "read",
+    configObserve,
+  ),
+  define(
+    "config.observe.import_lists",
+    "arr_config_observe",
+    "import_lists",
+    media,
+    "read",
+    configObserve,
+  ),
+  define("config.observe.metadata", "arr_config_observe", "metadata", media, "read", configObserve),
+  define("config.observe.proxies", "arr_config_observe", "proxies", every, "read", configObserve),
   define(
     "config.observe.quality_profiles",
     "arr_config_observe",
     "quality_profiles",
     media,
     "read",
+    configObserve,
   ),
-  define("config.observe.custom_formats", "arr_config_observe", "custom_formats", media, "read"),
+  define(
+    "config.observe.custom_formats",
+    "arr_config_observe",
+    "custom_formats",
+    media,
+    "read",
+    configObserve,
+  ),
   define(
     "config.observe.release_profiles",
     "arr_config_observe",
     "release_profiles",
     sonarr,
     "read",
+    configObserve,
   ),
-  define("config.observe.delay_profiles", "arr_config_observe", "delay_profiles", media, "read"),
-  define("config.observe.app_profiles", "arr_config_observe", "app_profiles", prowlarr, "read"),
-  define("config.observe.tags", "arr_config_observe", "tags", every, "read"),
-  define("config.observe.root_folders", "arr_config_observe", "root_folders", media, "read"),
+  define(
+    "config.observe.delay_profiles",
+    "arr_config_observe",
+    "delay_profiles",
+    media,
+    "read",
+    configObserve,
+  ),
+  define(
+    "config.observe.app_profiles",
+    "arr_config_observe",
+    "app_profiles",
+    prowlarr,
+    "read",
+    configObserve,
+  ),
+  define("config.observe.tags", "arr_config_observe", "tags", every, "read", configObserve),
+  define(
+    "config.observe.root_folders",
+    "arr_config_observe",
+    "root_folders",
+    media,
+    "read",
+    configObserve,
+  ),
   define(
     "config.observe.remote_path_mappings",
     "arr_config_observe",
     "remote_path_mappings",
     media,
     "read",
+    configObserve,
   ),
   define(
     "config.observe.import_list_exclusions",
@@ -562,6 +641,7 @@ const definitions = [
     "import_list_exclusions",
     media,
     "read",
+    configObserve,
   ),
 
   // arr_job_get
@@ -785,6 +865,7 @@ const definitions = [
     "reconcile_provider",
     every,
     "mutate",
+    configReconcile,
   ),
   define(
     "config.reconcile.delete_provider",
@@ -799,6 +880,7 @@ const definitions = [
     "force_provider_save",
     every,
     "mutate",
+    configReconcile,
   ),
   define(
     "config.reconcile.test_provider",
@@ -806,6 +888,7 @@ const definitions = [
     "test_provider",
     every,
     "external",
+    configReconcile,
   ),
   define(
     "config.reconcile.reconcile_profile",
@@ -813,6 +896,7 @@ const definitions = [
     "reconcile_profile",
     every,
     "mutate",
+    configReconcile,
   ),
   define(
     "config.reconcile.delete_profile",
@@ -827,6 +911,7 @@ const definitions = [
     "reconcile_resource",
     every,
     "mutate",
+    configReconcile,
   ),
   define(
     "config.reconcile.delete_resource",
@@ -835,12 +920,18 @@ const definitions = [
     every,
     "destructive",
   ),
+  // Destructive rather than mutating, because what this intent can do is what a
+  // caller has to be told: at full sync it deletes the indexers a mapping no
+  // longer selects on the other application. A call that cannot reach that says
+  // so in its own plan; the declaration is about the intent, and understating a
+  // deletion is the one direction this must not round in.
   define(
     "config.reconcile.reconcile_application_sync",
     "arr_config_reconcile",
     "reconcile_application_sync",
     prowlarr,
-    "mutate",
+    "destructive",
+    configReconcile,
   ),
 
   // arr_job_cancel
