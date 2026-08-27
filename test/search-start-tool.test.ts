@@ -45,11 +45,15 @@ interface Upstream {
 interface UpstreamOptions {
   /** Answers a started command; the default accepts it. */
   readonly command?: (request: UpstreamRequest) => Response;
+  /** Answers a record read; the default serves the recorded library fixture. */
+  readonly record?: (route: string) => Response | undefined;
   readonly unreachable?: boolean;
 }
 
 let statuses: Awaited<ReturnType<typeof loadStatusFixtures>>;
 const commandRecords = new Map<ApplicationId, Record<string, unknown>>();
+/** The recorded library records the precondition check reads, keyed by route. */
+const libraryRecords = new Map<string, Record<string, unknown>>();
 
 beforeAll(async () => {
   statuses = await loadStatusFixtures();
@@ -60,6 +64,18 @@ beforeAll(async () => {
       throw new Error(`The ${application} command fixture holds no record`);
     }
     commandRecords.set(application, first);
+  }
+  for (const [application, route] of [
+    ["sonarr", "series"],
+    ["sonarr", "episode"],
+    ["radarr", "movie"],
+  ] as const) {
+    for (const record of await fixtureBody<readonly Record<string, unknown>[]>(
+      application,
+      route,
+    )) {
+      libraryRecords.set(`${route}/${String(record.id)}`, record);
+    }
   }
 });
 
@@ -107,7 +123,14 @@ function upstream(options: UpstreamOptions = {}): Upstream {
     if (route === "system/status") {
       return Promise.resolve(jsonResponse(statuses.get(application)?.body));
     }
-    return Promise.resolve(jsonResponse({ message: "not found" }, 404));
+    const overridden = options.record?.(route);
+    if (overridden !== undefined) {
+      return Promise.resolve(overridden);
+    }
+    const record = libraryRecords.get(route);
+    return Promise.resolve(
+      record === undefined ? jsonResponse({ message: "not found" }, 404) : jsonResponse(record),
+    );
   };
 
   return { fetch, requests };
@@ -161,7 +184,7 @@ function mintMedia(
 }
 
 describe("arr_search_start plan mode", () => {
-  it("discloses the command and the caller's own references without contacting the instance", async () => {
+  it("sends no command, and discloses the one it would send with the caller's own references", async () => {
     const state = createWorkflowState();
     const instance = upstream();
     const series = mintMedia(state, "sonarr", "series", "12");
@@ -185,7 +208,11 @@ describe("arr_search_start plan mode", () => {
     expect(result.mutation?.plan).toMatch(/^pln_/u);
     expect(result.mutation?.requestedEffects[0]?.severity).toBe("consequential");
     expect(result.mutation?.requestedEffects[0]?.summary).toContain("SeriesSearch");
+    // Nothing was started. The instance is still read — a plan that could not
+    // tell the caller the application is unreachable, or that the record is
+    // gone, would hand out one that cannot be applied.
     expect(instance.requests.some((request) => request.method === "POST")).toBe(false);
+    expect(instance.requests.map((request) => request.route)).toContain("series/12");
   });
 
   it("says a wanted-list search may grab across the whole monitored library", async () => {
@@ -208,15 +235,36 @@ describe("arr_search_start plan mode", () => {
     expect(summary).toContain("monitored");
     expect(summary).toContain("grab");
   });
+
+  it("says out loud that a relaxed wanted scope is the application's own, not everything", async () => {
+    const state = createWorkflowState();
+    const instance = upstream();
+
+    const result = await call(searchStartTool, contextFor(instance, state), {
+      target: "missing",
+      mode: "plan",
+      applications: ["sonarr"],
+      monitoredOnly: false,
+    });
+
+    // The upstream filter selects rather than switches, so `false` cannot mean
+    // "search unmonitored media too"; the effect and the warning both say what
+    // is actually sent instead of claiming something wider.
+    const warnings = outcomeFor(result, "sonarr").warnings.join(" ");
+    expect(warnings).toContain("default wanted scope");
+    expect(result.mutation?.requestedEffects[0]?.summary).toContain("default wanted scope");
+  });
 });
 
 describe("arr_search_start apply mode", () => {
   it("sends one allowlisted command and returns the job it was projected into", async () => {
     const state = createWorkflowState();
     const instance = upstream();
+    // The two recorded episodes of the recorded series, so the precondition
+    // check reads records that actually exist in the fixtures.
     const episodes = [
-      mintMedia(state, "sonarr", "episode", "11"),
-      mintMedia(state, "sonarr", "episode", "12"),
+      mintMedia(state, "sonarr", "episode", "1001"),
+      mintMedia(state, "sonarr", "episode", "1003"),
     ];
     const context = contextFor(instance, state);
 
@@ -230,7 +278,7 @@ describe("arr_search_start apply mode", () => {
     const posted = instance.requests.filter((request) => request.method === "POST");
     expect(posted).toHaveLength(1);
     expect(posted[0]?.route).toBe("command");
-    expect(posted[0]?.body).toEqual({ name: "EpisodeSearch", episodeIds: [11, 12] });
+    expect(posted[0]?.body).toEqual({ name: "EpisodeSearch", episodeIds: [1001, 1003] });
 
     const data = dataFor(result, "sonarr");
     if (data?.stage !== "started") {
@@ -335,6 +383,51 @@ describe("arr_search_start refusals", () => {
     expect(instance.requests.some((request) => request.method === "POST")).toBe(false);
   });
 
+  it("blocks the command when a named record no longer exists upstream", async () => {
+    const state = createWorkflowState();
+    const instance = upstream({
+      record: (route) =>
+        route === "series/12" ? jsonResponse({ message: "not found" }, 404) : undefined,
+    });
+
+    const result = await call(searchStartTool, contextFor(instance, state), {
+      target: "sonarr_series",
+      mode: "apply",
+      series: mintMedia(state, "sonarr", "series", "12"),
+    });
+
+    // The reference still resolves; only the instance knows the record is gone,
+    // which is exactly what the immediate current-state read is for.
+    expect(result.status).toBe("error");
+    expect(outcomeFor(result, "sonarr").error?.code).toBe("stale_reference");
+    expect(instance.requests.some((request) => request.method === "POST")).toBe(false);
+  });
+
+  it("fails a recorded plan as stale once a searched record's monitoring changes", async () => {
+    const state = createWorkflowState();
+    let monitored = true;
+    const instance = upstream({
+      record: (route) => (route === "series/12" ? jsonResponse({ id: 12, monitored }) : undefined),
+    });
+    const context = contextFor(instance, state);
+    const series = mintMedia(state, "sonarr", "series", "12");
+
+    const planned = await call(searchStartTool, context, {
+      target: "sonarr_series",
+      mode: "plan",
+      series,
+    });
+    monitored = false;
+    const applied = await call(searchStartTool, context, {
+      mode: "apply",
+      plan: planned.mutation?.plan,
+    });
+
+    expect(applied.status).toBe("error");
+    expect(outcomeFor(applied, "sonarr").error?.code).toBe("stale_plan");
+    expect(instance.requests.some((request) => request.method === "POST")).toBe(false);
+  });
+
   it("refuses a reference that names the wrong kind of record", async () => {
     const state = createWorkflowState();
     const instance = upstream();
@@ -342,7 +435,7 @@ describe("arr_search_start refusals", () => {
     const result = await call(searchStartTool, contextFor(instance, state), {
       target: "sonarr_series",
       mode: "apply",
-      series: mintMedia(state, "sonarr", "episode", "11"),
+      series: mintMedia(state, "sonarr", "episode", "1001"),
     });
 
     expect(outcomeFor(result, "sonarr").error?.code).toBe("invalid_input");

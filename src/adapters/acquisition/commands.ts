@@ -3,7 +3,14 @@ import type { ApplicationId } from "../../applications.js";
 import type { UpstreamBody, UpstreamClient } from "../../http/client.js";
 import type { UpstreamCommandObservation } from "../../state/jobs.js";
 import { safeText } from "../activity/parse.js";
-import { parseUpstream, text, upstreamId, upstreamText } from "../library/parse.js";
+import {
+  flag,
+  parseUpstream,
+  text,
+  upstreamFlag,
+  upstreamId,
+  upstreamText,
+} from "../library/parse.js";
 import { safeReason } from "./parse.js";
 import type { SearchStartRequest, SearchStartTarget } from "./requests.js";
 
@@ -48,16 +55,23 @@ export function searchCommandName(
 }
 
 /**
- * Narrows a wanted-list search to the monitored items only.
+ * Narrows a wanted-list search to the monitored items, or leaves its scope
+ * alone.
  *
- * Both applications' wanted searches take this pair, and both already default
- * to the monitored set, so an instance that ignores the filter runs the
- * narrower search rather than a broader one. That asymmetry is deliberate:
- * where this server cannot be certain the filter took effect, the failure it
- * accepts is searching too little, never searching media the caller excluded.
+ * The filter is only ever added, never inverted. `filterKey`/`filterValue` is a
+ * selection rather than a switch, so `monitored`/`false` would ask for the
+ * strictly *unmonitored* wanted items — the opposite of relaxing the
+ * restriction, and a search of media the caller never asked about. So
+ * `monitoredOnly: false` sends no filter at all and the command runs at the
+ * application's own default wanted scope, which the handler discloses as a
+ * warning rather than describing as something wider than it is.
+ *
+ * The remaining asymmetry is deliberate too: an instance that ignores the
+ * filter runs the broader default rather than a search this server narrowed to
+ * something unintended.
  */
 function monitoredFilter(monitoredOnly: boolean): UpstreamBody {
-  return { filterKey: "monitored", filterValue: monitoredOnly ? "true" : "false" };
+  return monitoredOnly ? { filterKey: "monitored", filterValue: "true" } : {};
 }
 
 /**
@@ -110,6 +124,103 @@ const acceptedCommandSchema = z.object({
  */
 function commandMessage(value: string | null | undefined): string | undefined {
   return safeReason(safeText(value));
+}
+
+/**
+ * The route each application answers one record of a searchable kind on.
+ *
+ * These are the reads the precondition check makes, and they exist for exactly
+ * that: the command endpoint accepts a search for a record that no longer
+ * exists without complaint, so the record itself has to be looked at before the
+ * command is sent.
+ */
+const recordRoutes: Readonly<Record<"series" | "episode" | "movie", string>> = {
+  series: "series",
+  episode: "episode",
+  movie: "movie",
+};
+
+/** The half of a searched record whose change or disappearance matters. */
+const searchedRecordSchema = z.object({
+  id: upstreamId,
+  monitored: upstreamFlag,
+});
+
+/**
+ * How many record reads one precondition check runs at once. The published
+ * schema already bounds the selection; this bounds how hard checking it hits an
+ * instance at a moment, matching the grab adapter's own ceiling.
+ */
+export const recordReadConcurrency = 4;
+
+/** One record's current state, as a string the read set can compare. */
+function recordState(kind: string, record: z.infer<typeof searchedRecordSchema>): string {
+  return `${kind}:${record.id}:monitored=${String(flag(record.monitored) ?? "unknown")}`;
+}
+
+async function readRecord(
+  client: UpstreamClient,
+  application: ApplicationId,
+  kind: "series" | "episode" | "movie",
+  id: number,
+): Promise<string> {
+  const route = `${recordRoutes[kind]}/${id}`;
+  const record = parseUpstream(
+    searchedRecordSchema,
+    await client.get(route),
+    application,
+    recordRoutes[kind],
+  );
+  return recordState(kind, record);
+}
+
+/** The records one request names, and the kind each of them is. */
+function searchedRecords(
+  request: SearchStartRequest,
+): readonly { readonly kind: "series" | "episode" | "movie"; readonly id: number }[] {
+  switch (request.target) {
+    case "sonarr_episode":
+      return request.episodeIds.map((id) => ({ kind: "episode" as const, id }));
+    case "sonarr_season":
+    case "sonarr_series":
+      return [{ kind: "series", id: request.seriesId }];
+    case "radarr_movie":
+      return request.movieIds.map((id) => ({ kind: "movie" as const, id }));
+    case "missing":
+    case "cutoff_unmet":
+      // A wanted-list search names no record. Its scope is the whole library,
+      // which no read of this shape could fingerprint, so there is nothing here
+      // to validate and the command's own filter is the entire contract.
+      return [];
+  }
+}
+
+/**
+ * Reads the current state of every record an automatic search would search for.
+ *
+ * This is the immediate current-state validation a mutation owes: a record that
+ * has been deleted since its reference was minted answers `404`, which the
+ * shared boundary normalizes into the `stale_reference` a caller recovers from
+ * by re-reading the library, and a record whose monitoring changed produces a
+ * different read set so a plan built against the old one is stale. Neither is
+ * knowable from the process-local reference alone.
+ */
+export async function readSearchTargets(
+  client: UpstreamClient,
+  application: ApplicationId,
+  request: SearchStartRequest,
+): Promise<readonly string[]> {
+  const records = searchedRecords(request);
+  const states: string[] = [];
+  for (let index = 0; index < records.length; index += recordReadConcurrency) {
+    const batch = records.slice(index, index + recordReadConcurrency);
+    states.push(
+      ...(await Promise.all(
+        batch.map((record) => readRecord(client, application, record.kind, record.id)),
+      )),
+    );
+  }
+  return states;
 }
 
 export interface StartedCommand {

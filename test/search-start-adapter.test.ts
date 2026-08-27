@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  readSearchTargets,
   searchCommandName,
   searchCommandRoutes,
   startSearchCommand,
@@ -102,16 +103,11 @@ describe("automatic search commands", () => {
         "missing",
         { name: "MissingMoviesSearch", filterKey: "monitored", filterValue: "true" },
       ],
-      [
-        "sonarr",
-        "cutoff_unmet",
-        { name: "CutoffUnmetEpisodeSearch", filterKey: "monitored", filterValue: "false" },
-      ],
-      [
-        "radarr",
-        "cutoff_unmet",
-        { name: "CutoffUnmetMoviesSearch", filterKey: "monitored", filterValue: "false" },
-      ],
+      // `monitoredOnly: false` sends no filter at all: the upstream pair
+      // selects rather than switches, so `monitored`/`false` would ask for the
+      // strictly unmonitored wanted items instead of relaxing the restriction.
+      ["sonarr", "cutoff_unmet", { name: "CutoffUnmetEpisodeSearch" }],
+      ["radarr", "cutoff_unmet", { name: "CutoffUnmetMoviesSearch" }],
     ];
 
     for (const [application, target, body] of expected) {
@@ -139,6 +135,69 @@ describe("automatic search commands", () => {
       expect(started.name).toBe(command);
       expect(started.upstreamId).toBe(String(record.id));
     }
+  });
+
+  it("never asks for the strictly unmonitored wanted items", async () => {
+    for (const application of ["sonarr", "radarr"] as const) {
+      for (const target of ["missing", "cutoff_unmet"] as const) {
+        const command = searchCommandName(application, target) as string;
+        const record = await acceptedCommand(application);
+        const harness = searchHarness(application, () => jsonResponse(record, 201));
+
+        await startSearchCommand(
+          harness.client,
+          application,
+          { target, monitoredOnly: false },
+          command,
+        );
+
+        // The filter is only ever added, never inverted, so a relaxed scope can
+        // never become a search of media the caller did not name.
+        expect(bodyOf(harness.calls[0] as UpstreamCall)).not.toHaveProperty("filterValue");
+      }
+    }
+  });
+
+  it("reads every named record's current state before a search is planned or sent", async () => {
+    const requested: string[] = [];
+    const harness = searchHarness("sonarr", (call) => {
+      requested.push(call.url.pathname);
+      return jsonResponse({ id: 11, monitored: true });
+    });
+
+    const states = await readSearchTargets(harness.client, "sonarr", {
+      target: "sonarr_episode",
+      episodeIds: [11, 12],
+    });
+
+    expect(requested.map((path) => path.split("/api/v3/")[1])).toEqual([
+      "episode/11",
+      "episode/12",
+    ]);
+    expect(states).toHaveLength(2);
+    // A wanted-list search names no record, so it reads none.
+    await expect(
+      readSearchTargets(harness.client, "sonarr", { target: "missing", monitoredOnly: true }),
+    ).resolves.toEqual([]);
+    expect(requested).toHaveLength(2);
+  });
+
+  it("reports a record that has been deleted since as a stale reference", async () => {
+    const harness = searchHarness("radarr", () => jsonResponse({ message: "not found" }, 404));
+
+    await expect(
+      readSearchTargets(harness.client, "radarr", { target: "radarr_movie", movieIds: [8] }),
+    ).rejects.toThrow(/did not match an existing resource/u);
+  });
+
+  it("changes its read set when a searched record's monitoring changes", async () => {
+    const monitored = searchHarness("sonarr", () => jsonResponse({ id: 12, monitored: true }));
+    const unmonitored = searchHarness("sonarr", () => jsonResponse({ id: 12, monitored: false }));
+    const request = { target: "sonarr_series", seriesId: 12 } as const;
+
+    expect(await readSearchTargets(monitored.client, "sonarr", request)).not.toEqual(
+      await readSearchTargets(unmonitored.client, "sonarr", request),
+    );
   });
 
   it("reports the command identity and state the instance answered with", async () => {

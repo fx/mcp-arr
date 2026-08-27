@@ -1,4 +1,8 @@
-import { searchCommandName, startSearchCommand } from "../adapters/acquisition/commands.js";
+import {
+  readSearchTargets,
+  searchCommandName,
+  startSearchCommand,
+} from "../adapters/acquisition/commands.js";
 import {
   type ReleaseGrabRequest,
   runReleaseGrab,
@@ -869,23 +873,38 @@ function readSearchStart(invocation: OperationInvocation): Resolved<SearchStartI
 }
 
 /**
- * The read set an automatic-search plan depends on: the media it would search
- * for.
+ * The read set an automatic-search plan depends on: the current state of the
+ * media it would search for.
  *
- * Re-running it immediately before apply is what rechecks that every reference
- * still resolves at the moment the command would be sent, so a reference that
- * expired between planning and applying blocks the command rather than being
- * silently dropped from it. A wanted-list search observes nothing, because it
- * names no record whose disappearance could change what it does.
+ * Two checks run here, and the second is the one only an upstream read can
+ * make. Re-resolving the references catches one that expired between planning
+ * and applying, so it blocks the command rather than being silently dropped
+ * from it. Reading each named record then catches what the process-local
+ * reference cannot know at all: a record deleted since the reference was minted
+ * answers `404` and becomes a `stale_reference`, and one whose monitoring
+ * changed produces a different read set, so a plan built against the old state
+ * is stale. Running it immediately before apply is what makes it the
+ * current-state validation a mutation owes rather than a snapshot of whenever
+ * the caller last looked.
+ *
+ * A wanted-list search names no record, so it reads none: its scope is the
+ * whole library, which no read of this shape could fingerprint, and the
+ * command's own filter is the entire contract.
  */
-export const searchStartPreconditions: PreconditionReader = (invocation) => {
+export const searchStartPreconditions: PreconditionReader = async (invocation) => {
   const intent = readSearchStart(invocation);
   if (!intent.ok) {
-    return Promise.resolve<PreconditionRead>({ status: "blocked", error: intent.error });
+    return { status: "blocked", error: intent.error };
   }
 
   const request = intent.value.selection.request;
-  return Promise.resolve<PreconditionRead>({
+  const states = await readSearchTargets(
+    invocation.adapter.client,
+    invocation.application,
+    request,
+  );
+
+  return {
     status: "ok",
     observations: [
       {
@@ -893,26 +912,24 @@ export const searchStartPreconditions: PreconditionReader = (invocation) => {
         // Built from the resolved request rather than from the caller's own
         // argument order, and sorted, so naming the same records in another
         // order is the same read set.
-        value: [intent.value.command, ...searchTargetKeys(request)].sort(),
+        value: [intent.value.command, ...scopeKeys(request), ...states].sort(),
       },
     ],
-  });
+  };
 };
 
-/** The upstream identities one request would search for, as comparable strings. */
-function searchTargetKeys(request: SearchStartRequest): readonly string[] {
+/** The parts of a request's scope that are not a record this server can read. */
+function scopeKeys(request: SearchStartRequest): readonly string[] {
   switch (request.target) {
-    case "sonarr_episode":
-      return request.episodeIds.map((id) => `episode:${id}`);
     case "sonarr_season":
-      return [`season:${request.seriesId}/${request.seasonNumber}`];
-    case "sonarr_series":
-      return [`series:${request.seriesId}`];
-    case "radarr_movie":
-      return request.movieIds.map((id) => `movie:${id}`);
+      return [`season:${request.seasonNumber}`];
     case "missing":
     case "cutoff_unmet":
       return [`monitored:${request.monitoredOnly}`];
+    case "sonarr_episode":
+    case "sonarr_series":
+    case "radarr_movie":
+      return [];
   }
 }
 
@@ -921,13 +938,18 @@ function searchTargetKeys(request: SearchStartRequest): readonly string[] {
  *
  * A wanted-list search is the consequential one and says so: it can grab across
  * a whole library, and the count of what it will touch is not knowable before
- * it runs. A search for named records states how many.
+ * it runs. Its scope is described exactly as it is sent — the monitored wanted
+ * items when the caller asked for that, and otherwise the application's own
+ * default wanted scope, which is not the same as "everything" and is not
+ * claimed to be. A search for named records states how many.
  */
 function searchStartEffect(application: ApplicationId, intent: SearchStartIntent): Effect {
   const request = intent.selection.request;
   const scope =
     request.target === "missing" || request.target === "cutoff_unmet"
-      ? `every ${request.monitoredOnly ? "monitored " : ""}wanted item`
+      ? request.monitoredOnly
+        ? "every monitored wanted item"
+        : "the application's own default wanted scope"
       : `${intent.selection.references.length} selected item(s)`;
   return {
     application,
@@ -937,13 +959,33 @@ function searchStartEffect(application: ApplicationId, intent: SearchStartIntent
 }
 
 /**
+ * What the caller has to be told about a scope this server could not express.
+ *
+ * `monitoredOnly: false` does not mean "search unmonitored media too": the
+ * upstream filter selects rather than switches, so asking for unmonitored items
+ * would search media the caller never named. The command is therefore sent
+ * without a filter, at whatever wanted scope the application itself uses, and
+ * that difference is disclosed rather than papered over.
+ */
+function scopeWarnings(request: SearchStartRequest): readonly string[] {
+  const wanted = request.target === "missing" || request.target === "cutoff_unmet";
+  return wanted && !request.monitoredOnly
+    ? [
+        "this search runs at the application's own default wanted scope; these commands cannot be widened past it, so unmonitored media may still be excluded",
+      ]
+    : [];
+}
+
+/**
  * Starts one allowlisted automatic search.
  *
- * Plan discloses the command and the media without contacting the instance;
- * apply sends it and projects the accepted command into a normalized job, which
- * is the only thing a caller follows afterwards. A read-mode invocation — which
- * the published schema cannot produce, since a mode is required — is refused
- * rather than quietly treated as one of the two.
+ * Plan sends no command: it reads the instance to check that the application
+ * supports the variant and that every named record is still there, then
+ * discloses what applying would run. Apply sends the command and projects the
+ * accepted one into a normalized job, which is the only thing a caller follows
+ * afterwards. A read-mode invocation — which the published schema cannot
+ * produce, since a mode is required — is refused rather than quietly treated as
+ * one of the two.
  *
  * The projected job reports itself as uncancellable. That is not a guess: the
  * upstream cancel route is a `DELETE` the shared client does not expose, so
@@ -972,6 +1014,7 @@ export const searchStartHandler: OperationHandler = async (invocation) => {
     return {
       status: "ok",
       data,
+      warnings: scopeWarnings(selection.request),
       plan: {
         requestedEffects: [effect],
         // Every named record still resolves and the application has the
@@ -1013,7 +1056,7 @@ export const searchStartHandler: OperationHandler = async (invocation) => {
   return {
     status: "ok",
     data,
-    warnings: record.warnings,
+    warnings: [...scopeWarnings(selection.request), ...record.warnings],
     job: record.reference,
     effects: [searchStartEffect(application, intent.value)],
   };
