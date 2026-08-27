@@ -614,6 +614,31 @@ describe("candidate references", () => {
     const invalidClasses: readonly [string, ImportCandidate][] = [
       ["queue item zero", { ...candidate, context: { ...candidate.context, queueItemId: 0 } }],
       ["candidate zero", { ...candidate, context: { ...candidate.context, candidateId: 0 } }],
+      // A reference from the wrong application, or of the wrong kind, is not
+      // this candidate's mapping — identity is not a number on its own, and
+      // storing the number alone would resolve later onto whatever record has
+      // it on the other application.
+      [
+        "media reference from another application",
+        {
+          ...candidate,
+          media: { application: "radarr" as const, kind: "movie" as const, id: "8" },
+        },
+      ],
+      [
+        "media reference of the wrong kind",
+        {
+          ...candidate,
+          media: { application: "sonarr" as const, kind: "episode" as const, id: "12" },
+        },
+      ],
+      [
+        "episode reference from another application",
+        {
+          ...candidate,
+          episodes: [{ application: "radarr" as const, kind: "episode" as const, id: "1001" }],
+        },
+      ],
       // The mapping the caller was shown is what gets stored, so this is the
       // field that has to be refused rather than the context's copy of it.
       [

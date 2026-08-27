@@ -4,12 +4,7 @@ import type { UpstreamClient, UpstreamQuery } from "../../http/client.js";
 import { safeReason } from "../acquisition/parse.js";
 import { safeLabel, safeText } from "../activity/parse.js";
 import { type MediaApplication, mediaRef } from "../library/model.js";
-import {
-  type AdapterPage,
-  defaultScanLimit,
-  type PageWindow,
-  projectPage,
-} from "../library/paging.js";
+import { type AdapterPage, type PageWindow, projectPage } from "../library/paging.js";
 import {
   count,
   customFormatList,
@@ -587,11 +582,13 @@ async function readCandidates(
     map: (record) => mapCandidate(context, record) as ImportCandidate,
   });
 
-  // Counted over the same prefix the projection examined, because that is the
-  // only part this answer says anything about.
-  const unmappable = records
-    .slice(0, defaultScanLimit)
-    .filter((record) => identifiablePath(record) === undefined).length;
+  // Counted over everything the instance returned, and worded as such. An
+  // earlier version claimed to count only what the projection examined, which
+  // it did not: the projection stops as soon as it has filled the page and seen
+  // one row past it, so a narrow page would have reported rows it never looked
+  // at. The parsing has already visited every row, so counting them costs
+  // nothing beyond what was spent.
+  const unmappable = records.filter((record) => identifiablePath(record) === undefined).length;
   return {
     ...page,
     unmappable,
@@ -600,7 +597,7 @@ async function readCandidates(
       ...(unmappable === 0
         ? []
         : [
-            `${String(unmappable)} file(s) the instance returned carried no path to identify them and were left out`,
+            `${String(unmappable)} of the file(s) this instance returned carry no path to identify them and are not candidates`,
           ]),
     ],
   };

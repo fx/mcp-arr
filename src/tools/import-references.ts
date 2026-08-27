@@ -2,7 +2,7 @@ import { z } from "zod";
 import { fileIdentityLength } from "../adapters/import/candidates.js";
 import type { ImportCandidate, ImportCandidateContext } from "../adapters/import/model.js";
 import { importSourceKinds } from "../adapters/import/model.js";
-import type { MediaApplication } from "../adapters/library/model.js";
+import type { MediaApplication, MediaRef } from "../adapters/library/model.js";
 import { queryDigest } from "../adapters/library/paging.js";
 import type { ReferenceStore } from "../state/references.js";
 import { createToolError, type ToolError, toolErrorForReferenceFailure } from "./errors.js";
@@ -146,13 +146,15 @@ function detailFor(candidate: ImportCandidate): Record<string, unknown> {
     sourceKind: candidate.sourceKind,
     candidateId: context.candidateId,
     queueItemId: context.queueItemId,
-    mediaId: numericId(candidate.media?.id),
+    mediaId: mappedId(candidate.media, candidate.application, [mediaKindFor(candidate)]),
     scanMediaId: context.scanMediaId,
     seasonNumber: candidate.seasonNumber,
     episodeIds:
       candidate.episodes === undefined
         ? undefined
-        : candidate.episodes.map((episode) => numericId(episode.id)),
+        : candidate.episodes.map((episode) =>
+            mappedId(episode, candidate.application, ["episode"]),
+          ),
     fileIdentity: candidate.fileIdentity,
     sizeBytes: candidate.sizeBytes,
     // The boolean the caller saw decides whether the identifier is stored at
@@ -172,6 +174,28 @@ function detailFor(candidate: ImportCandidate): Record<string, unknown> {
  */
 function numericId(value: string | undefined): number | undefined {
   return value !== undefined && /^\d+$/u.test(value) ? Number(value) : undefined;
+}
+
+/**
+ * The identifier of a media reference that is the right one for this candidate.
+ *
+ * A reference carries the application and the kind it names, and both have to
+ * match: a Sonarr candidate holding a Radarr movie reference, or a Radarr one
+ * holding episode references, would otherwise be stored as a plain number and
+ * resolve later as a mapping onto whatever record happens to have that number
+ * on the other application. Identity is not a number on its own.
+ */
+function mappedId(
+  reference: MediaRef | undefined,
+  application: MediaApplication,
+  kinds: readonly string[],
+): number | undefined {
+  if (reference === undefined) {
+    return undefined;
+  }
+  return reference.application === application && kinds.includes(reference.kind)
+    ? numericId(reference.id)
+    : undefined;
 }
 
 /**
@@ -228,8 +252,36 @@ export function isNameableCandidate(candidate: ImportCandidate): boolean {
   return (
     (candidate.application === "sonarr" || candidate.application === "radarr") &&
     candidate.sourceKind === candidate.context.sourceKind &&
+    mappingIsStorable(candidate) &&
     candidateDetailSchema.safeParse(detailFor(candidate)).success
   );
+}
+
+/**
+ * Whether the mapping the caller was shown can be stored as what it says.
+ *
+ * A reference that names another application or another kind of record cannot,
+ * and dropping it quietly would be worse than refusing: the stored mapping
+ * would claim less than the candidate presented, so a later step would import
+ * against a mapping the caller never saw. A candidate with no mapping at all is
+ * a different thing and remains nameable — an unmapped file under a folder is a
+ * real answer.
+ */
+function mappingIsStorable(candidate: ImportCandidate): boolean {
+  const media = candidate.media;
+  if (
+    media !== undefined &&
+    mappedId(media, candidate.application, [mediaKindFor(candidate)]) === undefined
+  ) {
+    return false;
+  }
+  return (candidate.episodes ?? []).every(
+    (episode) => mappedId(episode, candidate.application, ["episode"]) !== undefined,
+  );
+}
+
+function mediaKindFor(candidate: ImportCandidate): string {
+  return candidate.application === "sonarr" ? "series" : "movie";
 }
 
 /**
