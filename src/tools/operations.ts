@@ -14,6 +14,7 @@ import {
   searchStartHandler,
   searchStartPreconditions,
 } from "./acquisition.js";
+import { activityQueryHandler } from "./activity.js";
 import { createToolError, type ToolError } from "./errors.js";
 import { jobCancelHandler, jobCancelPreconditions, jobGetHandler } from "./jobs.js";
 import { libraryQueryHandler } from "./library.js";
@@ -285,6 +286,13 @@ const searchStart: DefineOptions = {
   readPreconditions: searchStartPreconditions,
 };
 
+/**
+ * Every `arr_activity_query` view runs the same handler, for the same reason:
+ * the view is carried by the caller's own discriminator, which the handler
+ * re-validates against the published schema.
+ */
+const activityQuery: DefineOptions = { handler: activityQueryHandler };
+
 const every = ["sonarr", "radarr", "prowlarr"] as const;
 const media = ["sonarr", "radarr"] as const;
 const sonarr = ["sonarr"] as const;
@@ -365,21 +373,57 @@ const definitions = [
   define("library.query.lookup", "arr_library_query", "lookup", media, "read", libraryQuery),
 
   // arr_activity_query
-  define("activity.query.queue_status", "arr_activity_query", "queue_status", media, "read"),
-  define("activity.query.queue", "arr_activity_query", "queue", media, "read"),
-  define("activity.query.queue_details", "arr_activity_query", "queue_details", media, "read"),
-  define("activity.query.history", "arr_activity_query", "history", every, "read"),
-  define("activity.query.blocklist", "arr_activity_query", "blocklist", media, "read"),
-  define("activity.query.health", "arr_activity_query", "health", every, "read"),
-  define("activity.query.commands", "arr_activity_query", "commands", every, "read"),
-  define("activity.query.disk_space", "arr_activity_query", "disk_space", media, "read"),
-  define("activity.query.indexer_status", "arr_activity_query", "indexer_status", prowlarr, "read"),
+  define(
+    "activity.query.queue_status",
+    "arr_activity_query",
+    "queue_status",
+    media,
+    "read",
+    activityQuery,
+  ),
+  define("activity.query.queue", "arr_activity_query", "queue", media, "read", activityQuery),
+  define(
+    "activity.query.queue_details",
+    "arr_activity_query",
+    "queue_details",
+    media,
+    "read",
+    activityQuery,
+  ),
+  define("activity.query.history", "arr_activity_query", "history", every, "read", activityQuery),
+  define(
+    "activity.query.blocklist",
+    "arr_activity_query",
+    "blocklist",
+    media,
+    "read",
+    activityQuery,
+  ),
+  define("activity.query.health", "arr_activity_query", "health", every, "read", activityQuery),
+  define("activity.query.commands", "arr_activity_query", "commands", every, "read", activityQuery),
+  define(
+    "activity.query.disk_space",
+    "arr_activity_query",
+    "disk_space",
+    media,
+    "read",
+    activityQuery,
+  ),
+  define(
+    "activity.query.indexer_status",
+    "arr_activity_query",
+    "indexer_status",
+    prowlarr,
+    "read",
+    activityQuery,
+  ),
   define(
     "activity.query.indexer_statistics",
     "arr_activity_query",
     "indexer_statistics",
     prowlarr,
     "read",
+    activityQuery,
   ),
 
   // arr_release_search

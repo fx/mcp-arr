@@ -28,7 +28,7 @@ specs:
     status: active
 
 # Implementation order: changes 0011 through 0014 are scheduled ahead of the
-# still-pending 0004 through 0010. 0011 establishes distribution; 0012 through
+# still-pending 0005 through 0010. 0011 establishes distribution; 0012 through
 # 0014 correct defects found testing the merged server against live instances.
 changes:
   - id: "0001"
@@ -57,7 +57,7 @@ changes:
     path: changes/0004-activity-diagnostics.md
     description: Implement queue, history, blocklist, health, command, and diagnosis views
     spec: activity-management
-    status: draft
+    status: complete
     depends_on: ["0001", "0002"]
   - id: "0005"
     name: release-search-and-grab

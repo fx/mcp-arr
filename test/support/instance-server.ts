@@ -23,9 +23,9 @@ import { fixtureRoot } from "./tool-context.js";
  */
 
 /**
- * The routes each application answers: its probe, its library reads, the
- * interactive release search a grab is resolved from, and the command endpoint
- * an automatic search is started on.
+ * The routes each application answers: its probe, its library and activity
+ * reads, the interactive release search a grab is resolved from, and the
+ * command endpoint an automatic search is started on.
  */
 const routes: Readonly<Record<ApplicationId, readonly string[]>> = {
   sonarr: [
@@ -37,8 +37,15 @@ const routes: Readonly<Record<ApplicationId, readonly string[]>> = {
     "wanted/missing",
     "wanted/cutoff",
     "calendar",
-    "release",
+    "queue/status",
+    "queue",
+    "queue/details",
+    "history",
+    "blocklist",
+    "health",
     "command",
+    "diskspace",
+    "release",
   ],
   radarr: [
     "system/status",
@@ -49,12 +56,29 @@ const routes: Readonly<Record<ApplicationId, readonly string[]>> = {
     "wanted/missing",
     "wanted/cutoff",
     "calendar",
+    "queue/status",
+    "queue",
+    "queue/details",
+    "history",
+    "blocklist",
+    "health",
+    "command",
+    "diskspace",
     "release",
+  ],
+  // Prowlarr has no media library, no queue, no blocklist, and no disk view, so
+  // it answers the capability probe, the activity reads it does model, and the
+  // routes an aggregate search and a grab need.
+  prowlarr: [
+    "system/status",
+    "indexer",
+    "indexerstatus",
+    "indexerstats",
+    "search",
+    "history",
+    "health",
     "command",
   ],
-  // Prowlarr has no media library, so it answers the capability probe, its
-  // indexer views, and the routes an aggregate search and a grab need.
-  prowlarr: ["system/status", "indexer", "indexerstatus", "search"],
 };
 
 /**

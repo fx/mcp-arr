@@ -13,14 +13,14 @@
 
 ## Changes
 
-Changes 0011 through 0014 are scheduled ahead of the still-pending 0004 through 0010. 0011 establishes distribution; 0012 through 0014 correct defects found testing the merged server against live Sonarr, Radarr, and Prowlarr instances. 0012 in particular is worth landing before any further domain change, because every one of them adds tools onto the same broken publication path.
+Changes 0011 through 0014 are scheduled ahead of the still-pending 0005 through 0010. 0011 establishes distribution; 0012 through 0014 correct defects found testing the merged server against live Sonarr, Radarr, and Prowlarr instances. 0012 in particular is worth landing before any further domain change, because every one of them adds tools onto the same broken publication path.
 
 | # | Change | Spec | Status | Depends On |
 |---|--------|------|--------|------------|
 | 0001 | [Project Foundation](changes/0001-project-foundation.md) | [Architecture](specs/architecture/) | complete | — |
 | 0002 | [Typed Tool Runtime](changes/0002-tool-runtime.md) | [Tool Contracts](specs/tool-contracts/) | complete | 0001 |
 | 0003 | [Library Queries](changes/0003-library-queries.md) | [Library Management](specs/library-management/) | complete | 0001, 0002 |
-| 0004 | [Activity Diagnostics](changes/0004-activity-diagnostics.md) | [Activity Management](specs/activity-management/) | draft | 0001, 0002 |
+| 0004 | [Activity Diagnostics](changes/0004-activity-diagnostics.md) | [Activity Management](specs/activity-management/) | complete | 0001, 0002 |
 | 0005 | [Release Search and Grab](changes/0005-release-search-and-grab.md) | [Acquisition and Import](specs/acquisition-and-import/) | complete | 0002, 0003 |
 | 0006 | [Queue Resolution](changes/0006-queue-resolution.md) | [Activity Management](specs/activity-management/) | draft | 0002, 0004 |
 | 0007 | [Guarded Manual Import](changes/0007-manual-import.md) | [Acquisition and Import](specs/acquisition-and-import/) | draft | 0002, 0003, 0004, 0006 |

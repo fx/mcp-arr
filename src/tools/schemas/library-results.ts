@@ -75,8 +75,12 @@ const mediaDetailSchema = z.strictObject({
  * the library record a lookup result already matches. Both of those are library
  * records, so the kind is drawn from the record kinds and a file kind cannot
  * appear here at all.
+ *
+ * Exported because `arr_activity_query` publishes the same thing: the series or
+ * movie a queue row is associated with is the identity a library query would
+ * return for it, and two definitions of one shape could drift apart.
  */
-const mediaIdentitySchema = z.strictObject({
+export const mediaIdentitySchema = z.strictObject({
   reference: mediaReferenceSchema,
   application: mediaApplicationSchema,
   kind: z.enum(mediaRecordKinds),
