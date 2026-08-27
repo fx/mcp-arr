@@ -29,7 +29,9 @@ import { enableSwitches } from "./write.js";
  * A credential is verified by presence, which is all a credential can be
  * verified by: an instance that returns a mask has said that something is
  * stored, and this checks that it says so where a secret was set and stops
- * saying so where one was cleared.
+ * saying so where one was cleared. Presence is the weaker check, so it is used
+ * nowhere else — every ordinary field, including a cleared one, is held to the
+ * value this apply actually sent.
  */
 
 export interface VerificationRequest {

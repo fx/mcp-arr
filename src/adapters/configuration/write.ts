@@ -121,8 +121,8 @@ export interface WriteRequest {
    * The credentials supplied for this request.
    *
    * Read here and nowhere else: this is the only place a value is needed, so it
-   * is the only place one is taken, and the runtime erases the bundle as soon
-   * as this function returns.
+   * is the only place one is taken. The runtime erases the bundle on its way
+   * out, whatever this function answered.
    */
   readonly secrets: TransientSecrets;
 }

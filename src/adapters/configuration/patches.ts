@@ -28,10 +28,11 @@ import type { SafeFieldValue } from "./model.js";
  *    `tags` cannot be given anything but identifiers.
  * 2. **A credential is never a desired field.** A name the classifier reads as
  *    a secret is refused here, so a credential cannot arrive through the
- *    ordinary field channel and be retained in a plan's intent. Supplying one
- *    is its own typed channel, which arrives with the transient-secret work;
- *    clearing one needs no value and is therefore already possible, through an
- *    explicit removal.
+ *    ordinary field channel and be retained in a plan's intent. It has two
+ *    channels of its own instead: an explicit removal clears one and needs no
+ *    value at all, and the secret channel supplies one — as a name here and a
+ *    value that stays in the bundle in {@link ./secrets.js} until the writer
+ *    builds the payload.
  * 3. **Absence is never removal.** A field the patch does not name is
  *    preserved, and a `null` value is refused with the removal channel named,
  *    so "unset this" is always something a caller states rather than something
