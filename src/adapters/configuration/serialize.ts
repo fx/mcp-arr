@@ -22,6 +22,7 @@ import {
 import {
   customFormatSchema,
   flatRecordSchema,
+  isUpstreamId,
   parseConfiguration,
   providerResourceSchema,
   providerTemplateSchema,
@@ -56,9 +57,13 @@ export interface SerializationContext {
  * Every configuration row upstream is identified by an integer id, and a record
  * without one can be neither referenced nor reconciled. Refusing it names only
  * the route, like every other unreadable response.
+ *
+ * What counts as one is {@link isUpstreamId}, which is also what the internal
+ * capture matches on: publishing a reference the resource set would not
+ * recognize is exactly the divergence the two representations exist to prevent.
  */
-function requireId(context: SerializationContext, id: number | null | undefined): number {
-  if (typeof id !== "number") {
+function requireId(context: SerializationContext, id: unknown): number {
+  if (!isUpstreamId(id)) {
     throw new UpstreamError("unexpected-response", {
       application: context.application,
       operation: context.route,

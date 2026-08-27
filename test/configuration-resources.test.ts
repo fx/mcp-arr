@@ -78,10 +78,19 @@ describe("lossless upstream capture", () => {
     expect(Object.isFrozen(resource.payload())).toBe(false);
   });
 
-  it("reports no identifier for a payload that carries none", () => {
+  /**
+   * The model-facing side refuses each of these outright, in
+   * `configuration-observe.test.ts`; both halves ask the same predicate, so
+   * neither can start recognizing an identifier the other does not.
+   */
+  it("reports no identifier for a payload that carries none this adapter can use", () => {
     expect(captureUpstreamResource("sonarr", "tags", { label: "example" }).id).toBeUndefined();
     expect(captureUpstreamResource("sonarr", "tags", { id: "1" }).id).toBeUndefined();
     expect(captureUpstreamResource("sonarr", "tags", { id: 1.5 }).id).toBeUndefined();
+    expect(captureUpstreamResource("sonarr", "tags", { id: Number.NaN }).id).toBeUndefined();
+    expect(
+      captureUpstreamResource("sonarr", "tags", { id: Number.MAX_SAFE_INTEGER + 2 }).id,
+    ).toBeUndefined();
     expect(captureUpstreamResource("sonarr", "tags", ["not-a-record"]).id).toBeUndefined();
   });
 });

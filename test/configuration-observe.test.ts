@@ -388,4 +388,25 @@ describe("refusing what an instance cannot answer", () => {
     );
     expect(expectObservationError(identifier.outcome).code).toBe("unexpected_response");
   });
+
+  /**
+   * The counterpart to "reports no identifier for a payload that carries none"
+   * in `configuration-resources.test.ts`: these are exactly the values the
+   * internal capture declines to treat as an identifier. Publishing a reference
+   * for one would hand a caller a row the resource set cannot find, so every
+   * family refuses the record instead.
+   */
+  it("refuses an id the internal capture would not recognize", async () => {
+    for (const id of [1.5, Number.MAX_SAFE_INTEGER + 2, 1e21, "1"]) {
+      for (const domain of ["indexers", "quality_profiles", "tags"] as const) {
+        const { outcome } = await observe(
+          "sonarr",
+          observationRequest(domain),
+          serving([{ id, name: "example" }]),
+        );
+
+        expect(expectObservationError(outcome).code).toBe("unexpected_response");
+      }
+    }
+  });
 });

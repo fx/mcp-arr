@@ -12,9 +12,25 @@ import { UpstreamError } from "../../http/errors.js";
  * about it. Requiring more would refuse instances that work.
  */
 
-const upstreamId = z.number().int();
+/**
+ * Whether an upstream `id` is one both halves of this adapter can use.
+ *
+ * The model-facing output mints a reference from it and the lossless capture in
+ * {@link ./resources.js} matches on it, so a value only one of them accepted
+ * would leave a record a caller can name and the internal side cannot find.
+ * That is the divergence the two-representation design exists to prevent, so
+ * both halves — and the schemas below — decide it here and nowhere else.
+ *
+ * Safe integers only: a fraction is not a row identifier, and a magnitude past
+ * the safe range no longer denotes the row upstream meant.
+ */
+export function isUpstreamId(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value);
+}
 
-const optionalUpstreamId = z.number().int().nullish();
+const upstreamId = z.custom<number>(isUpstreamId);
+
+const optionalUpstreamId = upstreamId.nullish();
 
 const upstreamText = z.string().nullish();
 

@@ -1,5 +1,6 @@
 import type { ApplicationId } from "../../applications.js";
 import type { ConfigurationDomain } from "./domains.js";
+import { isUpstreamId, isUpstreamRecord } from "./parse.js";
 
 /**
  * The lossless internal representation of upstream configuration.
@@ -89,12 +90,21 @@ function deepFreeze(value: UpstreamValue): UpstreamValue {
   return Object.freeze(value);
 }
 
+/**
+ * The row identifier a payload reports, if it reports one this adapter can use.
+ *
+ * Both decisions here are the model-facing side's decisions too — whether the
+ * payload is a readable record, and whether its `id` is usable — so both are
+ * made by the predicates in {@link ./parse.js} rather than by a second copy
+ * here. A copy that drifted permissive would admit an identifier the serializer
+ * refuses, or refuse one it publishes; either way a caller would hold a
+ * reference to a row {@link ConfigurationResourceSet.find} cannot return.
+ */
 function identifierOf(value: UpstreamValue): number | undefined {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isUpstreamRecord(value)) {
     return undefined;
   }
-  const id = (value as { readonly id?: UpstreamValue }).id;
-  return typeof id === "number" && Number.isSafeInteger(id) ? id : undefined;
+  return isUpstreamId(value.id) ? value.id : undefined;
 }
 
 /**
