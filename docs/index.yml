@@ -92,7 +92,7 @@ changes:
     path: changes/0009-library-mutations.md
     description: Implement typed add, monitoring, file, rename, move, and deletion workflows
     spec: library-management
-    status: draft
+    status: complete
     depends_on: ["0002", "0003"]
   - id: "0010"
     name: history-and-blocklist-mutations

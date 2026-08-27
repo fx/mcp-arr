@@ -43,6 +43,15 @@ async function call(
   return response.status;
 }
 
+/** Reads one of the instance's routes, as a client would, for what it answered. */
+async function read(running: FixtureInstance, route: string): Promise<unknown> {
+  const { apiBasePath } = describeApplication(running.application);
+  const response = await fetch(`${running.url}${apiBasePath}/${route}`, {
+    headers: { "X-Api-Key": running.apiKey },
+  });
+  return response.json() as Promise<unknown>;
+}
+
 /** Posts a body to one of the instance's write routes, as a client would. */
 async function post(
   running: FixtureInstance,
@@ -139,8 +148,10 @@ describe("the fixture instance's route and method surface", () => {
     // Each application writes on its own grab route and nowhere else, so a
     // write aimed at another application's route is the 404 it would really be.
     expect((await post(sonarr, "search", { guid: "example" })).status).toBe(404);
-    expect((await post(sonarr, "wanted/missing", { guid: "example" })).status).toBe(404);
     expect((await post(prowlarr, "release", { guid: "example" })).status).toBe(404);
+    // A write aimed at one of its own read routes is the other answer: the path
+    // is there and the verb is not.
+    expect((await post(sonarr, "wanted/missing", { guid: "example" })).status).toBe(405);
     expect(sonarr.grabs).toEqual([]);
     expect(prowlarr.grabs).toEqual([]);
   });
@@ -163,9 +174,70 @@ describe("the fixture instance's route and method surface", () => {
 
     // 405 where the route exists and 404 where it does not, so a client that
     // reached for the wrong verb cannot be mistaken for one that got it right.
+    // A collection is read-only even where its individual records are not.
     expect(await call(sonarr, "PUT", "series", { id: 12 })).toBe(405);
-    expect(await call(sonarr, "DELETE", "series/12")).toBe(405);
+    expect(await call(sonarr, "DELETE", "qualityprofile")).toBe(405);
     expect(await call(sonarr, "PUT", "movie", { id: 8 })).toBe(404);
+    // Every method asks the same question, so a POST at a route that exists for
+    // reading is refused by verb rather than denied as an absent path.
+    expect(await call(sonarr, "POST", "episodefile", { id: 2001 })).toBe(405);
+    expect(await call(sonarr, "POST", "blocklist/7001", {})).toBe(405);
+    expect(await call(sonarr, "POST", "nothing/here", {})).toBe(404);
+    // A record of a collection this application does not model is not a path it
+    // recognizes at all, whatever the verb.
+    expect(await call(sonarr, "PUT", "moviefile/501", { id: 501 })).toBe(404);
+    expect(await call(sonarr, "GET", "moviefile/501")).toBe(404);
+  });
+
+  it("keeps a library write, so the read after it sees what was written", async () => {
+    const sonarr = await instance("sonarr");
+
+    // A replacement that does not name the record it replaces is refused, and
+    // recorded nowhere: these APIs replace a whole resource, and a payload with
+    // no identity is not one.
+    expect(await call(sonarr, "PUT", "series/12", { monitored: false })).toBe(400);
+    expect(sonarr.writes).toEqual([]);
+
+    expect(await call(sonarr, "PUT", "series/12", { id: 12, monitored: false })).toBe(200);
+    expect(sonarr.writes).toEqual([
+      expect.objectContaining({
+        method: "PUT",
+        route: "series",
+        body: { id: 12, monitored: false },
+      }),
+    ]);
+    // Read back, because recording a write and performing one are different
+    // things: a double that logged the request and kept the original record
+    // would satisfy every assertion above and none of this one.
+    expect(await read(sonarr, "series/12")).toEqual({ id: 12, monitored: false });
+
+    // Removing it takes it out of both the record read and the collection, and
+    // a second removal is the 404 a real instance gives — which is what makes a
+    // repeated deletion distinguishable from a first.
+    expect(await call(sonarr, "DELETE", "series/12")).toBe(200);
+    expect(await call(sonarr, "GET", "series/12")).toBe(404);
+    expect(await call(sonarr, "DELETE", "series/12")).toBe(404);
+    expect(sonarr.writes.filter((write) => write.method === "DELETE")).toHaveLength(1);
+  });
+
+  it("refuses a create that carries no metadata identifier", async () => {
+    const radarr = await instance("radarr");
+
+    // The metadata identifier is the one field this route exists to carry, so a
+    // create without it is a client defect rather than a record to invent.
+    expect(await call(radarr, "POST", "movie", { title: "Example" })).toBe(400);
+    expect(radarr.writes).toEqual([]);
+
+    expect(await call(radarr, "POST", "movie", { tmdbId: 200004, title: "Example" })).toBe(201);
+    expect(radarr.writes).toEqual([expect.objectContaining({ method: "POST", route: "movie" })]);
+
+    // The created record joins the collection under an identifier of its own,
+    // so a create that recorded the request and stored nothing would fail here.
+    const movies = (await read(radarr, "movie")) as Array<Record<string, unknown>>;
+    const created = movies.find((movie) => movie.title === "Example");
+    expect(created).toMatchObject({ tmdbId: 200004 });
+    expect(movies.filter((movie) => movie.id === created?.id)).toHaveLength(1);
+    expect(await read(radarr, `movie/${String(created?.id)}`)).toMatchObject({ tmdbId: 200004 });
   });
 
   it("refuses an unknown path and a wrong API key before anything else", async () => {
