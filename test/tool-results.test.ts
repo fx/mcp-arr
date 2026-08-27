@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createToolError } from "../src/tools/errors.js";
+import {
+  createToolError,
+  toolErrorForThrown,
+  toolErrorForUpstreamFailure,
+} from "../src/tools/errors.js";
 import {
   applicationOutcome,
   buildToolResult,
@@ -140,16 +144,130 @@ describe("tool result envelope", () => {
     expect(capabilitiesOutputSchema.safeParse(withData).success).toBe(false);
   });
 
-  it("summarizes the envelope without introducing any new content", () => {
+  it("summarizes a partial result with the failure's code and remediation", () => {
     const result = buildToolResult({
       applications: [okOutcome("sonarr"), failedOutcome("radarr")],
       warnings: ["prowlarr is not configured"],
     });
 
-    const summary = summarizeToolResult("arr_activity_query", result);
-    expect(summary).toBe(
-      "arr_activity_query: partial; sonarr ok, radarr unavailable; errors: partial_failure; 1 warning(s)",
+    // The successful half and the failed half both have to be readable from
+    // the text alone, because a host that surfaces only the text would
+    // otherwise show a failure it cannot act on.
+    expect(summarizeToolResult("arr_activity_query", result)).toBe(
+      "arr_activity_query: partial; sonarr ok, radarr unavailable; errors: unavailable_application (Confirm the instance is running and reachable, then retry; other applications are unaffected.), partial_failure (Inspect the per-application and per-item outcomes and retry only the failures.); 1 warning(s)",
     );
+  });
+
+  it("summarizes a total failure with the code the envelope's error list omits", () => {
+    const result = buildToolResult({
+      applications: [failedOutcome("sonarr"), failedOutcome("radarr")],
+    });
+
+    // Nothing succeeded, so there is no top-level error to summarize from; the
+    // cause lives on each application, and one shared code is named once.
+    expect(result.errors).toEqual([]);
+    expect(summarizeToolResult("arr_activity_query", result)).toBe(
+      "arr_activity_query: error; sonarr unavailable, radarr unavailable; errors: unavailable_application (Confirm the instance is running and reachable, then retry; other applications are unaffected.)",
+    );
+  });
+
+  it("summarizes an unsupported variant by naming the capability remediation", () => {
+    const unsupported = (application: "sonarr" | "prowlarr") =>
+      applicationOutcome({
+        application,
+        status: "unsupported",
+        error: createToolError({
+          code: "unsupported_capability",
+          message: `${application}: this operation is declared but not implemented yet`,
+          application,
+        }),
+      });
+    const result = buildToolResult({
+      applications: [unsupported("sonarr"), unsupported("prowlarr")],
+    });
+
+    expect(summarizeToolResult("arr_library_query", result)).toBe(
+      "arr_library_query: error; sonarr unsupported, prowlarr unsupported; errors: unsupported_capability (Call arr_capabilities to list the operations this instance supports.)",
+    );
+  });
+
+  it("summarizes a success without any error segment", () => {
+    const result = buildToolResult({ applications: [okOutcome("sonarr"), okOutcome("radarr")] });
+
+    expect(summarizeToolResult("arr_activity_query", result)).toBe(
+      "arr_activity_query: ok; sonarr ok, radarr ok",
+    );
+  });
+
+  it("names an item failure's code without repeating it per item", () => {
+    const staleItem = (reference: string): ItemOutcome => ({
+      reference,
+      status: "error",
+      warnings: [],
+      error: createToolError({
+        code: "stale_reference",
+        message: "the queue reference expired",
+        application: "sonarr",
+      }),
+    });
+    const result = buildToolResult({
+      applications: [
+        applicationOutcome({
+          application: "sonarr",
+          status: "ok",
+          items: [staleItem("que_00000001"), staleItem("que_00000002")],
+        }),
+      ],
+    });
+
+    expect(summarizeToolResult("arr_queue_resolve", result)).toBe(
+      "arr_queue_resolve: partial; sonarr ok (2 item(s) failed); errors: stale_reference (Repeat the query that produced the reference and use the fresh one.), partial_failure (Inspect the per-application and per-item outcomes and retry only the failures.)",
+    );
+  });
+
+  it("keeps upstream content out of the summary even when an error carries it", () => {
+    // The HTTP boundary redacts before an error is built, so this message is
+    // deliberately hostile: it proves the summary is safe because of what it
+    // restates, not because every message it might meet is already clean.
+    const secret = "b0bacafe00000000000000000000beef";
+    const upstream = toolErrorForUpstreamFailure(
+      {
+        kind: "validation",
+        message: `sonarr rejected the request: {"path":"https://sonarr.example.invalid/api/v3/series?apikey=${secret}","body":"<html>denied</html>","header":"X-Api-Key: ${secret}"}`,
+      },
+      "sonarr",
+    );
+    const thrown = toolErrorForThrown(
+      new Error(`connect ECONNREFUSED https://radarr.example.invalid?apikey=${secret}`),
+      "radarr",
+    );
+    const result = buildToolResult({
+      applications: [
+        applicationOutcome({ application: "sonarr", status: "error", error: upstream }),
+        applicationOutcome({ application: "radarr", status: "error", error: thrown }),
+      ],
+    });
+
+    const summary = summarizeToolResult("arr_library_change", result);
+
+    // The summary restates only the closed-vocabulary code and its static
+    // hint, so no field an upstream response can influence has a route into
+    // the text — while the structured result still carries the full message.
+    expect(summary).toBe(
+      "arr_library_change: error; sonarr error, radarr error; errors: upstream_rejection (Adjust the requested values to satisfy the application's own validation.), unexpected_response (Check the application version against arr_capabilities and report the mismatch.)",
+    );
+    for (const leak of [
+      secret,
+      "sonarr.example.invalid",
+      "radarr.example.invalid",
+      "<html>",
+      "X-Api-Key",
+      "apikey",
+    ]) {
+      expect(summary).not.toContain(leak);
+    }
+    expect(result.applications[0]?.error?.message).toContain(secret);
+    expect(result.applications[1]?.error?.message).not.toContain(secret);
   });
 
   it("reports how much a bounded read returned", () => {
