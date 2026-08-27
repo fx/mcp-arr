@@ -26,11 +26,15 @@ import type {
   DiskCondition,
   HistoryRecord,
   QueueItem,
-  QueueItemKind,
   QueueStatusMessage,
   QueueSummary,
 } from "./model.js";
-import { queueStatuses, trackedDownloadStates, trackedDownloadStatuses } from "./model.js";
+import {
+  queueItemKindForStatus,
+  queueStatuses,
+  trackedDownloadStates,
+  trackedDownloadStatuses,
+} from "./model.js";
 import {
   closedWord,
   downloadIdentity,
@@ -264,19 +268,6 @@ function statusMessages(
   }));
 }
 
-/**
- * What kind of row this is.
- *
- * `delay` and `fallback` are the two statuses Sonarr and Radarr use for a
- * release they are holding rather than a download they are tracking, and they
- * are the only two: a row with any other status has a download-client item
- * behind it. Deciding it here once is what lets change 0006 validate an intent
- * against a discriminant instead of re-reading a status word.
- */
-function queueItemKind(status: string): QueueItemKind {
-  return status === "delay" || status === "fallback" ? "pending_release" : "tracked_download";
-}
-
 export function mapQueueItem(
   profile: MediaProfile,
   record: QueueUpstream,
@@ -284,7 +275,7 @@ export function mapQueueItem(
 ): QueueItem {
   const application = profile.application;
   const status = closedWord(record.status, queueStatuses, "unknown");
-  const kind = queueItemKind(status);
+  const kind = queueItemKindForStatus(status);
   const mediaId = mediaIdOf(profile, record);
   return {
     application,

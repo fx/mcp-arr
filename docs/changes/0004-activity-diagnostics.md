@@ -64,10 +64,10 @@ The [Activity Management spec](../specs/activity-management/#activity-queries) o
   - [x] Map queue status, records, details, tracked states, status messages, and media associations
   - [x] Implement bounded history/blocklist/health/command views
   - [x] Add Prowlarr status/statistics views with allowlist sanitization
-- [ ] Implement references and diagnosis
-  - [ ] Create typed queue references for tracked and pending items
-  - [ ] Correlate safe queue, history, blocklist, health, disk, and media evidence
-  - [ ] Represent partial failures and suggested typed actions
+- [x] Implement references and diagnosis
+  - [x] Create typed queue references for tracked and pending items
+  - [x] Correlate safe queue, history, blocklist, health, disk, and media evidence
+  - [x] Represent partial failures and suggested typed actions
 - [ ] Register and verify `arr_activity_query`
   - [ ] Add closed view schemas, filters, pagination, and details
   - [ ] Add fixture and stdio tests for every status/item kind and unavailable application

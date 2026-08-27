@@ -56,6 +56,21 @@ export const queueStatuses = [
 
 export type QueueStatus = (typeof queueStatuses)[number];
 
+/**
+ * Which kind of row a status implies.
+ *
+ * The relation is one-way and total: `delay` and `fallback` are the two
+ * statuses Sonarr and Radarr use for a release they are holding rather than a
+ * download they are tracking, and every other status has a download-client item
+ * behind it. It lives here, beside both closed sets, because it is the single
+ * definition of that relation — a second copy of it somewhere else could
+ * disagree with this one, and a row whose kind and status disagreed would be a
+ * row a later transition could be misled about.
+ */
+export function queueItemKindForStatus(status: QueueStatus): QueueItemKind {
+  return status === "delay" || status === "fallback" ? "pending_release" : "tracked_download";
+}
+
 /** Whether the application is happy with the tracked download. */
 export const trackedDownloadStatuses = ["ok", "warning", "error", "unknown"] as const;
 
