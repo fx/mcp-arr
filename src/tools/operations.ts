@@ -21,6 +21,7 @@ import { jobCancelHandler, jobCancelPreconditions, jobGetHandler } from "./jobs.
 import { libraryQueryHandler } from "./library.js";
 import { libraryChangeHandler, libraryChangePreconditions } from "./library-change.js";
 import type { ProjectedToolName, ToolName } from "./names.js";
+import { queueResolveHandler, queueResolvePreconditions } from "./queue-resolve.js";
 import type { Effect, ItemOutcome } from "./results.js";
 import type { Continuation } from "./schemas/common.js";
 
@@ -293,6 +294,31 @@ const libraryChange: DefineOptions = {
 const activityChange: DefineOptions = {
   handler: activityChangeHandler,
   readPreconditions: activityChangePreconditions,
+};
+
+/**
+ * Every `arr_queue_resolve` intent runs the same handler behind the same
+ * precondition reader, for the reason the library and activity mutations do:
+ * pairing them here rather than per variant is what makes a queue transition
+ * unreachable without the current-state validation it is compiled from.
+ *
+ * The pairing matters more here than anywhere else on this surface. The reader
+ * re-reads each selected row and compiles its transition from what it just
+ * read, and the handler sends exactly what the reader compiled — so an intent
+ * registered with the handler and without the reader would send a request built
+ * from nothing, against rows nobody had checked, for the operations that delete
+ * downloads and their payload data.
+ *
+ * How consequential each intent is stays per intent in the table below rather
+ * than being shared across the union: two of them ask a download client to
+ * delete data and are declared `destructive`, one starts a download and is
+ * declared `start_job`, and the rest change only what the application tracks.
+ * `arr_capabilities` reports that classification per intent, so a caller can
+ * tell them apart before it calls one.
+ */
+const queueResolve: DefineOptions = {
+  handler: queueResolveHandler,
+  readPreconditions: queueResolvePreconditions,
 };
 
 /**
@@ -594,13 +620,21 @@ const definitions = [
   }),
 
   // arr_queue_resolve
-  define("queue.resolve.ignore_tracking", "arr_queue_resolve", "ignore_tracking", media, "mutate"),
+  define(
+    "queue.resolve.ignore_tracking",
+    "arr_queue_resolve",
+    "ignore_tracking",
+    media,
+    "mutate",
+    queueResolve,
+  ),
   define(
     "queue.resolve.remove_from_client_and_delete_data",
     "arr_queue_resolve",
     "remove_from_client_and_delete_data",
     media,
     "destructive",
+    queueResolve,
   ),
   define(
     "queue.resolve.blocklist_and_remove",
@@ -608,6 +642,7 @@ const definitions = [
     "blocklist_and_remove",
     media,
     "destructive",
+    queueResolve,
   ),
   define(
     "queue.resolve.change_category_mark_imported",
@@ -615,6 +650,7 @@ const definitions = [
     "change_category_mark_imported",
     media,
     "mutate",
+    queueResolve,
   ),
   define(
     "queue.resolve.route_to_manual_import",
@@ -622,6 +658,7 @@ const definitions = [
     "route_to_manual_import",
     media,
     "mutate",
+    queueResolve,
   ),
   define(
     "queue.resolve.force_pending_grab",
@@ -629,14 +666,23 @@ const definitions = [
     "force_pending_grab",
     media,
     "start_job",
+    queueResolve,
   ),
-  define("queue.resolve.remove_pending", "arr_queue_resolve", "remove_pending", media, "mutate"),
+  define(
+    "queue.resolve.remove_pending",
+    "arr_queue_resolve",
+    "remove_pending",
+    media,
+    "mutate",
+    queueResolve,
+  ),
   define(
     "queue.resolve.blocklist_pending",
     "arr_queue_resolve",
     "blocklist_pending",
     media,
     "mutate",
+    queueResolve,
   ),
 
   // arr_activity_change

@@ -71,7 +71,7 @@ changes:
     path: changes/0006-queue-resolution.md
     description: Implement typed tracked-download and pending-release queue transitions
     spec: activity-management
-    status: draft
+    status: complete
     depends_on: ["0002", "0004"]
   - id: "0007"
     name: manual-import

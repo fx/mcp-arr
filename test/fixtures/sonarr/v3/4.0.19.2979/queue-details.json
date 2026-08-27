@@ -98,6 +98,46 @@
       ],
       "customFormats": [],
       "customFormatScore": 0
+    },
+    {
+      "id": 503,
+      "seriesId": 13,
+      "episodeId": 1002,
+      "seasonNumber": 1,
+      "title": "Example Anime S01E14 WEBDL-720p",
+      "status": "delay",
+      "trackedDownloadStatus": null,
+      "trackedDownloadState": null,
+      "statusMessages": [],
+      "errorMessage": null,
+      "size": 0,
+      "sizeleft": 0,
+      "timeleft": null,
+      "estimatedCompletionTime": null,
+      "added": "2026-08-27T08:00:00Z",
+      "protocol": "torrent",
+      "indexer": "Example Indexer",
+      "downloadClient": null,
+      "downloadId": null,
+      "quality": {
+        "quality": {
+          "id": 4,
+          "name": "WEBDL-720p",
+          "source": "bluray",
+          "resolution": 720
+        },
+        "revision": {
+          "version": 1,
+          "real": 0,
+          "isRepack": false
+        }
+      },
+      "languages": [
+        {
+          "id": 1,
+          "name": "English"
+        }
+      ]
     }
   ]
 }
