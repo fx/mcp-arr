@@ -139,6 +139,36 @@ describe("candidate scan context", () => {
     expect((await scanTracked("sonarr", { queueItemId: 503 })).result.status).toBe("unmapped");
   });
 
+  it("answers a removed record with a typed error rather than a transport failure", async () => {
+    // A record that has gone is a domain answer with a remedy a caller can act
+    // on, so it is that error rather than the upstream 404 handed upwards.
+    const harness = libraryHarness("radarr", () => jsonResponse({ message: "not found" }, 404));
+    const result = await scanLibraryContext(harness.client, "radarr", libraryRequest, wholeFolder);
+
+    expect(result.status).toBe("absent");
+    if (result.status === "ok") {
+      throw new Error("Expected the scan to be refused");
+    }
+    expect(result.error.code).toBe("stale_reference");
+    expect(result.error.remediation).toContain("Repeat the query");
+  });
+
+  it("leaves every other upstream failure its own shape", async () => {
+    // A 404 on a single record is a domain answer; a 500, an authentication
+    // failure and an unreachable instance are not, and telling a caller to
+    // re-read its query for one of those would send it after the wrong thing.
+    for (const [label, respond] of [
+      ["server error", () => jsonResponse({ message: "boom" }, 500)],
+      ["authentication", () => jsonResponse({ message: "no" }, 401)],
+    ] as const) {
+      const harness = libraryHarness("radarr", respond);
+      await expect(
+        scanLibraryContext(harness.client, "radarr", libraryRequest, wholeFolder),
+        label,
+      ).rejects.toThrow();
+    }
+  });
+
   it("takes a library context's folder from the record rather than the caller", async () => {
     const { result, calls } = await scanLibrary("radarr", libraryRequest);
     expect(result.status).toBe("ok");

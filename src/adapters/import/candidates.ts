@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { UpstreamClient, UpstreamQuery } from "../../http/client.js";
+import { isUpstreamError } from "../../http/errors.js";
+import { createToolError, type ToolError } from "../../tools/errors.js";
 import { safeReason } from "../acquisition/parse.js";
 import { safeLabel, safeText } from "../activity/parse.js";
 import { type MediaApplication, mediaRef } from "../library/model.js";
@@ -183,6 +185,50 @@ type ScanResolution =
   | { readonly ok: false; readonly reason: "absent" | "unmapped" };
 
 /**
+ * The typed answer a scan gives when its target is not there.
+ *
+ * A target that has gone is a domain answer with a remedy the caller can act
+ * on — read the query that produced the reference again — so it is that error
+ * rather than a transport failure handed upwards. Every other upstream failure
+ * keeps its own shape: a timeout, an authentication failure and a 5xx are not
+ * domain answers, and collapsing them into this one would tell a caller to
+ * re-read a query when the instance is simply unreachable.
+ */
+function scanRefusal(application: MediaApplication, reason: "absent" | "unmapped"): ToolError {
+  return reason === "absent"
+    ? createToolError({
+        code: "stale_reference",
+        message: `${application}: that record is no longer on this instance`,
+        application,
+      })
+    : createToolError({
+        code: "conflict",
+        message: `${application}: that record names no location on this instance, so there is nothing to scan`,
+        application,
+      });
+}
+
+/**
+ * Reads one upstream record, treating "it is not there" as an answer.
+ *
+ * A `404` on a single-record route means the record has gone, which this
+ * surface has a word for. Anything else is rethrown untouched, so the failure a
+ * caller sees is the failure that happened.
+ */
+async function readRecord<TValue>(
+  read: () => Promise<TValue>,
+): Promise<{ ok: true; value: TValue } | { ok: false }> {
+  try {
+    return { ok: true, value: await read() };
+  } catch (error) {
+    if (isUpstreamError(error) && error.kind === "not-found") {
+      return { ok: false };
+    }
+    throw error;
+  }
+}
+
+/**
  * Resolves the scan context of a tracked download from its queue row.
  *
  * The queue reference a caller holds names a row, not a location, so the
@@ -259,7 +305,13 @@ async function readLibraryScanContext(
   request: { readonly mediaId: number; readonly seasonNumber?: number | undefined },
 ): Promise<ScanResolution> {
   const route = `${application === "sonarr" ? seriesRoute : movieRoute}/${String(request.mediaId)}`;
-  const record = parseUpstream(libraryRecordSchema, await client.get(route), application, route);
+  const read = await readRecord(async () =>
+    parseUpstream(libraryRecordSchema, await client.get(route), application, route),
+  );
+  if (!read.ok) {
+    return { ok: false, reason: "absent" };
+  }
+  const record = read.value;
 
   const folder = text(record.path);
   // A record reporting no path has nothing under it to scan, and one whose
@@ -637,9 +689,9 @@ async function readCandidates(
 export type CandidateScanResult =
   | { readonly status: "ok"; readonly scan: CandidateScan }
   /** The queue row or library record the scan was to start from is gone. */
-  | { readonly status: "absent" }
+  | { readonly status: "absent"; readonly error: ToolError }
   /** It exists but names no location, so there is nothing to scan. */
-  | { readonly status: "unmapped" };
+  | { readonly status: "unmapped"; readonly error: ToolError };
 
 /**
  * Scans the download a queue reference names.
@@ -659,7 +711,7 @@ export async function scanTrackedDownload(
 ): Promise<CandidateScanResult> {
   const resolved = await readTrackedScanContext(client, application, request);
   if (!resolved.ok) {
-    return { status: resolved.reason };
+    return { status: resolved.reason, error: scanRefusal(application, resolved.reason) };
   }
   return { status: "ok", scan: await readCandidates(client, resolved.context, window) };
 }
@@ -673,7 +725,7 @@ export async function scanLibraryContext(
 ): Promise<CandidateScanResult> {
   const resolved = await readLibraryScanContext(client, application, request);
   if (!resolved.ok) {
-    return { status: resolved.reason };
+    return { status: resolved.reason, error: scanRefusal(application, resolved.reason) };
   }
   return { status: "ok", scan: await readCandidates(client, resolved.context, window) };
 }
