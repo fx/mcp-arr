@@ -421,13 +421,46 @@ describe("candidate disclosure", () => {
     expect(scanned.scan.items[0]?.indexerFlags).toEqual(["freeleech"]);
   });
 
+  it("removes a folder name a rejection mentions in prose", async () => {
+    // The generic sanitizer knows about separators and long identifiers, which
+    // is everything it can know on its own. A rejection naming the folder in
+    // prose carries neither, and only the adapter knows what this scan's folder
+    // was called — so it is removed literally, before the generic pass.
+    const queue = await activityFixture<unknown[]>("sonarr", "queue/details");
+    const rows = await activityFixture<Array<Record<string, unknown>>>("sonarr", "manualimport");
+    const laced = rows.map((row, index) =>
+      index === 0
+        ? {
+            ...row,
+            rejections: [{ reason: "Could not import folder example-series", type: "permanent" }],
+          }
+        : row,
+    );
+    const harness = libraryHarness("sonarr", (call) =>
+      jsonResponse(call.url.pathname.endsWith("/manualimport") ? laced : queue),
+    );
+    const scanned = await scanTrackedDownload(harness.client, "sonarr", trackedRequest, {
+      offset: 0,
+      pageSize: 25,
+    });
+    if (scanned.status !== "ok") {
+      throw new Error("Expected a scan");
+    }
+
+    const reason = scanned.scan.items[0]?.decision.rejections[0]?.reason ?? "";
+    expect(reason).toContain("Could not import folder");
+    expect(reason).not.toContain("example-series");
+  });
+
   it("scrubs a rejection that quotes the path it objected to", async () => {
     const candidates = candidatesOf(await scanTracked("sonarr", trackedRequest));
     const reason = candidates[1]?.decision.rejections[0]?.reason ?? "";
 
     expect(reason).toContain("Unable to parse episode");
     expect(reason).not.toContain("/media/example");
-    expect(reason).toContain("[redacted path]");
+    expect(reason).not.toContain("example-series");
+    // Removed rather than deleted, so a reader can see something was taken out.
+    expect(reason).toMatch(/\[redacted/u);
   });
 });
 

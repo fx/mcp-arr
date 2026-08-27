@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { UpstreamClient, UpstreamQuery } from "../../http/client.js";
+import { safeReason } from "../acquisition/parse.js";
 import { safeLabel, safeText } from "../activity/parse.js";
 import { type MediaApplication, mediaRef } from "../library/model.js";
 import {
@@ -310,14 +311,40 @@ function rejectionType(value: string | null | undefined): ImportRejectionType {
  * rather than dropped: that a file was rejected is itself the evidence, and a
  * silently shorter list would understate why a candidate cannot be imported.
  */
-function candidateRejections(record: UpstreamCandidate): readonly ImportRejection[] {
+function candidateRejections(
+  context: ImportScanContext,
+  record: UpstreamCandidate,
+): readonly ImportRejection[] {
+  // The values this scan already knows, removed literally before the generic
+  // sanitizer runs. That sanitizer recognizes separators and long identifiers,
+  // which is everything it can know on its own — but a rejection that names a
+  // folder in prose ("could not import folder example-series") carries neither,
+  // and only the adapter knows what this scan's folder was called.
+  const known = [
+    context.downloadId,
+    context.folder,
+    context.folder === undefined ? undefined : folderNameOf(context.folder),
+    text(record.folderName),
+  ].filter((value): value is string => value !== undefined);
+
+  const scrub = (value: string | null | undefined): string | undefined =>
+    safeText(safeReason(value, known));
+
   return (record.rejections ?? []).map((rejection) => ({
     reason:
-      safeText(rejection.reason) ??
-      safeText(rejection.message) ??
+      scrub(rejection.reason) ??
+      scrub(rejection.message) ??
       "this instance rejected the file without a readable reason",
     type: rejectionType(rejection.type),
   }));
+}
+
+/** The last segment of a folder path, which is what upstream calls it. */
+function folderNameOf(folder: string): string | undefined {
+  const trimmed = folder.replace(/[\\/]+$/u, "");
+  const cut = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  const name = cut < 0 ? trimmed : trimmed.slice(cut + 1);
+  return name === "" ? undefined : name;
 }
 
 /** An upstream record identifier, where zero means the instance named none. */
@@ -415,7 +442,7 @@ export function mapCandidate(
   const existingFileId = recordId(
     count(application === "sonarr" ? record.episodeFileId : record.movieFileId),
   );
-  const rejections = candidateRejections(record);
+  const rejections = candidateRejections(context, record);
 
   return {
     application,

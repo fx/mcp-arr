@@ -198,6 +198,11 @@ export function fingerprintFor(detail: CandidateDetail): string {
   return queryDigest([
     detail.sourceKind,
     detail.candidateId,
+    // The queue row a tracked scan came from is effect-relevant source state:
+    // it is what a later step re-reads, and what decides whether importing can
+    // consume the download. Omitting it while including the library scan's own
+    // record would have been an asymmetry with no reason behind it.
+    detail.queueItemId,
     detail.fileIdentity,
     detail.sizeBytes,
     detail.mediaId,
