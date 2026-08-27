@@ -325,7 +325,20 @@ export const queueResolvePreconditions: PreconditionReader = async (invocation) 
     ...("replacementSearch" in intent ? { replacementSearch: intent.replacementSearch } : {}),
   };
 
-  return { status: "ok", validated: context, observations: itemObservations(items) };
+  return {
+    status: "ok",
+    validated: context,
+    observations: [
+      // The instance's own version belongs in the read set because the compiled
+      // flags are gated on it: a plan made against a version that vouches for
+      // `changeCategory` must not be applied after a downgrade that does not,
+      // silently recompiling into a different request. It is fingerprinted like
+      // every other observation, so the plan discloses a digest rather than the
+      // version string.
+      { key: "instance:version", value: capability.version },
+      ...itemObservations(items),
+    ],
+  };
 };
 
 /* -------------------------------------------------------------------------- */

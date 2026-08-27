@@ -69,6 +69,8 @@ interface Instance {
   deleteBehavior: "accept" | "lose" | "lose_after_applying" | "refuse";
   /** Ids whose delete applies and then loses its answer, whatever the mode. */
   loseFor: Set<number>;
+  /** The version this instance reports, so a plan can be aged by an upgrade. */
+  version: string;
   unreachable: boolean;
 }
 
@@ -96,6 +98,7 @@ async function createInstance(): Promise<Instance> {
     commands: [],
     deleteBehavior: "accept",
     loseFor: new Set<number>(),
+    version: "4.0.19.2979",
     unreachable: false,
     fetch: async (input, init) => {
       const url = new URL(input);
@@ -134,7 +137,7 @@ async function createInstance(): Promise<Instance> {
 
       switch (route) {
         case "system/status":
-          return jsonResponse({ appName: "Sonarr", version: "4.0.19.2979" });
+          return jsonResponse({ appName: "Sonarr", version: instance.version });
         case "queue":
           return jsonResponse({
             page: 1,
@@ -245,7 +248,12 @@ describe("queue resolution plan mode", () => {
       "delete the data it downloaded",
     );
     expect(result.mutation?.predictedEffects.length).toBeGreaterThan(0);
-    expect(result.mutation?.readSet?.length).toBe(1);
+    // One observation for the selected row, one for the instance version the
+    // flags were compiled against.
+    expect(result.mutation?.readSet?.map((entry) => entry.key.split(":")[0]).sort()).toEqual([
+      "instance",
+      "queue",
+    ]);
     // Planning reads; it never writes.
     expect(deletes()).toHaveLength(0);
     expect(instance.rows.some((row) => row.id === blockedImport)).toBe(true);
@@ -306,6 +314,29 @@ describe("queue resolution apply mode", () => {
 
     const stale = await run(resolveTool, { mode: "apply", plan });
     expect(outcomeOf(stale).error?.code).toBe("stale_plan");
+    expect(deletes()).toHaveLength(0);
+  });
+
+  it("refuses a plan made against a different instance version", async () => {
+    // The compiled flags are gated on the instance's version, so a plan made
+    // against one that vouches for them must not be applied after a downgrade
+    // that does not — it would silently recompile into a different request.
+    const reference = await referenceFor(blockedImport);
+    const planned = await run(resolveTool, {
+      intent: "change_category_mark_imported",
+      mode: "plan",
+      items: [reference],
+    });
+    expect(planned.mutation?.readSet?.some((entry) => entry.key === "instance:version")).toBe(true);
+
+    instance.version = "4.0.19.2980";
+    const stale = await run(resolveTool, {
+      mode: "apply",
+      plan: planned.mutation?.plan as string,
+    });
+
+    expect(outcomeOf(stale).error?.code).toBe("stale_plan");
+    expect(outcomeOf(stale).error?.message).toContain("instance:version");
     expect(deletes()).toHaveLength(0);
   });
 
