@@ -71,10 +71,10 @@ The [Configuration Reconciliation spec](../specs/configuration-reconciliation/) 
 - [ ] Implement lossless reconciliation runtime
   - [x] Add typed desired-state patches, diff/plan output, explicit removal, and dependency validation
   - [x] Preserve unknown, masked, and unmanaged fields in full-resource writes
-  - [ ] Require apply-by-plan to resupply named transient secrets without storing their values in plans or receipts
+  - [x] Require apply-by-plan to resupply named transient secrets without storing their values in plans or receipts
   - [ ] Add typed provider-test and explicit validation-bypass variants with warnings, external-effect metadata, and no default `forceSave`
   - [ ] Add fixtures and stdio tests for provider tests, sent notifications, test failures, warning bypass, and hard validation failures
-  - [ ] Add schema/resource fingerprints, stale rejection, transient-secret handling, apply verification, and direct-apply tests
+  - [x] Add schema/resource fingerprints, stale rejection, transient-secret handling, apply verification, and direct-apply tests
 - [x] Implement Prowlarr application synchronization
   - [x] Observe remote mappings and model Disabled/AddOnly/FullSync/tag behavior
   - [x] Plan explicit additions, updates, removals, and stale mappings

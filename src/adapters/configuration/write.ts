@@ -15,6 +15,7 @@ import { type ConfigurationRef, configurationRef, type SafeFieldValue } from "./
 import { isUpstreamRecord } from "./parse.js";
 import type { CompiledPatch, PatchAssignment } from "./patches.js";
 import type { UpstreamResource } from "./resources.js";
+import type { TransientSecrets } from "./secrets.js";
 import { isDynamicallyDefined } from "./serialize.js";
 
 /**
@@ -73,11 +74,14 @@ export interface ConfigurationChange {
  *
  * `preserved` is the disposition of every secret this server was not asked to
  * change, and it is the interesting one: it is the promise that a credential
- * the caller never supplied is still there afterwards.
+ * the caller never supplied is still there afterwards. `set` and `changed` are
+ * told apart by what the record held before — an instance that answered with a
+ * mask still said that something was configured — so a caller learns whether it
+ * has replaced a credential or supplied a first one.
  */
 export interface SecretDisposition {
   readonly name: string;
-  readonly disposition: "preserved" | "cleared";
+  readonly disposition: "preserved" | "cleared" | "set" | "changed";
 }
 
 /** How much of the resource this write carried through without touching it. */
@@ -113,6 +117,14 @@ export interface WriteRequest {
   readonly patch: CompiledPatch;
   readonly catalog: DependencyCatalog;
   readonly id: number;
+  /**
+   * The credentials supplied for this request.
+   *
+   * Read here and nowhere else: this is the only place a value is needed, so it
+   * is the only place one is taken, and the runtime erases the bundle as soon
+   * as this function returns.
+   */
+  readonly secrets: TransientSecrets;
 }
 
 /** The dynamic field array's property name, and the diff prefix for its entries. */
@@ -225,6 +237,9 @@ interface WriteState {
   readonly entries: ReadonlyMap<string, readonly FieldEntry[]>;
   /** Whether a tracker definition, rather than the application, named the fields. */
   readonly definitionDriven: boolean;
+  readonly secrets: TransientSecrets;
+  /** Credentials this write supplied a value for, and whether one was already set. */
+  readonly supplied: Map<string, "set" | "changed">;
   readonly changes: ConfigurationChange[];
   readonly warnings: string[];
   readonly writtenProperties: Set<string>;
@@ -387,6 +402,43 @@ function applyAssignment(
       state.changes.push(fieldChange(state, assignment.name, "set", before, assignment.value));
       return undefined;
     }
+    case "secret": {
+      const entry = resolveField(state, assignment.name);
+      if (!("record" in entry)) {
+        return entry;
+      }
+      // The instance has the last word. A name that reads as a credential got
+      // the patch this far; a record that does not actually treat the field as
+      // one would be written through a channel whose whole purpose is that the
+      // value is never retained, and a value that is not a credential belongs
+      // in a desired field where it can be described.
+      const privacy = typeof entry.record.privacy === "string" ? entry.record.privacy : undefined;
+      if (classifyProviderField({ name: assignment.name, privacy }) !== "secret") {
+        return toolError(
+          state.application,
+          "invalid_input",
+          `${assignment.name} is not a credential on this record; state it as a desired field instead`,
+        );
+      }
+      const value = state.secrets.take(assignment.name);
+      if (value === undefined) {
+        return toolError(
+          state.application,
+          "invalid_input",
+          `no value was supplied for ${assignment.name}; a credential is supplied again with every request that needs it`,
+        );
+      }
+      // Told apart by what was configured before, never by comparing values: a
+      // comparison would need the old credential, and an instance that answered
+      // with a mask never gave one. A supplied credential is therefore always a
+      // change to send, even where it happens to match what is stored.
+      const configured = describeSecret(assignment.name, entry.record.value).state;
+      entry.record.value = value;
+      state.writtenFields.add(entry.index);
+      state.supplied.set(assignment.name, configured === "configured" ? "changed" : "set");
+      state.changes.push({ path: fieldPath(assignment.name), action: "set", redacted: true });
+      return undefined;
+    }
     default:
       return unreachable(patch, assignment);
   }
@@ -451,6 +503,7 @@ function applyRemoval(
 function secretDispositions(
   payload: Record<string, unknown>,
   cleared: ReadonlySet<string>,
+  supplied: ReadonlyMap<string, "set" | "changed">,
 ): readonly SecretDisposition[] {
   const fields = payload[fieldsProperty];
   if (!Array.isArray(fields)) {
@@ -473,7 +526,7 @@ function secretDispositions(
     }
     dispositions.push({
       name: value.name,
-      disposition: cleared.has(value.name) ? "cleared" : "preserved",
+      disposition: supplied.get(value.name) ?? (cleared.has(value.name) ? "cleared" : "preserved"),
     });
   }
   return dispositions;
@@ -505,6 +558,8 @@ export function writeConfigurationPatch(request: WriteRequest): WriteOutcome {
     payload,
     entries: fieldEntries(payload),
     definitionDriven: isDynamicallyDefined(payload),
+    secrets: request.secrets,
+    supplied: new Map(),
     changes: [],
     warnings: [],
     writtenProperties: new Set(),
@@ -531,7 +586,7 @@ export function writeConfigurationPatch(request: WriteRequest): WriteOutcome {
 
   const fields = payload[fieldsProperty];
   const fieldCount = Array.isArray(fields) ? fields.length : 0;
-  const secrets = secretDispositions(payload, cleared);
+  const secrets = secretDispositions(payload, cleared, state.supplied);
   if (secrets.some((secret) => secret.disposition === "cleared")) {
     state.warnings.push(
       "clearing a credential leaves this record without it until one is supplied again",
@@ -578,6 +633,14 @@ export function writeConfigurationPatch(request: WriteRequest): WriteOutcome {
  * A secret is observed by presence before it is digested. That is not only
  * hygiene: a plan whose validity depended on a credential's exact bytes would
  * go stale on a rotation that changes nothing about what the patch does.
+ *
+ * One observation is about shape rather than about a value. A provider's field
+ * list is defined by the instance, so a field entry that appears or disappears,
+ * or an implementation that has been swapped underneath, changes what this
+ * patch means even though every value it names still reads the same. That is
+ * the resource-side half of the schema fingerprint in {@link ./fingerprints.js},
+ * and it is deliberately an inventory of names rather than of contents, so it
+ * moves when the record's shape moves and not when its settings do.
  */
 export function configurationObservations(
   resource: UpstreamResource,
@@ -593,6 +656,16 @@ export function configurationObservations(
     return observations;
   }
   const entries = fieldEntries(payload);
+  if (patch.family === "provider") {
+    observations.push({
+      key: "resource-shape",
+      value: fingerprint({
+        implementation: payload.implementation,
+        configContract: payload.configContract,
+        fields: [...entries.keys()].sort(),
+      }),
+    });
+  }
 
   const observeProperty = (property: string): void => {
     observations.push({ key: property, value: fingerprint(payload[property]) });
@@ -629,6 +702,7 @@ export function configurationObservations(
         observeProperty("tags");
         break;
       case "field":
+      case "secret":
         observeField(assignment.name);
         break;
     }

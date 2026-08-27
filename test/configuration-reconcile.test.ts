@@ -1,14 +1,20 @@
 import { describe, expect, it } from "vitest";
-import type { ConfigurationDomain } from "../src/adapters/configuration/domains.js";
-import {
-  type ConfigurationReconcileOutcome,
-  type ConfigurationReconcileRequest,
-  runConfigurationReconciliation,
-} from "../src/adapters/configuration/reconcile.js";
-import { type ApplicationId, describeApplication } from "../src/applications.js";
+import { runConfigurationReconciliation } from "../src/adapters/configuration/reconcile.js";
+import { describeApplication } from "../src/applications.js";
 import { fingerprintReadSet } from "../src/state/plans.js";
 import { toolErrorProvesNoEffect } from "../src/tools/errors.js";
-import { configurationHarness } from "./support/configuration.js";
+import {
+  configurationHarness,
+  expectApplied,
+  expectPlanned,
+  expectRefused,
+  first,
+  onlyWrite,
+  planning,
+  reconcile,
+  type UpstreamRecord,
+  writes,
+} from "./support/configuration.js";
 import { fixtureBody, jsonResponse } from "./support/library.js";
 
 /**
@@ -22,112 +28,6 @@ import { fixtureBody, jsonResponse } from "./support/library.js";
  * outcome, which is the pair of claims a full-resource write has to make good
  * on at once.
  */
-
-type Record_ = Record<string, unknown>;
-
-interface Instance {
-  /** Upstream route, without the versioned API prefix, to its response body. */
-  readonly routes: Readonly<Record<string, unknown>>;
-}
-
-interface Dispatched {
-  readonly method: string;
-  readonly route: string;
-  readonly body?: unknown;
-}
-
-interface ReconcileRun {
-  readonly outcome: ConfigurationReconcileOutcome;
-  readonly dispatched: readonly Dispatched[];
-}
-
-/**
- * Runs one reconciliation against a small routing table.
- *
- * A route the table does not carry answers 404, like an instance that does not
- * have that record; a PUT echoes what it was sent, like an instance that
- * accepted it.
- */
-async function reconcile(
-  application: ApplicationId,
-  instance: Instance,
-  request: ConfigurationReconcileRequest,
-): Promise<ReconcileRun> {
-  const prefix = `${describeApplication(application).apiBasePath}/`;
-  const dispatched: Dispatched[] = [];
-  const harness = configurationHarness(application, (call) => {
-    const route = call.url.pathname.startsWith(prefix)
-      ? call.url.pathname.slice(prefix.length)
-      : call.url.pathname;
-    const method = call.init.method ?? "GET";
-    const sent = typeof call.init.body === "string" ? JSON.parse(call.init.body) : undefined;
-    dispatched.push({ method, route, ...(sent === undefined ? {} : { body: sent }) });
-    if (method !== "GET") {
-      return jsonResponse(sent);
-    }
-    const body = instance.routes[route];
-    return body === undefined
-      ? jsonResponse({ message: "NotFound" }, 404)
-      : jsonResponse(structuredClone(body));
-  });
-
-  const outcome = await runConfigurationReconciliation(application, harness.client, request);
-  return { outcome, dispatched };
-}
-
-function planning(
-  domain: ConfigurationDomain,
-  targetId: number,
-  overrides: Partial<ConfigurationReconcileRequest> = {},
-): ConfigurationReconcileRequest {
-  return { domain, targetId, fields: [], mode: "plan", ...overrides };
-}
-
-function expectPlanned(outcome: ConfigurationReconcileOutcome) {
-  if (outcome.status !== "planned") {
-    throw new Error(
-      `Expected a plan, got ${outcome.status === "error" ? outcome.error.message : outcome.status}`,
-    );
-  }
-  return outcome;
-}
-
-function expectApplied(outcome: ConfigurationReconcileOutcome) {
-  if (outcome.status !== "applied") {
-    throw new Error(
-      `Expected an apply, got ${outcome.status === "error" ? outcome.error.message : outcome.status}`,
-    );
-  }
-  return outcome;
-}
-
-function expectRefused(outcome: ConfigurationReconcileOutcome) {
-  if (outcome.status !== "error") {
-    throw new Error(`Expected a refusal, got ${outcome.status}`);
-  }
-  return outcome;
-}
-
-function writes(dispatched: readonly Dispatched[]): readonly Dispatched[] {
-  return dispatched.filter((call) => call.method !== "GET");
-}
-
-function onlyWrite(dispatched: readonly Dispatched[]): Dispatched {
-  const [write, ...rest] = writes(dispatched);
-  if (write === undefined || rest.length > 0) {
-    throw new Error(`Expected exactly one upstream write, saw ${writes(dispatched).length}`);
-  }
-  return write;
-}
-
-async function first(application: ApplicationId, route: string): Promise<Record_> {
-  const body = await fixtureBody<readonly Record_[]>(application, route);
-  const record = body[0];
-  if (record === undefined) {
-    throw new Error(`The recorded ${route} response is empty`);
-  }
-  return record;
-}
 
 describe("planning a desired state", () => {
   it("describes the change without sending anything upstream", async () => {
@@ -224,7 +124,7 @@ describe("a full-resource write", () => {
     expect(write.body).toEqual({
       ...indexer,
       priority: 30,
-      fields: (indexer.fields as readonly Record_[]).map((field) =>
+      fields: (indexer.fields as readonly UpstreamRecord[]).map((field) =>
         field.name === "categories" ? { ...field, value: [5030] } : field,
       ),
     });
@@ -232,7 +132,7 @@ describe("a full-resource write", () => {
 
   it("keeps the planted credential in the upstream request and out of the outcome", async () => {
     const indexer = await first("sonarr", "indexer");
-    const canary = (indexer.fields as readonly Record_[]).find(
+    const canary = (indexer.fields as readonly UpstreamRecord[]).find(
       (field) => field.name === "apiKey",
     )?.value;
     expect(typeof canary).toBe("string");
@@ -251,12 +151,12 @@ describe("a full-resource write", () => {
   });
 
   it("returns a masked secret unchanged rather than blanking it", async () => {
-    const applications = await fixtureBody<readonly Record_[]>("prowlarr", "applications");
+    const applications = await fixtureBody<readonly UpstreamRecord[]>("prowlarr", "applications");
     const masked = applications[1];
     if (masked === undefined) {
       throw new Error("The recorded Prowlarr application list has no masked entry");
     }
-    const maskedValue = (masked.fields as readonly Record_[]).find(
+    const maskedValue = (masked.fields as readonly UpstreamRecord[]).find(
       (field) => field.name === "apiKey",
     )?.value;
     expect(maskedValue).toBe("********");
@@ -270,11 +170,11 @@ describe("a full-resource write", () => {
       }),
     );
     const applied = expectApplied(outcome);
-    const sent = onlyWrite(dispatched).body as Record_;
+    const sent = onlyWrite(dispatched).body as UpstreamRecord;
 
     // The sentinel is what this application accepts back to mean "keep the
     // stored credential", so sending it unchanged is what preserves it.
-    expect((sent.fields as readonly Record_[])[1]).toEqual({
+    expect((sent.fields as readonly UpstreamRecord[])[1]).toEqual({
       order: 1,
       name: "apiKey",
       value: "********",
@@ -395,7 +295,7 @@ describe("a full-resource write", () => {
 describe("explicit removal", () => {
   it("clears only what was named and leaves an omitted field alone", async () => {
     const client = await first("radarr", "downloadclient");
-    const password = (client.fields as readonly Record_[]).find(
+    const password = (client.fields as readonly UpstreamRecord[]).find(
       (field) => field.name === "password",
     )?.value;
     const { outcome, dispatched } = await reconcile(
@@ -407,8 +307,8 @@ describe("explicit removal", () => {
       }),
     );
     const applied = expectApplied(outcome);
-    const sent = onlyWrite(dispatched).body as Record_;
-    const sentFields = sent.fields as readonly Record_[];
+    const sent = onlyWrite(dispatched).body as UpstreamRecord;
+    const sentFields = sent.fields as readonly UpstreamRecord[];
     const fieldValue = (name: string) => sentFields.find((field) => field.name === name)?.value;
 
     expect(fieldValue("movieCategory")).toBeNull();
@@ -476,7 +376,7 @@ describe("dependency validation", () => {
     );
     expectApplied(outcome);
 
-    expect((onlyWrite(dispatched).body as Record_).tags).toEqual([3, 4]);
+    expect((onlyWrite(dispatched).body as UpstreamRecord).tags).toEqual([3, 4]);
   });
 
   it("stores the instance's own root-folder path for the identifier a list names", async () => {
@@ -499,7 +399,7 @@ describe("dependency validation", () => {
       }),
     );
     const applied = expectApplied(outcome);
-    const sent = onlyWrite(dispatched).body as Record_;
+    const sent = onlyWrite(dispatched).body as UpstreamRecord;
 
     expect(sent.qualityProfileId).toBe(2);
     expect(sent.rootFolderPath).toBe("/media/example/archive");
@@ -558,7 +458,7 @@ describe("applying a recorded plan", () => {
     const { outcome: stale, dispatched } = await reconcile(
       "sonarr",
       { routes: { "indexer/1": moved } },
-      { ...request, mode: "apply", planned: fingerprintReadSet(planned.observations) },
+      { ...request, mode: "apply", planned: { readSet: fingerprintReadSet(planned.observations) } },
     );
 
     expect(expectRefused(stale).error).toMatchObject({
@@ -570,7 +470,7 @@ describe("applying a recorded plan", () => {
 
   it("refuses as stale when a dependency the plan pointed at is gone", async () => {
     const indexer = await first("sonarr", "indexer");
-    const tags = await fixtureBody<readonly Record_[]>("sonarr", "tag");
+    const tags = await fixtureBody<readonly UpstreamRecord[]>("sonarr", "tag");
     const request = planning("indexers", 1, { fields: [{ name: "tags", value: [3] }] });
     const { outcome } = await reconcile(
       "sonarr",
@@ -582,7 +482,7 @@ describe("applying a recorded plan", () => {
     const { outcome: stale } = await reconcile(
       "sonarr",
       { routes: { "indexer/1": indexer, tag: tags.filter((tag) => tag.id !== 3) } },
-      { ...request, mode: "apply", planned: fingerprintReadSet(planned.observations) },
+      { ...request, mode: "apply", planned: { readSet: fingerprintReadSet(planned.observations) } },
     );
 
     // A deleted pointer is staleness, not a bad argument: the caller cannot fix
@@ -602,11 +502,11 @@ describe("applying a recorded plan", () => {
     const { outcome: applied, dispatched } = await reconcile(
       "sonarr",
       { routes: { "indexer/1": unrelated } },
-      { ...request, mode: "apply", planned: fingerprintReadSet(planned.observations) },
+      { ...request, mode: "apply", planned: { readSet: fingerprintReadSet(planned.observations) } },
     );
 
     expect(expectApplied(applied).attempted).toBe(true);
-    expect((onlyWrite(dispatched).body as Record_).priority).toBe(30);
+    expect((onlyWrite(dispatched).body as UpstreamRecord).priority).toBe(30);
   });
 });
 

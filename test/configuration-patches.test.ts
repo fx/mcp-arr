@@ -22,8 +22,9 @@ function compile(
   fields: readonly DesiredField[],
   removeFields: readonly string[] = [],
   application: ApplicationId = "sonarr",
+  secretNames: readonly string[] = [],
 ) {
-  return compileConfigurationPatch(application, domain, fields, removeFields);
+  return compileConfigurationPatch(application, domain, { fields, removeFields, secretNames });
 }
 
 function expectCompiled(
@@ -31,8 +32,9 @@ function expectCompiled(
   fields: readonly DesiredField[],
   removeFields: readonly string[] = [],
   application: ApplicationId = "sonarr",
+  secretNames: readonly string[] = [],
 ): CompiledPatch {
-  const compilation = compile(domain, fields, removeFields, application);
+  const compilation = compile(domain, fields, removeFields, application, secretNames);
   if (compilation.status !== "ok") {
     throw new Error(`Expected a compiled patch, got ${compilation.error.message}`);
   }
@@ -44,8 +46,9 @@ function expectRefused(
   fields: readonly DesiredField[],
   removeFields: readonly string[] = [],
   application: ApplicationId = "sonarr",
+  secretNames: readonly string[] = [],
 ) {
-  const compilation = compile(domain, fields, removeFields, application);
+  const compilation = compile(domain, fields, removeFields, application, secretNames);
   if (compilation.status !== "error") {
     throw new Error("Expected the desired state to be refused");
   }
