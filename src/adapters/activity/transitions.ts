@@ -190,11 +190,19 @@ function grabPath(queueItemId: number): string {
 /**
  * The four flags the queue-delete endpoint accepts.
  *
- * Every one of them is sent on every delete, explicitly, rather than letting an
- * omitted flag fall to whatever the instance defaults it to. The default is the
- * part that is easy to be wrong about and impossible to see in a request that
- * does not carry it, and a reviewed request shape that depends on an unstated
- * default is not reviewed.
+ * Every one of them is sent on every delete, explicitly, including the ones set
+ * to `false`. That is not verbosity, and omitting a flag is not the same as not
+ * requesting its effect: `removeFromClient` **defaults to true** on both
+ * applications, so a delete that simply left it out would ask the download
+ * client to drop the download and its payload — the exact opposite of what
+ * `ignore_tracking` promises, and precisely the surprising precedence this
+ * whole intent vocabulary exists to keep away from callers.
+ *
+ * So the specification's requirement that `ignore_tracking` compile "without
+ * removal, blocklist, or category-change flags" is a requirement about the
+ * effects requested, and an explicit `false` is how this endpoint is told not
+ * to perform one. A reviewed request shape that depends on an unstated default
+ * is not reviewed.
  */
 interface QueueDeleteFlags {
   readonly removeFromClient: boolean;
