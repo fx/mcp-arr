@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
-import type { UpstreamClient, UpstreamQuery } from "../../http/client.js";
+import type { UpstreamBody, UpstreamClient, UpstreamQuery } from "../../http/client.js";
 import { isUpstreamError } from "../../http/errors.js";
 import { createToolError, type ToolError } from "../../tools/errors.js";
 import { safeReason } from "../acquisition/parse.js";
@@ -728,4 +728,161 @@ export async function scanLibraryContext(
     return { status: resolved.reason, error: scanRefusal(application, resolved.reason) };
   }
   return { status: "ok", scan: await readCandidates(client, resolved.context, window) };
+}
+
+/**
+ * Where a candidate was found, in the terms a reference retained.
+ *
+ * It carries no path and no download identifier, which is what makes it safe to
+ * accept from outside this module: every location it leads to is re-derived
+ * from upstream state by the same two resolvers a first scan uses. A correction
+ * therefore reaches exactly the folder the original scan reached, and reaches it
+ * because the queue row or the library record still says so.
+ */
+export interface CandidateOrigin {
+  readonly sourceKind: ImportSourceKind;
+  /** The queue row a tracked scan started from. */
+  readonly queueItemId?: number | undefined;
+  /** The library record a library-context scan was scoped to. */
+  readonly scanMediaId?: number | undefined;
+  readonly seasonNumber?: number | undefined;
+  /** The media association the tracked queue read is scoped by, where there is one. */
+  readonly mediaId?: number | undefined;
+}
+
+/**
+ * The corrected mapping one reprocess sends, already resolved.
+ *
+ * Every member is an upstream identifier or an object read from the instance's
+ * own definitions — never a string a caller wrote, and never a path. What a
+ * caller may correct is decided by the published schema and compiled by
+ * {@link ../../adapters/import/corrections.js}; this is what that compilation
+ * produces, and this type is the reason nothing else can reach the payload.
+ */
+export interface UpstreamMappingPatch {
+  readonly mediaId?: number | undefined;
+  readonly episodeIds?: readonly number[] | undefined;
+  readonly quality?: unknown;
+  readonly languages?: readonly unknown[] | undefined;
+  readonly releaseGroup?: string | undefined;
+}
+
+export type ReprocessResult =
+  | { readonly status: "ok"; readonly candidate: ImportCandidate }
+  /** The queue row, the library record, or the file itself is gone. */
+  | { readonly status: "absent" }
+  /** The origin exists but names no location, so there is nothing to reprocess. */
+  | { readonly status: "unmapped" };
+
+/**
+ * Re-decides one candidate with a corrected mapping.
+ *
+ * The path is recovered rather than remembered. The scan is re-run from the
+ * origin, the row whose file digest matches the one the reference retained is
+ * the row this is about, and its path goes straight into the request — so the
+ * canonical path enters here, builds exactly one upstream request, and leaves
+ * as the digest it arrived as. A file that is no longer there has no matching
+ * digest and is reported absent, which is the same answer a caller needs before
+ * an import as after one.
+ *
+ * The endpoint re-runs the application's own decision engine and answers with
+ * the re-decided row. It imports nothing: the import is a command, and this is
+ * not it.
+ */
+export async function reprocessCandidate(
+  client: UpstreamClient,
+  application: MediaApplication,
+  origin: CandidateOrigin,
+  identity: string,
+  patch: UpstreamMappingPatch,
+): Promise<ReprocessResult> {
+  const resolved =
+    origin.sourceKind === "tracked_download"
+      ? await readTrackedScanContext(client, application, {
+          queueItemId: origin.queueItemId ?? 0,
+          mediaId: origin.mediaId,
+        })
+      : await readLibraryScanContext(client, application, {
+          mediaId: origin.scanMediaId ?? 0,
+          seasonNumber: origin.seasonNumber,
+        });
+  if (!resolved.ok) {
+    return { status: resolved.reason };
+  }
+  const context = resolved.context;
+
+  const rows = parseUpstream(
+    z.array(candidateSchema),
+    await client.get(manualImportRoute, scanQuery(context)),
+    application,
+    manualImportRoute,
+  );
+  const row = rows.find((candidate) => {
+    const path = identifiablePath(candidate);
+    return path !== undefined && fileIdentity(path) === identity;
+  });
+  if (row === undefined) {
+    return { status: "absent" };
+  }
+
+  const answered = parseUpstream(
+    z.array(candidateSchema),
+    await client.post(manualImportRoute, { files: [correctedRow(context, row, patch)] }),
+    application,
+    manualImportRoute,
+  );
+  const decided = answered[0];
+  if (decided === undefined) {
+    return { status: "absent" };
+  }
+  const candidate = mapCandidate(context, decided);
+  return candidate === undefined ? { status: "absent" } : { status: "ok", candidate };
+}
+
+/**
+ * The one row a reprocess sends, built field by field.
+ *
+ * The instance's own row is the base, so everything the application decided and
+ * this project does not model travels back unchanged — and the corrections are
+ * written over it one named property at a time. Nothing is spread in from a
+ * caller: the patch's own type admits only identifiers and objects read from
+ * the instance, and this function names each of them, so a field the published
+ * schema does not accept has no route to the payload even if one were added to
+ * the patch type later.
+ */
+function correctedRow(
+  context: ImportScanContext,
+  row: UpstreamCandidate,
+  patch: UpstreamMappingPatch,
+): UpstreamBody {
+  const mediaProperty = context.application === "sonarr" ? "series" : "movie";
+  const base: Record<string, unknown> = {
+    ...(row as Record<string, unknown>),
+    // The download identity is what ties an imported file back to the queue row
+    // it came from, and the instance drops it from a scan answer, so it is put
+    // back from the context this call re-derived rather than from the row.
+    ...(context.downloadId === undefined ? {} : { downloadId: context.downloadId }),
+  };
+
+  if (patch.mediaId !== undefined) {
+    base[mediaProperty] = { id: patch.mediaId };
+  }
+  if (patch.episodeIds !== undefined) {
+    base.episodes = patch.episodeIds.map((id) => ({ id }));
+    base.episodeIds = [...patch.episodeIds];
+  }
+  if (patch.quality !== undefined) {
+    base.quality = { ...(isRecord(row.quality) ? row.quality : {}), quality: patch.quality };
+  }
+  if (patch.languages !== undefined) {
+    base.languages = [...patch.languages];
+  }
+  if (patch.releaseGroup !== undefined) {
+    base.releaseGroup = patch.releaseGroup;
+  }
+  return base;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

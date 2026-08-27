@@ -66,10 +66,10 @@ The [Acquisition and Import spec](../specs/acquisition-and-import/#manual-import
   - [x] Resolve Sonarr series/season and Radarr movie library contexts from `arr_library_query` media references without accepting raw paths
   - [x] Map Sonarr and Radarr candidate data, rejections, file identity, and media associations
   - [x] Add opaque candidate references without canonical paths or raw download IDs
-- [ ] Implement correction and apply-time validation
-  - [ ] Reprocess explicit mapping corrections and issue new bound references
-  - [ ] Rerun reprocessing and verify source, queue, media, file, and free-space preconditions at apply
-  - [ ] Reject every blocking decision and stale fingerprint before command submission
+- [x] Implement correction and apply-time validation
+  - [x] Reprocess explicit mapping corrections and issue new bound references
+  - [x] Rerun reprocessing and verify source, queue, media, file, and free-space preconditions at apply
+  - [x] Reject every blocking decision and stale fingerprint before command submission
 - [ ] Implement import execution and jobs
   - [ ] Submit only the typed `ManualImport` command with explicit import mode
   - [ ] Snapshot per-file terminal and unknown outcomes in normalized jobs
