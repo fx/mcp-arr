@@ -372,6 +372,59 @@ describe("activity references retain what a transition needs", () => {
     expect(resolveBlocklistReference(store, history, "radarr").ok).toBe(false);
   });
 
+  it("retains the media association a history mutation re-reads through", () => {
+    const { store, advance } = storeAt();
+    const associated = mintHistoryReference(store, {
+      ...historyRecord(),
+      application: "sonarr",
+      context: { application: "sonarr", historyRecordId: 9001, mediaId: 12 },
+    });
+
+    expect(associated).not.toContain("12");
+    expect(resolveHistoryReference(store, associated, "sonarr")).toEqual({
+      ok: true,
+      value: { application: "sonarr", historyRecordId: 9001, mediaId: 12 },
+    });
+
+    // A reference outlives its query but not by much: once it has expired the
+    // remedy is to read history again, which is what `stale_reference` says.
+    advance(15 * 60_000 + 1);
+    const expired = resolveHistoryReference(store, associated, "sonarr");
+    expect(expired.ok).toBe(false);
+    if (!expired.ok) {
+      expect(expired.error.code).toBe("stale_reference");
+    }
+  });
+
+  it("refuses a history reference whose retained association is corrupt", () => {
+    const { store } = storeAt();
+    const plant = (detail: Readonly<Record<string, unknown>>) =>
+      store.mint({
+        kind: "history",
+        applications: ["sonarr"],
+        payload: () => ({
+          kind: "domain",
+          snapshot: { upstreamId: "9001", fingerprint: "abc", detail },
+        }),
+      }).reference;
+
+    const good = { kind: "history_record", eventType: "grabbed", mediaId: 12 };
+    expect(resolveHistoryReference(store, plant(good), "sonarr").ok).toBe(true);
+    // Absence is legitimate — Prowlarr history has no media association — so
+    // only a value this module would never have written is refused.
+    expect(
+      resolveHistoryReference(store, plant({ ...good, mediaId: undefined }), "sonarr"),
+    ).toEqual({ ok: true, value: { application: "sonarr", historyRecordId: 9001 } });
+
+    for (const corrupt of [{ mediaId: -1 }, { mediaId: 1.5 }, { mediaId: "12" }]) {
+      const resolved = resolveHistoryReference(store, plant({ ...good, ...corrupt }), "sonarr");
+      expect(resolved.ok).toBe(false);
+      if (!resolved.ok) {
+        expect(resolved.error.code).toBe("invalid_input");
+      }
+    }
+  });
+
   it("refuses a stored payload whose retained state is corrupt rather than coercing it", () => {
     const { store } = storeAt();
     const plant = (detail: Readonly<Record<string, unknown>>) =>

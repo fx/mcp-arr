@@ -64,6 +64,14 @@ export interface QueueReferenceContext {
 export interface HistoryReferenceContext {
   readonly application: ApplicationId;
   readonly historyRecordId: number;
+  /**
+   * The series or movie the record was associated with, where upstream named
+   * one. It is retained for the same reason a queue reference retains its: a
+   * mark-failed has to re-read the record it names immediately before writing,
+   * and this is what lets that read be one scoped request instead of a walk
+   * back through the instance's whole history.
+   */
+  readonly mediaId?: number | undefined;
 }
 
 export interface BlocklistReferenceContext {
@@ -120,6 +128,7 @@ function historyFingerprint(record: HistoryRecord): string {
     record.eventType,
     record.date,
     record.successful,
+    record.context.mediaId,
   ]);
 }
 
@@ -175,7 +184,14 @@ export function mintHistoryReference(references: ReferenceStore, record: History
       snapshot: {
         upstreamId: String(record.context.historyRecordId),
         fingerprint: historyFingerprint(record),
-        detail: { kind: detailKinds.history, eventType: record.eventType },
+        detail: {
+          kind: detailKinds.history,
+          eventType: record.eventType,
+          // The media association and nothing else about the media record: it
+          // is an identifier this server already reports as a media reference,
+          // and it is what bounds the re-read a later mark-failed performs.
+          mediaId: record.context.mediaId,
+        },
       },
     }),
   }).reference;
@@ -400,9 +416,27 @@ export function resolveHistoryReference(
     detailKind: detailKinds.history,
     property,
   });
-  return record.ok
-    ? { ok: true, value: { application, historyRecordId: record.value.id } }
-    : record;
+  if (!record.ok) {
+    return record;
+  }
+
+  // A media association this module never wrote is legitimately absent — a
+  // Prowlarr history record has none, and neither does a media row upstream
+  // could not associate. One holding something this module would never have
+  // written is refused rather than dropped: silently continuing without it
+  // would turn a corrupt reference into an unbounded history walk.
+  const mediaId = storedId(record.value.detail.mediaId);
+  if (mediaId.state === "invalid") {
+    return { ok: false, error: invalid(application, `${property} does not name a history record`) };
+  }
+  return {
+    ok: true,
+    value: {
+      application,
+      historyRecordId: record.value.id,
+      mediaId: mediaId.state === "present" ? mediaId.value : undefined,
+    },
+  };
 }
 
 export function resolveBlocklistReference(

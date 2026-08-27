@@ -60,10 +60,10 @@ The [Activity Management spec](../specs/activity-management/#history-and-blockli
 
 ## Tasks
 
-- [ ] Implement typed activity mutation references and adapters
-  - [ ] Add safe history and blocklist references to activity results
-  - [ ] Implement Sonarr/Radarr mark-history-failed behavior and follow-on effect mapping
-  - [ ] Implement Sonarr/Radarr single-record blocklist removal
+- [x] Implement typed activity mutation references and adapters
+  - [x] Add safe history and blocklist references to activity results
+  - [x] Implement Sonarr/Radarr mark-history-failed behavior and follow-on effect mapping
+  - [x] Implement Sonarr/Radarr single-record blocklist removal
 - [ ] Register and verify `arr_activity_change`
   - [ ] Add typed plan/direct-apply variants and structured receipts
   - [ ] Add stale-state and unknown-outcome reconciliation

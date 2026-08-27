@@ -34,7 +34,7 @@ export const allApplicationsEnvironment: EnvironmentRecord = {
 /**
  * A client stub for a test that only reads.
  *
- * Both write methods reject, so a test that unexpectedly reaches one fails
+ * Every write method rejects, so a test that unexpectedly reaches one fails
  * naming the route rather than silently doing nothing and passing.
  */
 export function readOnlyClient(
@@ -44,7 +44,7 @@ export function readOnlyClient(
 ): UpstreamClient {
   const refuse = (path: string): Promise<never> =>
     Promise.reject(new Error(`This stub is read-only; it was asked to write ${path}`));
-  return { application, apiBaseUrl, get, post: refuse, put: refuse };
+  return { application, apiBaseUrl, get, post: refuse, put: refuse, delete: refuse };
 }
 
 export function applicationForUrl(url: string): ApplicationId {

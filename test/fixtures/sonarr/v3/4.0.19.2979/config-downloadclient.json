@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "application": "sonarr",
+    "apiVersion": "v3",
+    "version": "4.0.19.2979",
+    "endpoint": "/api/v3/config/downloadclient"
+  },
+  "body": {
+    "id": 1,
+    "downloadClientWorkingFolders": "_UNPACK_|_FAILED_",
+    "enableCompletedDownloadHandling": true,
+    "checkForFinishedDownloadInterval": 1,
+    "autoRedownloadFailed": true,
+    "autoRedownloadFailedFromInteractiveSearch": true
+  }
+}
