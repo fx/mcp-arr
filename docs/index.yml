@@ -64,7 +64,7 @@ changes:
     path: changes/0005-release-search-and-grab.md
     description: Implement cached release search, opaque references, grab, and automatic search
     spec: acquisition-and-import
-    status: draft
+    status: complete
     depends_on: ["0002", "0003"]
   - id: "0006"
     name: queue-resolution

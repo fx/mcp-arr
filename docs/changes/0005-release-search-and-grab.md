@@ -5,7 +5,7 @@
 Implement stateful Sonarr, Radarr, and Prowlarr release search plus typed grab using expiring opaque references as defined by the [Acquisition and Import spec](../specs/acquisition-and-import/).
 
 **Spec:** [Acquisition and Import](../specs/acquisition-and-import/)
-**Status:** draft
+**Status:** complete
 **Depends On:** 0002, 0003
 
 ## Motivation
@@ -67,10 +67,10 @@ The [Acquisition and Import spec](../specs/acquisition-and-import/#release-searc
   - [x] Bind search cache identity, application/media context, and expiration
   - [x] Implement typed single grab and Prowlarr per-item bulk grab
   - [x] Add direct apply, plan/apply, retry, and stale-cache reconciliation
-- [ ] Implement and register `arr_search_start`
-  - [ ] Add typed episode/season/series/movie/missing/cutoff command variants with plan/direct-apply behavior
-  - [ ] Project resulting commands into normalized jobs
-  - [ ] Add fixture and stdio tests for partial failure, cache expiry, rejection, redaction, and duplicate retry
+- [x] Implement and register `arr_search_start`
+  - [x] Add typed episode/season/series/movie/missing/cutoff command variants with plan/direct-apply behavior
+  - [x] Project resulting commands into normalized jobs
+  - [x] Add fixture and stdio tests for partial failure, cache expiry, rejection, redaction, and duplicate retry
 
 ## Open Questions
 

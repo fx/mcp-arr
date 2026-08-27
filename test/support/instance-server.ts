@@ -17,8 +17,9 @@ import { fixtureRoot } from "./tool-context.js";
  */
 
 /**
- * The routes each application answers: its probe, its library reads, and the
- * interactive release search a grab is resolved from.
+ * The routes each application answers: its probe, its library reads, the
+ * interactive release search a grab is resolved from, and the command endpoint
+ * an automatic search is started on.
  */
 const routes: Readonly<Record<ApplicationId, readonly string[]>> = {
   sonarr: [
@@ -31,6 +32,7 @@ const routes: Readonly<Record<ApplicationId, readonly string[]>> = {
     "wanted/cutoff",
     "calendar",
     "release",
+    "command",
   ],
   radarr: [
     "system/status",
@@ -42,6 +44,7 @@ const routes: Readonly<Record<ApplicationId, readonly string[]>> = {
     "wanted/cutoff",
     "calendar",
     "release",
+    "command",
   ],
   // Prowlarr has no media library, so it answers the capability probe and the
   // routes an aggregate search and a grab need.
@@ -96,6 +99,12 @@ export interface UpstreamGrab {
   readonly indexerId: number | undefined;
 }
 
+/** One command this instance was asked to start, as it arrived. */
+export interface UpstreamCommand {
+  readonly name: string;
+  readonly body: Readonly<Record<string, unknown>>;
+}
+
 export interface FixtureInstance {
   readonly application: ApplicationId;
   readonly url: string;
@@ -106,6 +115,8 @@ export interface FixtureInstance {
   readonly searches: readonly UpstreamSearch[];
   /** The grabs this instance was asked to resolve, in order. */
   readonly grabs: readonly UpstreamGrab[];
+  /** The commands this instance was asked to start, in order. */
+  readonly commands: readonly UpstreamCommand[];
   close(): Promise<void>;
 }
 
@@ -122,25 +133,17 @@ function filtered(body: unknown, route: string, query: URLSearchParams): unknown
   return body.filter((record) => isRecord(record) && String(record[filter.field]) === wanted);
 }
 
-interface GrabBody {
-  readonly guid: string;
-  readonly indexerId: number | undefined;
-}
-
-/** Reads the body one grab carried, which is only ever a cache identity. */
-async function readGrabBody(request: IncomingMessage): Promise<GrabBody> {
+/** Reads the JSON object a write carried. Nothing here interprets it. */
+async function readPostedBody(request: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   for await (const chunk of request) {
     chunks.push(chunk as Buffer);
   }
   const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  if (!isRecord(parsed) || typeof parsed.guid !== "string") {
-    throw new Error("A grab must carry a release GUID");
+  if (!isRecord(parsed)) {
+    throw new Error("A write must carry a JSON object");
   }
-  return {
-    guid: parsed.guid,
-    indexerId: typeof parsed.indexerId === "number" ? parsed.indexerId : undefined,
-  };
+  return parsed;
 }
 
 /** The single record `series/{id}` answers with, taken from the series fixture. */
@@ -159,6 +162,7 @@ export async function startFixtureInstance(
   const requests: string[] = [];
   const searches: UpstreamSearch[] = [];
   const grabs: UpstreamGrab[] = [];
+  const started: UpstreamCommand[] = [];
   const stale = new Set(options.staleGrabs ?? []);
   const bodies = new Map<string, unknown>(
     await Promise.all(
@@ -198,24 +202,53 @@ export async function startFixtureInstance(
       return;
     }
 
-    // A grab is the one thing this server is asked to do rather than to
-    // report. It resolves out of the recorded search body, exactly the way an
-    // instance resolves one out of its own short-lived cache, and answers `404`
-    // for a release the cache no longer holds.
+    /**
+     * Accepts an allowlisted command and answers as an instance does: with a
+     * command record the caller can follow. The record is the recorded fixture
+     * with the requested name written over it, so the identity and the state
+     * come from the fixture and only the echo is synthesized.
+     */
+    const acceptCommand = (body: Record<string, unknown>): void => {
+      const name = typeof body.name === "string" ? body.name : "";
+      started.push({ name, body });
+      const recorded = Array.isArray(bodies.get("command"))
+        ? (bodies.get("command") as unknown[])[0]
+        : undefined;
+      if (name === "" || !isRecord(recorded)) {
+        send(response, 400, { message: "unknown command" });
+        return;
+      }
+      send(response, 201, { ...recorded, name });
+    };
+
+    // The two things this server is asked to do rather than to report. A grab
+    // resolves out of the recorded search body, exactly the way an instance
+    // resolves one out of its own short-lived cache, and answers `404` for a
+    // release the cache no longer holds. A command is accepted and echoed back
+    // as a command record, which is what makes the started job projectable.
     if (request.method === "POST") {
-      if (route !== grabRoutes[application]) {
+      if (route !== grabRoutes[application] && route !== "command") {
         send(response, 404, { message: "not found" });
         return;
       }
-      readGrabBody(request).then(
+      readPostedBody(request).then(
         (body) => {
-          grabs.push({ route, guid: body.guid, indexerId: body.indexerId });
+          if (route === "command") {
+            acceptCommand(body);
+            return;
+          }
+          const guid = typeof body.guid === "string" ? body.guid : "";
+          grabs.push({
+            route,
+            guid,
+            indexerId: typeof body.indexerId === "number" ? body.indexerId : undefined,
+          });
           const cached = Array.isArray(bodies.get(route))
             ? (bodies.get(route) as unknown[]).find(
-                (record) => isRecord(record) && record.guid === body.guid,
+                (record) => isRecord(record) && record.guid === guid,
               )
             : undefined;
-          if (cached === undefined || stale.has(body.guid)) {
+          if (cached === undefined || stale.has(guid)) {
             send(response, 404, {
               message: "Couldn't find requested release in cache, try searching again",
             });
@@ -256,6 +289,7 @@ export async function startFixtureInstance(
     requests,
     searches,
     grabs,
+    commands: started,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => (error === undefined ? resolve() : reject(error)));

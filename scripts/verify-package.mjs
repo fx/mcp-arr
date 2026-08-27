@@ -19,6 +19,7 @@ const canonicalRepository = "https://github.com/fx/mcp-arr";
 const allowedFiles = [
   "LICENSE",
   "README.md",
+  "dist/adapters/acquisition/commands.js",
   "dist/adapters/acquisition/grab.js",
   "dist/adapters/acquisition/model.js",
   "dist/adapters/acquisition/parse.js",

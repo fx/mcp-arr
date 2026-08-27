@@ -1,3 +1,4 @@
+import { searchCommandName, startSearchCommand } from "../adapters/acquisition/commands.js";
 import {
   type ReleaseGrabRequest,
   runReleaseGrab,
@@ -16,6 +17,8 @@ import {
   type ReleaseSearchRequest,
   type ReleaseSearchTarget,
   releaseSearchTargets,
+  type SearchStartRequest,
+  type SearchStartTarget,
 } from "../adapters/acquisition/requests.js";
 import { type ReleaseSearchData, runReleaseSearch } from "../adapters/acquisition/service.js";
 import { mediaRef, mediaRefKey, seasonRef } from "../adapters/library/model.js";
@@ -24,7 +27,8 @@ import type { ApplicationId } from "../applications.js";
 import type { PreconditionRead } from "../state/plans.js";
 import { type ReferenceEntry, referenceLifetimes } from "../state/references.js";
 import { createToolError, type ToolError, toolErrorForReferenceFailure } from "./errors.js";
-import { type Resolved, resolveUpstreamId } from "./library.js";
+import { projectJob } from "./jobs.js";
+import { type Resolved, resolveUpstreamId, resolveUpstreamIds } from "./library.js";
 import type { OperationHandler, OperationInvocation, PreconditionReader } from "./operations.js";
 import type { Effect, ItemOutcome } from "./results.js";
 import {
@@ -32,11 +36,14 @@ import {
   type ReleaseSearchInput,
   releaseGrabInputSchema,
   releaseSearchInputSchema,
+  type SearchStartInput,
+  searchStartInputSchema,
 } from "./schemas/acquisition.js";
 import type {
   PublishedReleaseCandidate,
   ReleaseGrabResultData,
   ReleaseSearchResult,
+  SearchStartResultData,
 } from "./schemas/acquisition-results.js";
 
 /**
@@ -708,3 +715,306 @@ function grabFailure(application: ApplicationId, items: readonly ItemOutcome[]):
     application,
   });
 }
+
+/**
+ * `arr_search_start`: the other half of acquisition, and the opposite trade.
+ *
+ * An interactive search hands the caller the releases and lets it choose; an
+ * automatic search asks the application to do the whole thing itself, grab
+ * included. That is why this is a mutation with a job rather than a bounded
+ * read: nothing comes back but the identity of the work that started.
+ *
+ * The upstream endpoint behind it is a generic command dispatcher, which the
+ * tool contract forbids exposing. It is not exposed: the caller names a typed
+ * target, `adapters/acquisition/commands.ts` holds the closed table from target
+ * to command name, and no caller-supplied string reaches that table or the
+ * request body.
+ */
+
+/**
+ * The media a start request names, resolved once.
+ *
+ * Both halves of the handler need this — the plan republishes the references
+ * and the apply sends the identifiers — so it is resolved before the mode is
+ * branched on, which is also what makes a bad reference fail identically in
+ * plan and in apply.
+ */
+interface SearchSelection {
+  readonly request: SearchStartRequest;
+  /** The opaque references the caller named, echoed back by a plan. */
+  readonly references: readonly string[];
+}
+
+/**
+ * Resolves every media reference an automatic search names.
+ *
+ * A wanted-list search names none: `missing` and `cutoff_unmet` describe a
+ * whole library rather than a set of records, so their only argument is whether
+ * to stay inside the monitored set.
+ */
+function buildSearchStart(
+  invocation: OperationInvocation,
+  input: Extract<SearchStartInput, { readonly target: SearchStartTarget }>,
+): Resolved<SearchSelection> {
+  switch (input.target) {
+    case "sonarr_episode": {
+      const ids = resolveUpstreamIds(invocation, input.episodes, "episode", "episodes");
+      return ids.ok
+        ? {
+            ok: true,
+            value: {
+              request: { target: "sonarr_episode", episodeIds: ids.value },
+              references: input.episodes,
+            },
+          }
+        : ids;
+    }
+    case "sonarr_season": {
+      const seriesId = resolveUpstreamId(invocation, input.series, "series", "series");
+      return seriesId.ok
+        ? {
+            ok: true,
+            value: {
+              request: {
+                target: "sonarr_season",
+                seriesId: seriesId.value,
+                seasonNumber: input.seasonNumber,
+              },
+              references: [input.series],
+            },
+          }
+        : seriesId;
+    }
+    case "sonarr_series": {
+      const seriesId = resolveUpstreamId(invocation, input.series, "series", "series");
+      return seriesId.ok
+        ? {
+            ok: true,
+            value: {
+              request: { target: "sonarr_series", seriesId: seriesId.value },
+              references: [input.series],
+            },
+          }
+        : seriesId;
+    }
+    case "radarr_movie": {
+      const ids = resolveUpstreamIds(invocation, input.movies, "movie", "movies");
+      return ids.ok
+        ? {
+            ok: true,
+            value: {
+              request: { target: "radarr_movie", movieIds: ids.value },
+              references: input.movies,
+            },
+          }
+        : ids;
+    }
+    case "missing":
+    case "cutoff_unmet":
+      return {
+        ok: true,
+        value: {
+          request: { target: input.target, monitoredOnly: input.monitoredOnly },
+          references: [],
+        },
+      };
+  }
+}
+
+interface SearchStartIntent {
+  readonly selection: SearchSelection;
+  /** The allowlisted command this target compiles to on this application. */
+  readonly command: string;
+}
+
+/**
+ * Narrows a validated input to the intent this application can actually run.
+ *
+ * Two things are checked here that the schema cannot: that the caller supplied
+ * a direct intent rather than an unresolved plan reference, and that the
+ * selected application has a command for the target at all. The second is a
+ * capability answer rather than a validation one, which is why it is an
+ * `unsupported_capability` and not an `invalid_input`.
+ */
+function readSearchStart(invocation: OperationInvocation): Resolved<SearchStartIntent> {
+  const parsed = searchStartInputSchema.safeParse(invocation.input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: invalid(invocation, "the arguments do not match the arr_search_start input schema"),
+    };
+  }
+
+  const input = parsed.data as SearchStartInput;
+  if (!("target" in input)) {
+    // The plan-apply form carries no intent of its own; the dispatcher replaces
+    // it with the plan's recorded intent before a handler ever runs.
+    return { ok: false, error: invalid(invocation, "no search target was named") };
+  }
+
+  const command = searchCommandName(invocation.application, input.target);
+  if (command === undefined) {
+    return {
+      ok: false,
+      error: createToolError({
+        code: "unsupported_capability",
+        message: `${invocation.application}: the ${input.target} automatic search is not available on this application`,
+        application: invocation.application,
+      }),
+    };
+  }
+
+  const selection = buildSearchStart(invocation, input);
+  return selection.ok ? { ok: true, value: { selection: selection.value, command } } : selection;
+}
+
+/**
+ * The read set an automatic-search plan depends on: the media it would search
+ * for.
+ *
+ * Re-running it immediately before apply is what rechecks that every reference
+ * still resolves at the moment the command would be sent, so a reference that
+ * expired between planning and applying blocks the command rather than being
+ * silently dropped from it. A wanted-list search observes nothing, because it
+ * names no record whose disappearance could change what it does.
+ */
+export const searchStartPreconditions: PreconditionReader = (invocation) => {
+  const intent = readSearchStart(invocation);
+  if (!intent.ok) {
+    return Promise.resolve<PreconditionRead>({ status: "blocked", error: intent.error });
+  }
+
+  const request = intent.value.selection.request;
+  return Promise.resolve<PreconditionRead>({
+    status: "ok",
+    observations: [
+      {
+        key: "search-targets",
+        // Built from the resolved request rather than from the caller's own
+        // argument order, and sorted, so naming the same records in another
+        // order is the same read set.
+        value: [intent.value.command, ...searchTargetKeys(request)].sort(),
+      },
+    ],
+  });
+};
+
+/** The upstream identities one request would search for, as comparable strings. */
+function searchTargetKeys(request: SearchStartRequest): readonly string[] {
+  switch (request.target) {
+    case "sonarr_episode":
+      return request.episodeIds.map((id) => `episode:${id}`);
+    case "sonarr_season":
+      return [`season:${request.seriesId}/${request.seasonNumber}`];
+    case "sonarr_series":
+      return [`series:${request.seriesId}`];
+    case "radarr_movie":
+      return request.movieIds.map((id) => `movie:${id}`);
+    case "missing":
+    case "cutoff_unmet":
+      return [`monitored:${request.monitoredOnly}`];
+  }
+}
+
+/**
+ * How much work one automatic search asks for.
+ *
+ * A wanted-list search is the consequential one and says so: it can grab across
+ * a whole library, and the count of what it will touch is not knowable before
+ * it runs. A search for named records states how many.
+ */
+function searchStartEffect(application: ApplicationId, intent: SearchStartIntent): Effect {
+  const request = intent.selection.request;
+  const scope =
+    request.target === "missing" || request.target === "cutoff_unmet"
+      ? `every ${request.monitoredOnly ? "monitored " : ""}wanted item`
+      : `${intent.selection.references.length} selected item(s)`;
+  return {
+    application,
+    severity: "consequential",
+    summary: `run ${intent.command} for ${scope}, which may grab and download releases`,
+  };
+}
+
+/**
+ * Starts one allowlisted automatic search.
+ *
+ * Plan discloses the command and the media without contacting the instance;
+ * apply sends it and projects the accepted command into a normalized job, which
+ * is the only thing a caller follows afterwards. A read-mode invocation — which
+ * the published schema cannot produce, since a mode is required — is refused
+ * rather than quietly treated as one of the two.
+ *
+ * The projected job reports itself as uncancellable. That is not a guess: the
+ * upstream cancel route is a `DELETE` the shared client does not expose, so
+ * this server cannot request cancellation and says so, instead of accepting a
+ * cancellation it would silently fail to make. A caller that needs the current
+ * state of a running command reads it through `arr_activity_query`'s `commands`
+ * view, which lists what the instance is actually running.
+ */
+export const searchStartHandler: OperationHandler = async (invocation) => {
+  const intent = readSearchStart(invocation);
+  if (!intent.ok) {
+    return { status: "error", error: intent.error };
+  }
+  const application = invocation.application;
+  const { selection, command } = intent.value;
+
+  if (invocation.mode === "plan") {
+    const data: SearchStartResultData = {
+      stage: "planned",
+      target: selection.request.target,
+      application,
+      command,
+      media: [...selection.references],
+    };
+    const effect = searchStartEffect(application, intent.value);
+    return {
+      status: "ok",
+      data,
+      plan: {
+        requestedEffects: [effect],
+        // Every named record still resolves and the application has the
+        // command, so the search is predicted to start. What it will find, and
+        // whether it grabs anything, is the application's own decision and is
+        // deliberately not predicted here.
+        predictedEffects: [effect],
+      },
+    };
+  }
+
+  if (invocation.mode !== "apply") {
+    return {
+      status: "error",
+      error: invalid(invocation, "an automatic search runs only in plan or apply mode"),
+    };
+  }
+
+  const started = await startSearchCommand(
+    invocation.adapter.client,
+    application,
+    selection.request,
+    command,
+  );
+  const record = invocation.state.jobs.project({
+    application,
+    command: { name: started.name, upstreamId: started.upstreamId },
+    observation: started.observation,
+    // See the handler's own note: this server has no way to ask upstream to
+    // stop a command, so the job never claims it can.
+    cancellation: { supported: false },
+  });
+
+  const data: SearchStartResultData = {
+    stage: "started",
+    target: selection.request.target,
+    job: projectJob(record),
+  };
+  return {
+    status: "ok",
+    data,
+    warnings: record.warnings,
+    job: record.reference,
+    effects: [searchStartEffect(application, intent.value)],
+  };
+};

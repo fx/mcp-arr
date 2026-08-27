@@ -248,3 +248,82 @@ describe("arr_release_search and arr_release_grab over stdio", () => {
     }
   }, 30_000);
 });
+
+describe("arr_search_start over stdio", () => {
+  it("starts an allowlisted command and hands back a readable job", async () => {
+    const sonarr = await instance("sonarr");
+    const child = spawnBuiltServer(instanceEnvironment([sonarr]), 10_000);
+
+    try {
+      await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
+      const series = await seriesReference(child, 2);
+
+      const started = (await child.request(3, "tools/call", {
+        name: "arr_search_start",
+        arguments: { target: "sonarr_series", mode: "apply", series },
+      })) as CallResult;
+
+      expect(started.result?.isError).toBe(false);
+      const envelope = started.result?.structuredContent as {
+        status: string;
+        applications: Array<{ data?: { stage: string; job?: { job: string; command?: unknown } } }>;
+        mutation?: { job?: string; receipt?: { state: string } };
+      };
+      expect(envelope.status).toBe("ok");
+      expect(envelope.applications[0]?.data?.stage).toBe("started");
+      expect(envelope.mutation?.receipt?.state).toBe("succeeded");
+
+      // The instance was asked for exactly the allowlisted command, and for
+      // nothing a caller could have named.
+      expect(sonarr.commands.map((entry) => entry.name)).toEqual(["SeriesSearch"]);
+      expect(sonarr.commands[0]?.body).toEqual({ name: "SeriesSearch", seriesId: 12 });
+
+      // The job reference the mutation returned is one arr_job_get resolves.
+      const job = envelope.mutation?.job;
+      const read = (await child.request(4, "tools/call", {
+        name: "arr_job_get",
+        arguments: { job },
+      })) as CallResult;
+      expect(read.result?.isError).toBe(false);
+      expect(
+        (read.result?.structuredContent as { applications: Array<{ data?: { job: string } }> })
+          .applications[0]?.data?.job,
+      ).toBe(job);
+
+      await child.terminateGracefully();
+      assertCleanProtocolStdout(child.stdout);
+      expect(child.stderr).toBe("");
+      expect(child.stdout).not.toContain(sonarr.apiKey);
+      expect(child.stdout).not.toContain("127.0.0.1");
+    } finally {
+      await child.forceCleanup().catch(() => undefined);
+    }
+  }, 30_000);
+
+  it("refuses a wanted-list search that does not name one application", async () => {
+    const sonarr = await instance("sonarr");
+    const radarr = await instance("radarr");
+    const child = spawnBuiltServer(instanceEnvironment([sonarr, radarr]), 10_000);
+
+    try {
+      await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
+      const called = (await child.request(2, "tools/call", {
+        name: "arr_search_start",
+        arguments: { target: "missing", mode: "apply", monitoredOnly: true },
+      })) as CallResult;
+
+      expect(called.result?.isError).toBe(true);
+      const summary = called.result?.content?.[0]?.text ?? "";
+      expect(summary).toContain("invalid_input");
+      // Nothing was started on either instance.
+      expect(sonarr.commands).toEqual([]);
+      expect(radarr.commands).toEqual([]);
+
+      await child.terminateGracefully();
+      assertCleanProtocolStdout(child.stdout);
+      expect(child.stderr).toBe("");
+    } finally {
+      await child.forceCleanup().catch(() => undefined);
+    }
+  }, 30_000);
+});
