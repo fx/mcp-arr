@@ -110,6 +110,15 @@ export interface ImportCandidateContext {
   readonly sizeBytes?: number | undefined;
   /** Set when this candidate is a file the library already holds. */
   readonly existingFileId?: number | undefined;
+  /**
+   * Whether the application would import the file as mapped when the candidate
+   * was inspected.
+   *
+   * Retained because the reference's fingerprint covers it: a candidate that
+   * was importable then and is not now is a different candidate, and a later
+   * step has to be able to see that rather than infer it.
+   */
+  readonly importable?: boolean | undefined;
 }
 
 /**

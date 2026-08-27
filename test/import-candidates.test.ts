@@ -482,12 +482,19 @@ describe("candidate references", () => {
       candidateId: 3001,
       queueItemId: 502,
       fileIdentity: candidate.fileIdentity,
+      importable: candidate.decision.importable,
     };
 
     const corrupt: readonly [string, Record<string, unknown>][] = [
       ["a path where the identifier belongs", { upstreamId: "/media/example/file.mkv" }],
       ["an identifier naming another row", { upstreamId: "4242" }],
       ["a fingerprint that is not a digest", { fingerprint: "/media/example" }],
+      // A well-formed fingerprint that simply is not this candidate's. The
+      // shape says nothing; the value is what has to match.
+      [
+        "a fingerprint of the right shape but the wrong candidate",
+        { fingerprint: "deadbeefcafe1234" },
+      ],
       ["an unknown field", { extra: "unexpected" }],
     ];
 
@@ -609,6 +616,31 @@ describe("candidate references", () => {
 
     const resolved = resolveCandidateReference(references, reference, "sonarr");
     expect(resolved.ok && resolved.value.seasonNumber).toBe(0);
+  });
+
+  it("recomputes the fingerprint rather than trusting its shape", async () => {
+    // The digest is a function of the detail beside it, which is what makes it
+    // checkable at all: every part of it is retained, so resolution recomputes
+    // it and requires the exact value.
+    const references = store();
+    const candidate = await firstCandidate();
+    const reference = mintCandidateReference(references, candidate) as string;
+    const resolved = references.resolve(reference, "import_candidate");
+    if (!resolved.ok || resolved.entry.payload.kind !== "domain") {
+      throw new Error("Expected a domain payload");
+    }
+    const snapshot = resolved.entry.payload.snapshot;
+
+    // Changing what the detail says without changing the digest is refused,
+    // and so is changing the digest without changing the detail.
+    references.update(reference, "import_candidate", {
+      kind: "domain",
+      snapshot: {
+        ...snapshot,
+        detail: { ...snapshot.detail, importable: !candidate.decision.importable },
+      },
+    });
+    expect(resolveCandidateReference(references, reference, "sonarr").ok).toBe(false);
   });
 
   it("gives two scans of the same file the same fingerprint", async () => {

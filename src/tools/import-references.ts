@@ -72,6 +72,16 @@ const candidateDetailSchema = z
     fileIdentity: z.string().regex(new RegExp(`^[0-9a-f]{${String(fileIdentityLength)}}$`, "u")),
     sizeBytes: sizeSchema.optional(),
     existingFileId: recordIdSchema.optional(),
+    /**
+     * Whether the application would import the file as mapped.
+     *
+     * Retained rather than recomputed because the fingerprint covers it: a
+     * candidate that was importable when it was inspected and is not now is a
+     * different candidate, and a digest that did not say so would call the two
+     * the same. It is also what makes the fingerprint checkable at all — every
+     * part of it has to be here, or resolution could never recompute it.
+     */
+    importable: z.boolean(),
   })
   .refine(
     (detail) =>
@@ -104,6 +114,13 @@ const candidateSnapshotSchema = z
   })
   .refine((snapshot) => snapshot.upstreamId === String(snapshot.detail.candidateId ?? 0), {
     error: "the retained upstream identifier does not match the candidate it names",
+  })
+  .refine((snapshot) => snapshot.fingerprint === fingerprintFor(snapshot.detail), {
+    // The fingerprint is checked by value and not merely by shape. It is a
+    // digest of the detail beside it, so it can be recomputed here — and one
+    // that does not match means the two describe different candidates, which is
+    // corruption whatever either of them says on its own.
+    error: "the retained fingerprint does not describe the candidate beside it",
   });
 
 type CandidateDetail = z.infer<typeof candidateDetailSchema>;
@@ -121,31 +138,41 @@ function detailFor(candidate: ImportCandidate): Record<string, unknown> {
     fileIdentity: candidate.fileIdentity,
     sizeBytes: candidate.sizeBytes,
     existingFileId: candidate.context.existingFileId,
+    importable: candidate.decision.importable,
   };
 }
 
 /**
  * Digests the state a candidate's validity depends on.
  *
+ * It is computed from the retained detail and from nothing else, which is what
+ * makes it verifiable: resolution can recompute it and require the exact value,
+ * so a fingerprint is checked by what it says rather than by looking like a
+ * digest. A part that lived outside the detail would break that — the digest
+ * could never be recomputed, and the field would be decoration.
+ *
  * The parts are listed in a fixed, code-authored order, and each is either a
  * value this server derived or an identifier the instance assigned — never
  * upstream free text, whose sanitization would otherwise decide whether two
  * scans of the same file fingerprint alike. The file identity is already a
- * digest of the path; including it here is what makes a file swapped underneath
- * a validated candidate detectable without either digest disclosing the path.
+ * digest of the path, so including it makes a file swapped underneath a
+ * validated candidate detectable without either digest disclosing the path.
+ *
+ * The application is not among the parts because it is not the detail's to
+ * carry: a reference is bound to exactly one application by the store, and that
+ * binding is checked before this is.
  */
-function candidateFingerprint(candidate: ImportCandidate): string {
+function fingerprintFor(detail: CandidateDetail): string {
   return queryDigest([
-    candidate.application,
-    candidate.sourceKind,
-    candidate.context.candidateId,
-    candidate.fileIdentity,
-    candidate.sizeBytes,
-    candidate.context.mediaId,
-    candidate.context.seasonNumber,
-    ...[...(candidate.context.episodeIds ?? [])].sort((left, right) => left - right),
-    candidate.context.existingFileId,
-    candidate.decision.importable,
+    detail.sourceKind,
+    detail.candidateId,
+    detail.fileIdentity,
+    detail.sizeBytes,
+    detail.mediaId,
+    detail.seasonNumber,
+    ...[...(detail.episodeIds ?? [])].sort((left, right) => left - right),
+    detail.existingFileId,
+    detail.importable,
   ]);
 }
 
@@ -195,7 +222,7 @@ export function mintCandidateReference(
         // and such a candidate is still nameable: what identifies the file is
         // its fingerprint, not a row number that may not exist.
         upstreamId: String(candidate.context.candidateId ?? 0),
-        fingerprint: candidateFingerprint(candidate),
+        fingerprint: fingerprintFor(candidateDetailSchema.parse(detailFor(candidate))),
         detail: detailFor(candidate),
       },
     }),
@@ -276,5 +303,6 @@ function contextFrom(
     fileIdentity: detail.fileIdentity,
     sizeBytes: detail.sizeBytes,
     existingFileId: detail.existingFileId,
+    importable: detail.importable,
   };
 }
