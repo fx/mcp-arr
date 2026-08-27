@@ -127,23 +127,47 @@ function readFinding(value: unknown): ValidationFinding | undefined {
   };
 }
 
+/** What one answer to a test contained, and what could not be read out of it. */
+export interface ValidationReading {
+  readonly findings: readonly ValidationFinding[];
+  /**
+   * How many entries the instance sent that this server could not read.
+   *
+   * Counted rather than discarded. An entry nobody could read is not evidence
+   * of anything, and dropping it would let a refusal that listed one warning and
+   * one unreadable objection be bypassed as though the warning were all of it.
+   */
+  readonly unreadable: number;
+}
+
 /**
  * Reads whatever the instance answered a test with.
  *
  * These APIs report a clean test as an empty success and a rejected one as a
  * body listing what failed, so both shapes are read here rather than only the
- * one a passing test produces. A body this server cannot make sense of yields
- * no findings, which — combined with the rule below — leaves a rejection
- * classified as a failure rather than as a warning nothing described.
+ * one a passing test produces. A body that is not a list at all is one
+ * unreadable entry rather than nothing, for the same reason: a rejection this
+ * server cannot parse must not read as a rejection with nothing in it.
  */
-export function readFindings(body: unknown): readonly ValidationFinding[] {
-  if (!Array.isArray(body)) {
-    return [];
+export function readValidation(body: unknown): ValidationReading {
+  if (body === undefined || body === null) {
+    return { findings: [], unreadable: 0 };
   }
-  return body.flatMap((entry) => {
+  if (!Array.isArray(body)) {
+    return { findings: [], unreadable: 1 };
+  }
+
+  const findings: ValidationFinding[] = [];
+  let unreadable = 0;
+  for (const entry of body) {
     const finding = readFinding(entry);
-    return finding === undefined ? [] : [finding];
-  });
+    if (finding === undefined) {
+      unreadable += 1;
+    } else {
+      findings.push(finding);
+    }
+  }
+  return { findings, unreadable };
 }
 
 /**
@@ -151,21 +175,23 @@ export function readFindings(body: unknown): readonly ValidationFinding[] {
  *
  * An accepted test with warnings is warned rather than passed: the instance
  * took it and still had something to say. A rejected test is failed unless
- * every finding it listed is a warning — and a rejection that listed nothing
- * this server could read is failed too, because an unreadable refusal is not
- * evidence that a bypass is safe.
+ * every objection it raised is a warning this server could read — a rejection
+ * that listed nothing readable is failed, and so is one that listed a warning
+ * alongside something unreadable, because the unread part is exactly what a
+ * bypass would be overriding blind.
  */
-export function classifyTest(
-  accepted: boolean,
-  findings: readonly ValidationFinding[],
-): ProviderTestOutcome {
-  if (findings.some((finding) => finding.severity === "error")) {
+export function classifyTest(accepted: boolean, reading: ValidationReading): ProviderTestOutcome {
+  if (reading.findings.some((finding) => finding.severity === "error")) {
     return "failed";
   }
   if (accepted) {
-    return findings.length === 0 ? "passed" : "warned";
+    // An accepted answer already says the instance took it, so an entry that
+    // could not be read alongside that is a warning nobody can name rather
+    // than a refusal: it is reported as warned, not as a failure the instance
+    // did not report.
+    return reading.findings.length === 0 && reading.unreadable === 0 ? "passed" : "warned";
   }
-  return findings.length === 0 ? "failed" : "warned";
+  return reading.unreadable > 0 || reading.findings.length === 0 ? "failed" : "warned";
 }
 
 /** Whether a save may proceed past this outcome when a caller explicitly asks. */
@@ -182,6 +208,8 @@ export interface ProviderTestRequest {
 export interface ProviderTestResult {
   readonly outcome: ProviderTestOutcome;
   readonly findings: readonly ValidationFinding[];
+  /** How many of the instance's objections this server could not read. */
+  readonly unreadable: number;
   /** What the test reached, as a fact about what happened rather than a plan. */
   readonly effect: ExternalEffect;
   /**
@@ -196,7 +224,20 @@ export interface ProviderTestResult {
 
 export type ProviderTestOutcomeResult =
   | ({ readonly status: "ok" } & ProviderTestResult)
-  | { readonly status: "error"; readonly error: ToolError; readonly attempted: boolean };
+  | {
+      readonly status: "error";
+      readonly error: ToolError;
+      readonly attempted: boolean;
+      /**
+       * What the attempt reached, present exactly when one was made.
+       *
+       * A notification test whose answer was lost may already have delivered
+       * its message. A result that said only "this failed" would invite a retry
+       * that sends a second one, so the effect travels with the failure as well
+       * as with the success.
+       */
+      readonly effect?: ExternalEffect | undefined;
+    };
 
 /** The route a provider domain's test is sent to. */
 export function providerTestRoute(
@@ -238,12 +279,13 @@ export async function runProviderTest(
   try {
     dispatched = true;
     const answered = await client.validate(route, request.payload);
-    const findings = readFindings(answered.body);
+    const reading = readValidation(answered.body);
     return {
       status: "ok",
       attempted: true,
-      outcome: classifyTest(answered.accepted, findings),
-      findings,
+      outcome: classifyTest(answered.accepted, reading),
+      findings: reading.findings,
+      unreadable: reading.unreadable,
       effect: domainEffects[request.domain],
     };
   } catch (error) {
@@ -251,6 +293,7 @@ export async function runProviderTest(
       status: "error",
       attempted: dispatched,
       error: toolErrorForThrown(error, application),
+      ...(dispatched ? { effect: domainEffects[request.domain] } : {}),
     };
   }
 }
@@ -305,7 +348,10 @@ export function checkBypass(
   }
   return createToolError({
     code: "upstream_rejection",
-    message: `${application}: this provider failed validation rather than raising warnings, and a bypass does not override a failure`,
+    message:
+      result.unreadable > 0
+        ? `${application}: this instance raised ${String(result.unreadable)} objection(s) this server could not read, and a bypass does not override something nobody can name`
+        : `${application}: this provider failed validation rather than raising warnings, and a bypass does not override a failure`,
     application,
   });
 }

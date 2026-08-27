@@ -11,7 +11,7 @@ import {
   isBypassable,
   providerTestOutcomes,
   providerTestRoute,
-  readFindings,
+  readValidation,
   runProviderTest,
   type ValidationFinding,
 } from "../src/adapters/configuration/tests.js";
@@ -147,46 +147,70 @@ describe("classifying a test", () => {
     expect(providerTestOutcomes).toEqual(["passed", "warned", "failed"]);
     const warning: ValidationFinding = { severity: "warning", message: "example" };
     const error: ValidationFinding = { severity: "error", message: "example" };
+    const read = (findings: readonly ValidationFinding[], unreadable = 0) => ({
+      findings,
+      unreadable,
+    });
 
-    expect(classifyTest(true, [])).toBe("passed");
-    expect(classifyTest(true, [warning])).toBe("warned");
-    expect(classifyTest(false, [warning])).toBe("warned");
-    expect(classifyTest(false, [error])).toBe("failed");
+    expect(classifyTest(true, read([]))).toBe("passed");
+    expect(classifyTest(true, read([warning]))).toBe("warned");
+    expect(classifyTest(false, read([warning]))).toBe("warned");
+    expect(classifyTest(false, read([error]))).toBe("failed");
     // One error among warnings is a failure. Reading the set as warnings
     // because most of them were is exactly how a bypass comes to override
     // something it was never meant to.
-    expect(classifyTest(false, [warning, error])).toBe("failed");
-    expect(classifyTest(true, [warning, error])).toBe("failed");
+    expect(classifyTest(false, read([warning, error]))).toBe("failed");
+    expect(classifyTest(true, read([warning, error]))).toBe("failed");
   });
 
-  it("treats a refusal it cannot read as a failure rather than a warning", () => {
-    // An unreadable refusal is not evidence that a bypass is safe.
-    expect(classifyTest(false, [])).toBe("failed");
-    expect(readFindings(undefined)).toEqual([]);
-    expect(readFindings({ message: "not a list" })).toEqual([]);
-    expect(readFindings([{ propertyName: "onGrab" }])).toEqual([]);
+  it("treats an objection it cannot read as one a bypass must not override", () => {
+    const warning: ValidationFinding = { severity: "warning", message: "example" };
+
+    // A refusal listing nothing readable is a failure, and so is one listing a
+    // warning beside something unread: the unread part is exactly what a bypass
+    // would be overriding blind.
+    expect(classifyTest(false, { findings: [], unreadable: 0 })).toBe("failed");
+    expect(classifyTest(false, { findings: [], unreadable: 1 })).toBe("failed");
+    expect(classifyTest(false, { findings: [warning], unreadable: 1 })).toBe("failed");
+    // An accepted answer already says the instance took it, so an unreadable
+    // entry beside that is a warning nobody can name rather than a refusal.
+    expect(classifyTest(true, { findings: [], unreadable: 1 })).toBe("warned");
+  });
+
+  it("counts what it could not read rather than dropping it", () => {
+    expect(readValidation(undefined)).toEqual({ findings: [], unreadable: 0 });
+    // A body that is not a list at all is one unreadable objection, not none.
+    expect(readValidation({ message: "not a list" })).toEqual({ findings: [], unreadable: 1 });
+    expect(readValidation([{ propertyName: "onGrab" }])).toEqual({ findings: [], unreadable: 1 });
+    expect(
+      readValidation([{ errorMessage: "example", isWarning: true }, { propertyName: "onGrab" }]),
+    ).toEqual({
+      findings: [{ severity: "warning", field: undefined, message: "example" }],
+      unreadable: 1,
+    });
   });
 
   it("counts an entry as a warning only where the instance said so", () => {
     // Unlabelled is an error: being wrong that way refuses a save that could
     // have proceeded, and being wrong the other way overrides a real failure.
-    expect(readFindings([{ errorMessage: "example" }])).toEqual([
-      { severity: "error", message: "example" },
+    expect(readValidation([{ errorMessage: "example" }]).findings).toEqual([
+      { severity: "error", field: undefined, message: "example" },
     ]);
-    expect(readFindings([{ errorMessage: "example", severity: "notice" }])).toEqual([
-      { severity: "error", message: "example" },
+    expect(readValidation([{ errorMessage: "example", severity: "notice" }]).findings).toEqual([
+      { severity: "error", field: undefined, message: "example" },
     ]);
-    expect(readFindings([{ errorMessage: "example", isWarning: true }])).toEqual([
-      { severity: "warning", message: "example" },
+    expect(readValidation([{ errorMessage: "example", isWarning: true }]).findings).toEqual([
+      { severity: "warning", field: undefined, message: "example" },
     ]);
-    expect(readFindings([{ errorMessage: "example", severity: "Warning" }])).toEqual([
-      { severity: "warning", message: "example" },
+    expect(readValidation([{ errorMessage: "example", severity: "Warning" }]).findings).toEqual([
+      { severity: "warning", field: undefined, message: "example" },
     ]);
   });
 
   it("reads the recorded answer into both kinds of finding", async () => {
     const result = ok(await instance({ status: 400, body: recorded }).run());
 
+    expect(result.unreadable).toBe(0);
     expect(result.findings).toEqual([
       {
         severity: "warning",
@@ -241,6 +265,16 @@ describe("running a test", () => {
     expect(result.attempted).toBe(true);
     expect(result.error.code).toBe("unavailable_application");
     expect(running.bodies).toHaveLength(1);
+    // And it says what the attempt reached, so a caller does not retry a
+    // notification that may already have been delivered.
+    expect(result.effect).toBe("delivers_message");
+  });
+
+  it("carries no external effect where nothing was attempted", async () => {
+    const result = failed(await instance({ status: 200 }).run("proxies"));
+
+    expect(result.attempted).toBe(false);
+    expect(result.effect).toBeUndefined();
   });
 
   it("still fails a server error rather than reading it as a validation answer", async () => {
@@ -264,7 +298,12 @@ describe("bypassing warnings", () => {
 
   it("permits a bypass past warnings and refuses one past a failure", () => {
     const warned = { severity: "warning" as const, message: "example" };
-    const base = { findings: [warned], effect: "delivers_message" as const, attempted: true };
+    const base = {
+      findings: [warned],
+      unreadable: 0,
+      effect: "delivers_message" as const,
+      attempted: true,
+    };
 
     expect(isBypassable("warned")).toBe(true);
     expect(isBypassable("failed")).toBe(false);
@@ -276,6 +315,11 @@ describe("bypassing warnings", () => {
     const refused = checkBypass("sonarr", { ...base, outcome: "failed" });
     expect(refused?.code).toBe("upstream_rejection");
     expect(refused?.message).toContain("does not override a failure");
+
+    // And where the refusal was unreadable, the reason says so rather than
+    // describing a failure the instance never named.
+    const unread = checkBypass("sonarr", { ...base, outcome: "failed", unreadable: 2 });
+    expect(unread?.message).toContain("2 objection(s) this server could not read");
   });
 
   it("names every warning it skipped rather than counting them", async () => {

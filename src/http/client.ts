@@ -162,28 +162,29 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
    * than as a parse failure.
    */
   /**
-   * The one answer `send` gives instead of throwing, and only when asked.
+   * The answer `send` gives instead of a bare body, and only when asked.
    *
-   * It exists so `validate` can read a rejection the instance chose without a
-   * second copy of the request path — the joining, the serialization, the
-   * timeout, and the redaction all have to be the same or a validating write
-   * would be a different request than every other write. Nothing else passes
-   * the flag that produces one, so no other method can receive it.
+   * It exists so `validate` can report the status the instance chose — and read
+   * a rejection it chose — without a second copy of the request path: the
+   * joining, the serialization, the timeout, and the redaction all have to be
+   * the same, or a validating write would be a different request than every
+   * other write. Nothing else passes the flag that produces one, so no other
+   * method can receive it.
    */
-  interface RetainedRejection {
-    readonly rejectedWithStatus: number;
-    readonly rejectedBody: unknown;
+  interface RetainedAnswer {
+    readonly retainedStatus: number;
+    readonly retainedBody: unknown;
   }
 
-  const isRetainedRejection = (value: unknown): value is RetainedRejection =>
-    typeof value === "object" && value !== null && "rejectedWithStatus" in value;
+  const isRetainedAnswer = (value: unknown): value is RetainedAnswer =>
+    typeof value === "object" && value !== null && "retainedStatus" in value;
 
   const send = async (
     method: "GET" | "POST" | "PUT" | "DELETE",
     path: string,
     query: UpstreamQuery | undefined,
     body: UpstreamBody | undefined,
-    retainRejection = false,
+    retainStatus = false,
   ): Promise<unknown> => {
     const joined = joinUpstreamUrl(apiBaseUrl, path);
     if (!joined.ok) {
@@ -247,12 +248,12 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
         // and for a validating write that decision's body is the answer. Above
         // it, the instance is reporting that it failed rather than that the
         // request did, which is not something to hand back as a result.
-        if (retainRejection && response.status < 500) {
+        if (retainStatus && response.status < 500) {
           const rejected = await response.text().catch(() => "");
           return {
-            rejectedWithStatus: response.status,
-            rejectedBody: readJson(rejected),
-          } satisfies RetainedRejection;
+            retainedStatus: response.status,
+            retainedBody: readJson(rejected),
+          } satisfies RetainedAnswer;
         }
         discardBody(response);
         throw new UpstreamError(upstreamErrorKindForStatus(response.status), {
@@ -277,8 +278,18 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
       // an unexpected response carrying the status, because a read that
       // returned nothing has not answered the question it was asked, and
       // losing that status would leave the caller with less than it had.
-      if (method !== "GET" && answered.trim() === "") {
+      if (method !== "GET" && answered.trim() === "" && !retainStatus) {
         return undefined;
+      }
+
+      if (retainStatus) {
+        // The status the instance chose, for a caller that promised to report
+        // it. A body that is not JSON is not a failure here either: the caller
+        // reads what came back rather than assuming a shape.
+        return {
+          retainedStatus: response.status,
+          retainedBody: readJson(answered),
+        } satisfies RetainedAnswer;
       }
 
       try {
@@ -322,9 +333,18 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
       // validation this server never received is not a validation that
       // answered — and telling those apart is the whole point of the method.
       const answered = await send("POST", path, query, body, true);
-      return isRetainedRejection(answered)
-        ? { accepted: false, status: answered.rejectedWithStatus, body: answered.rejectedBody }
-        : { accepted: true, status: 200, body: answered };
+      if (!isRetainedAnswer(answered)) {
+        // Unreachable: the flag above is what produces the envelope, and this
+        // is the only site that passes it. Refused rather than assumed, because
+        // inventing a status here would be inventing the very thing this method
+        // exists to report.
+        throw new UpstreamError("unexpected-response", { application, operation: path });
+      }
+      return {
+        accepted: answered.retainedStatus < 400,
+        status: answered.retainedStatus,
+        body: answered.retainedBody,
+      };
     },
 
     delete(path: string, query?: UpstreamQuery): Promise<unknown> {
