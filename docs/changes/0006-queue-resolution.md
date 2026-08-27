@@ -5,7 +5,7 @@
 Implement typed queue state-machine mutations for tracked downloads and pending releases through `arr_queue_resolve` as defined by the [Activity Management spec](../specs/activity-management/).
 
 **Spec:** [Activity Management](../specs/activity-management/)
-**Status:** draft
+**Status:** complete
 **Depends On:** 0002, 0004
 
 ## Motivation
@@ -71,10 +71,10 @@ The [Activity Management spec](../specs/activity-management/#queue-item-kinds) o
   - [x] Capture queue/download/media read-set fingerprints and exact predicted effects
   - [x] Add direct apply, planned apply, stale-plan, partial bulk, retry, and unknown-outcome paths
   - [x] Reconcile against queue state and against history matched on download identity
-- [ ] Register and verify `arr_queue_resolve`
-  - [ ] Add typed input/output unions and conservative annotations
-  - [ ] Add fixture and stdio tests for data deletion, blocklist, replacement search, ignore, category change, pending grab, and stale references
-  - [ ] Add audit-safe receipts without canonical paths or download IDs
+- [x] Register and verify `arr_queue_resolve`
+  - [x] Add typed input/output unions and conservative annotations
+  - [x] Add fixture and stdio tests for data deletion, blocklist, replacement search, ignore, category change, pending grab, and stale references
+  - [x] Add audit-safe receipts without canonical paths or download IDs
 
 ## Open Questions
 

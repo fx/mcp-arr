@@ -13,7 +13,7 @@
 
 ## Changes
 
-Changes 0011 through 0014 are scheduled ahead of the still-pending 0006 through 0009. 0011 establishes distribution; 0012 through 0014 correct defects found testing the merged server against live Sonarr, Radarr, and Prowlarr instances. 0012 in particular is worth landing before any further domain change, because every one of them adds tools onto the same broken publication path.
+Changes 0011 through 0014 were scheduled ahead of the lower-numbered domain changes that were still outstanding at the time. 0011 establishes distribution; 0012 through 0014 correct defects found testing the merged server against live Sonarr, Radarr, and Prowlarr instances. 0012 in particular was worth landing before any further domain change, because every one of them adds tools onto the same broken publication path. Which changes are still outstanding is the table's answer rather than this note's.
 
 | # | Change | Spec | Status | Depends On |
 |---|--------|------|--------|------------|
@@ -22,7 +22,7 @@ Changes 0011 through 0014 are scheduled ahead of the still-pending 0006 through 
 | 0003 | [Library Queries](changes/0003-library-queries.md) | [Library Management](specs/library-management/) | complete | 0001, 0002 |
 | 0004 | [Activity Diagnostics](changes/0004-activity-diagnostics.md) | [Activity Management](specs/activity-management/) | complete | 0001, 0002 |
 | 0005 | [Release Search and Grab](changes/0005-release-search-and-grab.md) | [Acquisition and Import](specs/acquisition-and-import/) | complete | 0002, 0003 |
-| 0006 | [Queue Resolution](changes/0006-queue-resolution.md) | [Activity Management](specs/activity-management/) | draft | 0002, 0004 |
+| 0006 | [Queue Resolution](changes/0006-queue-resolution.md) | [Activity Management](specs/activity-management/) | complete | 0002, 0004 |
 | 0007 | [Guarded Manual Import](changes/0007-manual-import.md) | [Acquisition and Import](specs/acquisition-and-import/) | draft | 0002, 0003, 0004, 0006 |
 | 0008 | [Configuration Reconciliation](changes/0008-configuration-reconciliation.md) | [Configuration Reconciliation](specs/configuration-reconciliation/) | draft | 0001, 0002 |
 | 0009 | [Library Mutations](changes/0009-library-mutations.md) | [Library Management](specs/library-management/) | complete | 0002, 0003 |

@@ -27,9 +27,11 @@ specs:
     description: Stable typed MCP tools, plan/apply, references, errors, receipts, and jobs
     status: active
 
-# Implementation order: changes 0011 through 0014 are scheduled ahead of the
-# still-pending 0006 through 0009. 0011 establishes distribution; 0012 through
-# 0014 correct defects found testing the merged server against live instances.
+# Implementation order: changes 0011 through 0014 were scheduled ahead of the
+# lower-numbered domain changes that were still outstanding at the time. 0011
+# establishes distribution; 0012 through 0014 correct defects found testing the
+# merged server against live instances. Which changes are still outstanding is
+# the status field of each entry below rather than this comment.
 changes:
   - id: "0001"
     name: project-foundation
@@ -71,7 +73,7 @@ changes:
     path: changes/0006-queue-resolution.md
     description: Implement typed tracked-download and pending-release queue transitions
     spec: activity-management
-    status: draft
+    status: complete
     depends_on: ["0002", "0004"]
   - id: "0007"
     name: manual-import

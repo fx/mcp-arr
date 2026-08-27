@@ -125,6 +125,8 @@ const parentFilters: Readonly<
 /** `history/failed/{id}` and `blocklist/{id}`, the two activity single-record writes. */
 const historyFailedRoute = /^history\/failed\/(\d+)$/u;
 const blocklistRecordRoute = /^blocklist\/(\d+)$/u;
+const queueItemRoute = /^queue\/(\d+)$/u;
+const queueGrabRoute = /^queue\/grab\/(\d+)$/u;
 
 /**
  * The collections whose individual records this surface reads and writes.
@@ -194,6 +196,20 @@ export interface UpstreamGrab {
   readonly indexerId: number | undefined;
 }
 
+/**
+ * One queue item this instance resolved, as the request arrived.
+ *
+ * The flags are kept exactly as they were sent rather than interpreted, because
+ * what a test needs to assert about a queue transition is the combination that
+ * reached the wire — that is the whole of what distinguishes the intents from
+ * one another.
+ */
+export interface UpstreamQueueResolution {
+  readonly queueItemId: number;
+  readonly method: "DELETE" | "POST";
+  readonly flags: Readonly<Record<string, string>>;
+}
+
 /** One command this instance started, as it arrived. */
 export interface UpstreamCommand {
   readonly name: string;
@@ -238,6 +254,12 @@ export interface FixtureInstance {
    */
   readonly failedHistory: readonly number[];
   readonly removedBlocklist: readonly number[];
+  /**
+   * The queue items this instance resolved, in order and on the same terms as
+   * the grabs above: a request it refused is absent, so a test cannot mistake a
+   * rejected transition for a performed one.
+   */
+  readonly queueResolutions: readonly UpstreamQueueResolution[];
   /**
    * The library records and media files this instance created, replaced, and
    * removed, in order and on the same terms as the grabs above: a write this
@@ -307,6 +329,12 @@ export async function startFixtureInstance(
   // what a real instance does, and it is what lets a test that reconciles a
   // lost answer against upstream state mean anything.
   const removedBlocklist: number[] = [];
+  // Resolved queue items are remembered as well as recorded, so a later read of
+  // the queue no longer reports a row this instance removed — which is what
+  // makes a second resolution of the same row the `404` a real instance gives,
+  // and what a stale reference has to be distinguishable from a first attempt.
+  const resolvedQueue: number[] = [];
+  const queueResolutions: UpstreamQueueResolution[] = [];
   const writes: UpstreamWrite[] = [];
   // Well clear of every identifier the recorded fixtures use, so a created
   // record is always distinguishable from one that was already there.
@@ -329,12 +357,23 @@ export async function startFixtureInstance(
    * from it. Every other route answers its recorded body unchanged.
    */
   const withoutRemoved = (body: unknown, route: string): unknown => {
-    if (route !== "blocklist" || removedBlocklist.length === 0 || !isRecord(body)) {
+    // `queue/details` answers a bare array where the paged routes answer an
+    // envelope, so both shapes are filtered rather than only the one the
+    // blocklist happens to use.
+    if (route === "queue/details" && resolvedQueue.length > 0 && Array.isArray(body)) {
+      return body.filter(
+        (record) => !(isRecord(record) && resolvedQueue.includes(Number(record.id))),
+      );
+    }
+
+    const removed =
+      route === "blocklist" ? removedBlocklist : route === "queue" ? resolvedQueue : [];
+    if (removed.length === 0 || !isRecord(body)) {
       return body;
     }
     const records = Array.isArray(body.records) ? body.records : [];
     const kept = records.filter(
-      (record) => !(isRecord(record) && removedBlocklist.includes(Number(record.id))),
+      (record) => !(isRecord(record) && removed.includes(Number(record.id))),
     );
     return { ...body, records: kept, totalRecords: kept.length };
   };
@@ -469,6 +508,13 @@ export async function startFixtureInstance(
     if (answers(candidate)) {
       return true;
     }
+    // Asked before the generic `<collection>/<id>` shape, which `queue/502`
+    // also matches: deciding it there would answer "no such path" for a route
+    // this instance does expose, and a wrong verb on it would be reported as a
+    // missing route.
+    if (queueGrabRoute.test(candidate) || queueItemRoute.test(candidate)) {
+      return answers("queue");
+    }
     const record = singleRecordRoute.exec(candidate);
     if (record !== null) {
       const collection = record[1] ?? "";
@@ -526,6 +572,36 @@ export async function startFixtureInstance(
       started.push({ name, body });
       send(response, 201, { ...recorded, name });
     };
+
+    /**
+     * The two queue transitions. Both name their row in the path and read no
+     * body: a delete carries the resolution's flags as query parameters, and a
+     * pending grab carries nothing at all.
+     *
+     * A row this instance no longer holds — including one it has already
+     * resolved — is the `404` a real instance gives, which is what makes a
+     * stale reference distinguishable from a first attempt.
+     */
+    const queueItem = request.method === "DELETE" ? queueItemRoute.exec(route) : null;
+    const queueGrab = request.method === "POST" ? queueGrabRoute.exec(route) : null;
+    if ((queueItem !== null || queueGrab !== null) && answers("queue")) {
+      const id = Number((queueItem ?? queueGrab)?.[1]);
+      if (!pagedHasId(bodies.get("queue"), id) || resolvedQueue.includes(id)) {
+        send(response, 404, { message: "unknown queue item" });
+        return;
+      }
+      resolvedQueue.push(id);
+      queueResolutions.push({
+        queueItemId: id,
+        method: queueItem !== null ? "DELETE" : "POST",
+        flags: Object.fromEntries(url.searchParams),
+      });
+      // Both answer with no content, which is what the upstream client has to
+      // resolve rather than fail to parse.
+      response.writeHead(204);
+      response.end();
+      return;
+    }
 
     // The two things this server is asked to do rather than to report. A grab
     // resolves out of the recorded search body, exactly the way an instance
@@ -666,6 +742,17 @@ export async function startFixtureInstance(
       return;
     }
 
+    // The queue transition paths exist, but not for reading: `queue/{id}` is
+    // resolved with a delete and `queue/grab/{id}` with a post, and neither
+    // answers a `GET`. Deciding that here keeps the promise `exposes` makes —
+    // a path this instance has, reached with the wrong verb, is told so.
+    if (queueItemRoute.test(route) || queueGrabRoute.test(route)) {
+      send(response, answers("queue") ? 405 : 404, {
+        message: answers("queue") ? "method not allowed" : "not found",
+      });
+      return;
+    }
+
     if (single !== null) {
       if (!known || collection === undefined || recordId === undefined) {
         send(response, 404, { message: "not found" });
@@ -700,6 +787,7 @@ export async function startFixtureInstance(
     commands: started,
     failedHistory,
     removedBlocklist,
+    queueResolutions,
     writes,
     close: () =>
       new Promise<void>((resolve, reject) => {
