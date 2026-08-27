@@ -23,7 +23,7 @@ Changes 0011 through 0014 were scheduled ahead of the lower-numbered domain chan
 | 0004 | [Activity Diagnostics](changes/0004-activity-diagnostics.md) | [Activity Management](specs/activity-management/) | complete | 0001, 0002 |
 | 0005 | [Release Search and Grab](changes/0005-release-search-and-grab.md) | [Acquisition and Import](specs/acquisition-and-import/) | complete | 0002, 0003 |
 | 0006 | [Queue Resolution](changes/0006-queue-resolution.md) | [Activity Management](specs/activity-management/) | complete | 0002, 0004 |
-| 0007 | [Guarded Manual Import](changes/0007-manual-import.md) | [Acquisition and Import](specs/acquisition-and-import/) | draft | 0002, 0003, 0004, 0006 |
+| 0007 | [Guarded Manual Import](changes/0007-manual-import.md) | [Acquisition and Import](specs/acquisition-and-import/) | complete | 0002, 0003, 0004, 0006 |
 | 0008 | [Configuration Reconciliation](changes/0008-configuration-reconciliation.md) | [Configuration Reconciliation](specs/configuration-reconciliation/) | complete | 0001, 0002 |
 | 0009 | [Library Mutations](changes/0009-library-mutations.md) | [Library Management](specs/library-management/) | complete | 0002, 0003 |
 | 0010 | [History and Blocklist Mutations](changes/0010-history-and-blocklist-mutations.md) | [Activity Management](specs/activity-management/) | complete | 0002, 0004 |

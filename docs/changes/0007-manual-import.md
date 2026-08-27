@@ -5,7 +5,7 @@
 Implement candidate discovery, mapping reprocessing, apply-time revalidation, and command execution for Sonarr and Radarr manual import as defined by the [Acquisition and Import spec](../specs/acquisition-and-import/).
 
 **Spec:** [Acquisition and Import](../specs/acquisition-and-import/)
-**Status:** draft
+**Status:** complete
 **Depends On:** 0002, 0003, 0004, 0006
 
 ## Motivation
@@ -70,10 +70,10 @@ The [Acquisition and Import spec](../specs/acquisition-and-import/#manual-import
   - [x] Reprocess explicit mapping corrections and issue new bound references
   - [x] Rerun reprocessing and verify source, queue, media, file, and free-space preconditions at apply
   - [x] Reject every blocking decision and stale fingerprint before command submission
-- [ ] Implement import execution and jobs
-  - [ ] Submit only the typed `ManualImport` command with explicit import mode
-  - [ ] Snapshot per-file terminal and unknown outcomes in normalized jobs
-  - [ ] Add fixture and stdio tests for packs, split episodes, samples, existing files, blocked upgrades, stale files, source cleanup, partial failure, and restart invalidation
+- [x] Implement import execution and jobs
+  - [x] Submit only the typed `ManualImport` command with explicit import mode
+  - [x] Snapshot per-file terminal and unknown outcomes in normalized jobs
+  - [x] Add fixture and stdio tests for packs, split episodes, samples, existing files, blocked upgrades, stale files, source cleanup, partial failure, and restart invalidation
 
 ## Open Questions
 

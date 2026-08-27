@@ -244,19 +244,23 @@ export interface StartedCommand {
  * response this server cannot read is a failure rather than a silent success,
  * because a command whose id was lost is one no caller could ever follow.
  */
-export async function startSearchCommand(
-  client: UpstreamClient,
+/**
+ * Reads the record an accepted command answers with.
+ *
+ * Shared by every command this server starts, so the identity a job is built
+ * from and the sanitization applied to the instance's own message are decided
+ * once. What comes back is the upstream id and an observation; the command
+ * *name* is deliberately not among them, because the name a job publishes is
+ * the constant this project sent rather than the instance's echo of it.
+ */
+export function readAcceptedCommand(
+  body: unknown,
   application: ApplicationId,
-  request: SearchStartRequest,
-  name: string,
-): Promise<StartedCommand> {
-  const route = searchCommandRoutes.command;
-  const body = await client.post(route, commandBody(name, request));
+  route: string,
+): { readonly upstreamId: string; readonly observation: UpstreamCommandObservation } {
   const accepted = parseUpstream(acceptedCommandSchema, body, application, route);
-
   return {
     upstreamId: String(accepted.id),
-    name,
     observation: {
       state: text(accepted.status),
       result: text(accepted.result),
@@ -268,4 +272,19 @@ export async function startSearchCommand(
       ),
     },
   };
+}
+
+export async function startSearchCommand(
+  client: UpstreamClient,
+  application: ApplicationId,
+  request: SearchStartRequest,
+  name: string,
+): Promise<StartedCommand> {
+  const route = searchCommandRoutes.command;
+  const accepted = readAcceptedCommand(
+    await client.post(route, commandBody(name, request)),
+    application,
+    route,
+  );
+  return { upstreamId: accepted.upstreamId, name, observation: accepted.observation };
 }
