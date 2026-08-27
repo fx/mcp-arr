@@ -1,13 +1,21 @@
 import type { ApplicationId } from "../../applications.js";
 import type { UpstreamBody } from "../../http/client.js";
 import type { ReadSetObservation } from "../../state/plans.js";
+import { fingerprint } from "../../state/tokens.js";
 import { createToolError, type ToolError } from "../../tools/errors.js";
 import { type DependencyCatalog, referenceValue } from "./dependencies.js";
-import { classifyProviderField, describeSecret, safeFieldValue } from "./fields.js";
+import {
+  classifyProviderField,
+  describeSecret,
+  type FieldValueKind,
+  providerFieldAllowlist,
+  safeFieldValue,
+} from "./fields.js";
 import { type ConfigurationRef, configurationRef, type SafeFieldValue } from "./model.js";
 import { isUpstreamRecord } from "./parse.js";
 import type { CompiledPatch, PatchAssignment } from "./patches.js";
-import type { UpstreamResource, UpstreamValue } from "./resources.js";
+import type { UpstreamResource } from "./resources.js";
+import { isDynamicallyDefined } from "./serialize.js";
 
 /**
  * The lossless full-resource write.
@@ -134,9 +142,18 @@ function sameValue(left: unknown, right: unknown): boolean {
  * observation would have withheld cannot become reportable merely by appearing
  * in a diff. A value the classifier refuses is reported as redacted, which says
  * that something is there without saying what.
+ *
+ * A dynamic field is narrowed by the kind its allowlist entry records, exactly
+ * as the observation narrows it. Passing the kind is what stops a definition
+ * file from publishing a credential by naming the field it lives in after an
+ * allowlisted setting: the name came from that file, so it is not evidence
+ * about the value, and a diff must not be the softer of the two paths.
  */
-function reportable(value: unknown): { value?: SafeFieldValue; redacted: boolean } {
-  const safe = safeFieldValue(value);
+function reportable(
+  value: unknown,
+  kind?: FieldValueKind,
+): { value?: SafeFieldValue; redacted: boolean } {
+  const safe = safeFieldValue(value, kind);
   return safe === undefined ? { redacted: true } : { value: safe, redacted: false };
 }
 
@@ -145,8 +162,8 @@ function change(
   action: "set" | "clear",
   before: unknown,
   after: unknown,
+  current = reportable(before),
 ): ConfigurationChange {
-  const current = reportable(before);
   const settled = sameValue(before, after) ? "unchanged" : action;
   return {
     path,
@@ -196,6 +213,8 @@ interface WriteState {
   readonly application: ApplicationId;
   readonly payload: Record<string, unknown>;
   readonly entries: ReadonlyMap<string, readonly FieldEntry[]>;
+  /** Whether a tracker definition, rather than the application, named the fields. */
+  readonly definitionDriven: boolean;
   readonly changes: ConfigurationChange[];
   readonly warnings: string[];
   readonly writtenProperties: Set<string>;
@@ -225,6 +244,29 @@ function resolveField(state: WriteState, name: string): FieldEntry | ToolError {
     );
   }
   return entry;
+}
+
+/**
+ * A change to one dynamic provider field.
+ *
+ * Two narrowings a top-level property does not need, and both are the
+ * observation serializer's, applied here for the same reasons. The current
+ * value is held to the kind the allowlist records for the name, and for a
+ * provider whose field list comes from a tracker definition no current value is
+ * reported at all — that definition chose the names, so a name is not evidence
+ * about what the value is.
+ */
+function fieldChange(
+  state: WriteState,
+  name: string,
+  action: "set" | "clear",
+  before: unknown,
+  after: unknown,
+): ConfigurationChange {
+  const current: { value?: SafeFieldValue; redacted: boolean } = state.definitionDriven
+    ? { redacted: true }
+    : reportable(before, providerFieldAllowlist.get(name));
+  return change(fieldPath(name), action, before, after, current);
 }
 
 function setProperty(state: WriteState, path: string, property: string, value: unknown): void {
@@ -295,10 +337,23 @@ function applyAssignment(
       if (!("record" in entry)) {
         return entry;
       }
+      // Classified again here, with the entry's own privacy word, because the
+      // compiler had only the name to go on. Upstream privacy may escalate a
+      // field to a credential and never de-escalate one, so an instance that
+      // marks an allowlisted setting as a password decides that it is one — and
+      // a credential is not something the ordinary desired-state channel sets.
+      const privacy = typeof entry.record.privacy === "string" ? entry.record.privacy : undefined;
+      if (classifyProviderField({ name: assignment.name, privacy }) === "secret") {
+        return toolError(
+          state.application,
+          "invalid_input",
+          `this instance marks ${assignment.name} as a credential, so it is never set as a desired field; clear it with an explicit removal instead`,
+        );
+      }
       const before = entry.record.value;
       entry.record.value = assignment.value;
       state.writtenFields.add(entry.index);
-      state.changes.push(change(fieldPath(assignment.name), "set", before, assignment.value));
+      state.changes.push(fieldChange(state, assignment.name, "set", before, assignment.value));
       return undefined;
     }
     default:
@@ -349,7 +404,7 @@ function applyRemoval(
   state.changes.push(
     secret === "secret"
       ? { path: fieldPath(name), action: before === null ? "unchanged" : "clear", redacted: true }
-      : change(fieldPath(name), "clear", before, null),
+      : fieldChange(state, name, "clear", before, null),
   );
   return undefined;
 }
@@ -418,6 +473,7 @@ export function writeConfigurationPatch(request: WriteRequest): WriteOutcome {
     application,
     payload,
     entries: fieldEntries(payload),
+    definitionDriven: isDynamicallyDefined(payload),
     changes: [],
     warnings: [],
     writtenProperties: new Set(),
@@ -482,7 +538,13 @@ export function writeConfigurationPatch(request: WriteRequest): WriteOutcome {
  * an unrelated field moved, which teaches a caller to re-plan reflexively and
  * makes staleness mean nothing.
  *
- * A secret is observed by presence rather than by value. That is not only
+ * Every value read from the resource is fingerprinted here rather than carried
+ * out of this function. A read set exists to be compared, so a digest answers
+ * the only question asked of it, and this way no unclassified upstream value —
+ * a credential a definition file filed under an ordinary name, most of all —
+ * sits in the result the tool layer holds while it records a plan.
+ *
+ * A secret is observed by presence before it is digested. That is not only
  * hygiene: a plan whose validity depended on a credential's exact bytes would
  * go stale on a rotation that changes nothing about what the patch does.
  */
@@ -492,6 +554,8 @@ export function configurationObservations(
 ): readonly ReadSetObservation[] {
   const payload = resource.payload();
   const observations: ReadSetObservation[] = [
+    // The identity the caller itself named, so it is the one observation with
+    // nothing to withhold.
     { key: "resource-id", value: isUpstreamRecord(payload) ? payload.id : undefined },
   ];
   if (!isUpstreamRecord(payload)) {
@@ -500,7 +564,7 @@ export function configurationObservations(
   const entries = fieldEntries(payload);
 
   const observeProperty = (property: string): void => {
-    observations.push({ key: property, value: payload[property] as UpstreamValue });
+    observations.push({ key: property, value: fingerprint(payload[property]) });
   };
   const observeField = (name: string): void => {
     const [entry] = entries.get(name) ?? [];
@@ -509,12 +573,13 @@ export function configurationObservations(
     const secret = classifyProviderField({ name, privacy }) === "secret";
     observations.push({
       key: fieldPath(name),
-      value:
+      value: fingerprint(
         record === undefined
           ? undefined
           : secret
             ? describeSecret(name, record.value).state
-            : (record.value as UpstreamValue),
+            : record.value,
+      ),
     });
   };
 

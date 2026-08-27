@@ -319,6 +319,77 @@ describe("a full-resource write", () => {
       minFormatScore: 20,
     });
   });
+
+  it("withholds a current value the observation itself would have withheld", async () => {
+    // A definition file names its own fields, so a provider whose field list
+    // comes from one publishes no current values at all — the diff has to be
+    // exactly as tight as the observation, or it becomes the softer path out.
+    const cardigann = {
+      id: 1,
+      name: "Example Tracker",
+      implementation: "Cardigann",
+      definitionFile: "example-tracker",
+      priority: 25,
+      tags: [],
+      fields: [{ order: 0, name: "minimumSeeders", value: 2 }],
+    };
+    const { outcome } = await reconcile(
+      "prowlarr",
+      { routes: { "indexer/1": cardigann } },
+      planning("indexers", 1, { fields: [{ name: "minimumSeeders", value: 5 }] }),
+    );
+
+    expect(expectPlanned(outcome).diff.changes).toEqual([
+      { path: "fields.minimumSeeders", action: "set", after: 5, redacted: true },
+    ]);
+  });
+
+  it("refuses to set a field the instance itself marks as a credential", async () => {
+    // Upstream privacy escalates a field to a credential and never de-escalates
+    // one, so an instance that files an allowlisted setting under a password
+    // privacy decides that it is one. The compiler had only the name; the write
+    // has the entry, so this is where that judgement lands.
+    const client = {
+      ...(await first("radarr", "downloadclient")),
+      fields: [{ order: 0, name: "movieCategory", value: "radarr", privacy: "password" }],
+    };
+    const { outcome, dispatched } = await reconcile(
+      "radarr",
+      { routes: { "downloadclient/1": client } },
+      planning("download_clients", 1, {
+        mode: "apply",
+        fields: [{ name: "movieCategory", value: "films" }],
+      }),
+    );
+
+    expect(expectRefused(outcome).error).toMatchObject({
+      code: "invalid_input",
+      message: expect.stringContaining("marks movieCategory as a credential"),
+    });
+    expect(writes(dispatched)).toEqual([]);
+  });
+
+  it("withholds a value whose shape does not match the name it was filed under", async () => {
+    // The name came from the instance, not from this server, so it vouches for
+    // nothing: a credential filed under an allowlisted setting is redacted by
+    // the kind that setting records, exactly as the observation redacts it.
+    const canary = "CANARY-BORROWED-NAME-PASSKEY-0001";
+    const client = {
+      ...(await first("radarr", "downloadclient")),
+      fields: [{ order: 0, name: "movieCategory", value: canary }],
+    };
+    const { outcome } = await reconcile(
+      "radarr",
+      { routes: { "downloadclient/1": client } },
+      planning("download_clients", 1, { fields: [{ name: "movieCategory", value: "radarr" }] }),
+    );
+    const planned = expectPlanned(outcome);
+
+    expect(planned.diff.changes).toEqual([
+      { path: "fields.movieCategory", action: "set", after: "radarr", redacted: true },
+    ]);
+    expect(JSON.stringify(outcome)).not.toContain(canary);
+  });
 });
 
 describe("explicit removal", () => {

@@ -158,6 +158,10 @@ const providerSurfacedKeys = [
  * Whether this provider's field list comes from a tracker definition rather
  * than from the application's own compiled schema.
  *
+ * Exported because the write side has to make the same judgement: a diff that
+ * reported a definition-driven provider's current field values would publish
+ * exactly what this suppression exists to withhold.
+ *
  * Prowlarr's Cardigann indexers take their fields from a YAML file, so every
  * name in them is chosen by that file. The classifier already refuses a value
  * whose kind does not match the name it borrowed, but a handful of allowlisted
@@ -166,11 +170,9 @@ const providerSurfacedKeys = [
  * reports no field values at all: its credentials are still acknowledged, and
  * everything else is counted as withheld.
  */
-function isDynamicallyDefined(
-  resource: { readonly implementation?: string | null | undefined },
-  raw: Record<string, unknown>,
-): boolean {
-  const implementation = text(resource.implementation)?.toLowerCase();
+export function isDynamicallyDefined(raw: Record<string, unknown>): boolean {
+  const implementation =
+    typeof raw.implementation === "string" ? text(raw.implementation)?.toLowerCase() : undefined;
   return implementation === "cardigann" || "definitionName" in raw || "definitionFile" in raw;
 }
 
@@ -191,7 +193,7 @@ export function serializeProvider(
       privacy: field.privacy,
     })),
   );
-  const dynamic = isDynamicallyDefined(resource, raw);
+  const dynamic = isDynamicallyDefined(raw);
   const reportedFields = dynamic ? [] : classified.fields;
   const withheldFieldCount = classified.withheldCount + (dynamic ? classified.fields.length : 0);
   const secrets = [...classified.secrets, ...topLevelSecrets(raw)];
