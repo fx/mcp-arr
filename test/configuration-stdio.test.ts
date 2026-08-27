@@ -312,6 +312,51 @@ describe("arr_config_reconcile over stdio", () => {
     }
   });
 
+  it("saves over warnings with the parameter that skips them", async () => {
+    // The instance raises a warning rather than a failure, which is the one
+    // case a bypass exists for. The save then carries the parameter, and the
+    // result says plainly which checks were skipped.
+    const sonarr = await instance("sonarr", {
+      providerTestObjections: [
+        { isWarning: true, propertyName: "apiPath", errorMessage: "unusual path" },
+      ],
+    });
+    const child = spawnBuiltServer(instanceEnvironment([sonarr]), 10_000);
+
+    try {
+      await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
+      const target = await indexerReference(child, 2);
+
+      const applied = await reconcile(child, 3, {
+        intent: "force_provider_save",
+        mode: "apply",
+        application: "sonarr",
+        domain: "indexers",
+        target,
+        fields: [{ name: "priority", value: 30 }],
+        acceptValidationWarnings: true,
+      });
+
+      expect(applied.isError).toBe(false);
+      // The provider was tested with the resource the save would send, not the
+      // one the instance already had: the test body carries the new priority.
+      expect(sonarr.providerTests).toHaveLength(1);
+      expect((sonarr.providerTests[0]?.body as { priority?: number }).priority).toBe(30);
+      const write = sonarr.writes.filter((entry) => entry.method === "PUT")[0];
+      expect(write).toBeDefined();
+      // Read from what the instance actually received: the parameter is on the
+      // save's own request, and only there.
+      const saved = sonarr.searches.filter((entry) => entry.route === "indexer/1");
+      expect(saved.some((entry) => entry.query.get("forceSave") === "true")).toBe(true);
+      expect(JSON.stringify(applied.envelope.applications[0]?.warnings)).toContain("skipped");
+
+      await child.terminateGracefully();
+      assertCleanProtocolStdout(child.stdout);
+    } finally {
+      await child.forceCleanup().catch(() => undefined);
+    }
+  });
+
   it("refuses a bypass the instance's objections do not justify", async () => {
     // The instance answers the test with a failure rather than a warning. A
     // bypass overrides warnings and only warnings, so this is refused however

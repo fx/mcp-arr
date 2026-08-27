@@ -11,7 +11,7 @@ import {
 } from "../../state/plans.js";
 import { createToolError, type ToolError, toolErrorForThrown } from "../../tools/errors.js";
 import { readDependencyCatalog, validateDependencies } from "./dependencies.js";
-import { type ConfigurationDomain, routeFor } from "./domains.js";
+import { type ConfigurationDomain, isProviderDomain, routeFor } from "./domains.js";
 import { readSchemaFingerprint } from "./fingerprints.js";
 import { isUpstreamRecord } from "./parse.js";
 import { compileConfigurationPatch, type DesiredField } from "./patches.js";
@@ -21,6 +21,7 @@ import {
   type UpstreamValue,
 } from "./resources.js";
 import { noTransientSecrets, type TransientSecrets } from "./secrets.js";
+import { planBypass, runProviderTest } from "./tests.js";
 import { verifyConfigurationApply } from "./verify.js";
 import {
   type ConfigurationDiff,
@@ -85,6 +86,19 @@ export interface ConfigurationReconcileRequest {
    * of it: the plan never held them.
    */
   readonly secrets?: TransientSecrets | undefined;
+  /**
+   * Test the resource this write would send before sending it, and save over
+   * validation warnings if that is what the instance raised.
+   *
+   * Set only by the explicit bypass intent, and it decides three things
+   * together because they have to agree: the provider is tested with the
+   * *desired* resource rather than the stored one, since a warning a change
+   * causes is the warning the caller is asking to override; the save carries
+   * the bypass parameter only where something actually needed overriding; and
+   * a provider the instance failed outright is refused, because no field on a
+   * request turns a failure into a warning.
+   */
+  readonly bypassValidationWarnings?: boolean | undefined;
 }
 
 /** What a recorded plan carries into the apply that quotes it. */
@@ -327,15 +341,48 @@ async function reconcileWithSecrets(
       };
     }
 
+    let query: Readonly<Record<string, boolean>> = {};
+    const bypassWarnings: string[] = [];
+    if (request.bypassValidationWarnings === true) {
+      if (!isProviderDomain(request.domain)) {
+        return refuse(
+          failure(
+            application,
+            "invalid_input",
+            "only a provider can be saved over validation warnings",
+          ),
+        );
+      }
+      // The resource this write would send, not the one the instance holds: a
+      // warning the change itself causes is the one the caller is asking to
+      // override, and an old warning it fixed must not block it.
+      const tested = await runProviderTest(application, client, {
+        domain: request.domain,
+        payload,
+      });
+      if (tested.status === "error") {
+        return { status: "error", error: tested.error, attempted: false };
+      }
+      const decision = planBypass(application, tested);
+      if (decision.refusal !== undefined) {
+        return { status: "error", error: decision.refusal, attempted: false };
+      }
+      query = decision.query;
+      bypassWarnings.push(...decision.warnings);
+    }
+
     dispatched = true;
-    const answered = await client.put(resourceRoute, payload);
+    const answered =
+      Object.keys(query).length === 0
+        ? await client.put(resourceRoute, payload)
+        : await client.put(resourceRoute, payload, query);
     return {
       status: "applied",
       attempted: true,
       diff,
       changed,
       observations,
-      warnings,
+      warnings: [...warnings, ...bypassWarnings],
       requiredSecrets,
       verification: await verifyConfigurationApply(client, {
         application,

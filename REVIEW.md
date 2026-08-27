@@ -38,6 +38,12 @@ What is deliberately withheld is different and is enforced elsewhere: a secret's
 
 That is deliberate. A plan is worth reading only if it describes the request the apply will send, and a plan mode that built a different payload — one with the credential left out — would describe something else. The value is used inside one call and is gone when it returns: the bundle is erased in an outer `finally` on every path, the payload is a local that is never returned, and neither the plan, the receipt, the diff, nor the read set has a field a credential could travel in. Asking for the planning path to skip the write, or to build a payload without the secret, is a false positive — it trades the one guarantee that makes a plan meaningful for the removal of a short-lived local object.
 
+## One Operation Declares One Side Effect, and the Effects Carry the Rest
+
+`OperationSideEffect` in `src/tools/operations.ts` is a single value per operation, and `arr_capabilities` reports it. An intent that does two consequential things therefore cannot say both there: `config.reconcile.force_provider_save` writes configuration *and*, on every apply, tests the provider first, which contacts whatever that provider is configured against. It is declared `mutate`, because the save is what it is for, and the contact is disclosed where a caller actually reads it — the tool's own annotation already declares `openWorldHint`, and the intent's *requested* effects name the contact in both plan and apply, unconditionally rather than as a prediction.
+
+Asking for the declaration to become `external` instead is a false positive: that trades one omission for a worse one, since a client would then read a configuration write as a read-only probe. Asking for a second declaration field is a change to change 0002's published capability contract, not a fix to this intent.
+
 ## Zod 4 Schema Conventions
 
 This repository pins zod 4 (see `zod` in `package.json`). In zod 4 the custom-message key for `.refine`, `.check`, and the schema factories is `error`; `message` is the legacy zod 3 alias. Both produce the custom message — verified against the pinned version — so `{ error: ... }` is correct and the message is not lost or ignored. Reporting `error` as a mistake, or asking for it to be changed to `message`, is a false positive.

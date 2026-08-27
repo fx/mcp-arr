@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { configurationReferenceSchema } from "./common.js";
+import {
+  profileDomains,
+  providerDomains,
+  resourceDomains,
+} from "../../adapters/configuration/domains.js";
+import { applicationIdSchema, configurationReferenceSchema } from "./common.js";
 
 /**
  * The published payloads of the two configuration tools.
@@ -11,10 +16,23 @@ import { configurationReferenceSchema } from "./common.js";
  * having here in particular — the adapter's whole design is that what may leave
  * is decided by an allowlist, and this is the second one, closest to the wire.
  *
+ * Every domain is the closed set its family actually has, so `tools/list`
+ * advertises the shapes this server can produce and no others.
+ *
  * Every identity is a reference. A configuration record's upstream row number
  * is held in the reference store and never appears in a result, so a caller can
  * neither read one out of a token nor name a row this server did not return.
  */
+
+/**
+ * The domain sets, taken from the adapter's own lists rather than from the
+ * input schemas beside this file. Both directions matter: the published result
+ * cannot name a domain the adapter does not model, and importing the input
+ * module here would close a cycle between the two halves of one tool's schema.
+ */
+const providerDomainSchema = z.enum(providerDomains);
+const profileDomainSchema = z.enum(profileDomains);
+const resourceDomainSchema = z.enum(resourceDomains);
 
 const safeFieldValueSchema = z.union([
   z.string(),
@@ -99,26 +117,26 @@ const providerTemplateSchema = z.strictObject({
 });
 
 const providerSchemaSchema = z.strictObject({
-  application: z.string().min(1),
-  domain: z.string().min(1),
+  application: applicationIdSchema,
+  domain: providerDomainSchema,
   templates: z.array(providerTemplateSchema),
 });
 
 export const configurationViewSchema = z.discriminatedUnion("family", [
   z.strictObject({
     family: z.literal("provider"),
-    domain: z.string().min(1),
+    domain: providerDomainSchema,
     records: z.array(providerRecordSchema),
     schema: providerSchemaSchema.optional(),
   }),
   z.strictObject({
     family: z.literal("profile"),
-    domain: z.string().min(1),
+    domain: profileDomainSchema,
     records: z.array(profileRecordSchema),
   }),
   z.strictObject({
     family: z.literal("resource"),
-    domain: z.string().min(1),
+    domain: resourceDomainSchema,
     records: z.array(resourceRecordSchema),
   }),
 ]);

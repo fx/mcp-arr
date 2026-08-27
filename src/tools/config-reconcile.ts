@@ -1,5 +1,6 @@
 import type { ConfigurationDomain, ProviderDomain } from "../adapters/configuration/domains.js";
 import { isProviderDomain } from "../adapters/configuration/domains.js";
+import type { ConfigurationRef } from "../adapters/configuration/model.js";
 import type { DesiredField } from "../adapters/configuration/patches.js";
 import {
   type ConfigurationReconcileOutcome,
@@ -19,7 +20,6 @@ import {
   describeExternalEffect,
   externalEffectOf,
   type ProviderTestResult,
-  planBypass,
   runProviderTest,
 } from "../adapters/configuration/tests.js";
 import type { ConfigurationDiff } from "../adapters/configuration/write.js";
@@ -267,6 +267,18 @@ function publishDiff(invocation: OperationInvocation, diff: ConfigurationDiff): 
   };
 }
 
+/**
+ * The reference a per-item outcome names its mapping by.
+ *
+ * An item outcome is published beside the payload, so it is a second place an
+ * identity can escape through: naming the mapping by its upstream row there
+ * while the payload names it by token would leave the identifier reachable
+ * anyway, and a caller could not use it in the tools that take references.
+ */
+function mintedItems(invocation: OperationInvocation, ref: ConfigurationRef): string {
+  return referenceMinter(invocation.state.references)(ref);
+}
+
 /** Publishes each synchronized mapping, references and all. */
 function publishSync(invocation: OperationInvocation, items: readonly SyncItemOutcome[]): unknown {
   const mint = referenceMinter(invocation.state.references);
@@ -345,6 +357,7 @@ async function reconcileDirect(
   target: ResolvedTarget,
   mode: "plan" | "apply",
   planned?: readonly { readonly key: string; readonly digest: string }[],
+  bypass = false,
 ): Promise<Resolved<ConfigurationReconcileOutcome>> {
   const bundle = bundleFor(intent);
   if (!bundle.ok) {
@@ -360,6 +373,7 @@ async function reconcileDirect(
       removeFields: intent.removeFields,
       mode,
       secrets: bundle.value,
+      ...(bypass ? { bypassValidationWarnings: true } : {}),
       ...(planned === undefined ? {} : { planned: { readSet: planned } }),
     }),
   };
@@ -494,13 +508,31 @@ async function readReconcilePreconditions(
     targetId: target.value.id,
     changed: outcome.changed,
     warnings: outcome.warnings,
-    effects: reconcileEffects(invocation, intent, outcome.changed),
+    effects: [
+      ...reconcileEffects(invocation, intent, outcome.changed),
+      // Requested rather than predicted, for the bypass: the test is not a
+      // consequence of some condition holding, it is what this intent does
+      // every time it is applied. A caller reading only the effects has to see
+      // that applying this contacts something outside the instance.
+      ...(bypass
+        ? [
+            effect(
+              invocation,
+              "consequential",
+              `tests this provider before saving, which ${describeExternalEffect(
+                target.value.domain as ProviderDomain,
+                invocation.application,
+              )}`,
+            ),
+          ]
+        : []),
+    ],
     predicted: bypass
       ? [
           effect(
             invocation,
             "consequential",
-            "tests this provider first, which contacts whatever it is configured against, and saves over validation warnings only if the instance raises warnings rather than failures",
+            "saves over validation warnings only where the instance raises warnings; a provider it fails outright is refused",
           ),
         ]
       : [],
@@ -627,7 +659,7 @@ async function readSyncPreconditions(
     readSet: [...fingerprintReadSet(outcome.observations)],
     data: publishSync(invocation, outcome.items),
     items: outcome.items.map((item) => ({
-      reference: item.ref.id,
+      reference: mintedItems(invocation, item.ref),
       status: item.error === undefined ? "ok" : "error",
       warnings: [...item.warnings],
       ...(item.error === undefined ? {} : { error: item.error }),
@@ -774,44 +806,29 @@ async function applyTest(
   };
 }
 
+/**
+ * The explicit bypass.
+ *
+ * It is the ordinary apply with one flag set, deliberately: the adapter tests
+ * the resource it is about to send and decides the parameter, the refusal, and
+ * the disclosure together, so a save cannot claim to have skipped checks while
+ * sending no parameter or send one while reporting that nothing was overridden.
+ * Splitting that across two calls here would have this layer build a second
+ * payload, and a second payload is a second chance to send something the test
+ * never saw.
+ */
 async function applyBypass(
   invocation: OperationInvocation,
   context: ReconcileContext,
   intent: DirectIntent,
 ): Promise<Awaited<ReturnType<OperationHandler>>> {
-  const domain = context.domain;
-  if (!isProviderDomain(domain)) {
-    return {
-      status: "error",
-      error: error(invocation, "invalid_input", "a bypass names a provider domain"),
-    };
-  }
-  const payload = await buildTestPayload(invocation, context, domain);
-  if (!payload.ok) {
-    return { status: "error", error: payload.error };
-  }
-
-  const tested = await runProviderTest(invocation.application, invocation.adapter.client, {
-    domain,
-    payload: payload.value,
-  });
-  if (tested.status === "error") {
-    return tested.attempted
-      ? { status: "ok", outcomeUnknown: tested.error, effects: context.effects }
-      : { status: "error", error: tested.error };
-  }
-
-  const decision = planBypass(invocation.application, tested);
-  if (decision.refusal !== undefined) {
-    return { status: "error", error: decision.refusal };
-  }
-
   const run = await reconcileDirect(
     invocation,
     intent,
     { domain: context.domain, id: context.targetId },
     "apply",
     context.readSet,
+    true,
   );
   if (!run.ok) {
     return { status: "error", error: run.error };
@@ -822,16 +839,18 @@ async function applyBypass(
       ? { status: "ok", outcomeUnknown: outcome.error, effects: context.effects }
       : { status: "error", error: outcome.error };
   }
+  if (outcome.status !== "applied") {
+    return {
+      status: "error",
+      error: error(invocation, "conflict", "the apply phase reported a plan"),
+    };
+  }
 
   return {
     status: "ok",
-    data: outcome.status === "applied" ? publishDiff(invocation, outcome.diff) : undefined,
+    data: publishDiff(invocation, outcome.diff),
     effects: context.effects,
-    warnings: [
-      describeExternalEffect(domain, invocation.application),
-      ...decision.warnings,
-      ...(outcome.status === "applied" ? outcome.warnings : []),
-    ],
+    warnings: outcome.warnings,
   };
 }
 
@@ -875,7 +894,7 @@ async function applySync(
   }
 
   const items: readonly ItemOutcome[] = outcome.items.map((item) => ({
-    reference: item.ref.id,
+    reference: mintedItems(invocation, item.ref),
     status: item.error === undefined ? "ok" : "error",
     warnings: [...item.warnings],
     ...(item.error === undefined ? {} : { error: item.error }),
