@@ -119,6 +119,26 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
       throw new UpstreamError("invalid-request", { application, pathProblem: joined.problem });
     }
 
+    // Serialized here, before anything is dispatched and before the fetch's
+    // own catch is in scope. A value JSON cannot represent is a fault in this
+    // project's own payload, not a failure to reach the instance, and folding
+    // it into the catch below would report a working instance as unreachable —
+    // sending the caller to look at the wrong system entirely. The thrown
+    // value's message is deliberately dropped: a serializer quotes what it
+    // choked on, and that is the payload.
+    let payload: string | undefined;
+    if (body !== undefined) {
+      try {
+        payload = JSON.stringify(body);
+      } catch {
+        throw new UpstreamError("invalid-request", {
+          application,
+          operation: path,
+          bodyProblem: "unserializable",
+        });
+      }
+    }
+
     // Appended after the path is validated and joined, and deliberately kept
     // out of `operation` below: the route names the failure, while a query
     // value can be caller-derived and must never reach a diagnostic.
@@ -142,9 +162,9 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
           headers: {
             "X-Api-Key": options.apiKey,
             Accept: "application/json",
-            ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+            ...(payload === undefined ? {} : { "Content-Type": "application/json" }),
           },
-          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+          ...(payload === undefined ? {} : { body: payload }),
           signal: controller.signal,
         });
       } catch {
@@ -161,9 +181,9 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
         });
       }
 
-      let payload: string;
+      let answered: string;
       try {
-        payload = await response.text();
+        answered = await response.text();
       } catch {
         throw fail(timedOut ? "timeout" : "unavailable");
       }
@@ -175,12 +195,12 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
       // an unexpected response carrying the status, because a read that
       // returned nothing has not answered the question it was asked, and
       // losing that status would leave the caller with less than it had.
-      if (method !== "GET" && payload.trim() === "") {
+      if (method !== "GET" && answered.trim() === "") {
         return undefined;
       }
 
       try {
-        return JSON.parse(payload) as unknown;
+        return JSON.parse(answered) as unknown;
       } catch {
         throw new UpstreamError("unexpected-response", {
           application,

@@ -308,6 +308,34 @@ describe("createUpstreamClient", () => {
     expect(silent.calls[0]?.init.signal?.aborted).toBe(true);
   });
 
+  it("refuses a body it cannot serialize and never reaches for the instance", async () => {
+    const { client, calls } = harness(() => json({ id: 12 }));
+    const secret = "sensitive-title-value";
+    const circular: Record<string, unknown> = { title: secret };
+    circular.self = circular;
+
+    for (const unserializable of [{ title: secret, size: 1n }, circular]) {
+      const rejection = client.post("series", unserializable);
+      await expect(rejection).rejects.toBeInstanceOf(UpstreamError);
+      const error = await captureError(rejection);
+      // A payload this project cannot represent is its own fault, not an
+      // unreachable instance: reporting `unavailable` would send the caller to
+      // look at a system that is working fine.
+      expect(error.kind).toBe("invalid-request");
+      expect(error.bodyProblem).toBe("unserializable");
+      expect(error.operation).toBe("series");
+      expect(error.status).toBeUndefined();
+      expect(error.message).toContain("body could not be serialized");
+      // A serializer quotes the value it choked on, so its message is dropped.
+      const disclosed = `${error.message}\n${JSON.stringify(error.toJSON())}`;
+      expect(disclosed).not.toContain(secret);
+      expect(disclosed).not.toContain(apiKey);
+    }
+
+    // Nothing was ever dispatched.
+    expect(calls).toEqual([]);
+  });
+
   it("refuses an unusable path on a write before anything is dispatched", async () => {
     const { client, calls } = harness(() => json({ id: 12 }));
 
@@ -429,6 +457,7 @@ describe("UpstreamError", () => {
       operation: "system/status",
       status: 400,
       pathProblem: undefined,
+      bodyProblem: undefined,
       message: error.message,
     });
     expect(isUpstreamError(error)).toBe(true);
