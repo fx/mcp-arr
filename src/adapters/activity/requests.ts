@@ -20,12 +20,15 @@ export const activityViews = [
   "health",
   "commands",
   "disk_space",
+  "indexer_status",
+  "indexer_statistics",
 ] as const;
 
 export type ActivityView = (typeof activityViews)[number];
 
 const media = ["sonarr", "radarr"] as const;
 const every = ["sonarr", "radarr", "prowlarr"] as const;
+const prowlarr = ["prowlarr"] as const;
 
 /**
  * Which applications model each view.
@@ -33,13 +36,8 @@ const every = ["sonarr", "radarr", "prowlarr"] as const;
  * This mirrors the application support the internal operation registry declares
  * for the `arr_activity_query` variants, and a test holds the two lists to each
  * other so a view can never be advertised in one place and refused in the
- * other. Prowlarr has no queue, blocklist, or media library, so it appears only
- * against the three views it genuinely answers.
- *
- * The registry also declares `indexer_status` and `indexer_statistics` for
- * Prowlarr. Those are the third task of change 0004 and are deliberately absent
- * here rather than declared and unimplemented; the parity test names them, so
- * the gap is stated rather than silent.
+ * other. Prowlarr has no queue, blocklist, or media library, and the two
+ * indexer views exist only on Prowlarr.
  */
 export const activityViewApplications: Readonly<Record<ActivityView, readonly ApplicationId[]>> = {
   queue_status: media,
@@ -50,6 +48,8 @@ export const activityViewApplications: Readonly<Record<ActivityView, readonly Ap
   health: every,
   commands: every,
   disk_space: media,
+  indexer_status: prowlarr,
+  indexer_statistics: prowlarr,
 };
 
 export interface ActivityPaging {
@@ -100,7 +100,9 @@ export type ActivityQueryRequest =
     } & DateWindow)
   | (ActivityQueryBase & { readonly view: "health" })
   | (ActivityQueryBase & { readonly view: "commands" })
-  | (ActivityQueryBase & { readonly view: "disk_space" });
+  | (ActivityQueryBase & { readonly view: "disk_space" })
+  | (ActivityQueryBase & { readonly view: "indexer_status" })
+  | (ActivityQueryBase & { readonly view: "indexer_statistics" } & DateWindow);
 
 export type ActivityRequestFor<TView extends ActivityView> = Extract<
   ActivityQueryRequest,
@@ -125,6 +127,7 @@ export function digestPartsFor(
     case "health":
     case "commands":
     case "disk_space":
+    case "indexer_status":
       return shared;
     case "queue":
       return [...shared, ...[...(request.mediaIds ?? [])].sort((a, b) => a - b)];
@@ -138,6 +141,8 @@ export function digestPartsFor(
         request.until,
         ...[...(request.mediaIds ?? [])].sort((a, b) => a - b),
       ];
+    case "indexer_statistics":
+      return [...shared, request.since, request.until];
   }
 }
 

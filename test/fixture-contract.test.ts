@@ -100,6 +100,7 @@ describe("versioned fixture contract", () => {
       "prowlarr/v1/2.5.2.5491/history.json",
       "prowlarr/v1/2.5.2.5491/health.json",
       "prowlarr/v1/2.5.2.5491/command.json",
+      "prowlarr/v1/2.5.2.5491/indexerstats.json",
     ]);
     await expect(listFiles(fixtureRoot)).resolves.toEqual([...approvedFixtureInventory].sort());
 

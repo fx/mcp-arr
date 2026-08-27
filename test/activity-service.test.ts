@@ -29,39 +29,21 @@ const requestForView: Readonly<Record<ActivityView, ActivityQueryRequest>> = {
   health: { view: "health", detail: "summary", paging: paging() },
   commands: { view: "commands", detail: "summary", paging: paging() },
   disk_space: { view: "disk_space", detail: "summary", paging: paging() },
+  indexer_status: { view: "indexer_status", detail: "summary", paging: paging() },
+  indexer_statistics: { view: "indexer_statistics", detail: "summary", paging: paging() },
 };
 
-/**
- * The `arr_activity_query` variants the operation registry declares that this
- * module does not implement yet.
- *
- * They are the third task of change 0004. Naming them here is what keeps the
- * parity check below strict: every other registered variant must match this
- * module exactly, and a variant may only be missing if it is on this list —
- * which also means the list has to be emptied when that task lands, rather than
- * the gap quietly persisting.
- */
-const pendingViews: readonly string[] = ["indexer_status", "indexer_statistics"];
-
 describe("activity view support", () => {
-  it("declares the views it implements exactly as the operation registry does", () => {
+  it("declares the same views and applications the operation registry does", () => {
     const registered = operationDefinitions
       .filter((operation) => operation.tool === "arr_activity_query")
       .map((operation) => [operation.variant, [...operation.applications]] as const);
 
-    // Implemented views match the registry exactly — same order, same
-    // application sets — so a view cannot be advertised in one place and
-    // refused in the other.
-    expect(registered.filter(([variant]) => !pendingViews.includes(variant ?? ""))).toEqual(
+    // Every registered variant is now implemented, so the two lists match
+    // exactly rather than one of them carrying a pending exception.
+    expect(registered).toEqual(
       activityViews.map((view) => [view, [...activityViewApplications[view]]]),
     );
-    // The pending views are registered, and none of them is implemented here.
-    expect(
-      registered
-        .map(([variant]) => variant)
-        .filter((variant) => pendingViews.includes(variant ?? "")),
-    ).toEqual(pendingViews);
-    expect(activityViews.filter((view) => pendingViews.includes(view))).toEqual([]);
   });
 
   it("refuses a view an application does not model before sending a request", async () => {

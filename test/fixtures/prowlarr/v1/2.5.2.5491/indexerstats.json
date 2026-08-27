@@ -1,0 +1,38 @@
+{
+  "metadata": {
+    "application": "prowlarr",
+    "apiVersion": "v1",
+    "version": "2.5.2.5491",
+    "endpoint": "/api/v1/indexerstats"
+  },
+  "body": {
+    "indexers": [
+      {
+        "indexerId": 21,
+        "indexerName": "Example Indexer",
+        "numberOfQueries": 412,
+        "numberOfGrabs": 38,
+        "numberOfRssQueries": 260,
+        "numberOfAuthQueries": 4,
+        "numberOfFailedQueries": 3,
+        "numberOfFailedGrabs": 1,
+        "numberOfFailedRssQueries": 2,
+        "numberOfFailedAuthQueries": 0,
+        "averageResponseTime": 734
+      },
+      {
+        "indexerId": 22,
+        "indexerName": "Example Usenet Indexer",
+        "numberOfQueries": 118,
+        "numberOfGrabs": 9,
+        "numberOfRssQueries": 90,
+        "numberOfAuthQueries": 12,
+        "numberOfFailedQueries": 40,
+        "numberOfFailedGrabs": 3,
+        "numberOfFailedRssQueries": 11,
+        "numberOfFailedAuthQueries": 12,
+        "averageResponseTime": 15021
+      }
+    ]
+  }
+}

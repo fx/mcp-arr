@@ -71,7 +71,16 @@ const approvedRoutes: Readonly<Record<FixtureApplication, readonly string[]>> = 
     "command",
     "diskspace",
   ],
-  prowlarr: ["system/status", "indexer", "indexerstatus", "search", "history", "health", "command"],
+  prowlarr: [
+    "system/status",
+    "indexer",
+    "indexerstatus",
+    "search",
+    "history",
+    "health",
+    "command",
+    "indexerstats",
+  ],
 };
 
 /** The file that records one route's response. */
