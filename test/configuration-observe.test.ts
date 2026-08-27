@@ -12,6 +12,7 @@ import {
   firstRecord,
   observationRequest,
   observe,
+  observedRecords,
   providerRecords,
 } from "./support/configuration.js";
 import { fixtureBody, jsonResponse } from "./support/library.js";
@@ -273,6 +274,57 @@ describe("bounding and continuing an observation", () => {
       serving(body),
     );
     expect(expectObservationError(malformed.outcome).message).toContain("was not issued");
+  });
+
+  /**
+   * The cursor digest must key on what actually varies. `includeSchema` only
+   * reaches a schema route on a provider domain; everywhere else it is ignored,
+   * so digesting it there would make two identical observations mint cursors
+   * that reject each other.
+   */
+  it("mints interchangeable cursors for a non-provider observation either way", async () => {
+    const tags = [
+      { id: 1, label: "example-one" },
+      { id: 2, label: "example-two" },
+    ];
+    const withSchema = await observe(
+      "sonarr",
+      observationRequest("tags", { paging: { pageSize: 1 }, includeSchema: true }),
+      serving(tags),
+    );
+    const cursor = expectObserved(withSchema.outcome).continuation.cursor;
+    expect(cursor).toBeDefined();
+
+    // The same observation, asked without the flag, continues that page.
+    const continued = await observe(
+      "sonarr",
+      observationRequest("tags", { paging: { pageSize: 1, cursor } }),
+      serving(tags),
+    );
+    expect(observedRecords(continued.outcome).map((record) => record.ref.id)).toEqual(["2"]);
+    // And no schema route was read for a domain that has none.
+    expect(withSchema.calls.map((call) => call.url.pathname)).toEqual(["/api/v3/tag"]);
+  });
+
+  it("still separates provider observations that differ only by includeSchema", async () => {
+    const body = await fixtureBody("sonarr", "indexer");
+    const plain = await observe(
+      "sonarr",
+      observationRequest("indexers", { paging: { pageSize: 1 } }),
+      serving(body),
+    );
+    const cursor = expectObserved(plain.outcome).continuation.cursor;
+
+    const schemaBody = await fixtureBody("sonarr", "indexer/schema");
+    const mismatched = await observe(
+      "sonarr",
+      observationRequest("indexers", { paging: { pageSize: 1, cursor }, includeSchema: true }),
+      (call) => jsonResponse(call.url.pathname.endsWith("/schema") ? schemaBody : body),
+    );
+
+    expect(expectObservationError(mismatched.outcome).message).toContain(
+      "belongs to a different observation",
+    );
   });
 
   it("refuses a page size outside the published bounds before sending anything", async () => {

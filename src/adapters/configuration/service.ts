@@ -120,7 +120,12 @@ function digestParts(
     request.domain,
     request.detail,
     request.paging.pageSize,
-    request.includeSchema === true,
+    // Only where it changes the answer. Outside a provider domain there is no
+    // schema route to read and the flag is ignored, so digesting it there would
+    // mint two incompatible cursors for two observations that returned exactly
+    // the same page — and the second page of one would be refused as belonging
+    // to a different observation.
+    isProviderDomain(request.domain) ? request.includeSchema === true : undefined,
   ];
 }
 
