@@ -58,6 +58,8 @@ interface InstanceOptions {
    * an instance that took the request and did not store it does.
    */
   readonly ignoreWrites?: boolean | undefined;
+  /** Answers every single-mapping read with this record, whichever was asked for. */
+  readonly answerReadsWith?: Readonly<Record<string, unknown>> | undefined;
 }
 
 interface Instance {
@@ -98,6 +100,9 @@ function instance(options: InstanceOptions = {}): Instance {
 
     const single = /^applications\/(\d+)$/u.exec(route);
     if (single !== null) {
+      if (options.answerReadsWith !== undefined) {
+        return jsonResponse(options.answerReadsWith);
+      }
       const id = Number(single[1]);
       const written =
         options.ignoreWrites === true
@@ -514,6 +519,24 @@ describe("applying a level change", () => {
     expect(outcome.warnings.at(-1)).toContain("no synchronization was started");
     expect(outcome.warnings.at(-1)).toContain("not confirmed at the requested level");
     expect(outcome.unresolved).toBeUndefined();
+  });
+
+  it("holds it back when the confirming read described a different mapping", async () => {
+    // A well-formed answer about mapping 1, which is already at full sync, in
+    // reply to a question about mapping 2. Confirming from that would release
+    // the global command on the strength of a reading of something else.
+    const other = records("applications").find((record) => record.id === 1);
+    if (other === undefined) {
+      throw new Error("The recorded applications fixture lost a mapping");
+    }
+    const misrouted = instance({ answerReadsWith: other });
+    const outcome = applied(
+      await misrouted.run(request({ targets: [2], mode: "apply", startSync: true })),
+    );
+
+    expect(outcome.items[0]).toMatchObject({ attempted: true, verified: false });
+    expect(misrouted.writes.map((write) => write.route)).toEqual(["applications/2"]);
+    expect(outcome.warnings.at(-1)).toContain("no synchronization was started");
   });
 
   it("holds it back for a level that was written but did not land either", async () => {

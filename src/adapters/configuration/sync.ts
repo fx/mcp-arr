@@ -772,7 +772,15 @@ async function confirmSyncLevel(
     const route = `${routeFor("applications", application) ?? "applications"}/${String(id)}`;
     const body = await client.get(route);
     const parsed = applicationSchema.safeParse(body);
-    return parsed.success && readSyncLevel(parsed.data.syncLevel) === request.syncLevel;
+    // The identity is checked as well as the level. A well-formed answer that
+    // describes a different mapping happens to satisfy the level whenever that
+    // other mapping is already on it, and confirming from that would release
+    // the global command on the strength of a reading of something else.
+    return (
+      parsed.success &&
+      parsed.data.id === id &&
+      readSyncLevel(parsed.data.syncLevel) === request.syncLevel
+    );
   } catch {
     return false;
   }
