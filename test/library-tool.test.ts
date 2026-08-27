@@ -456,7 +456,9 @@ describe("arr_library_query capability projection", () => {
       environment: instanceEnvironment([sonarr, radarr]),
     });
 
-    const report = await reportCapabilities(context, undefined);
+    // Full detail, because the assertion below is about what is *not* listed
+    // as unimplemented; the bounded default reports that as a count.
+    const report = await reportCapabilities(context, undefined, "full");
     const viewsFor = (application: string) =>
       (
         report.applications.find((entry) => entry.application === application)?.data
@@ -491,7 +493,9 @@ describe("arr_library_query capability projection", () => {
     for (const application of applicationIds) {
       const data = report.applications.find((entry) => entry.application === application)?.data;
       expect(
-        data?.unimplementedOperations.filter((operation) => operation.tool === "arr_library_query"),
+        (data?.unimplementedOperations ?? []).filter(
+          (operation) => operation.tool === "arr_library_query",
+        ),
         application,
       ).toEqual([]);
     }

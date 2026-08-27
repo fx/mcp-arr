@@ -36,6 +36,13 @@ export const modeSchema = z.enum(["plan", "apply"]);
  */
 export const detailLevelSchema = z.enum(["summary", "full"]);
 
+/**
+ * The detail level as the tool surface sees it, inferred from the schema so
+ * the accepted set has one definition. The library adapters declare the same
+ * pair for their own request model; this is the tool-layer name for it.
+ */
+export type DetailLevel = z.infer<typeof detailLevelSchema>;
+
 export const defaultPageSize = 25;
 export const maxPageSize = 100;
 

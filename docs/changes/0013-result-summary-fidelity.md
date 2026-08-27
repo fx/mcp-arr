@@ -5,7 +5,7 @@
 Make what a caller actually reads match what the server actually found. Error summaries currently discard the error code and remediation hint the structured result carries, and `arr_capabilities` returns an unbounded enumeration dominated by operations that do not work. Both are now named by the [Tool Contracts spec](../specs/tool-contracts/#error-contract).
 
 **Spec:** [Tool Contracts](../specs/tool-contracts/)
-**Status:** draft
+**Status:** complete
 **Depends On:** —
 
 ## Motivation
@@ -81,10 +81,10 @@ The [Tool Contracts spec](../specs/tool-contracts/#error-contract) owns what a s
   - [x] Derive error summaries from the carried error rather than the envelope status
   - [x] Assert summary text for total failure, partial failure, unsupported variant, and success
   - [x] Confirm no upstream body, URL, header, or API key can reach a summary
-- [ ] Bound the capability report
-  - [ ] Add a detail level that defaults to the bounded form and enumerates only on request
-  - [ ] Verify the bounded default against configured, unconfigured, unavailable, and unsupported applications
-  - [ ] Update `README.md` where it describes what the capability report returns
+- [x] Bound the capability report
+  - [x] Add a detail level that defaults to the bounded form and enumerates only on request
+  - [x] Verify the bounded default against configured, unconfigured, unavailable, and unsupported applications
+  - [x] Update `README.md` where it describes what the capability report returns
 
 ## Open Questions
 
