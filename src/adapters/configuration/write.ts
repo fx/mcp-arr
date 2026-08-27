@@ -216,6 +216,28 @@ interface FieldEntry {
 }
 
 /**
+ * Whether one dynamic field entry actually holds a credential.
+ *
+ * The name and the instance's privacy word decide it, and the current value
+ * gets a veto: the observation classifier treats a boolean under a
+ * credential-shaped name as a switch rather than a credential — `useAuthentication`
+ * and `requireLogin` are switches — and withholds it instead of calling it
+ * configured. The write side has to agree, or the secret channel becomes a way
+ * to overwrite an ordinary switch with a supplied string, which is the generic
+ * passthrough this whole surface exists to prevent.
+ *
+ * Every place the writer asks "is this a credential" asks it here: the supplied
+ * secret, the explicit removal, the dispositions, and the read set.
+ */
+function isCredentialEntry(name: string, record: Record<string, unknown>): boolean {
+  if (typeof record.value === "boolean") {
+    return false;
+  }
+  const privacy = typeof record.privacy === "string" ? record.privacy : undefined;
+  return classifyProviderField({ name, privacy }) === "secret";
+}
+
+/**
  * Locates a provider's dynamic field entries by name.
  *
  * The entries themselves are handed back rather than copies, because the write
@@ -423,11 +445,11 @@ function applyAssignment(
       }
       // The instance has the last word. A name that reads as a credential got
       // the patch this far; a record that does not actually treat the field as
-      // one would be written through a channel whose whole purpose is that the
-      // value is never retained, and a value that is not a credential belongs
-      // in a desired field where it can be described.
-      const privacy = typeof entry.record.privacy === "string" ? entry.record.privacy : undefined;
-      if (classifyProviderField({ name: assignment.name, privacy }) !== "secret") {
+      // one — because nothing marks it, or because it holds a switch — would be
+      // written through a channel whose whole purpose is that the value is
+      // never retained, and a value that is not a credential belongs in a
+      // desired field where it can be described.
+      if (!isCredentialEntry(assignment.name, entry.record)) {
         return toolError(
           state.application,
           "invalid_input",
@@ -491,15 +513,23 @@ function applyRemoval(
   if (!("record" in entry)) {
     return entry;
   }
+  const secret = isCredentialEntry(name, entry.record);
+  if (!secret && !providerFieldAllowlist.has(name)) {
+    // The compiler cleared this name by reading it alone; the record says it is
+    // a switch rather than a credential, and a switch this server cannot
+    // describe is one it will not clear either. Refusing here rather than
+    // silently writing null keeps removal to fields it can say something about.
+    return toolError(
+      state.application,
+      "invalid_input",
+      `${name} is a switch on this record rather than a credential, and is not a field this server can clear`,
+    );
+  }
   const before = entry.record.value;
   entry.record.value = null;
   state.writtenFields.add(entry.index);
-  const secret = classifyProviderField({
-    name,
-    privacy: typeof entry.record.privacy === "string" ? entry.record.privacy : undefined,
-  });
   state.changes.push(
-    secret === "secret"
+    secret
       ? { path: fieldPath(name), action: before === null ? "unchanged" : "clear", redacted: true }
       : fieldChange(state, name, "clear", before, null),
   );
@@ -528,14 +558,10 @@ function secretDispositions(
     if (!isUpstreamRecord(value) || typeof value.name !== "string") {
       continue;
     }
-    const privacy = typeof value.privacy === "string" ? value.privacy : undefined;
-    if (classifyProviderField({ name: value.name, privacy }) !== "secret") {
-      continue;
-    }
     // A boolean under a credential-shaped name is a switch, not a credential;
     // the observation classifier withholds it rather than calling it
     // configured, and calling it preserved here would say the same false thing.
-    if (typeof value.value === "boolean") {
+    if (!isCredentialEntry(value.name, value)) {
       continue;
     }
     dispositions.push({
@@ -692,14 +718,12 @@ export function configurationObservations(
   const observeField = (name: string): void => {
     const [entry] = entries.get(name) ?? [];
     const record = entry?.record;
-    const privacy = typeof record?.privacy === "string" ? record.privacy : undefined;
-    const secret = classifyProviderField({ name, privacy }) === "secret";
     observations.push({
       key: fieldPath(name),
       value: fingerprint(
         record === undefined
           ? undefined
-          : secret
+          : isCredentialEntry(name, record)
             ? describeSecret(name, record.value).state
             : record.value,
       ),
@@ -714,7 +738,15 @@ export function configurationObservations(
         break;
       case "enabled":
         for (const name of enableSwitches) {
-          observeProperty(name);
+          // A switch the writer cannot move is observed as unwritable rather
+          // than by value: an instance changing a legacy `enable: "yes"` to
+          // some other non-boolean neither changes what this write does nor is
+          // disclosed by its diff, while one that becomes a real boolean does
+          // change it and still expires the plan.
+          observations.push({
+            key: name,
+            value: fingerprint(typeof payload[name] === "boolean" ? payload[name] : "unwritable"),
+          });
         }
         break;
       case "tags":

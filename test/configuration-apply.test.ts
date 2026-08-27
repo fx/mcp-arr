@@ -313,6 +313,50 @@ describe("applying a credential change", () => {
     expect(writes(dispatched)).toEqual([]);
   });
 
+  it("refuses a supplied value for a switch that merely reads like a credential", async () => {
+    // The observation classifier calls a boolean under a credential-shaped name
+    // a switch rather than a credential and withholds it. The write side has to
+    // agree, or this channel becomes a way to overwrite an ordinary switch with
+    // a supplied string.
+    const record = await first("radarr", "downloadclient");
+    const switched = {
+      ...record,
+      fields: [{ order: 0, name: "useAuthentication", value: false }],
+    };
+    const instance = {
+      routes: { "downloadclient/1": switched, "downloadclient/schema": [] },
+    };
+
+    const { outcome, dispatched } = await reconcile(
+      "radarr",
+      instance,
+      planning("download_clients", 1, {
+        mode: "apply",
+        secrets: secrets(["useAuthentication", supplied]),
+      }),
+    );
+    expect(expectRefused(outcome).error).toMatchObject({
+      code: "invalid_input",
+      message: expect.stringContaining("useAuthentication is not a credential on this record"),
+    });
+    expect(writes(dispatched)).toEqual([]);
+
+    // And it is not clearable either: this server cannot describe it, so it
+    // will not blank it.
+    const cleared = await reconcile(
+      "radarr",
+      instance,
+      planning("download_clients", 1, {
+        mode: "apply",
+        removeFields: ["useAuthentication"],
+      }),
+    );
+    expect(expectRefused(cleared.outcome).error).toMatchObject({
+      code: "invalid_input",
+      message: expect.stringContaining("is a switch on this record"),
+    });
+  });
+
   it("accepts a supplied value for a field the instance marks as one", async () => {
     // The mirror of the desired-field rule: upstream privacy escalates a field
     // to a credential, so a field this server would not have guessed at may be
@@ -434,6 +478,38 @@ describe("schema and resource fingerprints", () => {
     );
 
     expect(expectApplied(applied).attempted).toBe(true);
+  });
+
+  it("observes a switch the writer cannot move as unwritable rather than by value", async () => {
+    const instance = await newznab();
+    const record = await first("sonarr", "indexer");
+    const legacy = { ...record, enable: "yes" };
+    const request = planning("indexers", 1, { fields: [{ name: "enabled", value: true }] });
+    const { outcome } = await reconcile(
+      "sonarr",
+      { routes: { ...instance.routes, "indexer/1": legacy } },
+      request,
+    );
+    const planned = expectPlanned(outcome);
+    const quoting = { readSet: fingerprintReadSet(planned.observations) };
+
+    // The legacy property moves to another value the writer still cannot use.
+    // Nothing this write does has changed, so the plan is still good.
+    const { outcome: applied } = await reconcile(
+      "sonarr",
+      { routes: { ...instance.routes, "indexer/1": { ...legacy, enable: "no" } } },
+      { ...request, mode: "apply", planned: quoting },
+    );
+    expect(expectApplied(applied).attempted).toBe(true);
+
+    // It becomes a real switch, which the writer would now move: that is a
+    // different write, so the plan is stale.
+    const { outcome: stale } = await reconcile(
+      "sonarr",
+      { routes: { ...instance.routes, "indexer/1": { ...legacy, enable: false } } },
+      { ...request, mode: "apply", planned: quoting },
+    );
+    expect(expectRefused(stale).error).toMatchObject({ code: "stale_plan" });
   });
 
   it("makes a plan stale when a field entry has appeared on the record", async () => {
