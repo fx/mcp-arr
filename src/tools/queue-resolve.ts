@@ -20,7 +20,12 @@ import {
 } from "../adapters/activity/transitions.js";
 import { isMediaApplication, type MediaApplication } from "../adapters/library/model.js";
 import type { UpstreamClient } from "../http/client.js";
-import type { ApplyReconciliation, ApplyRecord } from "../state/apply-records.js";
+import type {
+  ApplyReconciliation,
+  ApplyRecord,
+  ApplySettlement,
+  BeginApplyInput,
+} from "../state/apply-records.js";
 import type { PreconditionRead, ReadSetObservation } from "../state/plans.js";
 import { resolveQueueReference } from "./activity-references.js";
 import {
@@ -424,6 +429,27 @@ async function applyItems(
       continue;
     }
 
+    const claim = perItemClaim(invocation, context, item.reference);
+    let record: string | undefined;
+    if (claim !== undefined) {
+      const attempt = invocation.state.applies.begin(claim);
+      if (attempt.status === "replayed") {
+        // This exact single-item mutation already has a receipt, so nothing is
+        // sent for it a second time and its recorded outcome is repeated.
+        outcomes.push(
+          itemOutcome(
+            item.reference,
+            attempt.record.state === "succeeded" ? undefined : attempt.record.error,
+            [
+              "this item was already applied by this server; its existing receipt is repeated and nothing was sent again",
+            ],
+          ),
+        );
+        continue;
+      }
+      record = attempt.record.reference;
+    }
+
     const sent = await sendTransition(invocation.adapter.client, item.transition);
     if (sent.dispatched) {
       dispatched += 1;
@@ -436,10 +462,70 @@ async function applyItems(
         unresolved = sent.error;
       }
     }
+    if (record !== undefined) {
+      invocation.state.applies.settle(record, settlementForItem(sent.error));
+    }
     outcomes.push(itemOutcome(item.reference, sent.error, sent.warnings));
   }
 
   return { outcomes, unresolved, dispatched };
+}
+
+/**
+ * The claim one item's own apply record is created from, or `undefined` where
+ * it needs none.
+ *
+ * Two cases need none. A transition that sends nothing — the routed manual
+ * import — performs no egress at all, and a receipt for it would record a
+ * mutation that never existed. And a selection of exactly one item is already
+ * covered: the dispatcher's own record is keyed on that same single-item intent,
+ * so creating a second one here would collide with it, be answered as a replay,
+ * and stop the mutation being sent at all.
+ *
+ * For everything else the key is the calling intent narrowed to this one item,
+ * which is deliberately the identical key a caller would produce by applying
+ * that item on its own. That is what makes the two reach one receipt: an item
+ * already resolved inside a bulk call is not sent again when it is later named
+ * alone.
+ */
+function perItemClaim(
+  invocation: OperationInvocation,
+  context: QueueResolveContext,
+  reference: string,
+): BeginApplyInput | undefined {
+  const sending = context.items.filter(
+    (item) => item.status === "ok" && item.transition.action.kind === "upstream",
+  );
+  if (sending.length < 2) {
+    return undefined;
+  }
+  const input = invocation.input;
+  return {
+    tool: "arr_queue_resolve",
+    variant: context.intent,
+    application: context.application,
+    intent:
+      typeof input === "object" && input !== null
+        ? { ...(input as Record<string, unknown>), items: [reference] }
+        : { items: [reference] },
+  };
+}
+
+/**
+ * How one item's own record settles.
+ *
+ * The same three answers the call-level receipt uses, decided per item because
+ * that is the whole point of having one per item: a request that was sent and
+ * whose answer was lost stays reconcilable on its own, rather than being
+ * absorbed into a batch verdict that says nothing about which item it was.
+ */
+function settlementForItem(error: ToolError | undefined): ApplySettlement {
+  if (error === undefined) {
+    return { status: "succeeded" };
+  }
+  return toolErrorProvesNoEffect(error.code)
+    ? { status: "failed", error }
+    : { status: "outcome_unknown", error };
 }
 
 /**

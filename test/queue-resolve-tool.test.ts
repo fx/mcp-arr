@@ -342,6 +342,33 @@ describe("queue resolution apply mode", () => {
     expect(deletes()).toHaveLength(1);
   });
 
+  it("records each item of a bulk apply before its own request", async () => {
+    // The change document requires a per-item apply record before each
+    // non-idempotent request, and this is what that buys: an item resolved
+    // inside a bulk call is not sent again when it is later named on its own.
+    const references = await queueReferences();
+    const first = await referenceFor(blockedImport);
+    const second = references.find((candidate) => candidate !== first) as string;
+
+    const bulk = await run(resolveTool, {
+      intent: "ignore_tracking",
+      mode: "apply",
+      items: [first, second],
+    });
+    expect(outcomeOf(bulk).items?.filter((item) => item.status === "ok")).toHaveLength(2);
+    expect(deletes()).toHaveLength(2);
+
+    const alone = await run(resolveTool, {
+      intent: "ignore_tracking",
+      mode: "apply",
+      items: [first],
+    });
+
+    expect(alone.applications[0]?.warnings.join(" ")).toContain("already applied");
+    // Nothing was sent a second time for a row the bulk call had resolved.
+    expect(deletes()).toHaveLength(2);
+  });
+
   it("answers a repeated apply from its receipt instead of sending again", async () => {
     const reference = await referenceFor(blockedImport);
     const args = { intent: "ignore_tracking", mode: "apply", items: [reference] };
