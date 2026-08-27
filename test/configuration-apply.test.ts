@@ -512,6 +512,23 @@ describe("verifying what the instance stored", () => {
     ).toHaveLength(1);
   });
 
+  it("judges only the switches the writer moved", async () => {
+    const record = await first("sonarr", "indexer");
+    // A legacy switch the writer leaves alone because it is not a boolean. An
+    // instance moving it says nothing about the apply that never wrote it.
+    const legacy = { ...record, enable: "yes" };
+    const { outcome } = await reconcile(
+      "sonarr",
+      {
+        routes: { ...(await newznab()).routes, "indexer/1": legacy },
+        answerWrite: (sent) => jsonResponse({ ...(sent as UpstreamRecord), enable: "no" }),
+      },
+      planning("indexers", 1, { mode: "apply", fields: [{ name: "enabled", value: true }] }),
+    );
+
+    expect(expectApplied(outcome).verification).toEqual({ status: "succeeded" });
+  });
+
   it("reports a conflict when the instance stored something else", async () => {
     const instance = await newznab();
     const { outcome } = await reconcile(

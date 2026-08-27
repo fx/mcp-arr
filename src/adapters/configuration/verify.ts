@@ -175,10 +175,11 @@ function checksFor(
         checks.push(checkProperty(current, sent, assignment.property));
         break;
       case "enabled":
-        // Exactly the switches the writer moves, and only those the record
-        // carries: a property this apply never wrote is not evidence about it.
+        // The writer's own predicate, not a weaker one. It moves a switch only
+        // where the record carried a boolean, so a legacy property of some
+        // other type was never written and is not evidence about this apply.
         for (const property of enableSwitches) {
-          if (property in sent) {
+          if (typeof sent[property] === "boolean") {
             checks.push(checkProperty(current, sent, property));
           }
         }

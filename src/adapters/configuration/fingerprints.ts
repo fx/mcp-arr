@@ -22,10 +22,10 @@ import { serializeProviderTemplate } from "./serialize.js";
  *
  * Fingerprinting the schema is what makes that visible. The digest covers the
  * template this resource's implementation is built from: its field names, their
- * types, whether each is advanced, and — the one that matters most — whether
- * each is a credential. A definition that reclassifies a field from a plain
- * setting to a password has changed what a write to it means, and a plan made
- * before that reclassification must not be applied after it.
+ * types, and — the one that matters most — whether each is a credential. A
+ * definition that reclassifies a field from a plain setting to a password has
+ * changed what a write to it means, and a plan made before that
+ * reclassification must not be applied after it.
  *
  * What is digested is the *serialized* template rather than the raw payload,
  * because the serializer already drops the default values a schema endpoint
