@@ -85,7 +85,9 @@ describe("observing providers", () => {
       { name: "minimumSeeders", value: 2 },
       { name: "seedRatio", value: 1.5 },
     ]);
-    expect(torrent?.withheld).toEqual({ count: 1 });
+    // `baseUrl`, and an `additionalParameters` the instance sent with no value
+    // key at all — never allowlisted, so absent or not it is only counted.
+    expect(torrent?.withheld).toEqual({ count: 2 });
   });
 
   it("reads a Radarr download client's single enable switch and both credentials", async () => {

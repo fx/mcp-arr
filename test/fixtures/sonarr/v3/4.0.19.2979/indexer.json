@@ -87,9 +87,10 @@
           "value": "example-torrent-indexer",
           "privacy": "normal"
         },
-        { "order": 1, "name": "apiKey", "privacy": "apiKey" },
+        { "order": 1, "name": "apiKey", "value": "", "privacy": "apiKey" },
         { "order": 2, "name": "minimumSeeders", "value": 2, "privacy": "normal" },
-        { "order": 3, "name": "seedRatio", "value": 1.5, "privacy": "normal" }
+        { "order": 3, "name": "seedRatio", "value": 1.5, "privacy": "normal" },
+        { "order": 4, "name": "additionalParameters", "privacy": "normal" }
       ]
     }
   ]
