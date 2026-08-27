@@ -118,6 +118,11 @@ function retainedFor(overrides: Partial<ImportCandidateContext> = {}): ImportCan
     fileIdentity: fileIdentity(cleanFile),
     sizeBytes: 3_221_225_472,
     importable: true,
+    selected: {
+      quality: "Bluray-1080p",
+      languages: ["English"],
+      releaseGroup: "ExampleGroup",
+    },
     ...overrides,
   };
 }
@@ -383,6 +388,55 @@ describe("what blocks an import", () => {
     ).toEqual([]);
   });
 
+  it("compares every retained mapping field, including the ones no number stands for", () => {
+    const retained = retainedFor({
+      selected: { quality: "Bluray-1080p", languages: ["English"], releaseGroup: "ExampleGroup" },
+    });
+    const changed = (selected: Record<string, unknown>) =>
+      ({
+        context: retainedFor({ selected: selected as never }),
+      }) as unknown as ImportCandidate;
+
+    // Retaining and fingerprinting these without comparing them would have been
+    // half a guarantee: the reference would say which quality it was bound to
+    // and nothing would check that the import used it.
+    expect(
+      staleFacts(
+        retained,
+        changed({ quality: "WEBDL-720p", languages: ["English"], releaseGroup: "ExampleGroup" }),
+      ),
+    ).toEqual(["quality"]);
+    expect(
+      staleFacts(
+        retained,
+        changed({ quality: "Bluray-1080p", languages: ["French"], releaseGroup: "ExampleGroup" }),
+      ),
+    ).toEqual(["languages"]);
+    expect(
+      staleFacts(
+        retained,
+        changed({ quality: "Bluray-1080p", languages: ["English"], releaseGroup: "Other" }),
+      ),
+    ).toEqual(["release group"]);
+    // And the queue row's own association, which a refiled download moves.
+    expect(
+      staleFacts(retained, {
+        context: retainedFor({ selected: retained.selected, queueMediaId: 13 }),
+      } as unknown as ImportCandidate),
+    ).toEqual(["queue association"]);
+  });
+
+  it("compares languages by their members rather than by their order", () => {
+    const retained = retainedFor({ selected: { languages: ["English", "French"] } });
+    const reordered = {
+      context: retainedFor({ selected: { languages: ["French", "English"] } }),
+    } as unknown as ImportCandidate;
+
+    // The same order the fingerprint uses, so a digest and a comparison cannot
+    // disagree about what the same languages are.
+    expect(staleFacts(retained, reordered)).toEqual([]);
+  });
+
   it("compares an episode set by its members rather than by their order", () => {
     const before = retainedFor({ episodeIds: [1001, 1004] });
     const after = {
@@ -512,6 +566,7 @@ describe("validating immediately before an import", () => {
         seasonNumber: 2,
         episodeIds: undefined,
         importable: false,
+        selected: { quality: "WEBDL-720p", languages: ["English"] },
       }),
       patch: {},
       destination: "/media/example/series",
@@ -583,6 +638,7 @@ describe("validating immediately before an import", () => {
         seasonNumber: 2,
         episodeIds: undefined,
         importable: false,
+        selected: { quality: "WEBDL-720p", languages: ["English"] },
       }),
       patch: {},
       destination: "/media/example/series",

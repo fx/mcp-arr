@@ -189,9 +189,11 @@ export function isImportable(candidate: ImportCandidate): boolean {
  * caller was shown, the existing-file identity says whether this is an import
  * at all, and the importability says the instance's own answer has not moved.
  *
- * The scan's own origin is deliberately not compared here: it is what the
- * reprocess was re-derived *from*, so it cannot disagree, and a check that
- * cannot fail is one that implies a guarantee nobody holds.
+ * The scan's *kind* and the row it is re-read through are deliberately not
+ * compared: they are what the reprocess was re-derived from, so they cannot
+ * disagree, and a check that cannot fail is one that implies a guarantee nobody
+ * holds. The media that row is filed under is a different matter — it is read
+ * back off the row and a download can be refiled — so it is compared.
  */
 export function staleFacts(
   retained: ImportCandidateContext,
@@ -216,6 +218,14 @@ export function staleFacts(
   );
   compare("existing file", retained.existingFileId, context.existingFileId);
   compare("importable", retained.importable, context.importable);
+  compare("queue association", retained.queueMediaId, context.queueMediaId);
+  // The three mapping fields no identifier stands for. Retaining and
+  // fingerprinting them without comparing them here would have been half a
+  // guarantee: the reference would say which quality it was bound to and
+  // nothing would check that the import used it.
+  compare("quality", retained.selected?.quality, context.selected?.quality);
+  compare("languages", sortedLanguages(retained), sortedLanguages(context));
+  compare("release group", retained.selected?.releaseGroup, context.selected?.releaseGroup);
   return moved;
 }
 
@@ -239,6 +249,19 @@ function isUnderMount(destination: string, mount: string): boolean {
   }
   const next = destination.slice(root.length, root.length + 1);
   return destination.startsWith(root) && (next === "/" || next === "\\");
+}
+
+/**
+ * A candidate's languages in a fixed order.
+ *
+ * Sorted here and sorted in the fingerprint, so the two agree about what "the
+ * same languages" means. A comparison stricter than the digest would expire
+ * plans the digest called equal, and a looser one would accept mappings the
+ * digest called different.
+ */
+function sortedLanguages(context: ImportCandidateContext): readonly string[] | undefined {
+  const languages = context.selected?.languages;
+  return languages === undefined ? undefined : [...languages].sort();
 }
 
 const diskSpaceRoute = "diskspace";

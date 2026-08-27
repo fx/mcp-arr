@@ -305,7 +305,10 @@ export function fingerprintFor(detail: CandidateDetail): string {
     // caller may correct is now covered: the media, the season and the episodes
     // by the identifiers above, and these three by name.
     detail.selected?.quality,
-    ...[...(detail.selected?.languages ?? [])],
+    // Sorted, and sorted the same way the validation compares them: a digest
+    // and a comparison that disagreed about what "the same languages" means
+    // would expire plans the other called equal.
+    ...[...(detail.selected?.languages ?? [])].sort(),
     detail.selected?.releaseGroup,
   ]);
 }
