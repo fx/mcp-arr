@@ -1,0 +1,31 @@
+{
+  "metadata": {
+    "application": "prowlarr",
+    "apiVersion": "v1",
+    "version": "2.5.2.5491",
+    "endpoint": "/api/v1/notification"
+  },
+  "body": [
+    {
+      "id": 1,
+      "name": "Example Webhook",
+      "implementation": "Webhook",
+      "implementationName": "Webhook",
+      "configContract": "WebhookSettings",
+      "onGrab": true,
+      "onHealthIssue": false,
+      "includeHealthWarnings": false,
+      "tags": [],
+      "fields": [
+        { "order": 0, "name": "url", "value": "example-webhook" },
+        { "order": 1, "name": "method", "value": 1 },
+        { "order": 2, "name": "username", "value": "example-operator" },
+        {
+          "order": 3,
+          "name": "password",
+          "value": "CANARY-PROWLARR-NOTIFICATION-PASSWORD-0009"
+        }
+      ]
+    }
+  ]
+}

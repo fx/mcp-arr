@@ -1,0 +1,44 @@
+{
+  "metadata": {
+    "application": "prowlarr",
+    "apiVersion": "v1",
+    "version": "2.5.2.5491",
+    "endpoint": "/api/v1/applications"
+  },
+  "body": [
+    {
+      "id": 1,
+      "name": "Example Series Application",
+      "implementation": "Sonarr",
+      "implementationName": "Sonarr",
+      "configContract": "SonarrSettings",
+      "syncLevel": "fullSync",
+      "tags": [],
+      "fields": [
+        { "order": 0, "name": "prowlarrUrl", "value": "example-prowlarr" },
+        { "order": 1, "name": "baseUrl", "value": "example-series-application" },
+        {
+          "order": 2,
+          "name": "apiKey",
+          "value": "CANARY-PROWLARR-APPLICATION-APIKEY-0008",
+          "privacy": "apiKey"
+        },
+        { "order": 3, "name": "syncCategories", "value": [5000, 5010] }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Example Movie Application",
+      "implementation": "Radarr",
+      "implementationName": "Radarr",
+      "configContract": "RadarrSettings",
+      "syncLevel": "addOnly",
+      "tags": [1],
+      "fields": [
+        { "order": 0, "name": "baseUrl", "value": "example-movie-application" },
+        { "order": 1, "name": "apiKey", "value": "********", "privacy": "apiKey" },
+        { "order": 2, "name": "syncCategories", "value": [2000] }
+      ]
+    }
+  ]
+}

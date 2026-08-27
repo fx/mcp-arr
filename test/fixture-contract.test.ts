@@ -79,6 +79,9 @@ describe("versioned fixture contract", () => {
       "sonarr/v3/4.0.19.2979/rootfolder.json",
       "sonarr/v3/4.0.19.2979/qualityprofile.json",
       "sonarr/v3/4.0.19.2979/tag.json",
+      "sonarr/v3/4.0.19.2979/indexer.json",
+      "sonarr/v3/4.0.19.2979/indexer-schema.json",
+      "sonarr/v3/4.0.19.2979/importlist.json",
       "radarr/v3/6.3.0.10514/system-status.json",
       "radarr/v3/6.3.0.10514/movie.json",
       "radarr/v3/6.3.0.10514/movie-lookup.json",
@@ -99,6 +102,7 @@ describe("versioned fixture contract", () => {
       "radarr/v3/6.3.0.10514/rootfolder.json",
       "radarr/v3/6.3.0.10514/qualityprofile.json",
       "radarr/v3/6.3.0.10514/tag.json",
+      "radarr/v3/6.3.0.10514/downloadclient.json",
       "prowlarr/v1/2.5.2.5491/system-status.json",
       "prowlarr/v1/2.5.2.5491/indexer.json",
       "prowlarr/v1/2.5.2.5491/indexerstatus.json",
@@ -107,6 +111,8 @@ describe("versioned fixture contract", () => {
       "prowlarr/v1/2.5.2.5491/health.json",
       "prowlarr/v1/2.5.2.5491/command.json",
       "prowlarr/v1/2.5.2.5491/indexerstats.json",
+      "prowlarr/v1/2.5.2.5491/applications.json",
+      "prowlarr/v1/2.5.2.5491/notification.json",
     ]);
     await expect(listFiles(fixtureRoot)).resolves.toEqual([...approvedFixtureInventory].sort());
 

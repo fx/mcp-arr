@@ -1,0 +1,96 @@
+{
+  "metadata": {
+    "application": "sonarr",
+    "apiVersion": "v3",
+    "version": "4.0.19.2979",
+    "endpoint": "/api/v3/indexer"
+  },
+  "body": [
+    {
+      "id": 1,
+      "name": "Example Usenet Indexer",
+      "implementation": "Newznab",
+      "implementationName": "Newznab",
+      "configContract": "NewznabSettings",
+      "protocol": "usenet",
+      "priority": 25,
+      "enableRss": true,
+      "enableAutomaticSearch": true,
+      "enableInteractiveSearch": false,
+      "downloadClientId": 0,
+      "seasonSearchMaximumSingleEpisodeAge": 0,
+      "tags": [1],
+      "fields": [
+        {
+          "order": 0,
+          "name": "baseUrl",
+          "label": "URL",
+          "value": "example-usenet-indexer",
+          "type": "textbox",
+          "advanced": false,
+          "privacy": "normal"
+        },
+        {
+          "order": 1,
+          "name": "apiPath",
+          "label": "API Path",
+          "value": "example-api-path",
+          "type": "textbox",
+          "advanced": true,
+          "privacy": "normal"
+        },
+        {
+          "order": 2,
+          "name": "apiKey",
+          "label": "API Key",
+          "value": "CANARY-SONARR-INDEXER-APIKEY-0001",
+          "type": "textbox",
+          "advanced": false,
+          "privacy": "apiKey"
+        },
+        {
+          "order": 3,
+          "name": "categories",
+          "label": "Categories",
+          "value": [5030, 5040],
+          "type": "select",
+          "advanced": false,
+          "privacy": "normal"
+        },
+        {
+          "order": 4,
+          "name": "additionalParameters",
+          "label": "Additional Parameters",
+          "value": "extended=1",
+          "type": "textbox",
+          "advanced": true,
+          "privacy": "normal"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Example Torrent Indexer",
+      "implementation": "Torznab",
+      "implementationName": "Torznab",
+      "configContract": "TorznabSettings",
+      "protocol": "torrent",
+      "priority": 30,
+      "enableRss": false,
+      "enableAutomaticSearch": false,
+      "enableInteractiveSearch": false,
+      "tags": [],
+      "fields": [
+        {
+          "order": 0,
+          "name": "baseUrl",
+          "value": "example-torrent-indexer",
+          "privacy": "normal"
+        },
+        { "order": 1, "name": "apiKey", "value": "", "privacy": "apiKey" },
+        { "order": 2, "name": "minimumSeeders", "value": 2, "privacy": "normal" },
+        { "order": 3, "name": "seedRatio", "value": 1.5, "privacy": "normal" }
+      ]
+    }
+  ]
+}
