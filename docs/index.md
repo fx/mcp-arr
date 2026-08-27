@@ -13,7 +13,7 @@
 
 ## Changes
 
-Changes 0011 through 0014 are scheduled ahead of the still-pending 0005 through 0010. 0011 establishes distribution; 0012 through 0014 correct defects found testing the merged server against live Sonarr, Radarr, and Prowlarr instances. 0012 in particular is worth landing before any further domain change, because every one of them adds tools onto the same broken publication path.
+Changes 0011 through 0014 are scheduled ahead of the still-pending 0006 through 0010. 0011 establishes distribution; 0012 through 0014 correct defects found testing the merged server against live Sonarr, Radarr, and Prowlarr instances. 0012 in particular is worth landing before any further domain change, because every one of them adds tools onto the same broken publication path.
 
 | # | Change | Spec | Status | Depends On |
 |---|--------|------|--------|------------|
