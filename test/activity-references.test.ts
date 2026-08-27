@@ -283,7 +283,6 @@ describe("activity references retain what a transition needs", () => {
 
     const good = {
       kind: "queue_item",
-      itemKind: "tracked_download",
       status: "completed",
       trackedState: "import_blocked",
       mediaId: 12,
@@ -298,7 +297,6 @@ describe("activity references retain what a transition needs", () => {
     for (const corrupt of [
       { ...good, status: "not-a-status" },
       { ...good, status: undefined },
-      { ...good, itemKind: undefined },
       { ...good, trackedState: "not-a-state" },
       { ...good, mediaId: -1 },
       { ...good, mediaId: 1.5 },
@@ -313,11 +311,7 @@ describe("activity references retain what a transition needs", () => {
 
     // Absence is not corruption where absence is legitimate: a pending release
     // has no tracked state, and upstream does not always associate a row.
-    const sparse = plant({
-      kind: "queue_item",
-      itemKind: "pending_release",
-      status: "delay",
-    });
+    const sparse = plant({ kind: "queue_item", status: "delay" });
     expect(resolveQueueReference(store, sparse, "sonarr")).toEqual({
       ok: true,
       value: {
@@ -329,6 +323,47 @@ describe("activity references retain what a transition needs", () => {
         mediaId: undefined,
       },
     });
+  });
+
+  it("derives the item kind from the status, so the two can never disagree", () => {
+    const { store } = storeAt();
+    // The kind is not stored beside the status, so a payload claiming to be a
+    // pending release while carrying a tracked download's status cannot be
+    // expressed — which is what would otherwise let a pending-only intent
+    // through the check meant to stop it.
+    const plant = (status: string) =>
+      store.mint({
+        kind: "queue",
+        applications: ["sonarr"],
+        payload: () => ({
+          kind: "domain",
+          snapshot: {
+            upstreamId: "502",
+            fingerprint: "abc",
+            detail: { kind: "queue_item", status },
+          },
+        }),
+      }).reference;
+
+    for (const [status, expected] of [
+      ["delay", "pending_release"],
+      ["fallback", "pending_release"],
+      ["completed", "tracked_download"],
+      ["downloading", "tracked_download"],
+      ["failed", "tracked_download"],
+      ["unknown", "tracked_download"],
+    ] as const) {
+      const resolved = resolveQueueReference(store, plant(status), "sonarr");
+      expect(resolved.ok).toBe(true);
+      if (resolved.ok) {
+        expect(resolved.value.itemKind).toBe(expected);
+      }
+      // And the requirement check follows the same derivation.
+      expect(
+        resolveQueueReference(store, plant(status), "sonarr", { requireKind: "pending_release" })
+          .ok,
+      ).toBe(expected === "pending_release");
+    }
   });
 
   it("refuses a reference of the right kind whose payload is not an activity record", () => {

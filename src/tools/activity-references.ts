@@ -7,7 +7,7 @@ import type {
   TrackedDownloadState,
 } from "../adapters/activity/model.js";
 import {
-  queueItemKinds,
+  queueItemKindForStatus,
   queueStatuses,
   trackedDownloadStates,
 } from "../adapters/activity/model.js";
@@ -151,7 +151,12 @@ export function mintQueueReference(references: ReferenceStore, item: QueueItem):
         fingerprint: queueFingerprint(item),
         detail: {
           kind: detailKinds.queue,
-          itemKind: item.kind,
+          // The item kind is deliberately not stored beside the status. It is
+          // a function of the status, so storing both would be two copies of
+          // one fact that a corrupt payload could make disagree — and a
+          // reference claiming to be a pending release while carrying a
+          // tracked download's status is exactly what would let a pending-only
+          // intent through the check meant to stop it.
           status: item.evidence.status,
           trackedState: item.evidence.trackedState,
           mediaId: item.context.mediaId,
@@ -337,30 +342,32 @@ export function resolveQueueReference(
   }
 
   const detail = record.value.detail;
-  const itemKind = storedWord(detail.itemKind, queueItemKinds);
   const status = storedWord(detail.status, queueStatuses);
   const trackedState = storedWord(detail.trackedState, trackedDownloadStates);
   const mediaId = storedId(detail.mediaId);
 
-  // The item kind and the status are always written, so absent is as wrong as
-  // malformed for those two. A tracked state and a media association are not: a
-  // pending release has no tracked state, and upstream does not always
-  // associate a row with a media record.
-  const corrupt =
-    itemKind.state !== "present" ||
+  // The status is always written, so absent is as wrong as malformed for it. A
+  // tracked state and a media association are not: a pending release has no
+  // tracked state, and upstream does not always associate a row with a media
+  // record.
+  if (
     status.state !== "present" ||
     trackedState.state === "invalid" ||
-    mediaId.state === "invalid";
-  if (corrupt) {
+    mediaId.state === "invalid"
+  ) {
     return { ok: false, error: invalid(application, `${property} does not name a queue item`) };
   }
 
-  if (options.requireKind !== undefined && itemKind.value !== options.requireKind) {
+  // Derived from the status rather than read back, by the same function the
+  // adapter maps a row with, so the kind a reference reports can never disagree
+  // with the status it retained.
+  const itemKind = queueItemKindForStatus(status.value);
+  if (options.requireKind !== undefined && itemKind !== options.requireKind) {
     return {
       ok: false,
       error: invalid(
         application,
-        `${property} names a ${describeKind(itemKind.value)}, and that is only valid for a ${describeKind(options.requireKind)}`,
+        `${property} names a ${describeKind(itemKind)}, and that is only valid for a ${describeKind(options.requireKind)}`,
       ),
     };
   }
@@ -370,7 +377,7 @@ export function resolveQueueReference(
     value: {
       application,
       queueItemId: record.value.id,
-      itemKind: itemKind.value,
+      itemKind,
       status: status.value,
       trackedState: trackedState.state === "present" ? trackedState.value : undefined,
       mediaId: mediaId.state === "present" ? mediaId.value : undefined,
