@@ -632,9 +632,19 @@ export async function runApplicationSync(
     }
   }
 
-  const warnings = callWarnings(items, request);
+  const effectWarnings = callWarnings(items);
   if (request.mode === "plan") {
-    return { status: "planned", items, observations, warnings };
+    return {
+      status: "planned",
+      items,
+      observations,
+      warnings: [
+        ...effectWarnings,
+        request.startSync
+          ? "a synchronization is started, which pushes every effect above immediately"
+          : "no synchronization is started; Prowlarr applies these effects on its own schedule",
+      ],
+    };
   }
 
   const settled: SyncItemOutcome[] = [];
@@ -663,12 +673,30 @@ export async function runApplicationSync(
   // Started once, after the levels are written, because Prowlarr synchronizes
   // every mapping on one command and starting it per mapping would ask for the
   // same work several times over.
+  //
+  // And held back where a mapping this call changed is not confirmed at its new
+  // level. The command runs every mapping at whatever level it is actually on,
+  // so starting it after a failed write would carry out one set of effects
+  // while this result described another — which is the one thing a disclosure
+  // of remote deletions cannot afford to get wrong.
+  const unconfirmed = settled.filter(
+    (item) => item.changed && (item.error !== undefined || item.verified !== true),
+  );
   let unresolved: ToolError | undefined;
-  if (request.startSync && settled.some((item) => item.error === undefined && item.changed)) {
+  let sync: string;
+  if (!request.startSync) {
+    sync = "no synchronization was started; Prowlarr applies these effects on its own schedule";
+  } else if (unconfirmed.length > 0) {
+    sync = `no synchronization was started: ${String(unconfirmed.length)} mapping(s) this call changed are not confirmed at the requested level, and a synchronization would run them at whatever level they are actually on`;
+  } else {
+    dispatched += 1;
     try {
       await client.post("command", syncCommandPayload());
+      sync = "a synchronization was started, which pushes every effect above immediately";
     } catch (error) {
       unresolved = toolErrorForThrown(error, application);
+      sync =
+        "a synchronization was sent and not acknowledged; whether it started is not established here";
     }
   }
 
@@ -676,7 +704,7 @@ export async function runApplicationSync(
     status: "applied",
     items: settled,
     observations,
-    warnings,
+    warnings: [...effectWarnings, sync],
     dispatched,
     ...(unresolved === undefined ? {} : { unresolved }),
   };
@@ -708,18 +736,19 @@ async function confirmSyncLevel(
 }
 
 /**
- * The call-level notes both a plan and an apply repeat.
+ * What the disclosed effects add up to, across every mapping this call named.
  *
  * The removal notice is the one that matters: a level that deletes indexers on
  * another application is the most consequential thing this surface does, and it
  * is disclosed by counting the effects rather than by testing the level again,
- * so a plan that found nothing to remove does not warn about removals it is not
+ * so a call that found nothing to remove does not warn about removals it is not
  * going to perform.
+ *
+ * What the synchronization itself did is deliberately not here. A plan predicts
+ * it and an apply reports it, and those are different sentences: an apply that
+ * held the command back must not repeat the plan's prediction that one ran.
  */
-function callWarnings(
-  items: readonly SyncItemOutcome[],
-  request: ApplicationSyncRequest,
-): readonly string[] {
+function callWarnings(items: readonly SyncItemOutcome[]): readonly string[] {
   const counted = (kind: SyncEffectKind): number =>
     items.reduce(
       (total, item) => total + item.effects.filter((effect) => effect.effect === kind).length,
@@ -739,8 +768,5 @@ function callWarnings(
       : [
           `${String(stale)} indexer mapping(s) are left as the remote already has them and are no longer maintained from here`,
         ]),
-    ...(request.startSync
-      ? ["a synchronization is started, which pushes these effects immediately"]
-      : ["no synchronization is started; Prowlarr applies these effects on its own schedule"]),
   ];
 }

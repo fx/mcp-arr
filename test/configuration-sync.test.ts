@@ -416,7 +416,9 @@ describe("the synchronization a level change starts", () => {
     );
 
     expect(outcome.items).toHaveLength(3);
-    expect(outcome.dispatched).toBe(1);
+    // Two upstream writes: the level, and the global command. Both are counted,
+    // because the command is a consequential mutation of its own.
+    expect(outcome.dispatched).toBe(2);
     expect(running.writes.map((write) => write.route)).toEqual(["applications/2", "command"]);
     expect(outcome.items.filter((item) => item.attempted).map((item) => item.name)).toEqual([
       "Example Movie Application",
@@ -431,7 +433,7 @@ describe("applying a level change", () => {
       await running.run(request({ targets: [2], mode: "apply", startSync: true })),
     );
 
-    expect(outcome.dispatched).toBe(1);
+    expect(outcome.dispatched).toBe(2);
     expect(outcome.items[0]).toMatchObject({ attempted: true, verified: true, changed: true });
     expect(running.writes[0]?.route).toBe("applications/2");
     // Prowlarr's own spelling of the level, written over the whole resource, so
@@ -456,17 +458,69 @@ describe("applying a level change", () => {
     expect(running.writes.map((write) => write.route)).toEqual(["applications/2"]);
   });
 
-  it("sends nothing for a mapping already at the requested level", async () => {
+  it("writes no level for a mapping already at the requested one", async () => {
+    const running = instance();
+    const outcome = applied(
+      await running.run(request({ targets: [1], mode: "apply", startSync: false })),
+    );
+
+    expect(outcome.dispatched).toBe(0);
+    expect(outcome.items[0]).toMatchObject({ attempted: false, changed: false });
+    expect(running.writes).toEqual([]);
+  });
+
+  it("still starts a synchronization the caller asked for when no level moved", async () => {
     const running = instance();
     const outcome = applied(
       await running.run(request({ targets: [1], mode: "apply", startSync: true })),
     );
 
-    expect(outcome.dispatched).toBe(0);
+    // The levels were already right, so nothing was written — but the caller
+    // asked for a synchronization and every effect it will carry out was
+    // disclosed, so declining to start one would answer a different request.
+    expect(running.writes.map((write) => write.route)).toEqual(["command"]);
+    expect(outcome.dispatched).toBe(1);
     expect(outcome.items[0]).toMatchObject({ attempted: false, changed: false });
-    // Neither the level nor the command: there is nothing to synchronize that
-    // the mapping was not already synchronizing.
-    expect(running.writes).toEqual([]);
+    expect(outcome.warnings.at(-1)).toContain("a synchronization was started");
+  });
+
+  it("holds the synchronization back when a level it would run is unconfirmed", async () => {
+    const running = instance({ failing: { "applications/3": 500 } });
+    const outcome = applied(
+      await running.run(request({ targets: [2, 3], mode: "apply", startSync: true })),
+    );
+
+    // The command runs every mapping at whatever level it is actually on, so
+    // starting it after a failed write would carry out one set of effects while
+    // this result described another.
+    expect(running.writes.map((write) => write.route)).toEqual(["applications/2"]);
+    expect(outcome.dispatched).toBe(2);
+    expect(outcome.warnings.at(-1)).toContain("no synchronization was started");
+    expect(outcome.warnings.at(-1)).toContain("not confirmed at the requested level");
+    expect(outcome.unresolved).toBeUndefined();
+  });
+
+  it("holds it back for a level that was written but did not land either", async () => {
+    const stubborn = instance({ ignoreWrites: true });
+    const outcome = applied(
+      await stubborn.run(request({ targets: [2], mode: "apply", startSync: true })),
+    );
+
+    expect(outcome.items[0]).toMatchObject({ attempted: true, verified: false });
+    expect(stubborn.writes.map((write) => write.route)).toEqual(["applications/2"]);
+    expect(outcome.warnings.at(-1)).toContain("no synchronization was started");
+  });
+
+  it("says a synchronization was not started rather than that it was", async () => {
+    const running = instance();
+    const planning = planned(await running.run(request({ targets: [2], startSync: true })));
+    const applying = applied(
+      await running.run(request({ targets: [2], mode: "apply", startSync: false })),
+    );
+
+    // A plan predicts and an apply reports, and those are different sentences.
+    expect(planning.warnings.at(-1)).toContain("a synchronization is started");
+    expect(applying.warnings.at(-1)).toContain("no synchronization was started");
   });
 
   it("reports each mapping's own outcome and claims nothing about the others", async () => {
