@@ -67,6 +67,8 @@ interface Instance {
    * case — the instance did the work and only the answer went missing.
    */
   deleteBehavior: "accept" | "lose" | "lose_after_applying" | "refuse";
+  /** Ids whose delete applies and then loses its answer, whatever the mode. */
+  loseFor: Set<number>;
   unreachable: boolean;
 }
 
@@ -93,6 +95,7 @@ async function createInstance(): Promise<Instance> {
     history: [],
     commands: [],
     deleteBehavior: "accept",
+    loseFor: new Set<number>(),
     unreachable: false,
     fetch: async (input, init) => {
       const url = new URL(input);
@@ -113,6 +116,10 @@ async function createInstance(): Promise<Instance> {
         const id = Number(route.split("/").at(-1));
         if (instance.deleteBehavior === "refuse") {
           return jsonResponse({ message: "rejected" }, 400);
+        }
+        if (instance.loseFor.has(id)) {
+          instance.rows = instance.rows.filter((row) => row.id !== id);
+          throw new Error("socket hang up");
         }
         if (instance.deleteBehavior === "lose") {
           throw new Error("socket hang up");
@@ -405,6 +412,42 @@ describe("queue resolution apply mode", () => {
 
     expect(alone.applications[0]?.warnings.join(" ")).toContain("already applied");
     expect(deletes()).toHaveLength(1);
+  });
+
+  it("replays the outcome a per-item receipt retained, not one rebuilt from its state", async () => {
+    // The first row's answer is lost inside a bulk call and reconciled against
+    // upstream state. What that reconciliation established is recorded on the
+    // item's own receipt, and a later single-item apply has to be answered with
+    // it — a rebuilt outcome would replace the reason with a bare note.
+    const references = await queueReferences();
+    const first = await referenceFor(blockedImport);
+    const second = references.find(
+      (candidate) => candidate !== first && candidate !== references[2],
+    ) as string;
+    instance.loseFor = new Set([blockedImport]);
+
+    const bulk = await run(resolveTool, {
+      intent: "ignore_tracking",
+      mode: "apply",
+      items: [first, second],
+    });
+    const applied = outcomeOf(bulk).items?.find((item) => item.reference === first);
+    expect(applied?.status).toBe("ok");
+    expect(applied?.warnings.join(" ")).toContain("upstream state confirms it was applied");
+
+    const alone = await run(resolveTool, {
+      intent: "ignore_tracking",
+      mode: "apply",
+      items: [first],
+    });
+
+    // The item keeps the reason the receipt retained; the note that nothing was
+    // sent again belongs to the call, which is where the dispatcher puts it.
+    const replayed = outcomeOf(alone).items?.[0];
+    expect(replayed?.status).toBe("ok");
+    expect(replayed?.warnings.join(" ")).toContain("upstream state confirms it was applied");
+    expect(outcomeOf(alone).warnings.join(" ")).toContain("already applied");
+    expect(deletes()).toHaveLength(2);
   });
 
   it("keeps a call open when a replayed item's outcome was never established", async () => {

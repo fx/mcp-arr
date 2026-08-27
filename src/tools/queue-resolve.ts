@@ -616,16 +616,27 @@ const replayedNote =
  *   established either, so it is treated exactly the same way. It carries no
  *   stored error of its own, which is precisely why reading `record.error` and
  *   calling an absent one a success would have been wrong.
+ *
+ * What is reported is the outcome the receipt **retained**, not one rebuilt
+ * from its state. The two are not the same answer: an item whose lost response
+ * was reconciled against upstream state recorded *why* it counts as applied,
+ * and a rebuilt outcome would replace that with a bare "already applied". The
+ * receipt is the whole of what a repeat is answered from, so the repeat says
+ * what the receipt says, with the replay note added to it.
  */
 function replayedItemOutcome(
   reference: string,
   record: ApplyRecord,
 ): { outcome: ItemOutcome; unresolved?: ToolError | undefined } {
+  const retained = record.items?.[0];
+  const replayWarnings = [...(retained?.warnings ?? []), replayedNote];
+
   if (record.state === "succeeded") {
-    return { outcome: itemOutcome(reference, undefined, [replayedNote]) };
+    return { outcome: itemOutcome(reference, undefined, replayWarnings) };
   }
 
   const error =
+    retained?.error ??
     record.error ??
     createToolError({
       code: "conflict",
@@ -633,7 +644,7 @@ function replayedItemOutcome(
       application: record.application,
     });
   return {
-    outcome: itemOutcome(reference, error, [replayedNote]),
+    outcome: itemOutcome(reference, error, replayWarnings),
     // A `failed` receipt is the one terminal refusal, and `begin` would have
     // let this attempt proceed rather than replaying it — so anything reaching
     // here is unresolved by definition.
