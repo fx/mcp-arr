@@ -3,7 +3,12 @@ import { z } from "zod";
 import type { UpstreamClient, UpstreamQuery } from "../../http/client.js";
 import { safeLabel, safeText } from "../activity/parse.js";
 import { type MediaApplication, mediaRef } from "../library/model.js";
-import { type AdapterPage, type PageWindow, projectPage } from "../library/paging.js";
+import {
+  type AdapterPage,
+  defaultScanLimit,
+  type PageWindow,
+  projectPage,
+} from "../library/paging.js";
 import {
   count,
   customFormatList,
@@ -376,12 +381,24 @@ function indexerFlagNames(value: unknown): readonly string[] | undefined {
  * path it did report, because a candidate without a fingerprint could not be
  * validated against later.
  */
+/**
+ * The path a candidate is fingerprinted from, if the instance reported one.
+ *
+ * Read on its own as well as inside the mapping, because whether a row can be
+ * identified at all decides whether it is a candidate — and that question has
+ * to be answerable without doing the mapping work, so the bounded traversal can
+ * skip a row rather than map it and throw the result away.
+ */
+function identifiablePath(record: UpstreamCandidate): string | undefined {
+  return text(record.path) ?? text(record.relativePath);
+}
+
 export function mapCandidate(
   context: ImportScanContext,
   record: UpstreamCandidate,
 ): ImportCandidate | undefined {
   const application = context.application;
-  const path = text(record.path) ?? text(record.relativePath);
+  const path = identifiablePath(record);
   if (path === undefined) {
     return undefined;
   }
@@ -489,20 +506,27 @@ async function readCandidates(
     manualImportRoute,
   );
 
-  // Mapped before the page is cut, because a row that cannot be fingerprinted
-  // is not a candidate at all and counting it against the page size would make
-  // the page shorter than the caller asked for without saying why.
-  const mapped = records.map((record) => mapCandidate(context, record));
-  const candidates = mapped.filter(
-    (candidate): candidate is ImportCandidate => candidate !== undefined,
-  );
-  const unmappable = mapped.length - candidates.length;
-
+  // Projected over the rows the instance returned rather than over an
+  // already-mapped array of them. Mapping first would do unbounded work before
+  // the ceiling could apply — a folder of a hundred thousand files would be
+  // mapped in full and then paged — so the traversal itself is what is bounded,
+  // and the mapping happens inside it.
+  //
+  // A row carrying no path cannot be fingerprinted, so it is not a candidate at
+  // all: it is excluded rather than mapped, which also keeps it from occupying
+  // a slot the caller asked to be filled.
   const page = projectPage({
-    source: candidates,
+    source: records,
     window,
-    map: (candidate) => candidate,
+    include: (record) => identifiablePath(record) !== undefined,
+    map: (record) => mapCandidate(context, record) as ImportCandidate,
   });
+
+  // Counted over the same prefix the projection examined, because that is the
+  // only part this answer says anything about.
+  const unmappable = records
+    .slice(0, defaultScanLimit)
+    .filter((record) => identifiablePath(record) === undefined).length;
   return {
     ...page,
     unmappable,

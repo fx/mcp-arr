@@ -238,6 +238,40 @@ describe("candidate mapping", () => {
     expect(scanned.scan.warnings?.join(" ")).toContain("no path to identify them");
   });
 
+  it("bounds the traversal itself, not an already-mapped copy of it", async () => {
+    // Five thousand rows the instance cannot identify, followed by one it can.
+    // Mapping before the ceiling applied would have mapped all 5,001; the
+    // ceiling is on the traversal, so the run stops inside it and says so.
+    const queue = await activityFixture<unknown[]>("sonarr", "queue/details");
+    const rows = await activityFixture<Array<Record<string, unknown>>>("sonarr", "manualimport");
+    const flood = [
+      ...Array.from({ length: 5_000 }, (_unused, index) => ({
+        id: 100_000 + index,
+        size: 1024,
+        rejections: [],
+      })),
+      rows[0],
+    ];
+    const harness = libraryHarness("sonarr", (call) =>
+      jsonResponse(call.url.pathname.endsWith("/manualimport") ? flood : queue),
+    );
+
+    const scanned = await scanTrackedDownload(harness.client, "sonarr", trackedRequest, {
+      offset: 0,
+      pageSize: 25,
+    });
+    if (scanned.status !== "ok") {
+      throw new Error("Expected a scan");
+    }
+
+    // The identifiable row sits past the ceiling, so it is not reached, and the
+    // answer says the folder was only partly examined rather than reporting an
+    // empty one.
+    expect(scanned.scan.items).toHaveLength(0);
+    expect(scanned.scan.warnings?.join(" ")).toContain("were examined");
+    expect(scanned.scan.unmappable).toBe(5_000);
+  });
+
   it("maps a Radarr scan, including a rejected sample with no media mapping", async () => {
     const candidates = candidatesOf(await scanLibrary("radarr", libraryRequest));
 
