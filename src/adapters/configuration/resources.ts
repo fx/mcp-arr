@@ -125,7 +125,12 @@ export class ConfigurationResourceSet {
   ) {
     this.application = application;
     this.domain = domain;
-    this.#resources = Object.freeze([...resources]);
+    // Each element is frozen too, not just the array. The constructor's
+    // parameter is structural, so a caller can hand in a resource it built
+    // itself rather than one `captureUpstreamResource` returned, keep its own
+    // reference, and later swap the `id` that `find` matches on or the
+    // `payload` a full-resource write would send.
+    this.#resources = Object.freeze(resources.map((resource) => Object.freeze(resource)));
     Object.freeze(this);
   }
 

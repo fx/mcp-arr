@@ -52,7 +52,7 @@ describe("provider field classification", () => {
   });
 
   it("keeps every credential name out of the allowlist", () => {
-    for (const name of providerFieldAllowlist) {
+    for (const name of providerFieldAllowlist.keys()) {
       expect(isSecretFieldName(name)).toBe(false);
     }
   });
@@ -79,6 +79,20 @@ describe("safe field values", () => {
     expect(
       safeFieldValue(Array.from({ length: maxSafeFieldValueItems + 1 }, () => 1)),
     ).toBeUndefined();
+  });
+
+  it("refuses an allowlisted name whose value is not the kind that name carries", () => {
+    // The attack the kinds exist to stop: a definition file names a field
+    // `minimumSeeders` and puts a passkey in it.
+    expect(safeFieldValue("CANARY-PASSKEY", "number")).toBeUndefined();
+    expect(safeFieldValue(2, "number")).toBe(2);
+    expect(safeFieldValue("true", "boolean")).toBeUndefined();
+    expect(safeFieldValue(false, "boolean")).toBe(false);
+    expect(safeFieldValue(7, "string")).toBeUndefined();
+    expect(safeFieldValue("radarr", "string")).toBe("radarr");
+    expect(safeFieldValue(["CANARY-PASSKEY"], "numberList")).toBeUndefined();
+    expect(safeFieldValue([5030, 5040], "numberList")).toEqual([5030, 5040]);
+    expect(safeFieldValue(5030, "numberList")).toBeUndefined();
   });
 
   it("refuses a value that carries a URL even under an allowlisted name", () => {
@@ -151,6 +165,19 @@ describe("classifying a whole dynamic field list", () => {
       { name: "apiKey", state: "configured", masked: false },
       { name: "passkey", state: "unconfigured", masked: false },
     ]);
+    expect(classified.withheldCount).toBe(2);
+  });
+
+  it("withholds a borrowed allowlisted name whose value is the wrong kind", () => {
+    const classified = classifyProviderFields([
+      // A dynamic definition naming its passkey after an operational setting.
+      { name: "minimumSeeders", value: "CANARY-BORROWED-NAME" },
+      { name: "categories", value: ["CANARY-BORROWED-LIST"] },
+      { name: "minimumSeeders", value: 3 },
+    ]);
+
+    expect(classified.fields).toEqual([{ name: "minimumSeeders", value: 3 }]);
+    expect(classified.secrets).toEqual([]);
     expect(classified.withheldCount).toBe(2);
   });
 

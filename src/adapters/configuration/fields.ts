@@ -56,6 +56,18 @@ const secretNameFragments = [
 const secretPrivacyWords: ReadonlySet<string> = new Set(["password", "apikey", "username"]);
 
 /**
+ * What an allowlisted field is allowed to hold.
+ *
+ * The name alone is not enough. A dynamic definition chooses its own field
+ * names, so it can name a field `minimumSeeders` and put a passkey in it; a
+ * classifier that trusted the name would then report the passkey. Pairing each
+ * allowlisted name with the kind of value it is supposed to carry closes that,
+ * because a credential is a string and almost every operational setting here is
+ * a number, a boolean, or a list of numbers.
+ */
+export type FieldValueKind = "number" | "boolean" | "string" | "numberList";
+
+/**
  * The provider field names whose values may be reported.
  *
  * One list serves every provider domain, because the implementations overlap —
@@ -69,42 +81,41 @@ const secretPrivacyWords: ReadonlySet<string> = new Set(["password", "apikey", "
  * free-form enough to carry a credential in its text — an indexer's additional
  * query parameters are the usual place a passkey actually lives.
  */
-export const providerFieldAllowlist: ReadonlySet<string> = new Set([
-  "addPaused",
-  "animeCategories",
-  "animeStandardFormatSearch",
-  "animeSyncCategories",
-  "categories",
-  "discographySeedTime",
-  "firstAndLast",
-  "initialState",
-  "minimumSeeders",
-  "movieCategory",
-  "multiLanguages",
-  "musicCategory",
-  "olderMoviePriority",
-  "olderTvPriority",
-  "packSeedTime",
-  "recentMoviePriority",
-  "recentTvPriority",
-  "removeCompletedDownloads",
-  "removeFailedDownloads",
-  "removeYear",
-  "seedCriteria.discographySeedTime",
-  "seedCriteria.seasonPackSeedTime",
-  "seedCriteria.seedRatio",
-  "seedCriteria.seedTime",
-  "seedRatio",
-  "seedTime",
-  "seasonPackSeedTime",
-  "sequentialOrder",
-  "startOnAdd",
-  "syncCategories",
-  "syncRejectBlocklistedTorrentHashes",
-  "tvCategory",
-  "useSsl",
+export const providerFieldAllowlist: ReadonlyMap<string, FieldValueKind> = new Map([
+  ["addPaused", "boolean"],
+  ["animeCategories", "numberList"],
+  ["animeStandardFormatSearch", "boolean"],
+  ["animeSyncCategories", "numberList"],
+  ["categories", "numberList"],
+  ["discographySeedTime", "number"],
+  ["firstAndLast", "boolean"],
+  ["initialState", "number"],
+  ["minimumSeeders", "number"],
+  ["movieCategory", "string"],
+  ["multiLanguages", "numberList"],
+  ["musicCategory", "string"],
+  ["olderMoviePriority", "number"],
+  ["olderTvPriority", "number"],
+  ["packSeedTime", "number"],
+  ["recentMoviePriority", "number"],
+  ["recentTvPriority", "number"],
+  ["removeCompletedDownloads", "boolean"],
+  ["removeFailedDownloads", "boolean"],
+  ["removeYear", "boolean"],
+  ["seedCriteria.discographySeedTime", "number"],
+  ["seedCriteria.seasonPackSeedTime", "number"],
+  ["seedCriteria.seedRatio", "number"],
+  ["seedCriteria.seedTime", "number"],
+  ["seedRatio", "number"],
+  ["seedTime", "number"],
+  ["seasonPackSeedTime", "number"],
+  ["sequentialOrder", "boolean"],
+  ["startOnAdd", "boolean"],
+  ["syncCategories", "numberList"],
+  ["syncRejectBlocklistedTorrentHashes", "boolean"],
+  ["tvCategory", "string"],
+  ["useSsl", "boolean"],
 ]);
-
 /** The longest string value that may be reported, allowlisted or not. */
 export const maxSafeFieldValueLength = 200;
 
@@ -159,11 +170,38 @@ function isSafePrimitive(value: unknown): value is string | number | boolean {
  * no room for — an object, a nested array, an over-long string a definition
  * file used as a free-text slot. Those are refused rather than stringified,
  * because stringifying is exactly how an unexamined payload gets out.
+ *
+ * Supplying the {@link FieldValueKind} the name is supposed to carry narrows it
+ * further, and that is what a *dynamic* field must always do: the name came
+ * from a definition file, so it is not evidence about the value. A fixed-shape
+ * upstream record needs no kind, because its property names come from the
+ * application's own schema rather than from a file an operator installed.
  */
-export function safeFieldValue(value: unknown): SafeFieldValue | undefined {
-  if (isSafePrimitive(value)) {
-    return value;
+export function safeFieldValue(value: unknown, kind?: FieldValueKind): SafeFieldValue | undefined {
+  if (kind === "numberList") {
+    return numberList(value);
   }
+  if (kind !== undefined) {
+    return typeof value === kind && isSafePrimitive(value) ? value : undefined;
+  }
+  return isSafePrimitive(value) ? value : primitiveList(value);
+}
+
+function numberList(value: unknown): readonly number[] | undefined {
+  if (!Array.isArray(value) || value.length > maxSafeFieldValueItems) {
+    return undefined;
+  }
+  const items: number[] = [];
+  for (const item of value) {
+    if (typeof item !== "number" || !Number.isFinite(item)) {
+      return undefined;
+    }
+    items.push(item);
+  }
+  return items;
+}
+
+function primitiveList(value: unknown): SafeFieldValue | undefined {
   if (!Array.isArray(value) || value.length > maxSafeFieldValueItems) {
     return undefined;
   }
@@ -239,7 +277,12 @@ export function classifyProviderFields(fields: readonly UpstreamProviderField[])
       secrets.push(describeSecret(field.name, field.value));
       continue;
     }
-    const value = classification === "safe" ? safeFieldValue(field.value) : undefined;
+    // The kind the allowlist records is passed in, so a dynamic definition
+    // cannot smuggle a value out by borrowing an allowlisted name.
+    const value =
+      classification === "safe"
+        ? safeFieldValue(field.value, providerFieldAllowlist.get(field.name))
+        : undefined;
     if (value === undefined) {
       withheldCount += 1;
       continue;

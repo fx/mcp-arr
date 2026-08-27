@@ -159,6 +159,31 @@ describe("the internal resource set", () => {
     expect(set.find(8)).toBeUndefined();
   });
 
+  it("freezes a resource it was handed, not only the ones it captured itself", () => {
+    // The constructor parameter is structural, so a caller can build its own
+    // resource rather than using captureUpstreamResource, keep the reference,
+    // and try to swap what find() matches on afterwards.
+    const forged = {
+      application: "prowlarr",
+      domain: "indexers",
+      id: 7,
+      payload: () => ({ id: 7 }),
+    } as unknown as UpstreamResource;
+    const held = new ConfigurationResourceSet("prowlarr", "indexers", [forged]);
+    const mutableForged = forged as unknown as Record<string, unknown>;
+
+    expect(Object.isFrozen(forged)).toBe(true);
+    expect(() => {
+      mutableForged.id = 99;
+    }).toThrow(TypeError);
+    expect(() => {
+      mutableForged.payload = () => ({ substituted: true });
+    }).toThrow(TypeError);
+
+    expect(held.find(7)?.payload()).toEqual({ id: 7 });
+    expect(held.find(99)).toBeUndefined();
+  });
+
   it("copies the array it was given, so the caller's own handle cannot change it", () => {
     const resources = [captureUpstreamResource("prowlarr", "indexers", upstreamRecord)];
     const copied = new ConfigurationResourceSet("prowlarr", "indexers", resources);
