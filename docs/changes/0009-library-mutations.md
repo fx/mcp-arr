@@ -64,9 +64,9 @@ The [Library Management spec](../specs/library-management/#lookup-and-add) owns 
   - [x] Add typed monitoring, profile, root, tag, and application-specific edits
   - [x] Add duplicate detection, explicit search-on-add, dependency validation, and fixtures
 - [ ] Implement file and path mutations
-  - [ ] Add file metadata update/delete and safe bulk grouping
+  - [x] Add file metadata update/delete and safe bulk grouping
   - [ ] Add rename preview and allowlisted rename/move command workflows
-  - [ ] Add explicit physical-data effects and current-state fingerprints
+  - [x] Add explicit physical-data effects and current-state fingerprints
 - [ ] Register and verify `arr_library_change`
   - [ ] Add direct apply and plan/apply variants with per-item outcomes
   - [ ] Add fixture and stdio tests for duplicates, stale references, partial bulk, deletion choices, rename/move, retry, and unknown outcome

@@ -46,6 +46,7 @@ const allowedFiles = [
   "dist/adapters/configuration/serialize.js",
   "dist/adapters/configuration/service.js",
   "dist/adapters/library/changes.js",
+  "dist/adapters/library/files.js",
   "dist/adapters/library/model.js",
   "dist/adapters/library/paging.js",
   "dist/adapters/library/parse.js",

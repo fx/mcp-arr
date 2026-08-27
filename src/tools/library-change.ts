@@ -18,13 +18,36 @@ import {
   type UpstreamResource,
   writeResource,
 } from "../adapters/library/changes.js";
+import {
+  type DeletionChoices,
+  deleteFileResource,
+  deleteRecordResource,
+  type FileChanges,
+  type FileDependency,
+  type FileResource,
+  fileApplications,
+  fileParentId,
+  fileParentKinds,
+  fileResourcePath,
+  fileState,
+  matchOption,
+  type NamedOption,
+  readFileResource,
+  readLanguageOptions,
+  readQualityOptions,
+  recordDeletionQuery,
+  recordDeletionState,
+  rewriteFileResource,
+} from "../adapters/library/files.js";
 import type {
   ConfigurationPointerKind,
   MediaApplication,
+  MediaFileKind,
   MediaLookupKind,
   MediaRecordKind,
 } from "../adapters/library/model.js";
 import { isMediaApplication, mediaRecordKinds } from "../adapters/library/model.js";
+import type { UpstreamClient } from "../http/client.js";
 import type { PreconditionRead, ReadSetObservation } from "../state/plans.js";
 import {
   createToolError,
@@ -34,7 +57,7 @@ import {
   toolErrorProvesNoEffect,
 } from "./errors.js";
 import type { OperationHandler, OperationInvocation, PreconditionReader } from "./operations.js";
-import type { Effect, ItemOutcome } from "./results.js";
+import type { Effect, EffectSeverity, ItemOutcome } from "./results.js";
 import { type LibraryChangeIntent, libraryChangeIntentSchema } from "./schemas/library.js";
 
 /**
@@ -105,6 +128,7 @@ interface ResourceWrite {
 
 interface AddContext {
   readonly kind: typeof contextKind;
+  readonly form: "add";
   readonly intent: "add_media";
   readonly candidate: LookupCandidate;
   readonly request: AddMediaRequest;
@@ -112,6 +136,7 @@ interface AddContext {
 
 interface ItemsContext {
   readonly kind: typeof contextKind;
+  readonly form: "items";
   readonly intent: "set_monitoring" | "edit_media";
   readonly items: readonly ItemValidation[];
   readonly writes: readonly ResourceWrite[];
@@ -120,7 +145,57 @@ interface ItemsContext {
   readonly effects: readonly Effect[];
 }
 
-type LibraryChangeContext = AddContext | ItemsContext;
+/**
+ * One upstream request a file or deletion mutation will send.
+ *
+ * The request is carried as the call that sends it rather than as a route and a
+ * payload, because these intents send three different kinds of request — a
+ * whole-resource write, a record deletion with its explicit choices, a file
+ * deletion — and the apply loop that dispatches them has no business knowing
+ * which. The path is still here, because it is the grouping key: two references
+ * that name the same resource share one request and report its one outcome.
+ */
+interface PendingRequest {
+  readonly path: string;
+  readonly send: (client: UpstreamClient) => Promise<unknown>;
+}
+
+/** One selected file or record, once its reference and current state are read. */
+interface SelectedItem {
+  readonly reference: string;
+  /** The request this item rests on, absent when the item itself failed. */
+  readonly requestPath?: string | undefined;
+  readonly error?: ToolError | undefined;
+  readonly warnings?: readonly string[] | undefined;
+  /** What this item contributes to the read set, failures included. */
+  readonly observation: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * A bulk mutation that sends one request per selected thing rather than
+ * rewriting a shared resource: the deletions and the file-metadata edits.
+ */
+interface RequestsContext {
+  readonly kind: typeof contextKind;
+  readonly form: "requests";
+  readonly intent: "delete_media" | "delete_file" | "update_file_metadata";
+  readonly items: readonly SelectedItem[];
+  readonly requests: readonly PendingRequest[];
+  readonly warnings: readonly string[];
+  readonly effects: readonly Effect[];
+}
+
+/**
+ * What the precondition reader validated, handed to the handler unchanged.
+ *
+ * Each member carries a `form` as well as the intent it came from, and the
+ * handler selects on the form rather than on the intent. That is deliberate:
+ * the form says how a mutation is *sent* — one rewritten resource, one request
+ * per selected thing — and several intents share each of those. A handler keyed
+ * on the intent would repeat the same dispatch code per variant and would let a
+ * variant added later fall through to the wrong one.
+ */
+type LibraryChangeContext = AddContext | ItemsContext | RequestsContext;
 
 function isLibraryChangeContext(value: unknown): value is LibraryChangeContext {
   return (
@@ -402,8 +477,21 @@ function parseIntent(invocation: OperationInvocation): Resolved<LibraryChangeInt
       };
 }
 
-function effect(application: MediaApplication, summary: string): Effect {
-  return { application, severity: "consequential", summary };
+/**
+ * One disclosed effect.
+ *
+ * The severity is a parameter rather than a constant because this tool now
+ * spans both kinds of consequence: changing what an application believes, and
+ * changing what is on the disk underneath it. A plan never softens the second
+ * into the first — the deletions declare themselves destructive even though it
+ * makes the plan read worse.
+ */
+function effect(
+  application: MediaApplication,
+  summary: string,
+  severity: EffectSeverity = "consequential",
+): Effect {
+  return { application, severity, summary };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -500,6 +588,7 @@ async function readAddPreconditions(
 
   const context: AddContext = {
     kind: contextKind,
+    form: "add",
     intent: "add_media",
     candidate,
     request: {
@@ -562,18 +651,18 @@ const monitorableKinds: readonly MediaRecordKind[] = [
 /**
  * Checks that one selected reference names a record this intent can act on.
  *
- * The two intents differ: monitoring reaches every record kind both
- * applications model, while a profile, root folder, or tag exists only on the
- * records that own one — an episode has no quality profile, so asking to change
- * one is refused rather than silently ignored.
+ * The intents differ in what they can reach: monitoring reaches every record
+ * kind both applications model, while a profile, root folder, or tag exists
+ * only on the records that own one — an episode has no quality profile, so
+ * asking to change one is refused rather than silently ignored — and a deletion
+ * or a move reaches only a record that is its own thing on disk.
  */
 function checkItemKind(
   invocation: OperationInvocation,
   application: MediaApplication,
-  intent: "set_monitoring" | "edit_media",
+  allowed: readonly MediaRecordKind[],
   kind: ResolvedMediaKind,
 ): Resolved<MediaRecordKind> {
-  const allowed = intent === "edit_media" ? editableKinds : monitorableKinds;
   if (!isRecordKind(kind) || !allowed.includes(kind)) {
     return {
       ok: false,
@@ -665,7 +754,12 @@ async function readItems(
       continue;
     }
 
-    const checked = checkItemKind(invocation, application, intent, identity.value.kind);
+    const checked = checkItemKind(
+      invocation,
+      application,
+      intent === "edit_media" ? editableKinds : monitorableKinds,
+      identity.value.kind,
+    );
     if (!checked.ok) {
       items.push({ status: "error", reference, error: checked.error });
       continue;
@@ -753,6 +847,27 @@ function describeCount(items: readonly ItemValidation[]): string {
   return `${count} record(s)`;
 }
 
+/** What a failed selection contributes to the read set: that it could not be read. */
+function unreadable(error: ToolError): Readonly<Record<string, unknown>> {
+  return { unreadable: error.code };
+}
+
+/**
+ * One observation per selected file or record, including the ones that failed,
+ * for the same reason {@link itemObservations} keeps them: a plan that reported
+ * an item as unchangeable must not act on it after it became readable again.
+ */
+function itemObservationsFor(
+  prefix: "media" | "file",
+  items: readonly SelectedItem[],
+): readonly ReadSetObservation[] {
+  return items.map((item) => ({ key: `${prefix}:${item.reference}`, value: item.observation }));
+}
+
+function describeSelection(items: readonly SelectedItem[], noun: string): string {
+  return `${items.filter((item) => item.error === undefined).length} ${noun}(s)`;
+}
+
 /**
  * Validates a monitoring or metadata change before anything is written.
  *
@@ -833,6 +948,7 @@ async function readItemPreconditions(
   const read = await readItems(invocation, application, intent.intent, intent.items, itemChanges);
   const context: ItemsContext = {
     kind: contextKind,
+    form: "items",
     intent: intent.intent,
     items: read.items,
     writes: read.writes,
@@ -902,6 +1018,473 @@ function describeEffects(
 }
 
 /* -------------------------------------------------------------------------- */
+/* delete_media                                                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The records a deletion may remove.
+ *
+ * A season and an episode are parts of a series rather than resources of their
+ * own, and a collection is a grouping Radarr keeps for movies it does not own
+ * outright, so none of them is something a delete could remove without deciding
+ * on the caller's behalf what else went with it.
+ */
+const deletableKinds: readonly MediaRecordKind[] = ["series", "movie"];
+
+/**
+ * Validates a deletion before anything is removed.
+ *
+ * The current state of every selected record is read, and what is fingerprinted
+ * is what the plan discloses: the title being removed and how much data is
+ * under it. A record that grew files between planning and applying therefore
+ * makes the plan stale rather than quietly taking more than the plan said it
+ * would.
+ */
+async function readDeletePreconditions(
+  invocation: OperationInvocation,
+  application: MediaApplication,
+  intent: Extract<LibraryChangeIntent, { intent: "delete_media" }>,
+): Promise<PreconditionRead> {
+  const choices: DeletionChoices = {
+    deleteFiles: intent.deleteFiles,
+    addImportListExclusion: intent.addImportListExclusion,
+  };
+  const items: SelectedItem[] = [];
+  const requests = new Map<string, PendingRequest>();
+
+  for (const reference of intent.items) {
+    const identity = resolveMediaIdentity(invocation, reference, "items");
+    if (!identity.ok) {
+      items.push({ reference, error: identity.error, observation: unreadable(identity.error) });
+      continue;
+    }
+    const checked = checkItemKind(invocation, application, deletableKinds, identity.value.kind);
+    if (!checked.ok) {
+      items.push({ reference, error: checked.error, observation: unreadable(checked.error) });
+      continue;
+    }
+
+    const resourcePath = recordResourcePath(checked.value, identity.value.id);
+    let resource: UpstreamResource;
+    try {
+      resource = await readRecordResource(
+        invocation.adapter.client,
+        application,
+        checked.value,
+        identity.value.id,
+      );
+    } catch (error) {
+      const failure = toolErrorForThrown(error, application);
+      items.push({ reference, error: failure, observation: unreadable(failure) });
+      continue;
+    }
+
+    // Two references naming the same record ask for one deletion, not two: the
+    // second request would find nothing and report a failure for a record this
+    // call had just removed itself.
+    if (!requests.has(resourcePath)) {
+      requests.set(resourcePath, {
+        path: resourcePath,
+        send: (client) =>
+          deleteRecordResource(client, resourcePath, recordDeletionQuery(application, choices)),
+      });
+    }
+    items.push({
+      reference,
+      requestPath: resourcePath,
+      observation: recordDeletionState(resource, choices),
+    });
+  }
+
+  const scope = describeSelection(items, "record");
+  const effects: Effect[] = [
+    effect(application, `remove ${scope} from the library`, "destructive"),
+    ...(choices.deleteFiles
+      ? [effect(application, `delete the files of ${scope} from disk`, "destructive")]
+      : []),
+    ...(choices.addImportListExclusion
+      ? [effect(application, `exclude ${scope} from future import-list additions`)]
+      : []),
+  ];
+
+  const context: RequestsContext = {
+    kind: contextKind,
+    form: "requests",
+    intent: "delete_media",
+    items,
+    requests: [...requests.values()],
+    warnings: [
+      choices.deleteFiles
+        ? "the files of the selected records are deleted from disk by this change"
+        : "the library records are removed and their files are left on disk",
+    ],
+    effects,
+  };
+
+  return { status: "ok", validated: context, observations: itemObservationsFor("media", items) };
+}
+
+/* -------------------------------------------------------------------------- */
+/* update_file_metadata and delete_file                                        */
+/* -------------------------------------------------------------------------- */
+
+interface FileIdentity {
+  readonly kind: MediaFileKind;
+  readonly id: number;
+}
+
+/**
+ * Turns one media-file reference back into the identity it stands for.
+ *
+ * A file is its own reference kind, so the dispatcher has already refused a
+ * media reference supplied where a file belongs. What is checked here is what
+ * only this tool knows: that the reference belongs to the instance being
+ * written to, and that the file kind is one this application actually models.
+ */
+function resolveFileIdentity(
+  invocation: OperationInvocation,
+  application: MediaApplication,
+  token: string,
+): Resolved<FileIdentity> {
+  const resolution = invocation.state.references.resolve(token, "media_file");
+  if (!resolution.ok) {
+    return {
+      ok: false,
+      error: toolErrorForReferenceFailure(resolution.reason, "media_file", application),
+    };
+  }
+
+  // Checked against the media application this call resolved, not against the
+  // invocation's own. The two agree today, because the media application is
+  // narrowed from it — but this function exists to validate a reference against
+  // the library instance being written to, and that is the value that says which
+  // one that is.
+  const entry = resolution.entry;
+  if (!entry.applications.includes(application)) {
+    return {
+      ok: false,
+      error: invalid(
+        invocation,
+        `this file reference belongs to ${entry.applications.join(" and ")}, and this call addressed ${application}`,
+      ),
+    };
+  }
+  if (entry.payload.kind !== "domain") {
+    return { ok: false, error: invalid(invocation, "this file reference does not name a file") };
+  }
+
+  const kind = entry.payload.snapshot.detail?.kind;
+  if (kind !== "episode_file" && kind !== "movie_file") {
+    return { ok: false, error: invalid(invocation, "this file reference does not name a file") };
+  }
+  if (fileApplications[kind] !== application) {
+    return {
+      ok: false,
+      error: unsupported(
+        invocation,
+        `this application has no ${kind.replaceAll("_", " ")} records`,
+      ),
+    };
+  }
+
+  const upstreamId = entry.payload.snapshot.upstreamId;
+  if (!/^\d+$/u.test(upstreamId)) {
+    return {
+      ok: false,
+      error: invalid(invocation, "this file reference does not name a single file"),
+    };
+  }
+  const id = Number(upstreamId);
+  if (!Number.isSafeInteger(id)) {
+    return {
+      ok: false,
+      error: invalid(invocation, "this file reference does not name a single file"),
+    };
+  }
+  return { ok: true, value: { kind, id } };
+}
+
+interface SelectedFile {
+  readonly reference: string;
+  readonly kind: MediaFileKind;
+  readonly id: number;
+  readonly parentId: number;
+  readonly resource: FileResource;
+}
+
+interface ReadFilesResult {
+  readonly items: readonly SelectedItem[];
+  readonly selected: readonly SelectedFile[];
+}
+
+/**
+ * Reads every selected file, failing one reference at a time.
+ *
+ * A reference that cannot be resolved or read fails that file alone, for the
+ * same reason a record does: a bulk change is explicitly not transactional, and
+ * blocking the call would hide the outcome of every other file.
+ */
+async function readFiles(
+  invocation: OperationInvocation,
+  application: MediaApplication,
+  references: readonly string[],
+  depends: FileDependency,
+): Promise<ReadFilesResult> {
+  const items: SelectedItem[] = [];
+  const selected: SelectedFile[] = [];
+
+  for (const reference of references) {
+    const identity = resolveFileIdentity(invocation, application, reference);
+    if (!identity.ok) {
+      items.push({ reference, error: identity.error, observation: unreadable(identity.error) });
+      continue;
+    }
+
+    let resource: FileResource;
+    try {
+      resource = await readFileResource(
+        invocation.adapter.client,
+        application,
+        identity.value.kind,
+        identity.value.id,
+      );
+    } catch (error) {
+      const failure = toolErrorForThrown(error, application);
+      items.push({ reference, error: failure, observation: unreadable(failure) });
+      continue;
+    }
+
+    const parentId = fileParentId(identity.value.kind, resource);
+    if (parentId === undefined) {
+      const failure = conflict(
+        invocation,
+        "this file reports no parent record, so it cannot be grouped safely",
+      );
+      items.push({ reference, error: failure, observation: unreadable(failure) });
+      continue;
+    }
+
+    selected.push({ ...identity.value, reference, parentId, resource });
+    items.push({ reference, observation: fileState(identity.value.kind, resource, depends) });
+  }
+
+  return { items, selected };
+}
+
+/**
+ * Refuses a selection upstream cannot process as one group.
+ *
+ * The file endpoints are organized around the record a file hangs off, so a
+ * call spanning two of them is asking one handler for something it has no
+ * single answer to. It is refused whole rather than split here, because
+ * splitting it would decide on the caller's behalf which grouping they meant —
+ * and this is the one place a mutation could silently act on more than what was
+ * asked for.
+ */
+function checkSingleParent(
+  invocation: OperationInvocation,
+  selected: readonly SelectedFile[],
+): ToolError | undefined {
+  const kind = selected[0]?.kind;
+  if (kind === undefined) {
+    return undefined;
+  }
+  const parents = new Set(selected.map((file) => file.parentId));
+  if (parents.size <= 1) {
+    return undefined;
+  }
+  return invalid(
+    invocation,
+    `every file in one call must belong to the same ${fileParentKinds[kind]}; this call names ${parents.size}, so split it into one call per ${fileParentKinds[kind]}`,
+  );
+}
+
+interface ResolvedFileChanges {
+  readonly changes: FileChanges;
+  readonly observations: readonly ReadSetObservation[];
+}
+
+/**
+ * Turns the caller's names for a quality and languages into the instance's own
+ * objects.
+ *
+ * Each list is read at most once per call and only when the intent names
+ * something from it, and the resolved values join the read set — a plan
+ * validated against a quality definition this instance has since removed must
+ * not apply.
+ */
+async function readFileChanges(
+  invocation: OperationInvocation,
+  application: MediaApplication,
+  changes: Extract<LibraryChangeIntent, { intent: "update_file_metadata" }>["changes"],
+): Promise<Resolved<ResolvedFileChanges>> {
+  const observations: ReadSetObservation[] = [];
+  const observe = (property: string, option: NamedOption): void => {
+    observations.push({
+      key: `${property}:${option.name}`,
+      value: { id: option.id, name: option.name },
+    });
+  };
+
+  let quality: NamedOption | undefined;
+  if (changes.quality !== undefined) {
+    const options = await readQualityOptions(invocation.adapter.client, application);
+    quality = matchOption(options, changes.quality);
+    if (quality === undefined) {
+      return {
+        ok: false,
+        error: invalid(invocation, `this instance defines no quality named “${changes.quality}”`),
+      };
+    }
+    observe("quality", quality);
+  }
+
+  let languages: NamedOption[] | undefined;
+  if (changes.languages !== undefined) {
+    const options = await readLanguageOptions(invocation.adapter.client, application);
+    languages = [];
+    for (const name of changes.languages) {
+      const matched = matchOption(options, name);
+      if (matched === undefined) {
+        return {
+          ok: false,
+          // Named, because a call listing several languages has to say which of
+          // them the instance did not recognize.
+          error: invalid(invocation, `this instance knows no language named “${name}”`),
+        };
+      }
+      languages.push(matched);
+      observe("language", matched);
+    }
+  }
+
+  return {
+    ok: true,
+    value: {
+      changes: {
+        ...(quality === undefined ? {} : { quality }),
+        ...(languages === undefined ? {} : { languages }),
+        ...(changes.releaseGroup === undefined ? {} : { releaseGroup: changes.releaseGroup }),
+      },
+      observations,
+    },
+  };
+}
+
+/**
+ * Validates a file-metadata update or a file deletion before anything is sent.
+ *
+ * The grouping check runs before any write is prepared, so a call that upstream
+ * could not process safely reaches no request at all — not even for the files
+ * that would have been fine on their own.
+ */
+async function readFilePreconditions(
+  invocation: OperationInvocation,
+  application: MediaApplication,
+  intent: Extract<LibraryChangeIntent, { intent: "update_file_metadata" | "delete_file" }>,
+): Promise<PreconditionRead> {
+  const read = await readFiles(
+    invocation,
+    application,
+    intent.files,
+    intent.intent === "delete_file" ? "identity" : "metadata",
+  );
+  const grouping = checkSingleParent(invocation, read.selected);
+  if (grouping !== undefined) {
+    return blocked(grouping);
+  }
+
+  let resolved: ResolvedFileChanges = { changes: {}, observations: [] };
+  if (intent.intent === "update_file_metadata") {
+    const changes = await readFileChanges(invocation, application, intent.changes);
+    if (!changes.ok) {
+      return blocked(changes.error);
+    }
+    resolved = changes.value;
+  }
+
+  const requests = new Map<string, PendingRequest>();
+  const items = read.items.map((item): SelectedItem => {
+    const file = read.selected.find((candidate) => candidate.reference === item.reference);
+    if (item.error !== undefined || file === undefined) {
+      return item;
+    }
+
+    const path = fileResourcePath(file.kind, file.id);
+    if (intent.intent === "delete_file") {
+      if (!requests.has(path)) {
+        requests.set(path, {
+          path,
+          send: (client) => deleteFileResource(client, file.kind, file.id),
+        });
+      }
+      return { ...item, requestPath: path };
+    }
+
+    const rewrite = rewriteFileResource(file.resource, resolved.changes);
+    if (rewrite.status === "blocked") {
+      const failure = conflict(invocation, rewrite.reason);
+      return { ...item, error: failure, observation: unreadable(failure) };
+    }
+    if (!rewrite.changed) {
+      return {
+        ...item,
+        warnings: ["this file already matched the requested metadata; nothing was sent for it"],
+      };
+    }
+    if (!requests.has(path)) {
+      requests.set(path, {
+        path,
+        send: (client) => writeResource(client, path, rewrite.resource),
+      });
+    }
+    return { ...item, requestPath: path };
+  });
+
+  const scope = describeSelection(items, "file");
+  const context: RequestsContext = {
+    kind: contextKind,
+    form: "requests",
+    intent: intent.intent,
+    items,
+    requests: [...requests.values()],
+    warnings:
+      intent.intent === "delete_file"
+        ? ["the selected files are deleted from disk by this change"]
+        : [],
+    effects:
+      intent.intent === "delete_file"
+        ? [effect(application, `delete ${scope} from disk`, "destructive")]
+        : fileChangeEffects(application, intent.changes, scope),
+  };
+
+  return {
+    status: "ok",
+    validated: context,
+    observations: [...resolved.observations, ...itemObservationsFor("file", items)],
+  };
+}
+
+/** One effect per named file-metadata change, for the same reason records get one. */
+function fileChangeEffects(
+  application: MediaApplication,
+  changes: Extract<LibraryChangeIntent, { intent: "update_file_metadata" }>["changes"],
+  scope: string,
+): readonly Effect[] {
+  const effects: Effect[] = [];
+  if (changes.quality !== undefined) {
+    effects.push(effect(application, `set the recorded quality of ${scope} to ${changes.quality}`));
+  }
+  if (changes.languages !== undefined) {
+    effects.push(effect(application, `set the recorded languages of ${scope}`));
+  }
+  if (changes.releaseGroup !== undefined) {
+    effects.push(effect(application, `set the recorded release group of ${scope}`));
+  }
+  return effects;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Preconditions and handler                                                   */
 /* -------------------------------------------------------------------------- */
 
@@ -928,9 +1511,14 @@ export const libraryChangePreconditions: PreconditionReader = async (invocation)
     case "set_monitoring":
     case "edit_media":
       return readItemPreconditions(invocation, application.value, intent.value);
+    case "delete_media":
+      return readDeletePreconditions(invocation, application.value, intent.value);
+    case "update_file_metadata":
+    case "delete_file":
+      return readFilePreconditions(invocation, application.value, intent.value);
     default:
-      // The file and rename intents belong to a later task of change 0009, and
-      // the registry still routes them to the not-implemented handler.
+      // The rename intent belongs to the next task of change 0009, and the
+      // registry still routes it to the not-implemented handler.
       return blocked(unsupported(invocation, "this intent is declared but not implemented yet"));
   }
 };
@@ -1024,6 +1612,64 @@ async function applyItems(
   return { outcomes, unresolved, dispatched };
 }
 
+/**
+ * Sends one request per selected file or record and reports each item's own
+ * outcome.
+ *
+ * The same division as {@link applyItems}: the request is per resource and the
+ * outcome is per item, because two references can name one resource and both of
+ * them succeeded or failed exactly as its one request did.
+ */
+async function applyRequests(
+  invocation: OperationInvocation,
+  application: MediaApplication,
+  context: RequestsContext,
+): Promise<AppliedItems> {
+  const failures = new Map<string, ToolError>();
+  let unresolved: ToolError | undefined;
+  let dispatched = 0;
+
+  for (const request of context.requests) {
+    dispatched += 1;
+    try {
+      await request.send(invocation.adapter.client);
+    } catch (error) {
+      const failure = toolErrorForThrown(error, application);
+      failures.set(request.path, failure);
+      if (unresolved === undefined && !toolErrorProvesNoEffect(failure.code)) {
+        unresolved = failure;
+      }
+    }
+  }
+
+  const outcomes = context.items.map((item) => {
+    if (item.error !== undefined) {
+      return itemOutcome(item.reference, item.error, []);
+    }
+    const failure = item.requestPath === undefined ? undefined : failures.get(item.requestPath);
+    return itemOutcome(item.reference, failure, failure === undefined ? (item.warnings ?? []) : []);
+  });
+
+  return { outcomes, unresolved, dispatched };
+}
+
+/**
+ * Whether this apply can be recorded as never having happened.
+ *
+ * Both halves are needed: no upstream request was dispatched at all, and every
+ * selection failed before one could be. "Every item errored" alone is equally
+ * true of a single resource whose write timed out, and recording that as
+ * unattempted would turn "we may have written and do not know" into "we
+ * definitely did not", which is the one direction a receipt must never round in.
+ */
+function unattemptedFailure(applied: AppliedItems): ToolError | undefined {
+  return applied.dispatched === 0 &&
+    applied.outcomes.length > 0 &&
+    applied.outcomes.every((item) => item.status === "error")
+    ? applied.outcomes[0]?.error
+    : undefined;
+}
+
 function planForItems(context: ItemsContext): {
   requestedEffects: readonly Effect[];
   predictedEffects: readonly Effect[];
@@ -1045,6 +1691,38 @@ function planForItems(context: ItemsContext): {
         : [`${failing} selected record(s) cannot be changed; see the per-item outcomes`]),
     ],
   };
+}
+
+/**
+ * Plan disclosure for the intents that send one request per selected thing.
+ *
+ * Predicting nothing when no request is prepared is the same rule the record
+ * intents keep: an apply would send nothing, and predicting the effect anyway
+ * would overstate what the plan is going to do.
+ */
+function planForRequests(context: RequestsContext): {
+  requestedEffects: readonly Effect[];
+  predictedEffects: readonly Effect[];
+  warnings: readonly string[];
+} {
+  const failing = context.items.filter((item) => item.error !== undefined).length;
+  return {
+    requestedEffects: context.effects,
+    predictedEffects: context.requests.length === 0 ? [] : context.effects,
+    warnings: [
+      ...context.warnings,
+      ...(context.requests.length === 0 ? ["nothing in this selection needs to be sent"] : []),
+      ...(failing === 0
+        ? []
+        : [`${failing} selected item(s) cannot be changed; see the per-item outcomes`]),
+    ],
+  };
+}
+
+function plannedItems(context: RequestsContext): readonly ItemOutcome[] {
+  return context.items.map((item) =>
+    itemOutcome(item.reference, item.error, item.error === undefined ? (item.warnings ?? []) : []),
+  );
 }
 
 /**
@@ -1070,7 +1748,7 @@ export const libraryChangeHandler: OperationHandler = async (invocation) => {
     };
   }
 
-  if (context.intent === "add_media") {
+  if (context.form === "add") {
     const effects = addEffects(application.value, context);
     if (invocation.mode === "plan") {
       return { status: "ok", plan: { requestedEffects: effects, predictedEffects: effects } };
@@ -1098,6 +1776,23 @@ export const libraryChangeHandler: OperationHandler = async (invocation) => {
     };
   }
 
+  if (context.form === "requests") {
+    if (invocation.mode === "plan") {
+      return { status: "ok", plan: planForRequests(context), items: plannedItems(context) };
+    }
+
+    const sent = await applyRequests(invocation, application.value, context);
+    const unattempted = unattemptedFailure(sent);
+    return {
+      status: "ok",
+      items: sent.outcomes,
+      effects: context.effects,
+      warnings: context.warnings,
+      ...(sent.unresolved === undefined ? {} : { outcomeUnknown: sent.unresolved }),
+      ...(unattempted === undefined ? {} : { unattempted }),
+    };
+  }
+
   if (invocation.mode === "plan") {
     const plan = planForItems(context);
     return {
@@ -1112,19 +1807,7 @@ export const libraryChangeHandler: OperationHandler = async (invocation) => {
   }
 
   const applied = await applyItems(invocation, application.value, context);
-  // A mutation may be recorded as never having happened only when this server
-  // can show that nothing was sent — no write was dispatched at all, and every
-  // selection failed before one could be. Both halves are needed: "every item
-  // errored" is equally true of a single record whose write timed out, and
-  // recording that as unattempted would turn "we may have written and do not
-  // know" into "we definitely did not", which is the one direction a receipt
-  // must never round in.
-  const unattempted =
-    applied.dispatched === 0 &&
-    applied.outcomes.length > 0 &&
-    applied.outcomes.every((item) => item.status === "error")
-      ? applied.outcomes[0]?.error
-      : undefined;
+  const unattempted = unattemptedFailure(applied);
 
   return {
     status: "ok",
