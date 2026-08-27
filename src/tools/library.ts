@@ -41,7 +41,7 @@ import type {
  * dispatcher owns both.
  */
 
-type Resolved<TValue> =
+export type Resolved<TValue> =
   | { readonly ok: true; readonly value: TValue }
   | { readonly ok: false; readonly error: ToolError };
 
@@ -510,8 +510,12 @@ function publishViewData(data: LibraryViewData, mint: ReferenceMinter): LibraryV
  * here is what only this tool knows: that the reference names the kind of
  * record the filter it was supplied for actually queries, so an episode
  * reference can never be sent as a series identifier.
+ *
+ * It is exported because `arr_release_search` accepts the very same media
+ * references this tool mints, and a second implementation of the kind and
+ * application checks is a second place for them to drift.
  */
-function resolveUpstreamId(
+export function resolveUpstreamId(
   invocation: OperationInvocation,
   token: string,
   expected: MediaKind,

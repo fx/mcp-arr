@@ -33,6 +33,7 @@ import {
   applicationOutcome,
   buildToolResult,
   type Effect,
+  type ItemOutcome,
   type MutationDetail,
   type Receipt,
   type ToolResult,
@@ -125,8 +126,12 @@ function unconfiguredOutcome(application: ApplicationId): ApplicationOutcome<unk
   });
 }
 
-function errorOutcome(application: ApplicationId, error: ToolError): ApplicationOutcome<unknown> {
-  return applicationOutcome({ application, status: "error", error });
+function errorOutcome(
+  application: ApplicationId,
+  error: ToolError,
+  items?: readonly ItemOutcome[] | undefined,
+): ApplicationOutcome<unknown> {
+  return applicationOutcome({ application, status: "error", error, items });
 }
 
 function errorResult(error: ToolError): ToolResult<unknown> {
@@ -351,7 +356,7 @@ async function runRead(
 ): Promise<OperationRun> {
   const outcome = await invokeHandler(options.operation, invocation);
   if (outcome.status === "error") {
-    return runFor(errorOutcome(options.application, outcome.error));
+    return runFor(errorOutcome(options.application, outcome.error, outcome.items));
   }
   return runFor(
     applicationOutcome({
@@ -525,7 +530,7 @@ async function runApply(
       attempt.record.reference,
       settlementFor(outcome.error),
     );
-    return runFor(errorOutcome(options.application, outcome.error), {
+    return runFor(errorOutcome(options.application, outcome.error, outcome.items), {
       requestedEffects: [],
       predictedEffects: [],
       receipt: { reference: attempt.record.reference, state: settled?.state ?? "failed" },
