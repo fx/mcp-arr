@@ -91,6 +91,31 @@ async function scanForRecord<TRecord extends PagedRecord>(
   schema: z.ZodType<TRecord>,
   recordId: number,
 ): Promise<RecordLookup<TRecord>> {
+  const found = await scanForPage(client, application, route, schema, recordId);
+  return found.status === "found"
+    ? { status: "found", record: found.record }
+    : { status: found.status };
+}
+
+/**
+ * The same walk, keeping the page the record was found on.
+ *
+ * A caller that has to reason about what else the instance recorded alongside
+ * the record — the history reconciliation baseline — needs that page, and
+ * re-reading it afterwards would be both an extra request and a second, later
+ * view of state that may have moved.
+ */
+async function scanForPage<TRecord extends PagedRecord>(
+  client: UpstreamClient,
+  application: MediaApplication,
+  route: string,
+  schema: z.ZodType<TRecord>,
+  recordId: number,
+): Promise<
+  | { readonly status: "found"; readonly record: TRecord; readonly page: readonly TRecord[] }
+  | { readonly status: "absent" }
+  | { readonly status: "beyond_scan" }
+> {
   let seen = 0;
   for (let page = 1; page <= maxRecordScanPages; page += 1) {
     const body = await client.get(route, {
@@ -102,7 +127,7 @@ async function scanForRecord<TRecord extends PagedRecord>(
     const envelope = parseActivity(pagedEnvelope(schema), body, application, route);
     const match = envelope.records.find((record) => record.id === recordId);
     if (match !== undefined) {
-      return { status: "found", record: match };
+      return { status: "found", record: match, page: envelope.records };
     }
 
     seen += envelope.records.length;
@@ -113,6 +138,26 @@ async function scanForRecord<TRecord extends PagedRecord>(
   }
   return { status: "beyond_scan" };
 }
+
+/**
+ * What a history re-read establishes.
+ *
+ * The prior failures are the half that makes reconciliation sound. A successful
+ * mark-failed records a *new* `download_failed` event against the same
+ * download, so "an event exists" proves nothing on its own — the instance may
+ * have recorded one before this call, or another actor may have failed the same
+ * download meanwhile. What proves this call applied is an event that was not
+ * there when the mutation was validated, which is why the baseline is captured
+ * from the very read that validated it rather than looked up afterwards.
+ */
+export type HistoryRecordLookup =
+  | {
+      readonly status: "found";
+      readonly record: HistoryRecord;
+      readonly priorFailureIds: readonly number[];
+    }
+  | { readonly status: "absent" }
+  | { readonly status: "beyond_scan" };
 
 export interface HistoryRecordLookupRequest {
   readonly historyRecordId: number;
@@ -137,28 +182,60 @@ export async function readHistoryRecord(
   client: UpstreamClient,
   profile: MediaProfile,
   request: HistoryRecordLookupRequest,
-): Promise<RecordLookup<HistoryRecord>> {
+): Promise<HistoryRecordLookup> {
   const application = profile.application;
   if (request.mediaId === undefined) {
-    const found = await scanForRecord(
+    const found = await scanForPage(
       client,
       application,
       sharedRoutes.history,
       historyRecordSchema,
       request.historyRecordId,
     );
-    return mapLookup(found, (record: HistoryUpstream) =>
-      mapMediaHistoryRecord(profile, record, "full"),
-    );
+    return found.status === "found"
+      ? foundHistory(profile, found.record, found.page)
+      : { status: found.status };
   }
 
   const route = profile.history.route;
   const body = await client.get(route, { [profile.history.parameter]: request.mediaId });
   const records = parseActivity(z.array(historyRecordSchema), body, application, route);
   const match = records.find((record) => record.id === request.historyRecordId);
-  return match === undefined
-    ? { status: "absent" }
-    : { status: "found", record: mapMediaHistoryRecord(profile, match, "full") };
+  return match === undefined ? { status: "absent" } : foundHistory(profile, match, records);
+}
+
+/**
+ * Pairs the record with the failures already recorded against its download.
+ *
+ * Both are taken from the same response, so the baseline costs no extra request
+ * and cannot drift from the state the mutation was validated against.
+ */
+function foundHistory(
+  profile: MediaProfile,
+  match: HistoryUpstream,
+  alongside: readonly HistoryUpstream[],
+): HistoryRecordLookup {
+  const record = mapMediaHistoryRecord(profile, match, "full");
+  return {
+    status: "found",
+    record,
+    priorFailureIds: failureIdsFor(profile, alongside, record.downloadIdentity),
+  };
+}
+
+/** The `download_failed` events in a read that name the same download. */
+function failureIdsFor(
+  profile: MediaProfile,
+  records: readonly HistoryUpstream[],
+  identity: string | undefined,
+): readonly number[] {
+  if (identity === undefined) {
+    return [];
+  }
+  return records
+    .map((entry) => mapMediaHistoryRecord(profile, entry, "summary"))
+    .filter((entry) => entry.eventType === "download_failed" && entry.downloadIdentity === identity)
+    .map((entry) => entry.context.historyRecordId);
 }
 
 /** Re-reads the blocked release a removal names, under the same scan bound. */
@@ -182,6 +259,99 @@ function mapLookup<TUpstream, TRecord>(
   map: (record: TUpstream) => TRecord,
 ): RecordLookup<TRecord> {
   return lookup.status === "found" ? { status: "found", record: map(lookup.record) } : lookup;
+}
+
+/**
+ * What re-reading upstream state after a lost answer established.
+ *
+ * Only `confirmed` and `not_applied` are conclusions. `unconfirmed` is the
+ * honest third answer and the default: a read that did not find the evidence it
+ * was looking for has not shown the mutation failed, because it may simply have
+ * arrived before the instance finished. Rounding that to "it did not happen"
+ * would licence a retry of a mutation that already applied, which is the
+ * direction a receipt must never round in.
+ */
+export type Reconciliation =
+  | { readonly status: "confirmed" }
+  | { readonly status: "not_applied" }
+  | { readonly status: "unconfirmed" };
+
+/**
+ * Reconciles a mark-failed whose answer was lost.
+ *
+ * A successful mark-failed does not change the grabbed record it names — it
+ * records a *new* `download_failed` event against the same download. So the
+ * evidence is that event, matched on the download identity the grab carried,
+ * which is a digest this process salts and can therefore compare without ever
+ * handling the client's own identifier. Where the grab carried no identity
+ * there is nothing to match on, and the answer stays unconfirmed rather than
+ * being guessed from timing.
+ */
+export async function reconcileHistoryFailure(
+  client: UpstreamClient,
+  profile: MediaProfile,
+  record: HistoryRecord,
+  priorFailureIds: readonly number[],
+): Promise<Reconciliation> {
+  const identity = record.downloadIdentity;
+  if (identity === undefined) {
+    return { status: "unconfirmed" };
+  }
+
+  const route = profile.history.route;
+  const mediaId = record.context.mediaId;
+  const body =
+    mediaId === undefined
+      ? await client.get(sharedRoutes.history, {
+          page: 1,
+          pageSize: maxPageSize,
+          sortKey: "date",
+          sortDirection: "descending",
+        })
+      : await client.get(route, { [profile.history.parameter]: mediaId });
+  const records =
+    mediaId === undefined
+      ? parseActivity(
+          pagedEnvelope(historyRecordSchema),
+          body,
+          profile.application,
+          sharedRoutes.history,
+        ).records
+      : parseActivity(z.array(historyRecordSchema), body, profile.application, route);
+
+  // Only an event that was not there when this mutation was validated. An
+  // instance that had already recorded a failure for this download — or another
+  // actor that recorded one meanwhile — would otherwise make a write that never
+  // landed look like one that did, which is the direction a receipt must never
+  // round in.
+  const known = new Set(priorFailureIds);
+  const appeared = failureIdsFor(profile, records, identity).some((id) => !known.has(id));
+  return appeared ? { status: "confirmed" } : { status: "unconfirmed" };
+}
+
+/**
+ * Reconciles a blocklist removal whose answer was lost.
+ *
+ * This one is decidable both ways, which is why it is worth doing: the record
+ * either is still there or it is not. A record that is gone confirms the
+ * removal; one that is still present shows it did not apply, and that is the
+ * rare case where a retry is provably safe rather than merely plausible. A scan
+ * that ran past its bound establishes neither.
+ */
+export async function reconcileBlocklistRemoval(
+  client: UpstreamClient,
+  profile: MediaProfile,
+  blocklistRecordId: number,
+): Promise<Reconciliation> {
+  const lookup = await readBlocklistRecord(client, profile, blocklistRecordId);
+  switch (lookup.status) {
+    case "absent":
+      return { status: "confirmed" };
+    case "found":
+      return { status: "not_applied" };
+    default:
+      return { status: "unconfirmed" };
+  }
 }
 
 /**
@@ -302,72 +472,92 @@ function effect(
   return { application, severity, summary };
 }
 
-/** The release a record names, for a summary, or a stated stand-in for one. */
-function describeRelease(title: string | undefined, fallback: string): string {
-  return title === undefined ? fallback : `“${title}”`;
+/**
+ * How a selection is named in an effect summary.
+ *
+ * One record is named, because a caller acting on a single release is owed the
+ * title it is about to fail. Several are counted instead, and that is not
+ * brevity: naming the first of five would say the mutation affects that release
+ * while it silently acts on four others, which is a disclosure that is false
+ * about the very thing a plan exists to describe.
+ */
+function describeSelection(
+  titles: readonly (string | undefined)[],
+  plural: string,
+  fallback: string,
+): string {
+  const only = titles.length === 1 ? titles[0] : undefined;
+  if (titles.length === 1) {
+    return only === undefined ? fallback : `“${only}”`;
+  }
+  return `${titles.length} ${plural}`;
 }
 
 /**
- * The effects of marking one grab failed.
+ * The effects of marking one or more grabs failed.
  *
- * Blocklisting is a certainty rather than a prediction — both applications
- * blocklist the release the failed grab came from, and a caller that did not
- * want that outcome wanted a different operation. The replacement search is the
- * conditional half, and it is disclosed from the setting that decides it rather
- * than assumed either way.
+ * All three are *requested* rather than split across the two lists, and that is
+ * the point of the shape: a caller that applies directly never reads a plan's
+ * predictions, so an effect disclosed only as a prediction is disclosed only to
+ * half the callers. Blocklisting is a certainty, and the replacement search is
+ * disclosed with the certainty the instance's own settings actually support —
+ * which is what varies, not whether it is mentioned at all.
  */
 export function historyFailureEffects(
-  record: HistoryRecord,
+  records: readonly HistoryRecord[],
   policy: FailureHandlingPolicy,
 ): MutationEffects {
   const application = policy.application;
-  const release = describeRelease(record.title, "the grabbed release");
+  const release = describeSelection(
+    records.map((record) => record.title),
+    "grabbed releases",
+    "the grabbed release",
+  );
+  const them = records.length === 1 ? "it" : "them";
   const requested = [
     effect(application, "consequential", `mark the grab of ${release} failed`),
     effect(
       application,
       "consequential",
-      `blocklist ${release} so this instance does not grab it again`,
+      `blocklist ${release} so this instance does not grab ${them} again`,
     ),
   ];
 
+  // The search is certain only where both settings say so. An instance that
+  // redownloads failed grabs while excluding interactively grabbed ones decides
+  // this per release, and a history record does not say which kind of grab it
+  // was; an instance that did not report the second setting has not established
+  // it either. Both are the same answer — the certainty is withdrawn — because
+  // disclosing a search as certain on a fact that was not read is favourable
+  // beyond what the state supports, which is the one direction this must not
+  // round in.
   if (policy.replacementSearch === true) {
-    // The search is certain only where both settings say so. An instance that
-    // redownloads failed grabs while excluding interactively grabbed ones
-    // decides this per release, and a history record does not say which kind of
-    // grab it was; an instance that did not report the second setting has not
-    // established it either. Both are the same answer — the certainty is
-    // withdrawn — because predicting a search as certain on a fact that was not
-    // read is favourable beyond what the state supports, which is the one
-    // direction a prediction must not round in.
     if (policy.replacementSearchFromInteractiveSearch === true) {
-      return {
-        requested,
-        predicted: [
-          ...requested,
-          effect(
-            application,
-            "consequential",
-            `start a replacement search for ${release}, because this instance redownloads failed grabs automatically`,
-          ),
-        ],
-        warnings: [],
-      };
-    }
-
-    const excluded = policy.replacementSearchFromInteractiveSearch === false;
-    return {
-      requested,
-      predicted: [
+      const settled = [
         ...requested,
         effect(
           application,
           "consequential",
-          excluded
-            ? `a replacement search for ${release} may follow, because this instance redownloads failed grabs except the ones grabbed from an interactive search`
-            : `a replacement search for ${release} may follow, because this instance redownloads failed grabs and did not report how it treats interactively grabbed ones`,
+          `start a replacement search for ${release}, because this instance redownloads failed grabs automatically`,
         ),
-      ],
+      ];
+      return { requested: settled, predicted: settled, warnings: [] };
+    }
+
+    const excluded = policy.replacementSearchFromInteractiveSearch === false;
+    const uncertain = [
+      ...requested,
+      effect(
+        application,
+        "consequential",
+        excluded
+          ? `a replacement search for ${release} may follow, because this instance redownloads failed grabs except the ones grabbed from an interactive search`
+          : `a replacement search for ${release} may follow, because this instance redownloads failed grabs and did not report how it treats interactively grabbed ones`,
+      ),
+    ];
+    return {
+      requested: uncertain,
+      predicted: uncertain,
       warnings: [
         excluded
           ? "this instance excludes interactively grabbed releases from automatic redownload, and its history does not record which searches were interactive"
@@ -375,31 +565,30 @@ export function historyFailureEffects(
       ],
     };
   }
-  if (policy.replacementSearch === false) {
-    return {
-      requested,
-      predicted: [
-        ...requested,
-        effect(
-          application,
-          "informational",
-          "no replacement search follows, because this instance does not redownload failed grabs automatically",
-        ),
-      ],
-      warnings: [],
-    };
-  }
 
-  return {
-    requested,
-    predicted: [
+  if (policy.replacementSearch === false) {
+    const none = [
       ...requested,
       effect(
         application,
-        "consequential",
-        `a replacement search for ${release} may follow, depending on this instance's failed-download handling`,
+        "informational",
+        "no replacement search follows, because this instance does not redownload failed grabs automatically",
       ),
-    ],
+    ];
+    return { requested: none, predicted: none, warnings: [] };
+  }
+
+  const unknown = [
+    ...requested,
+    effect(
+      application,
+      "consequential",
+      `a replacement search for ${release} may follow, depending on this instance's failed-download handling`,
+    ),
+  ];
+  return {
+    requested: unknown,
+    predicted: unknown,
     warnings: [
       "this instance did not report whether it redownloads failed grabs, so a replacement search may follow",
     ],
@@ -415,29 +604,39 @@ export function historyFailureEffects(
  * by this, and the only thing that changes is that the release is eligible
  * again.
  */
-export function blocklistRemovalEffects(record: BlocklistRecord): MutationEffects {
-  const application = record.application;
-  const release = describeRelease(record.title, "that blocked release");
+export function blocklistRemovalEffects(
+  application: MediaApplication,
+  records: readonly BlocklistRecord[],
+): MutationEffects {
+  const release = describeSelection(
+    records.map((record) => record.title),
+    "blocked releases",
+    "that blocked release",
+  );
+  // All three are *requested* rather than predicted, and that is deliberate.
+  // Re-allowing the release is not a consequence of removing the record, it is
+  // what removing the record means; and the non-effect has to be disclosed in
+  // apply mode too, because a caller that applies directly never reads a plan's
+  // predictions and "remove" is the word most easily read as deletion. Nothing
+  // here is conditional, so the two lists are the same.
   const requested = [
-    effect(application, "consequential", `remove the blocklist record for ${release}`),
+    effect(
+      application,
+      "consequential",
+      `remove the blocklist record${records.length === 1 ? "" : "s"} for ${release}`,
+    ),
+    effect(
+      application,
+      "consequential",
+      `allow ${release} to be considered and grabbed again by search and by automatic acquisition`,
+    ),
+    effect(
+      application,
+      "informational",
+      "no media file, download-client payload, or queue item is removed by this change",
+    ),
   ];
-  return {
-    requested,
-    predicted: [
-      ...requested,
-      effect(
-        application,
-        "consequential",
-        `allow ${release} to be considered and grabbed again by search and by automatic acquisition`,
-      ),
-      effect(
-        application,
-        "informational",
-        "no media file, download-client payload, or queue item is removed by this change",
-      ),
-    ],
-    warnings: [],
-  };
+  return { requested, predicted: requested, warnings: [] };
 }
 
 /**

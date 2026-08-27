@@ -15,6 +15,7 @@ import {
   searchStartPreconditions,
 } from "./acquisition.js";
 import { activityQueryHandler } from "./activity.js";
+import { activityChangeHandler, activityChangePreconditions } from "./activity-change.js";
 import { createToolError, type ToolError } from "./errors.js";
 import { jobCancelHandler, jobCancelPreconditions, jobGetHandler } from "./jobs.js";
 import { libraryQueryHandler } from "./library.js";
@@ -110,21 +111,28 @@ export type OperationOutcome =
        */
       readonly outcomeUnknown?: ToolError;
       /**
-       * Set when the handler can show that no upstream request was dispatched,
-       * and says why.
+       * Set when the handler can show that the call had no effect, and says why.
        *
        * The receipt then settles as `failed` — the one state a later identical
        * attempt may reuse — because recording it as a success would answer that
        * attempt from a receipt for a mutation that never happened, and a
        * transient failure would become permanent for that exact input.
        *
-       * "Can show" is the whole of the contract. A handler must set this from
-       * something it observed — a request it never sent, a payload the client
-       * refused before dispatch — and never from an aggregate of item failures,
-       * which is equally true of a single write that timed out. Reporting a
-       * mutation that may have applied as one that certainly did not is the one
-       * direction a receipt must never round in, so where this and
-       * {@link outcomeUnknown} disagree, the unknown outcome wins.
+       * "Can show" is the whole of the contract, and there are exactly two ways
+       * to show it: no upstream request was dispatched, or one was dispatched
+       * and a re-read of the authoritative upstream state established that it
+       * did not apply. The second is why this says "had no effect" rather than
+       * "was never sent" — a reconciliation that found the record untouched
+       * proves the same thing a request never sent does, and proving it is
+       * worth more to a caller than leaving it unknown.
+       *
+       * What a handler may never do is infer either from an aggregate of item
+       * failures, which is equally true of a single write that timed out, or
+       * set this while any selection succeeded — settling the receipt as
+       * retryable would then licence re-sending the write that did land.
+       * Reporting a mutation that may have applied as one that certainly did
+       * not is the one direction a receipt must never round in, so where this
+       * and {@link outcomeUnknown} disagree, the unknown outcome wins.
        */
       readonly unattempted?: ToolError;
     }
@@ -274,6 +282,17 @@ const releaseSearch: DefineOptions = { handler: releaseSearchHandler };
 const libraryChange: DefineOptions = {
   handler: libraryChangeHandler,
   readPreconditions: libraryChangePreconditions,
+};
+
+/**
+ * Both `arr_activity_change` intents run the same handler behind the same
+ * precondition reader, for the reason the library mutations do: pairing them
+ * here rather than per variant is what makes either mutation unreachable
+ * without the current-state validation that re-reads the record it names.
+ */
+const activityChange: DefineOptions = {
+  handler: activityChangeHandler,
+  readPreconditions: activityChangePreconditions,
 };
 
 /**
@@ -627,6 +646,7 @@ const definitions = [
     "mark_history_failed",
     media,
     "mutate",
+    activityChange,
   ),
   define(
     "activity.change.remove_blocklist_record",
@@ -634,6 +654,7 @@ const definitions = [
     "remove_blocklist_record",
     media,
     "mutate",
+    activityChange,
   ),
 
   // arr_import_execute

@@ -28,7 +28,7 @@ specs:
     status: active
 
 # Implementation order: changes 0011 through 0014 are scheduled ahead of the
-# still-pending 0006 through 0010. 0011 establishes distribution; 0012 through
+# still-pending 0006 through 0009. 0011 establishes distribution; 0012 through
 # 0014 correct defects found testing the merged server against live instances.
 changes:
   - id: "0001"
@@ -99,7 +99,7 @@ changes:
     path: changes/0010-history-and-blocklist-mutations.md
     description: Implement typed history-failure and single-record blocklist mutation workflows
     spec: activity-management
-    status: draft
+    status: complete
     depends_on: ["0002", "0004"]
   - id: "0011"
     name: npm-publishing

@@ -45,6 +45,38 @@
       }
     },
     {
+      "id": 9002,
+      "episodeId": 1004,
+      "seriesId": 12,
+      "eventType": "downloadFolderImported",
+      "date": "2026-08-26T20:15:00Z",
+      "sourceTitle": "Example Series S02E02 Bluray-1080p",
+      "downloadId": "d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3",
+      "successful": true,
+      "quality": {
+        "quality": {
+          "id": 4,
+          "name": "Bluray-1080p",
+          "source": "bluray",
+          "resolution": 1080
+        },
+        "revision": {
+          "version": 1,
+          "real": 0,
+          "isRepack": false
+        }
+      },
+      "languages": [
+        {
+          "id": 1,
+          "name": "English"
+        }
+      ],
+      "data": {
+        "downloadClient": "Example Client"
+      }
+    },
+    {
       "id": 9003,
       "episodeId": 1003,
       "seriesId": 12,

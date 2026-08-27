@@ -41,11 +41,13 @@ const routes: Readonly<Record<ApplicationId, readonly string[]>> = {
     "queue",
     "queue/details",
     "history",
+    "history/series",
     "blocklist",
     "health",
     "command",
     "diskspace",
     "release",
+    "config/downloadclient",
   ],
   radarr: [
     "system/status",
@@ -60,11 +62,13 @@ const routes: Readonly<Record<ApplicationId, readonly string[]>> = {
     "queue",
     "queue/details",
     "history",
+    "history/movie",
     "blocklist",
     "health",
     "command",
     "diskspace",
     "release",
+    "config/downloadclient",
   ],
   // Prowlarr has no media library, no queue, no blocklist, and no disk view, so
   // it answers the capability probe, the activity reads it does model, and the
@@ -92,7 +96,13 @@ const parentFilters: Readonly<Record<string, { query: string; field: string } | 
   episodefile: { query: "seriesId", field: "seriesId" },
   moviefile: { query: "movieId", field: "movieId" },
   search: { query: "indexerIds", field: "indexerId" },
+  "history/series": { query: "seriesId", field: "seriesId" },
+  "history/movie": { query: "movieId", field: "movieId" },
 };
+
+/** `history/failed/{id}` and `blocklist/{id}`, the two single-record writes. */
+const historyFailedRoute = /^history\/failed\/(\d+)$/u;
+const blocklistRecordRoute = /^blocklist\/(\d+)$/u;
 
 /** The route each application resolves a grab on, keyed by application. */
 const grabRoutes: Readonly<Record<ApplicationId, string>> = {
@@ -156,6 +166,14 @@ export interface FixtureInstance {
   readonly grabs: readonly UpstreamGrab[];
   /** The commands this instance started, in order, on the same terms. */
   readonly commands: readonly UpstreamCommand[];
+  /**
+   * The history records this instance marked failed, and the blocklist records
+   * it removed, in order. Like the grabs above, a write this server refused is
+   * absent — so a test asserting on these cannot mistake a rejected write for a
+   * performed one.
+   */
+  readonly failedHistory: readonly number[];
+  readonly removedBlocklist: readonly number[];
   close(): Promise<void>;
 }
 
@@ -185,6 +203,12 @@ async function readPostedBody(request: IncomingMessage): Promise<Record<string, 
   return parsed;
 }
 
+/** Whether a recorded paged collection holds a record with this identifier. */
+function pagedHasId(body: unknown, id: number): boolean {
+  const records = isRecord(body) && Array.isArray(body.records) ? body.records : [];
+  return records.some((record) => isRecord(record) && record.id === id);
+}
+
 /** The single record `series/{id}` answers with, taken from the series fixture. */
 function recordById(body: unknown, id: number): unknown {
   return Array.isArray(body)
@@ -202,6 +226,12 @@ export async function startFixtureInstance(
   const searches: UpstreamSearch[] = [];
   const grabs: UpstreamGrab[] = [];
   const started: UpstreamCommand[] = [];
+  const failedHistory: number[] = [];
+  // Removals are remembered as well as recorded, so a subsequent read of the
+  // blocklist no longer reports a record this instance has removed. That is
+  // what a real instance does, and it is what lets a test that reconciles a
+  // lost answer against upstream state mean anything.
+  const removedBlocklist: number[] = [];
   const stale = new Set(options.staleGrabs ?? []);
   const bodies = new Map<string, unknown>(
     await Promise.all(
@@ -214,6 +244,21 @@ export async function startFixtureInstance(
       ),
     ),
   );
+
+  /**
+   * The blocklist as it now stands, with anything this instance removed gone
+   * from it. Every other route answers its recorded body unchanged.
+   */
+  const withoutRemoved = (body: unknown, route: string): unknown => {
+    if (route !== "blocklist" || removedBlocklist.length === 0 || !isRecord(body)) {
+      return body;
+    }
+    const records = Array.isArray(body.records) ? body.records : [];
+    const kept = records.filter(
+      (record) => !(isRecord(record) && removedBlocklist.includes(Number(record.id))),
+    );
+    return { ...body, records: kept, totalRecords: kept.length };
+  };
 
   const send = (response: ServerResponse, status: number, body: unknown): void => {
     response.writeHead(status, { "Content-Type": "application/json" });
@@ -286,6 +331,26 @@ export async function startFixtureInstance(
       // route gives the `404` a real instance gives for a route that does not
       // exist, rather than a refusal, which would read as an instance that has
       // the endpoint and declined this particular command.
+      // A mark-failed names its record in the path and carries nothing in its
+      // body, so it is settled here rather than in the body handler below: the
+      // instance either holds that history record or it does not.
+      const failing = historyFailedRoute.exec(route);
+      if (failing !== null) {
+        if (!answers("history")) {
+          send(response, 404, { message: "not found" });
+          return;
+        }
+        const id = Number(failing[1]);
+        if (!pagedHasId(bodies.get("history"), id)) {
+          send(response, 404, { message: "unknown history record" });
+          return;
+        }
+        failedHistory.push(id);
+        response.writeHead(200);
+        response.end();
+        return;
+      }
+
       const writable = route === grabRoutes[application] || (route === "command" && answers(route));
       if (!writable) {
         send(response, 404, { message: "not found" });
@@ -329,6 +394,22 @@ export async function startFixtureInstance(
       return;
     }
 
+    // The one delete this surface exposes. A record the instance does not hold —
+    // including one it has already removed — is the `404` a real instance gives,
+    // which is what makes a second removal distinguishable from a first.
+    const removing = request.method === "DELETE" ? blocklistRecordRoute.exec(route) : null;
+    if (removing !== null && answers("blocklist")) {
+      const id = Number(removing[1]);
+      if (!pagedHasId(bodies.get("blocklist"), id) || removedBlocklist.includes(id)) {
+        send(response, 404, { message: "unknown blocklist record" });
+        return;
+      }
+      removedBlocklist.push(id);
+      response.writeHead(200);
+      response.end();
+      return;
+    }
+
     const single = application === "sonarr" ? /^series\/(\d+)$/u.exec(route) : null;
 
     // Everything left is a read, so every other method is one this instance
@@ -354,7 +435,7 @@ export async function startFixtureInstance(
       send(response, 404, { message: "not found" });
       return;
     }
-    send(response, 200, filtered(body, route, url.searchParams));
+    send(response, 200, filtered(withoutRemoved(body, route), route, url.searchParams));
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -371,6 +452,8 @@ export async function startFixtureInstance(
     searches,
     grabs,
     commands: started,
+    failedHistory,
+    removedBlocklist,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => (error === undefined ? resolve() : reject(error)));
