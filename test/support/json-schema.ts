@@ -209,6 +209,108 @@ export function schemaFailures(schema: Schema, value: unknown): readonly string[
   return collectFailures(schema, value, "");
 }
 
+/** The `type` values this dialect defines. Anything else is not a schema. */
+const schemaTypes = new Set(["object", "array", "string", "boolean", "integer", "number", "null"]);
+
+/** Keywords whose value must be a number wherever they appear. */
+const numericKeywords = ["maxItems", "maxLength", "maximum", "minItems", "minLength", "minimum"];
+
+function fail(path: string, reason: string): never {
+  throw new Error(`${describe(path)} ${reason}`);
+}
+
+/**
+ * Checks that a published schema is a well-formed schema at every depth.
+ *
+ * This is the meta-schema check, reduced to the closed vocabulary these
+ * schemas actually use. The vocabulary half is already here — {@link
+ * supportedKeywords} throws on any keyword this module has not implemented —
+ * and what this adds is the other half: that every keyword present carries a
+ * value of the JSON type the dialect defines for it. Over a fixed keyword set
+ * that reduction is exact, so a validator dependency would add a package
+ * without adding coverage.
+ */
+export function assertWellFormed(schema: Schema, path = ""): void {
+  for (const keyword of Object.keys(schema)) {
+    if (!supportedKeywords.has(keyword)) {
+      throw new Error(`Unsupported JSON Schema keyword at ${describe(path)}: ${keyword}`);
+    }
+  }
+
+  if ("type" in schema && !(typeof schema.type === "string" && schemaTypes.has(schema.type))) {
+    fail(path, `declares an unknown type ${JSON.stringify(schema.type)}`);
+  }
+  if ("required" in schema) {
+    const required = schema.required;
+    if (!Array.isArray(required) || required.some((name) => typeof name !== "string")) {
+      fail(path, "declares a required list that is not an array of names");
+    }
+  }
+  if ("enum" in schema && !(Array.isArray(schema.enum) && schema.enum.length > 0)) {
+    fail(path, "declares an enum that is not a non-empty array");
+  }
+  if ("description" in schema && typeof schema.description !== "string") {
+    fail(path, "declares a description that is not a string");
+  }
+  for (const keyword of numericKeywords) {
+    if (keyword in schema && typeof schema[keyword] !== "number") {
+      fail(path, `declares a ${keyword} that is not a number`);
+    }
+  }
+  if ("pattern" in schema) {
+    if (typeof schema.pattern !== "string") {
+      fail(path, "declares a pattern that is not a string");
+    }
+    try {
+      new RegExp(schema.pattern, "u");
+    } catch {
+      fail(path, `declares a pattern that does not compile: ${schema.pattern}`);
+    }
+  }
+
+  if ("properties" in schema) {
+    if (!isRecord(schema.properties)) {
+      fail(path, "declares properties that are not an object");
+    }
+    for (const [name, declared] of Object.entries(schema.properties)) {
+      if (!isRecord(declared)) {
+        fail(child(path, name), "is not a schema");
+      }
+      assertWellFormed(declared, child(path, name));
+    }
+  }
+  if ("additionalProperties" in schema) {
+    const additional = schema.additionalProperties;
+    if (typeof additional !== "boolean" && !isRecord(additional)) {
+      fail(path, "declares additionalProperties that is neither a boolean nor a schema");
+    }
+    if (isRecord(additional)) {
+      assertWellFormed(additional, child(path, "*"));
+    }
+  }
+  if ("items" in schema) {
+    if (!isRecord(schema.items)) {
+      fail(child(path, "[]"), "is not a schema");
+    }
+    assertWellFormed(schema.items, child(path, "[]"));
+  }
+  for (const keyword of ["anyOf", "oneOf"] as const) {
+    if (!(keyword in schema)) {
+      continue;
+    }
+    const alternatives = schema[keyword];
+    if (!Array.isArray(alternatives) || alternatives.length === 0) {
+      fail(path, `declares a ${keyword} that is not a non-empty array`);
+    }
+    for (const [index, alternative] of alternatives.entries()) {
+      if (!isRecord(alternative)) {
+        fail(child(path, `${keyword}[${index}]`), "is not a schema");
+      }
+      assertWellFormed(alternative, child(path, `${keyword}[${index}]`));
+    }
+  }
+}
+
 /**
  * The argument names a published schema declares, gathered from its own
  * properties and from every alternative it offers. A schema that publishes no

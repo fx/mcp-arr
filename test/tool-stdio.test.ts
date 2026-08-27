@@ -2,7 +2,7 @@ import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
 import { toolDefinitions } from "../src/tools/definitions.js";
 import { toolNames } from "../src/tools/names.js";
-import { publishedPropertyNames, schemaFailures } from "./support/json-schema.js";
+import { assertWellFormed, publishedPropertyNames, schemaFailures } from "./support/json-schema.js";
 import { assertCleanProtocolStdout, spawnBuiltServer } from "./support/spawned-stdio.js";
 import { sampleToolInputs } from "./support/tool-context.js";
 
@@ -61,6 +61,43 @@ async function listPublishedInputSchemas(): Promise<ReadonlyMap<string, Record<s
   }
 }
 
+/**
+ * The combinators a host drops a tool for carrying at the root of its input
+ * schema. All three, and the root only: the same host never inspects a
+ * combinator nested under a property.
+ */
+const rootCombinators = ["anyOf", "oneOf", "allOf"] as const;
+
+/** The property-key shape a host requires of a published schema, at any depth. */
+const propertyKeyPattern = /^[a-zA-Z0-9_.-]{1,64}$/u;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function offendingPropertyKeys(node: unknown, found: string[] = []): string[] {
+  if (Array.isArray(node)) {
+    for (const entry of node) {
+      offendingPropertyKeys(entry, found);
+    }
+    return found;
+  }
+  if (!isRecord(node)) {
+    return found;
+  }
+  if (isRecord(node.properties)) {
+    for (const key of Object.keys(node.properties)) {
+      if (!propertyKeyPattern.test(key)) {
+        found.push(key);
+      }
+    }
+  }
+  for (const value of Object.values(node)) {
+    offendingPropertyKeys(value, found);
+  }
+  return found;
+}
+
 interface ToolCallResult {
   result?: {
     isError?: boolean;
@@ -90,6 +127,24 @@ describe("built stdio tool surface", () => {
       expect(tools.map((tool) => tool.name)).toEqual([...toolNames]);
       for (const tool of tools) {
         expect(tool.inputSchema?.type, tool.name).toBe("object");
+        // A root combinator is not a style question. A host that filters tool
+        // definitions drops the tool outright when it finds one, so publishing
+        // alternatives at the root costs a caller the whole tool rather than
+        // some of its detail — and the object root the protocol asks for is
+        // satisfied at the same time as the combinator is present, which is how
+        // thirteen tools passed the assertion above while being unusable.
+        for (const combinator of rootCombinators) {
+          expect(
+            tool.inputSchema?.[combinator],
+            `${tool.name} publishes a root ${combinator}`,
+          ).toBeUndefined();
+        }
+        // Closed at the root as well: a caller reading the schema has to be
+        // able to tell that a property it does not find there is one the tool
+        // does not accept.
+        expect(tool.inputSchema?.additionalProperties, tool.name).toBe(false);
+        expect(offendingPropertyKeys(tool.inputSchema), tool.name).toEqual([]);
+        assertWellFormed(tool.inputSchema ?? {}, tool.name);
         // An object root satisfied on its own is what let every variant tool
         // publish `{"type":"object","properties":{}}`, so the arguments have to
         // be asserted here rather than beside this: a tool that publishes no
