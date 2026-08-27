@@ -590,6 +590,45 @@ describe("published variant merge", () => {
     // instead would put the accepted set under the one combinator a host never
     // inspects — the same failure the flat root exists to prevent, reintroduced
     // one property at a time.
-    expect(properties.mode).toEqual({ type: "string", enum: ["plan", "apply"] });
+    //
+    // And the collapse has to carry the description with it. The collapsed node
+    // is built by hand, so text a variant wrote survives only by being copied
+    // across; nothing else republishes it, and losing it here would delete it
+    // from the published schema outright rather than merely relocate it.
+    expect(properties.mode).toEqual({
+      type: "string",
+      enum: ["plan", "apply"],
+      description: "Validates without changing anything.",
+    });
+  });
+
+  it("keeps each alternative's own description where the shapes cannot collapse", () => {
+    const union = variantUnion(
+      z.union([
+        z.strictObject({
+          target: z.string().describe("The single item to act on."),
+          items: z.string(),
+        }),
+        z.strictObject({
+          target: z.array(z.string()).describe("Every item to act on."),
+          items: z.string(),
+        }),
+      ]),
+    );
+
+    const published = z4mini.toJSONSchema(union as never, {
+      target: "draft-7",
+      io: "input",
+    }) as unknown as Record<string, unknown>;
+    const properties = published.properties as Record<string, unknown>;
+
+    // Distinct shapes are published verbatim as alternatives, so there is
+    // nothing to carry: each keeps the description it was declared with.
+    expect(properties.target).toEqual({
+      anyOf: [
+        { type: "string", description: "The single item to act on." },
+        { type: "array", items: { type: "string" }, description: "Every item to act on." },
+      ],
+    });
   });
 });

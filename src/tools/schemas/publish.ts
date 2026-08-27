@@ -126,8 +126,25 @@ function mergeProperty(shapes: readonly JsonSchema[]): JsonSchema {
         }
       }
     }
-    return { type: "string", enum: values };
+    // The collapse builds a node by hand rather than keeping one, so anything
+    // the collapsed shapes carried has to be carried across deliberately or it
+    // is gone. `description` is the whole of that: a string choice may hold
+    // nothing but the three keywords stating the choice — which the collapse
+    // reproduces — plus this one annotation, and dropping it would delete text a
+    // variant wrote with nowhere else to appear. The first non-empty one wins,
+    // in variant order, because the shapes describe the same property and
+    // concatenating two phrasings of one sentence reads as neither.
+    const description = shapes
+      .map((shape) => shape.description)
+      .find((text): text is string => typeof text === "string" && text !== "");
+    return {
+      type: "string",
+      enum: values,
+      ...(description === undefined ? {} : { description }),
+    };
   }
+  // Published verbatim, so each alternative keeps its own annotations; there is
+  // nothing to carry across.
   return { anyOf: [...shapes] };
 }
 
