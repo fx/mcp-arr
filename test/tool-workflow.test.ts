@@ -692,6 +692,58 @@ describe("mutation receipts and retry", () => {
     expect(second.applications[0]?.warnings.join(" ")).toContain("nothing was sent again");
   });
 
+  it("settles a mutation nothing was dispatched for as failed, and retries it", async () => {
+    const media = harness.mediaReference();
+    outcome = {
+      status: "ok",
+      unattempted: createToolError({
+        code: "stale_reference",
+        message: "sonarr: nothing was sent",
+        application: "sonarr",
+      }),
+    };
+
+    const first = await dispatchOperation(harness.context, applyRequest(media));
+    expect(mutationOf(first).receipt?.state).toBe("failed");
+    expect(first.status).toBe("error");
+
+    // A failure that reached nothing is the one state a later identical
+    // attempt may reuse, so the repeat really runs.
+    const repeated = await dispatchOperation(harness.context, applyRequest(media));
+    expect(handled).toHaveLength(2);
+    expect(mutationOf(repeated).receipt?.state).toBe("failed");
+  });
+
+  it("prefers an unknown outcome over an unattempted one when a handler reports both", async () => {
+    const media = harness.mediaReference();
+    outcome = {
+      status: "ok",
+      outcomeUnknown: createToolError({
+        code: "timeout",
+        message: "sonarr: the request timed out",
+        application: "sonarr",
+      }),
+      unattempted: createToolError({
+        code: "stale_reference",
+        message: "sonarr: nothing was sent",
+        application: "sonarr",
+      }),
+    };
+
+    const result = await dispatchOperation(harness.context, applyRequest(media));
+
+    // Reading the pair as `failed` would license a retry of a mutation that
+    // may already have applied and would discard the only record that made
+    // reconciliation possible. Rounding the other way costs a reconciliation
+    // nobody needed.
+    expect(mutationOf(result).receipt?.state).toBe("outcome_unknown");
+    expect(result.applications[0]?.error?.code).toBe("timeout");
+
+    const repeated = await dispatchOperation(harness.context, applyRequest(media));
+    expect(handled).toHaveLength(1);
+    expect(mutationOf(repeated).receipt?.state).toBe("outcome_unknown");
+  });
+
   it("records the receipt before the mutation is attempted", async () => {
     let inFlight: ApplyAttempt | undefined;
     const observing = createHarness(

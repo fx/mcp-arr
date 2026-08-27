@@ -91,6 +91,8 @@ interface Instances {
   silenceCreates(application: ApplicationId): void;
   /** Lets a route answer normally again. */
   healRoute(application: ApplicationId, route: string): void;
+  /** Drops the connection on every write, as a lost answer would. */
+  dropWrites(application: ApplicationId): void;
   stop(application: ApplicationId): void;
 }
 
@@ -131,6 +133,7 @@ async function createInstances(): Promise<Instances> {
   const stopped = new Set<ApplicationId>();
   const failing = new Map<string, { status: number; method?: string | undefined }>();
   const silent = new Set<ApplicationId>();
+  const dropped = new Set<ApplicationId>();
   const key = (application: ApplicationId, route: string) => `${application}/${route}`;
 
   const collectionOf = (application: ApplicationId, route: string): Record<string, unknown>[] => {
@@ -160,6 +163,12 @@ async function createInstances(): Promise<Instances> {
       route,
       ...(isRecord(raw) ? { body: raw } : {}),
     });
+
+    // Dropped after the request is recorded, because the point of this mode is
+    // that the instance did receive it.
+    if (method !== "GET" && dropped.has(application)) {
+      throw new Error("connection reset");
+    }
 
     const failure = failing.get(key(application, route));
     if (failure !== undefined && (failure.method === undefined || failure.method === method)) {
@@ -225,6 +234,9 @@ async function createInstances(): Promise<Instances> {
     },
     healRoute: (application, route) => {
       failing.delete(key(application, route));
+    },
+    dropWrites: (application) => {
+      dropped.add(application);
     },
     stop: (application) => {
       stopped.add(application);
@@ -785,6 +797,34 @@ describe("arr_library_change set_monitoring", () => {
     expect(writes("sonarr")).toEqual([
       expect.objectContaining({ method: "PUT", route: "series/14" }),
     ]);
+  });
+
+  it("keeps a write whose answer was lost reconcilable rather than calling it failed", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+    instances.dropWrites("sonarr");
+    const intent = {
+      intent: "set_monitoring",
+      mode: "apply",
+      items: [series.reference],
+      monitored: false,
+    };
+
+    const applied = await change(intent);
+
+    // The request was sent and the answer never arrived. Every item reports an
+    // error, which is exactly what an apply that reached nothing looks like —
+    // and settling on that resemblance would record a mutation that may have
+    // applied as one that certainly did not.
+    expect(writes("sonarr")).toHaveLength(1);
+    expect(applied.status).toBe("error");
+    expect(applied.mutation?.receipt).toMatchObject({ state: "outcome_unknown" });
+    expect(errorCodes(applied)).toContain("unavailable_application");
+
+    // A repeat is answered from that receipt rather than sending it again,
+    // which is the whole point of not rounding down to `failed`.
+    const repeated = await change(intent);
+    expect(writes("sonarr")).toHaveLength(1);
+    expect(repeated.mutation?.receipt?.reference).toBe(applied.mutation?.receipt?.reference);
   });
 
   it("leaves an apply that reached nothing retryable with the same input", async () => {

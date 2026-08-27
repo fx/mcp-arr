@@ -960,6 +960,15 @@ interface AppliedItems {
    * close a mutation nothing was sent for to any later retry.
    */
   readonly unresolved?: ToolError | undefined;
+  /**
+   * How many upstream writes were actually dispatched.
+   *
+   * Counted rather than inferred, because it is the one thing that decides
+   * whether this mutation may be recorded as never having happened. "Every
+   * item reported an error" does not decide it: a single record whose write
+   * timed out produces exactly that, and the request was sent.
+   */
+  readonly dispatched: number;
 }
 
 /**
@@ -977,11 +986,13 @@ async function applyItems(
 ): Promise<AppliedItems> {
   const failures = new Map<string, ToolError>();
   let unresolved: ToolError | undefined;
+  let dispatched = 0;
 
   for (const write of context.writes) {
     if (!write.changed) {
       continue;
     }
+    dispatched += 1;
     try {
       await writeResource(invocation.adapter.client, write.path, write.payload);
     } catch (error) {
@@ -1010,7 +1021,7 @@ async function applyItems(
     );
   });
 
-  return { outcomes, unresolved };
+  return { outcomes, unresolved, dispatched };
 }
 
 function planForItems(context: ItemsContext): {
@@ -1101,11 +1112,17 @@ export const libraryChangeHandler: OperationHandler = async (invocation) => {
   }
 
   const applied = await applyItems(invocation, application.value, context);
-  // Every selection failing means nothing reached the application, so the
-  // receipt must stay reusable: a transient failure reading the only selected
-  // record would otherwise make that exact input permanently unretryable.
+  // A mutation may be recorded as never having happened only when this server
+  // can show that nothing was sent — no write was dispatched at all, and every
+  // selection failed before one could be. Both halves are needed: "every item
+  // errored" is equally true of a single record whose write timed out, and
+  // recording that as unattempted would turn "we may have written and do not
+  // know" into "we definitely did not", which is the one direction a receipt
+  // must never round in.
   const unattempted =
-    applied.outcomes.length > 0 && applied.outcomes.every((item) => item.status === "error")
+    applied.dispatched === 0 &&
+    applied.outcomes.length > 0 &&
+    applied.outcomes.every((item) => item.status === "error")
       ? applied.outcomes[0]?.error
       : undefined;
 

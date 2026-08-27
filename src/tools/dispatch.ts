@@ -485,20 +485,28 @@ function replayReceipt(options: RunOptions, existing: ApplyRecord): OperationRun
 /**
  * Decides how a completed handler settles its receipt.
  *
- * The three answers are not interchangeable. A mutation nothing was sent for
+ * The three answers are not interchangeable. One whose answer was lost settles
+ * as outcome-unknown and stays reconcilable; a mutation nothing was sent for
  * settles as `failed`, which is the one state a later identical attempt may
- * reuse; one whose answer was lost settles as outcome-unknown and stays
- * reconcilable; everything else succeeded. Per-item outcomes are retained
- * whichever it is, because a repeat is answered entirely from the receipt.
+ * reuse; everything else succeeded. Per-item outcomes are retained whichever it
+ * is, because a repeat is answered entirely from the receipt.
+ *
+ * An unknown outcome is checked first, and the order is the safety property. A
+ * handler that reports both is saying it sent something whose result it could
+ * not establish *and* that some part of the call never went out; reading that
+ * as `failed` would license a retry of a mutation that may already have
+ * applied, and would discard the only record that made reconciliation
+ * possible. Rounding the other way costs at worst a reconciliation nobody
+ * needed.
  */
 function settlementForOutcome(
   outcome: Extract<Awaited<ReturnType<OperationDefinition["handler"]>>, { status: "ok" }>,
 ): ApplySettlement {
-  if (outcome.unattempted !== undefined) {
-    return { status: "failed", error: outcome.unattempted };
-  }
   if (outcome.outcomeUnknown !== undefined) {
     return { status: "outcome_unknown", error: outcome.outcomeUnknown, items: outcome.items };
+  }
+  if (outcome.unattempted !== undefined) {
+    return { status: "failed", error: outcome.unattempted };
   }
   return { status: "succeeded", job: outcome.job, items: outcome.items };
 }

@@ -107,14 +107,21 @@ export type OperationOutcome =
        */
       readonly outcomeUnknown?: ToolError;
       /**
-       * Set when the handler completed without sending anything at all, and
-       * says why.
+       * Set when the handler can show that no upstream request was dispatched,
+       * and says why.
        *
-       * A bulk mutation whose every item failed validation reached no
-       * application, so its receipt settles as `failed` — the one state a later
-       * identical attempt may reuse. Recording it as a success would answer
-       * that attempt from a receipt for a mutation that never happened, and a
+       * The receipt then settles as `failed` — the one state a later identical
+       * attempt may reuse — because recording it as a success would answer that
+       * attempt from a receipt for a mutation that never happened, and a
        * transient failure would become permanent for that exact input.
+       *
+       * "Can show" is the whole of the contract. A handler must set this from
+       * something it observed — a request it never sent, a payload the client
+       * refused before dispatch — and never from an aggregate of item failures,
+       * which is equally true of a single write that timed out. Reporting a
+       * mutation that may have applied as one that certainly did not is the one
+       * direction a receipt must never round in, so where this and
+       * {@link outcomeUnknown} disagree, the unknown outcome wins.
        */
       readonly unattempted?: ToolError;
     }
