@@ -164,6 +164,40 @@ describe("observing providers", () => {
     expect(records[3]?.enabled).toBe(false);
   });
 
+  it("reads a provider whose unset field arrives with no value key", async () => {
+    const { outcome } = await observe(
+      "prowlarr",
+      observationRequest("applications"),
+      serving([
+        {
+          id: 1,
+          name: "Example Unconfigured Application",
+          implementation: "Sonarr",
+          implementationName: "Sonarr",
+          configContract: "SonarrSettings",
+          syncLevel: "fullSync",
+          tags: [],
+          fields: [
+            // An upstream optional nobody filled in omits the key entirely
+            // rather than sending a null, so this is the ordinary shape of an
+            // unconfigured field and not a payload to refuse.
+            { name: "authPassword", privacy: "password" },
+            { name: "syncCategories" },
+          ],
+        },
+      ]),
+    );
+    const application = firstRecord(providerRecords(outcome));
+
+    expect(application.secrets).toEqual([
+      { name: "authPassword", state: "unconfigured", masked: false },
+    ]);
+    expect(application.fields).toEqual([]);
+    // The allowlisted field has no value to report, so it is counted rather
+    // than published.
+    expect(application.withheld).toEqual({ count: 1 });
+  });
+
   it("omits field values at summary detail while still reporting secret state", async () => {
     const body = await fixtureBody("sonarr", "indexer");
     const { outcome } = await observe(

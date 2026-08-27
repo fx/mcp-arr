@@ -44,10 +44,18 @@ const upstreamNumber = z.number().nullish();
  * `value` is `unknown` by design. A definition file decides what it holds, and
  * the point of the classifier is that nothing gets to assume a shape before the
  * field has been classified; typing it here would be that assumption.
+ *
+ * It is also optional, because an unset field arrives with the key absent rather
+ * than with a null — an `authPassword` nobody filled in is simply not there. In
+ * zod 4 a bare `z.unknown()` is a required key, where zod 3 made it optional, so
+ * leaving it bare would refuse that ordinary shape and turn every provider
+ * record carrying one unconfigured field into an unexpected-response refusal.
+ * Optional changes only whether the key must be present; the value still reaches
+ * the classifier unexamined.
  */
 export const providerFieldSchema = z.object({
   name: z.string().min(1),
-  value: z.unknown(),
+  value: z.unknown().optional(),
   privacy: upstreamText,
 });
 
