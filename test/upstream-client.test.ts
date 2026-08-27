@@ -405,6 +405,34 @@ describe("createUpstreamClient", () => {
       status: 400,
       body: undefined,
     });
+
+    // A redirect is neither a success nor a validation the instance performed,
+    // so its status is reported and it is not accepted.
+    const { client: moved } = harness(() => new Response(null, { status: 302 }));
+    await expect(moved.validate("notification/test", { id: 1 })).resolves.toMatchObject({
+      accepted: false,
+      status: 302,
+    });
+  });
+
+  it("fails a validating write whose rejection body never arrived", async () => {
+    const { client } = harness(
+      () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(new Error("stream failed"));
+            },
+          }),
+          { status: 400 },
+        ),
+    );
+
+    // The body is what this answer consists of. Reading its loss as an empty
+    // rejection would report a test the caller could act on where nothing was
+    // learned at all.
+    const error = await captureError(client.validate("notification/test", { id: 1 }));
+    expect(error.kind).toBe("unavailable");
   });
 
   it("sends a delete with its query, its credential, and no body at all", async () => {

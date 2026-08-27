@@ -249,7 +249,16 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
         // it, the instance is reporting that it failed rather than that the
         // request did, which is not something to hand back as a result.
         if (retainStatus && response.status < 500) {
-          const rejected = await response.text().catch(() => "");
+          let rejected: string;
+          try {
+            rejected = await response.text();
+          } catch {
+            // The body this answer consists of never arrived, which is a
+            // transport failure and not a validation the instance performed.
+            // Reading it as an empty rejection would report a test the caller
+            // could act on where nothing was learned at all.
+            throw fail(timedOut ? "timeout" : "unavailable");
+          }
           return {
             retainedStatus: response.status,
             retainedBody: readJson(rejected),
@@ -341,7 +350,10 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
         throw new UpstreamError("unexpected-response", { application, operation: path });
       }
       return {
-        accepted: answered.retainedStatus < 400,
+        // The 2xx range rather than "not a rejection": a redirect is neither a
+        // success nor a validation the instance performed, and reading one as
+        // accepted would let it stand in for a test that passed.
+        accepted: answered.retainedStatus >= 200 && answered.retainedStatus < 300,
         status: answered.retainedStatus,
         body: answered.retainedBody,
       };
