@@ -26,6 +26,11 @@ The Activity Management spec's requirement that `ignore_tracking` be "compiled w
 A mutation's read set observes what its plan **disclosed**, which is not the same as what its request **sends**. A plan that names a record in a disclosed effect — "add “X” to the library", "move the files of “X”" — fingerprints that name, so applying the plan cannot act on a record that has since become a different one than the plan described, even though the name is not part of the payload. Reporting such an observation as unrelated to the mutation, on the grounds that the value is not sent upstream, is a false positive.
 
 The converse is a real finding and is worth reporting: a read set that observes something the plan neither disclosed nor depends on makes a valid plan expire for an unrelated reason, and that is a defect.
+## A Secret Field's Name Is Published; Its Value and a Withheld Field's Name Are Not
+
+The configuration adapter draws the line at values, not at names of credentials. `ConfiguredSecret.name` in `src/adapters/configuration/model.ts` carries the upstream field name — including one a Prowlarr Cardigann definition chose — and `serializeProvider` reports those names for every provider, dynamically defined ones included. `SecretDisposition.name` in `src/adapters/configuration/write.ts` does the same for a diff, because saying which credentials a full-resource write preserved is the promise that write has to make.
+
+What is deliberately withheld is different and is enforced elsewhere: a secret's **value** never leaves, and the names of **withheld** fields are reported only as `WithheldFields.count`. Asking for a secret field's name to be redacted, counted, or restricted to a static list is a false positive — it would make the diff disagree with an observation of the same record, and it closes nothing, since any caller that can plan a reconciliation can already call `arr_config_observe`.
 
 ## Zod 4 Schema Conventions
 
