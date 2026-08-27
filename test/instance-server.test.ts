@@ -5,11 +5,13 @@ import { type FixtureInstance, startFixtureInstance } from "./support/instance-s
 /**
  * The guards the fixture instance keeps on its own writes.
  *
- * A test double that stops checking is worse than no double: a client
- * regression that dropped the cache identity from a grab would be answered
- * with the same `404` an expired cache produces, so the suite would stay green
- * while the grab path was broken and the failure it eventually surfaced would
- * name the wrong cause. These tests hold the double to the check.
+ * A test double that stops checking is worse than no double. A grab that lost
+ * its cache identity would be answered with the same `404` an expired cache
+ * produces, and a command the instance refused would still appear in the record
+ * of what it started — so the suite would stay green while the write path was
+ * broken, and the failure it eventually surfaced would name the wrong cause.
+ * These tests hold the double to both: refuse a write that carries no identity,
+ * and record only the writes it actually performed.
  */
 
 const started: FixtureInstance[] = [];
@@ -58,9 +60,12 @@ describe("the fixture instance's grab route", () => {
       expect((await post(running, route, { guid: 42 })).status).toBe(400);
       expect((await post(running, route, { guid: "" })).status).toBe(400);
 
-      // A refused grab is not a grab the instance saw, so a test asserting on
-      // what reached the wire cannot mistake one for the other.
+      // A refused grab is not a grab the instance resolved, so a test asserting
+      // on what it did cannot mistake one for the other. That the request
+      // reached the wire at all is a separate question, and `requests` still
+      // answers it.
       expect(running.grabs).toEqual([]);
+      expect(running.requests).toEqual([route, route, route]);
     });
 
     it(`still answers a ${application} grab for an uncached release with 404`, async () => {
@@ -70,6 +75,30 @@ describe("the fixture instance's grab route", () => {
       // from the malformed-body refusal above.
       expect((await post(running, route, { guid: "never-recorded" })).status).toBe(404);
       expect(running.grabs.map((entry) => entry.guid)).toEqual(["never-recorded"]);
+    });
+  }
+});
+
+describe("the fixture instance's command route", () => {
+  for (const application of ["sonarr", "radarr"] as const) {
+    it(`records no ${application} command it refused to start`, async () => {
+      const running = await instance(application);
+
+      expect((await post(running, "command", { seriesId: 12 })).status).toBe(400);
+      expect((await post(running, "command", { name: 42 })).status).toBe(400);
+
+      // The whole point of the record: a test that asserts on what was started
+      // must fail when nothing was.
+      expect(running.commands).toEqual([]);
+      expect(running.requests).toEqual(["command", "command"]);
+    });
+
+    it(`records a started ${application} command with the body it arrived in`, async () => {
+      const running = await instance(application);
+      const body = { name: "RefreshMonitoredDownloads" };
+
+      expect((await post(running, "command", body)).status).toBe(201);
+      expect(running.commands).toEqual([{ name: body.name, body }]);
     });
   }
 });

@@ -46,8 +46,8 @@ const routes: Readonly<Record<ApplicationId, readonly string[]>> = {
     "release",
     "command",
   ],
-  // Prowlarr has no media library, so it answers the capability probe and the
-  // routes an aggregate search and a grab need.
+  // Prowlarr has no media library, so it answers the capability probe, its
+  // indexer views, and the routes an aggregate search and a grab need.
   prowlarr: ["system/status", "indexer", "indexerstatus", "search"],
 };
 
@@ -92,14 +92,14 @@ export interface UpstreamSearch {
   readonly query: URLSearchParams;
 }
 
-/** One grab this instance was asked for, as it arrived. */
+/** One grab this instance resolved, as it arrived. */
 export interface UpstreamGrab {
   readonly route: string;
   readonly guid: string;
   readonly indexerId: number | undefined;
 }
 
-/** One command this instance was asked to start, as it arrived. */
+/** One command this instance started, as it arrived. */
 export interface UpstreamCommand {
   readonly name: string;
   readonly body: Readonly<Record<string, unknown>>;
@@ -109,13 +109,22 @@ export interface FixtureInstance {
   readonly application: ApplicationId;
   readonly url: string;
   readonly apiKey: string;
-  /** The relative routes this instance was asked for, in order. */
+  /**
+   * The relative routes this instance was asked for, in order — every request
+   * that named one, answered or refused, because what reached the wire is the
+   * question this records.
+   */
   readonly requests: readonly string[];
   /** The same requests with their query parameters, for asserting what was sent. */
   readonly searches: readonly UpstreamSearch[];
-  /** The grabs this instance was asked to resolve, in order. */
+  /**
+   * The grabs this instance resolved, in order. A write this server refused is
+   * absent, so these two records say what the instance did rather than what it
+   * was asked to do, and a test asserting on them cannot mistake a rejected
+   * write for a performed one.
+   */
   readonly grabs: readonly UpstreamGrab[];
-  /** The commands this instance was asked to start, in order. */
+  /** The commands this instance started, in order, on the same terms. */
   readonly commands: readonly UpstreamCommand[];
   close(): Promise<void>;
 }
@@ -203,21 +212,28 @@ export async function startFixtureInstance(
     }
 
     /**
-     * Accepts an allowlisted command and answers as an instance does: with a
-     * command record the caller can follow. The record is the recorded fixture
-     * with the requested name written over it, so the identity and the state
-     * come from the fixture and only the echo is synthesized.
+     * Answers a command as an instance does: with a command record the caller
+     * can follow. The record is the recorded fixture with the requested name
+     * written over it, so the identity and the state come from the fixture and
+     * only the echo is synthesized.
+     *
+     * Which names are legitimate is instance policy this double does not hold.
+     * The allowlist is enforced where a target is compiled into a command, in
+     * `src/adapters/acquisition/commands.ts`, and a test asserts on the name
+     * recorded here; all this route requires is that a command carry one. A
+     * body without a name is refused and recorded nowhere, so `commands` is
+     * what the instance started rather than what it was asked for.
      */
     const acceptCommand = (body: Record<string, unknown>): void => {
-      const name = typeof body.name === "string" ? body.name : "";
-      started.push({ name, body });
       const recorded = Array.isArray(bodies.get("command"))
         ? (bodies.get("command") as unknown[])[0]
         : undefined;
+      const name = typeof body.name === "string" ? body.name : "";
       if (name === "" || !isRecord(recorded)) {
         send(response, 400, { message: "unknown command" });
         return;
       }
+      started.push({ name, body });
       send(response, 201, { ...recorded, name });
     };
 
