@@ -503,15 +503,25 @@ describe("dependency validation", () => {
 
     expect(sent.qualityProfileId).toBe(2);
     expect(sent.rootFolderPath).toBe("/media/example/archive");
+    // The path is what the instance stores and what the write sends; the diff
+    // reports the record it now points at instead, because an observation of
+    // this import list does not surface its root path either.
     expect(applied.diff.changes).toEqual([
-      { path: "qualityProfileId", action: "set", before: 1, after: 2 },
+      {
+        path: "qualityProfileId",
+        action: "set",
+        before: 1,
+        after: 2,
+        reference: { application: "sonarr", domain: "quality_profiles", id: "2" },
+      },
       {
         path: "rootFolderPath",
         action: "set",
-        before: "/media/example/series",
-        after: "/media/example/archive",
+        redacted: true,
+        reference: { application: "sonarr", domain: "root_folders", id: "2" },
       },
     ]);
+    expect(JSON.stringify(applied.diff)).not.toContain("/media/example");
   });
 
   it("refuses a root folder the application does not report", async () => {

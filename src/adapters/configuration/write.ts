@@ -56,6 +56,16 @@ export interface ConfigurationChange {
    * the same allowlist an observation applies.
    */
   readonly redacted?: boolean | undefined;
+  /**
+   * The configuration record this field now points at, where it points at one.
+   *
+   * It is what a pointer's change says instead of its stored value. An import
+   * list stores its root folder as a filesystem path, and the observation of an
+   * import list does not surface that path — so a diff of the same record must
+   * not become the place it appears. The reference names the record without
+   * describing the operator's disks.
+   */
+  readonly reference?: ConfigurationRef | undefined;
 }
 
 /**
@@ -269,11 +279,16 @@ function fieldChange(
   return change(fieldPath(name), action, before, after, current);
 }
 
-function setProperty(state: WriteState, path: string, property: string, value: unknown): void {
+/** Writes one top-level property and answers what it replaced. */
+function assignProperty(state: WriteState, property: string, value: unknown): unknown {
   const before = state.payload[property];
   state.payload[property] = value;
   state.writtenProperties.add(property);
-  state.changes.push(change(path, "set", before, value));
+  return before;
+}
+
+function setProperty(state: WriteState, path: string, property: string, value: unknown): void {
+  state.changes.push(change(path, "set", assignProperty(state, property, value), value));
 }
 
 /**
@@ -329,7 +344,23 @@ function applyAssignment(
           `this application reports nothing usable for ${assignment.name} ${assignment.id}`,
         );
       }
-      setProperty(state, assignment.property, assignment.property, value);
+      const before = assignProperty(state, assignment.property, value);
+      const reference = configurationRef(state.application, assignment.dependency, assignment.id);
+      // Reported by value only where the stored value *is* the identifier the
+      // caller supplied. Where the instance stores something else — a root
+      // folder is stored as its path — the change carries the reference and
+      // withholds the value, so a pointer never becomes the way a filesystem
+      // path reaches a result.
+      state.changes.push(
+        typeof value === "number"
+          ? { ...change(assignment.property, "set", before, value), reference }
+          : {
+              path: assignment.property,
+              action: sameValue(before, value) ? "unchanged" : "set",
+              redacted: true,
+              reference,
+            },
+      );
       return undefined;
     }
     case "field": {
