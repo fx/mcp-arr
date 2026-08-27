@@ -1,7 +1,10 @@
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
+import { toolDefinitions } from "../src/tools/definitions.js";
 import { toolNames } from "../src/tools/names.js";
+import { publishedPropertyNames, schemaFailures } from "./support/json-schema.js";
 import { assertCleanProtocolStdout, spawnBuiltServer } from "./support/spawned-stdio.js";
+import { sampleToolInputs } from "./support/tool-context.js";
 
 const sonarrApiKey = "sonarr-secret-key";
 
@@ -19,16 +22,43 @@ function spawnServer(deadlineMs = 5_000) {
   return spawnBuiltServer(configuredInstance, deadlineMs);
 }
 
+/** The variant property each tool names, or `undefined` where it has none. */
+const discriminators = new Map<string, string | undefined>(
+  toolDefinitions.map((definition) => [definition.name as string, definition.discriminator]),
+);
+
 interface ToolListResult {
   result?: {
     tools?: Array<{
       name: string;
       description?: string;
-      inputSchema?: { type?: string; additionalProperties?: unknown };
+      inputSchema?: Record<string, unknown>;
       outputSchema?: { type?: string };
       annotations?: Record<string, unknown>;
     }>;
   };
+}
+
+/**
+ * The published input schemas, keyed by tool name, exactly as a host receives
+ * them: read back off the wire from a spawned server rather than converted in
+ * process, because an in-process conversion is what hid an empty published
+ * schema behind a passing suite.
+ */
+async function listPublishedInputSchemas(): Promise<ReadonlyMap<string, Record<string, unknown>>> {
+  const child = spawnServer();
+  try {
+    await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
+    const listed = (await child.request(2, "tools/list")) as ToolListResult;
+    const published = new Map<string, Record<string, unknown>>();
+    for (const tool of listed.result?.tools ?? []) {
+      published.set(tool.name, tool.inputSchema ?? {});
+    }
+    await child.terminateGracefully();
+    return published;
+  } finally {
+    await child.forceCleanup().catch(() => undefined);
+  }
 }
 
 interface ToolCallResult {
@@ -60,6 +90,17 @@ describe("built stdio tool surface", () => {
       expect(tools.map((tool) => tool.name)).toEqual([...toolNames]);
       for (const tool of tools) {
         expect(tool.inputSchema?.type, tool.name).toBe("object");
+        // An object root satisfied on its own is what let every variant tool
+        // publish `{"type":"object","properties":{}}`, so the arguments have to
+        // be asserted here rather than beside this: a tool that publishes no
+        // argument name tells a caller nothing it can send.
+        const published = [...publishedPropertyNames(tool.inputSchema)];
+        expect(published, `${tool.name} publishes no argument`).not.toHaveLength(0);
+        const discriminator = discriminators.get(tool.name);
+        if (discriminator !== undefined) {
+          expect(published, tool.name).toContain(discriminator);
+        }
+
         expect(tool.outputSchema?.type, tool.name).toBe("object");
         expect(tool.description, tool.name).toBeTruthy();
         expect(tool.annotations, tool.name).toBeDefined();
@@ -70,6 +111,37 @@ describe("built stdio tool surface", () => {
       expect(child.stderr).toBe("");
     } finally {
       await child.forceCleanup().catch(() => undefined);
+    }
+  });
+
+  it("publishes a schema that admits what each tool accepts and refuses what it rejects", async () => {
+    const published = await listPublishedInputSchemas();
+
+    for (const name of toolNames) {
+      const schema = published.get(name);
+      expect(schema, name).toBeDefined();
+      if (schema === undefined) {
+        continue;
+      }
+
+      const accepted = structuredClone(sampleToolInputs[name]) as Record<string, unknown>;
+      expect(schemaFailures(schema, accepted), `${name} accepted arguments`).toEqual([]);
+
+      // The same object with one property the tool does not declare. The tool
+      // refuses it at runtime, so a published schema that admits it would tell
+      // a host something untrue about the call.
+      const rejected = { ...accepted, unexpectedProperty: "value" };
+      expect(schemaFailures(schema, rejected), `${name} rejected arguments`).not.toEqual([]);
+
+      const discriminator = discriminators.get(name);
+      if (discriminator !== undefined) {
+        // The variant is the half that never reached the wire. A published
+        // schema carrying no alternative admits any value here.
+        const undeclaredVariant = { ...accepted, [discriminator]: "not_a_variant" };
+        expect(schemaFailures(schema, undeclaredVariant), `${name} undeclared variant`).not.toEqual(
+          [],
+        );
+      }
     }
   });
 
