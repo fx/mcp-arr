@@ -538,7 +538,72 @@ describe("activity references retain what a transition needs", () => {
     const resolved = resolveQueueReference(store, foreign, "sonarr");
     expect(resolved.ok).toBe(false);
     if (!resolved.ok) {
-      expect(resolved.error.message).toContain("does not name an activity record");
+      // Named as the sort of record that was required, so a reader is told
+      // which half of its input was wrong rather than "activity record".
+      expect(resolved.error.message).toContain("does not name a queue item");
     }
+  });
+
+  it("names the retained field that failed rather than the record that did not", () => {
+    const { store } = storeAt();
+    const plant = (kind: "queue" | "history", detail: Readonly<Record<string, unknown>>) =>
+      store.mint({
+        kind,
+        applications: ["sonarr"],
+        payload: () => ({
+          kind: "domain",
+          snapshot: { upstreamId: "9001", fingerprint: "abc", detail },
+        }),
+      }).reference;
+
+    const messageOf = (resolved: { ok: boolean; error?: { message: string } }): string => {
+      if (resolved.ok || resolved.error === undefined) {
+        throw new Error("Expected the reference to be refused");
+      }
+      return resolved.error.message;
+    };
+
+    // A history record whose identifier is perfectly good and whose retained
+    // association is not. The two failures below must never read alike: one is
+    // "this is the wrong sort of reference", the other is "this is the right
+    // reference carrying state nothing vouches for".
+    const corruptAssociation = messageOf(
+      resolveHistoryReference(
+        store,
+        plant("history", { kind: "history_record", eventType: "grabbed", mediaId: -1 }),
+        "sonarr",
+      ),
+    );
+    const wrongRecord = messageOf(
+      resolveHistoryReference(store, plant("history", { kind: "queue_item" }), "sonarr"),
+    );
+
+    expect(corruptAssociation).toContain("retained media association is unusable");
+    expect(corruptAssociation).not.toContain("does not name a history record");
+    expect(wrongRecord).toContain("does not name a history record");
+    expect(wrongRecord).not.toContain("retained media association");
+
+    // The queue resolver names which of its three retained fields failed, for
+    // the same reason: the row's identity is intact in every one of these.
+    const queueDetail = { kind: "queue_item", status: "completed", trackedState: "importing" };
+    expect(
+      messageOf(
+        resolveQueueReference(store, plant("queue", { ...queueDetail, status: "no" }), "sonarr"),
+      ),
+    ).toContain("retained queue status is unusable");
+    expect(
+      messageOf(
+        resolveQueueReference(
+          store,
+          plant("queue", { ...queueDetail, trackedState: "no" }),
+          "sonarr",
+        ),
+      ),
+    ).toContain("retained tracked download state is unusable");
+    expect(
+      messageOf(
+        resolveQueueReference(store, plant("queue", { ...queueDetail, mediaId: -1 }), "sonarr"),
+      ),
+    ).toContain("retained media association is unusable");
   });
 });
