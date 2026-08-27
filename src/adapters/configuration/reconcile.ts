@@ -26,7 +26,6 @@ import {
   type ConfigurationDiff,
   configurationObservations,
   dependencyObservations,
-  type WriteOutcome,
   writeConfigurationPatch,
 } from "./write.js";
 
@@ -159,6 +158,24 @@ export async function runConfigurationReconciliation(
   client: UpstreamClient,
   request: ConfigurationReconcileRequest,
 ): Promise<ConfigurationReconcileOutcome> {
+  const secrets = request.secrets ?? noTransientSecrets();
+  try {
+    return await reconcileWithSecrets(application, client, request, secrets);
+  } finally {
+    // One erase site, on every path out — a refusal and a thrown request as
+    // much as a successful write. A credential this server was handed does not
+    // outlive the call it was handed to, so there is no path on which one
+    // survives because a check happened to fail first.
+    secrets.erase();
+  }
+}
+
+async function reconcileWithSecrets(
+  application: ApplicationId,
+  client: UpstreamClient,
+  request: ConfigurationReconcileRequest,
+  secrets: TransientSecrets,
+): Promise<ConfigurationReconcileOutcome> {
   const route = routeFor(request.domain, application);
   if (route === undefined) {
     return refuse(
@@ -172,8 +189,6 @@ export async function runConfigurationReconciliation(
   if (!Number.isSafeInteger(request.targetId) || request.targetId < 1) {
     return refuse(failure(application, "invalid_input", "that is not a configuration identifier"));
   }
-
-  const secrets = request.secrets ?? noTransientSecrets();
 
   // First, and before the desired state is even compiled. A plan applied
   // without its credentials is not a stale plan and must not be reported as
@@ -190,6 +205,22 @@ export async function runConfigurationReconciliation(
         `this plan changes ${resupply.names.join(", ")}, so each value must be supplied again with the apply`,
       ),
     );
+  }
+  if (request.planned !== undefined) {
+    const disclosed = new Set((request.planned.requiredSecrets ?? []).map((secret) => secret.name));
+    const undisclosed = secrets.names().filter((name) => !disclosed.has(name));
+    if (undisclosed.length > 0) {
+      // An apply does what its plan disclosed. A credential the plan never
+      // mentioned would change a field nobody was shown, which is the whole
+      // reason a plan is worth reading before it is applied.
+      return refuse(
+        failure(
+          application,
+          "invalid_input",
+          `this plan does not change ${undisclosed.join(", ")}; plan the change that does`,
+        ),
+      );
+    }
   }
   const requiredSecrets = secrets.requirements();
 
@@ -261,23 +292,14 @@ export async function runConfigurationReconciliation(
       return refuse(validation.error);
     }
 
-    // Erased the moment the request has been built, which is the whole of what
-    // this server ever does with a credential. The `finally` is load-bearing: a
-    // write that refused halfway has still read the values it needed, and they
-    // must not outlive it either.
-    let written: WriteOutcome;
-    try {
-      written = writeConfigurationPatch({
-        application,
-        resource,
-        patch,
-        catalog,
-        id: request.targetId,
-        secrets,
-      });
-    } finally {
-      secrets.erase();
-    }
+    const written = writeConfigurationPatch({
+      application,
+      resource,
+      patch,
+      catalog,
+      id: request.targetId,
+      secrets,
+    });
     if (written.status === "error") {
       return refuse(written.error);
     }

@@ -236,6 +236,44 @@ describe("applying a credential change", () => {
     expect(dispatched).toEqual([]);
   });
 
+  it("refuses a credential the plan being applied never disclosed", async () => {
+    const { outcome } = await reconcile(
+      "sonarr",
+      await newznab(),
+      planning("indexers", 1, { fields: [{ name: "priority", value: 30 }] }),
+    );
+    const planned = expectPlanned(outcome);
+
+    const { outcome: applied, dispatched } = await reconcile("sonarr", await newznab(), {
+      ...changingApiKey({ mode: "apply", fields: [{ name: "priority", value: 30 }] }),
+      planned: { readSet: fingerprintReadSet(planned.observations) },
+    });
+
+    // An apply does what its plan disclosed. Smuggling a credential change into
+    // one that never mentioned it is the case a plan is read to rule out.
+    expect(expectRefused(applied).error).toMatchObject({
+      code: "invalid_input",
+      message: expect.stringContaining("this plan does not change apiKey"),
+    });
+    expect(dispatched).toEqual([]);
+  });
+
+  it("erases the bundle even when the reconciliation refuses", async () => {
+    const bundle = secrets(["apiKey", supplied]);
+    const { outcome } = await reconcile(
+      "sonarr",
+      { routes: {} },
+      planning("indexers", 9, { mode: "apply", secrets: bundle }),
+    );
+
+    // The record was never found, so nothing was ever built from the value —
+    // and it is gone all the same, because a bundle does not outlive the call
+    // it was handed to.
+    expect(expectRefused(outcome).error.code).toBe("stale_reference");
+    expect(bundle.erased).toBe(true);
+    expect(bundle.take("apiKey")).toBeUndefined();
+  });
+
   it("applies a resupplied credential and says so when the value differs", async () => {
     const { outcome } = await reconcile("sonarr", await newznab(), changingApiKey());
     const planned = expectPlanned(outcome);

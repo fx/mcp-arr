@@ -5,6 +5,7 @@ import { createToolError } from "../../tools/errors.js";
 import { describeSecret } from "./fields.js";
 import { isUpstreamRecord } from "./parse.js";
 import type { CompiledPatch } from "./patches.js";
+import { enableSwitches } from "./write.js";
 
 /**
  * Apply verification.
@@ -156,8 +157,10 @@ function checksFor(
         checks.push(checkProperty(current, sent, assignment.property));
         break;
       case "enabled":
-        for (const property of Object.keys(sent)) {
-          if (property.startsWith("enable")) {
+        // Exactly the switches the writer moves, and only those the record
+        // carries: a property this apply never wrote is not evidence about it.
+        for (const property of enableSwitches) {
+          if (property in sent) {
             checks.push(checkProperty(current, sent, property));
           }
         }

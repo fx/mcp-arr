@@ -130,7 +130,12 @@ export interface WriteRequest {
 /** The dynamic field array's property name, and the diff prefix for its entries. */
 const fieldsProperty = "fields";
 
-const enableSwitches = [
+/**
+ * The switches a provider may express "on" through. Exported because apply
+ * verification has to check exactly the ones a write moved, and rediscovering
+ * them by name prefix would check properties this write never touched.
+ */
+export const enableSwitches = [
   "enable",
   "enableRss",
   "enableAutomaticSearch",
