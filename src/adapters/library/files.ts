@@ -371,13 +371,19 @@ export function recordDeletionState(
 }
 
 /**
- * The state a rename or a move depends on.
+ * The state a rename or a move depends on, and discloses.
  *
- * Deliberately narrower than the state a metadata edit depends on: a rename
- * turns on where the record is and what it is called, and nothing else. Folding
- * in monitoring, tags, or a profile would make a plan go stale because
- * something unrelated to the filesystem moved, and a caller would learn to
- * re-plan rather than to read why.
+ * Deliberately narrower than the state a metadata edit depends on: folding in
+ * monitoring, tags, or a profile would make a plan go stale because something
+ * unrelated to the filesystem moved, and a caller would learn to re-plan rather
+ * than to read why.
+ *
+ * The title is here even though neither request sends it, because both plans
+ * quote it — "rename 3 file(s) of “X”", "move the files of “X”" — and a plan
+ * must not be applied to a record that has since become a different one than
+ * the plan described. That is the same rule the add intent keeps for the
+ * candidate title it discloses: a read set observes what its plan disclosed,
+ * not only what its payload carries.
  */
 export function recordPathState(resource: UpstreamResource): Readonly<Record<string, unknown>> {
   return {
@@ -497,22 +503,34 @@ export interface MoveRequest {
   readonly recordId: number;
   /** Where the record's files are now, as the instance itself reports it. */
   readonly sourcePath: string;
-  /** A root folder from the instance's own list, never a caller-authored path. */
-  readonly destinationRootFolder: string;
+  /**
+   * Where they are to end up: the record's own folder under a root folder from
+   * the instance's own list. Composed by `relocatePath`, which is also what a
+   * root-folder edit re-points a record with, so the two agree by construction.
+   */
+  readonly destinationPath: string;
 }
 
-/** The move command's payload. Neither path is composed from caller input. */
+/**
+ * The move command's payload. Neither path is composed from caller input.
+ *
+ * One record moves per command, so the identifier is the singular one and the
+ * destination is the record's own resulting path rather than a root folder for
+ * the application to distribute several records under. That is the form this
+ * server can state exactly: it already knows the one folder that moves and
+ * where it lands, so nothing is left for the instance to derive.
+ */
 export function moveCommandPayload(
   application: MediaApplication,
   request: MoveRequest,
 ): UpstreamBody {
   const shared = {
     sourcePath: request.sourcePath,
-    destinationRootFolder: request.destinationRootFolder,
+    destinationPath: request.destinationPath,
   };
   return application === "sonarr"
-    ? { ...shared, seriesId: request.recordId, seriesIds: [request.recordId] }
-    : { ...shared, movieId: request.recordId, movieIds: [request.recordId] };
+    ? { ...shared, seriesId: request.recordId }
+    : { ...shared, movieId: request.recordId };
 }
 
 /**

@@ -1811,9 +1811,10 @@ describe("arr_library_change move_media", () => {
     expect(writes("sonarr")[0]?.body).toEqual({
       name: "MoveSeries",
       seriesId: 12,
-      seriesIds: [12],
       sourcePath: "/media/example/series/Example Series",
-      destinationRootFolder: "/media/example/archive",
+      // The record's own folder under the selected root, which is exactly where
+      // a root-folder edit would have re-pointed it without moving anything.
+      destinationPath: "/media/example/archive/Example Series",
     });
     expect(applied.mutation?.job).toMatch(/^job_/u);
   });

@@ -13,6 +13,7 @@ import {
   recordApplications,
   recordResourcePath,
   recordState,
+  relocatePath,
   rewriteResource,
   supportsMonitorSelection,
   type UpstreamResource,
@@ -1652,13 +1653,6 @@ async function readRenamePreconditions(
   };
 }
 
-/** The folder one path sits in, which is the root a record's own folder is under. */
-function parentFolder(path: string): string | undefined {
-  const trimmed = path.replace(/[\\/]+$/u, "");
-  const separator = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
-  return separator <= 0 ? undefined : trimmed.slice(0, separator);
-}
-
 /**
  * Validates a move before anything is moved.
  *
@@ -1706,7 +1700,14 @@ async function readMovePreconditions(
     );
   }
 
-  const settled = parentFolder(sourcePath) === destination.replace(/[\\/]+$/u, "");
+  // The destination is composed the same way a root-folder edit composes one, so
+  // a move and a re-point cannot disagree about where the record ends up. A
+  // record already at that path asks for nothing.
+  const destinationPath = relocatePath(sourcePath, destination);
+  if (destinationPath === undefined) {
+    return blocked(conflict(invocation, "this record's current path names no folder to move"));
+  }
+  const settled = destinationPath === sourcePath;
   const title = typeof resource.title === "string" ? resource.title : "the selected record";
   const context: CommandContext = {
     kind: contextKind,
@@ -1720,7 +1721,7 @@ async function readMovePreconditions(
           payload: moveCommandPayload(application, {
             recordId: identity.value.id,
             sourcePath,
-            destinationRootFolder: destination,
+            destinationPath,
           }),
         }),
     warnings: settled

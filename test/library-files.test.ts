@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import type { UpstreamResource } from "../src/adapters/library/changes.js";
+import { relocatePath, type UpstreamResource } from "../src/adapters/library/changes.js";
 import {
   allowedCommandNames,
   commandWorkflows,
@@ -302,7 +302,7 @@ describe("rename and move commands", () => {
       moveCommandPayload("radarr", {
         recordId: 8,
         sourcePath: "/media/example/movies/Example Movie (2021)",
-        destinationRootFolder: "/media/example/archive",
+        destinationPath: "/media/example/archive/Example Movie (2021)",
       }),
     );
 
@@ -315,14 +315,18 @@ describe("rename and move commands", () => {
       moveCommandPayload("sonarr", {
         recordId: 12,
         sourcePath: "/media/example/series/Example Series",
-        destinationRootFolder: "/media/example/archive",
+        destinationPath: "/media/example/archive/Example Series",
       }),
     ).toEqual({
       seriesId: 12,
-      seriesIds: [12],
       sourcePath: "/media/example/series/Example Series",
-      destinationRootFolder: "/media/example/archive",
+      destinationPath: "/media/example/archive/Example Series",
     });
+    // The destination is the record's own resulting path, composed the same way
+    // a root-folder edit composes one, so the two cannot disagree.
+    expect(relocatePath("/media/example/series/Example Series", "/media/example/archive")).toBe(
+      "/media/example/archive/Example Series",
+    );
     expect(renameCommandPayload("radarr", 8, [501])).toEqual({ movieId: 8, files: [501] });
   });
 });
