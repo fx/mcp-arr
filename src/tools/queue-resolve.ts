@@ -33,6 +33,7 @@ import {
   createToolError,
   type ToolError,
   toolErrorForThrown,
+  toolErrorForUpstreamFailure,
   toolErrorProvesNoEffect,
 } from "./errors.js";
 import type { OperationHandler, OperationInvocation, PreconditionReader } from "./operations.js";
@@ -288,13 +289,12 @@ export const queueResolvePreconditions: PreconditionReader = async (invocation) 
   // newer than every flag minimum, so every instance would pass.
   const capability = await invocation.adapter.probe();
   if (capability.status === "unavailable") {
-    return blocked(
-      createToolError({
-        code: "unavailable_application",
-        message: `${application}: ${capability.failure.message}`,
-        application,
-      }),
-    );
+    // Built by the shared helper rather than by hand: an upstream failure's
+    // message already names the application it came from, so prefixing it again
+    // produced "sonarr: sonarr: ...", which misrepresents where the message was
+    // written. The helper also maps the failure kind onto the right code, which
+    // hand-writing `unavailable_application` here quietly assumed.
+    return blocked(toolErrorForUpstreamFailure(capability.failure, application));
   }
 
   const profile = profileFor(application);

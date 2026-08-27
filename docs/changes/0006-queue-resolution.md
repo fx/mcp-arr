@@ -40,7 +40,7 @@ The [Activity Management spec](../specs/activity-management/#queue-item-kinds) o
 - Implement a state transition table for tracked and pending queue item kinds.
 - Map each intent to the exact Sonarr/Radarr queue action and relevant flags.
 - Capture queue, tracked-download, media, and replacement-search preconditions in plans.
-- Reconcile ambiguous outcomes using queue, history, blocklist, and job state.
+- Reconcile ambiguous outcomes using queue state, and history matched on download identity where the queue is ambiguous.
 - Keep `route_to_manual_import` as a transition that returns an import-inspection path; it does not import.
 
 ### Decisions
@@ -50,6 +50,9 @@ The [Activity Management spec](../specs/activity-management/#queue-item-kinds) o
   - **Alternatives considered:** A generic queue-delete tool was rejected.
 - **Decision:** Process bulk mutations independently.
   - **Why:** Upstream bulk actions are not transactional and may skip stale IDs.
+- **Decision:** Reconcile a lost outcome from queue state and from history matched on the download identity, and from nothing else.
+  - **Why:** Reconciliation may only settle an unknown outcome on evidence that can be tied to the apply being reconciled. The queue answers that directly: every transition that sends anything removes the row, so a row that is gone confirms the request arrived and a row still queued in the state the mutation was compiled against says it did not. History qualifies once it is matched on the salted download digest, which names the download the row stands for rather than the series it belongs to.
+  - **Alternatives considered:** Blocklist and command state were evaluated as corroboration and deliberately excluded. A blocklist record carries no download identity, and the only other keys are the release title, which this server does not retain, and the media association — so a release blocked for the same series last week would settle an unknown outcome as a success. A command is instance-wide, and a search running now may have been started by a scheduled task, by another caller, or by an unrelated grab. Reading either would manufacture confidence rather than establish it, and reporting an unknown outcome as a success is the one direction a receipt must never round in.
 
 ### Non-Goals
 
@@ -67,7 +70,7 @@ The [Activity Management spec](../specs/activity-management/#queue-item-kinds) o
 - [x] Implement plan/apply and reconciliation
   - [x] Capture queue/download/media read-set fingerprints and exact predicted effects
   - [x] Add direct apply, planned apply, stale-plan, partial bulk, retry, and unknown-outcome paths
-  - [x] Reconcile against queue, history, blocklist, and command state
+  - [x] Reconcile against queue state and against history matched on download identity
 - [ ] Register and verify `arr_queue_resolve`
   - [ ] Add typed input/output unions and conservative annotations
   - [ ] Add fixture and stdio tests for data deletion, blocklist, replacement search, ignore, category change, pending grab, and stale references
