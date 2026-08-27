@@ -77,10 +77,10 @@ The [Tool Contracts spec](../specs/tool-contracts/#error-contract) owns what a s
 
 ## Tasks
 
-- [ ] Carry the error code and remediation into result summaries
-  - [ ] Derive error summaries from the carried error rather than the envelope status
-  - [ ] Assert summary text for total failure, partial failure, unsupported variant, and success
-  - [ ] Confirm no upstream body, URL, header, or API key can reach a summary
+- [x] Carry the error code and remediation into result summaries
+  - [x] Derive error summaries from the carried error rather than the envelope status
+  - [x] Assert summary text for total failure, partial failure, unsupported variant, and success
+  - [x] Confirm no upstream body, URL, header, or API key can reach a summary
 - [ ] Bound the capability report
   - [ ] Add a detail level that defaults to the bounded form and enumerates only on request
   - [ ] Verify the bounded default against configured, unconfigured, unavailable, and unsupported applications

@@ -223,6 +223,12 @@ describe("arr_library_query over stdio", () => {
       expect(answer.outcomes[0]?.data?.view).toBe("lookup");
       expect(answer.outcomes[1]?.error?.code).toBe("unavailable_application");
       expect(answer.outcomes[1]?.error?.remediation).toBeTruthy();
+      // The failed half has to be actionable from the text a host shows, and
+      // the stdout assertions below cover that text too: carrying the code and
+      // the hint into the summary must not carry the instance with them.
+      expect(answer.summary).toContain(
+        "errors: unavailable_application (Confirm the instance is running and reachable, then retry; other applications are unaffected.)",
+      );
 
       await child.terminateGracefully();
       assertCleanProtocolStdout(child.stdout);

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ApplicationId } from "../applications.js";
-import { createToolError, type ToolError, toolErrorSchema } from "./errors.js";
+import { createToolError, type ToolError, type ToolErrorCode, toolErrorSchema } from "./errors.js";
 import type { ToolName } from "./names.js";
 import {
   applicationIdSchema,
@@ -309,8 +309,66 @@ function describeOutcome(outcome: ApplicationOutcome<unknown>, summary?: ToolSum
 }
 
 /**
+ * Every distinct failure the result carries, most specific first.
+ *
+ * The envelope's own `errors` list is not the whole story: a call that failed
+ * everywhere records each cause on the application that produced it and leaves
+ * the top-level list empty, so a summary built from `result.errors` alone
+ * describes a total failure without naming a single code.
+ *
+ * Ordering runs from the narrowest scope outwards: an application's item
+ * failures, then that application's own failure, then the envelope's errors —
+ * where the summarizing `partial_failure` sits. An item names the one thing
+ * that went wrong and its outcome only names that something did, so leading
+ * with the item is what makes the first code in the line the actionable one.
+ *
+ * Codes are deduplicated because several applications failing the same way is
+ * the common shape, and repeating one code and one hint per application would
+ * make the summary longer without making it say more.
+ */
+function collectErrors(result: ToolResult<unknown>): readonly ToolError[] {
+  const byCode = new Map<ToolErrorCode, ToolError>();
+  const record = (error: ToolError | undefined): void => {
+    if (error !== undefined && !byCode.has(error.code)) {
+      byCode.set(error.code, error);
+    }
+  };
+
+  for (const outcome of result.applications) {
+    for (const item of outcome.items ?? []) {
+      record(item.error);
+    }
+    record(outcome.error);
+  }
+  for (const error of result.errors) {
+    record(error);
+  }
+  return [...byCode.values()];
+}
+
+/**
+ * Names a failure by its stable code and its remediation hint.
+ *
+ * A host commonly surfaces only the text when a call reports failure, so a
+ * summary that says `error` and stops hides the one thing the caller needs to
+ * act on. Both values restated here are drawn from the closed vocabulary in
+ * `errors.ts` — the code is an enum member, and the remediation is a static
+ * string chosen by that code and never interpolated with upstream content — so
+ * neither can carry an upstream body, URL, header, or API key.
+ *
+ * The error's `message` is deliberately left out. It is the only field an
+ * upstream failure contributes text to, and the structured result already
+ * carries it in full; keeping it out of the summary keeps the line short and
+ * keeps redaction a property of the shape rather than of each call site.
+ */
+function describeError(error: ToolError): string {
+  return `${error.code} (${error.remediation})`;
+}
+
+/**
  * The concise text summary that accompanies every structured result. It repeats
- * only values already present in the envelope, so it cannot become a second,
+ * only values already present in the envelope — and, for a failure, only the
+ * stable code and the static remediation hint — so it cannot become a second,
  * unredacted channel.
  */
 export function summarizeToolResult(
@@ -322,8 +380,9 @@ export function summarizeToolResult(
   if (result.applications.length > 0) {
     parts.push(result.applications.map((outcome) => describeOutcome(outcome, summary)).join(", "));
   }
-  if (result.errors.length > 0) {
-    parts.push(`errors: ${result.errors.map((error) => error.code).join(", ")}`);
+  const errors = collectErrors(result);
+  if (errors.length > 0) {
+    parts.push(`errors: ${errors.map(describeError).join(", ")}`);
   }
   if (result.warnings.length > 0) {
     parts.push(`${result.warnings.length} warning(s)`);

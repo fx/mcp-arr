@@ -160,6 +160,14 @@ describe("tool protocol surface", () => {
       ["prowlarr", "unsupported_capability"],
     ]);
     expect(outcomes[0]?.error.remediation.length).toBeGreaterThan(0);
+
+    // A host commonly surfaces only the text when a call reports failure, so
+    // the code and the remediation have to survive into it rather than being
+    // computed, attached, and never seen.
+    expect(result.content?.[0]).toEqual({
+      type: "text",
+      text: "arr_library_query: error; sonarr unsupported, prowlarr unsupported; errors: unsupported_capability (Call arr_capabilities to list the operations this instance supports.)",
+    });
   });
 
   it("reports an unconfigured application without requiring placeholder credentials", async () => {
