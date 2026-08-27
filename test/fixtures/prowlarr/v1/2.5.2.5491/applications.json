@@ -50,7 +50,7 @@
       "tags": [],
       "fields": [
         { "order": 0, "name": "baseUrl", "value": "example-paused-application" },
-        { "order": 1, "name": "apiKey", "value": "********", "privacy": "apiKey" },
+        { "order": 1, "name": "apiKey", "privacy": "apiKey" },
         { "order": 2, "name": "syncCategories", "value": [5000] }
       ]
     }
