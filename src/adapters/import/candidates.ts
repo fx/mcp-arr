@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { UpstreamClient, UpstreamQuery } from "../../http/client.js";
 import { safeLabel, safeText } from "../activity/parse.js";
 import { type MediaApplication, mediaRef } from "../library/model.js";
+import { type AdapterPage, type PageWindow, projectPage } from "../library/paging.js";
 import {
   count,
   customFormatList,
@@ -458,15 +459,20 @@ function decisionFor(rejections: readonly ImportRejection[]): ImportDecision {
 }
 
 /**
- * Every candidate one scan found.
+ * One bounded page of the candidates a scan found.
  *
- * The endpoint is unpaged upstream and answers one folder, so the result is
- * bounded by what that folder holds rather than by a cursor. A row this server
- * cannot fingerprint is dropped rather than returned unusable, and the count of
- * dropped rows is reported so a short answer is never silently short.
+ * The upstream endpoint is unpaged and answers a whole folder, which is not a
+ * bound: a library context can hold arbitrarily many files, and "one folder" is
+ * a description of the request rather than a limit on the answer. So the rows
+ * it returns are projected into a page here, under the same scan ceiling every
+ * other unpaged route in this project is read through, and a page that stopped
+ * early says so rather than looking like the end of the folder.
+ *
+ * A row this server cannot fingerprint is dropped rather than returned
+ * unusable, and the count of dropped rows is reported so a short answer is
+ * never silently short.
  */
-export interface CandidateScan {
-  readonly candidates: readonly ImportCandidate[];
+export interface CandidateScan extends AdapterPage<ImportCandidate> {
   /** Rows the instance returned that carried no path to fingerprint. */
   readonly unmappable: number;
 }
@@ -474,6 +480,7 @@ export interface CandidateScan {
 async function readCandidates(
   client: UpstreamClient,
   context: ImportScanContext,
+  window: PageWindow,
 ): Promise<CandidateScan> {
   const records = parseUpstream(
     z.array(candidateSchema),
@@ -482,11 +489,32 @@ async function readCandidates(
     manualImportRoute,
   );
 
+  // Mapped before the page is cut, because a row that cannot be fingerprinted
+  // is not a candidate at all and counting it against the page size would make
+  // the page shorter than the caller asked for without saying why.
   const mapped = records.map((record) => mapCandidate(context, record));
   const candidates = mapped.filter(
     (candidate): candidate is ImportCandidate => candidate !== undefined,
   );
-  return { candidates, unmappable: mapped.length - candidates.length };
+  const unmappable = mapped.length - candidates.length;
+
+  const page = projectPage({
+    source: candidates,
+    window,
+    map: (candidate) => candidate,
+  });
+  return {
+    ...page,
+    unmappable,
+    warnings: [
+      ...(page.warnings ?? []),
+      ...(unmappable === 0
+        ? []
+        : [
+            `${String(unmappable)} file(s) the instance returned carried no path to identify them and were left out`,
+          ]),
+    ],
+  };
 }
 
 /** What a scan answers, whichever reference it started from. */
@@ -511,12 +539,13 @@ export async function scanTrackedDownload(
   client: UpstreamClient,
   application: MediaApplication,
   request: { readonly queueItemId: number; readonly mediaId?: number | undefined },
+  window: PageWindow,
 ): Promise<CandidateScanResult> {
   const resolved = await readTrackedScanContext(client, application, request);
   if (!resolved.ok) {
     return { status: resolved.reason };
   }
-  return { status: "ok", scan: await readCandidates(client, resolved.context) };
+  return { status: "ok", scan: await readCandidates(client, resolved.context, window) };
 }
 
 /** Scans the folder the application itself holds for a series or a movie. */
@@ -524,10 +553,11 @@ export async function scanLibraryContext(
   client: UpstreamClient,
   application: MediaApplication,
   request: { readonly mediaId: number; readonly seasonNumber?: number | undefined },
+  window: PageWindow,
 ): Promise<CandidateScanResult> {
   const resolved = await readLibraryScanContext(client, application, request);
   if (!resolved.ok) {
     return { status: resolved.reason };
   }
-  return { status: "ok", scan: await readCandidates(client, resolved.context) };
+  return { status: "ok", scan: await readCandidates(client, resolved.context, window) };
 }

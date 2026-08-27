@@ -8,6 +8,7 @@ import {
 } from "../src/adapters/import/candidates.js";
 import type { ImportCandidate } from "../src/adapters/import/model.js";
 import type { MediaApplication } from "../src/adapters/library/model.js";
+import type { PageWindow } from "../src/adapters/library/paging.js";
 import { createManualClock } from "../src/state/clock.js";
 import { createReferenceStore } from "../src/state/references.js";
 import {
@@ -71,21 +72,26 @@ async function instance(application: MediaApplication) {
   };
 }
 
+/** A window wide enough to hold the recorded folders, unless a test narrows it. */
+const wholeFolder = { offset: 0, pageSize: 25 } as const;
+
 async function scanTracked(
   application: MediaApplication,
   request: { queueItemId: number; mediaId?: number },
+  window: PageWindow = wholeFolder,
 ): Promise<Scanned> {
   const harness = libraryHarness(application, await instance(application));
-  const result = await scanTrackedDownload(harness.client, application, request);
+  const result = await scanTrackedDownload(harness.client, application, request, window);
   return { result, calls: harness.calls };
 }
 
 async function scanLibrary(
   application: MediaApplication,
   request: { mediaId: number; seasonNumber?: number },
+  window: PageWindow = wholeFolder,
 ): Promise<Scanned> {
   const harness = libraryHarness(application, await instance(application));
-  const result = await scanLibraryContext(harness.client, application, request);
+  const result = await scanLibraryContext(harness.client, application, request, window);
   return { result, calls: harness.calls };
 }
 
@@ -93,7 +99,7 @@ function candidatesOf(scanned: Scanned): readonly ImportCandidate[] {
   if (scanned.result.status !== "ok") {
     throw new Error(`Expected a scan, got ${scanned.result.status}`);
   }
-  return scanned.result.scan.candidates;
+  return scanned.result.scan.items;
 }
 
 /** The recorded Sonarr download this suite scans, and its own identifiers. */
@@ -184,6 +190,52 @@ describe("candidate mapping", () => {
     expect(existing?.existingLibraryFile).toBe(true);
     expect(existing?.context.existingFileId).toBe(5001);
     expect(existing?.decision.rejections[0]?.type).toBe("temporary");
+  });
+
+  it("returns a bounded page and says when the folder holds more", async () => {
+    // A folder is not a bound: a library context can hold arbitrarily many
+    // files, so the answer is a page like every other collection this server
+    // returns, and one that stopped early says so.
+    const narrow = await scanTracked("sonarr", trackedRequest, { offset: 0, pageSize: 2 });
+    if (narrow.result.status !== "ok") {
+      throw new Error("Expected a scan");
+    }
+    expect(narrow.result.scan.items).toHaveLength(2);
+    expect(narrow.result.scan.hasMore).toBe(true);
+
+    const second = await scanTracked("sonarr", trackedRequest, { offset: 2, pageSize: 2 });
+    if (second.result.status !== "ok") {
+      throw new Error("Expected a scan");
+    }
+    expect(second.result.scan.items).toHaveLength(1);
+    expect(second.result.scan.hasMore).toBe(false);
+    // The second page continues the first rather than repeating it.
+    expect(second.result.scan.items[0]?.fileIdentity).not.toBe(
+      narrow.result.scan.items[0]?.fileIdentity,
+    );
+  });
+
+  it("reports files it could not identify rather than dropping them silently", async () => {
+    const rows = await activityFixture<Array<Record<string, unknown>>>("sonarr", "manualimport");
+    const queue = await activityFixture<unknown[]>("sonarr", "queue/details");
+    // A row the instance returned with no path at all cannot be fingerprinted,
+    // so it is not a candidate — and a page that quietly held one fewer item
+    // would be a short answer with no reason attached.
+    const laced = [...rows, { id: 3999, size: 1024, rejections: [] }];
+    const harness = libraryHarness("sonarr", (call) =>
+      jsonResponse(call.url.pathname.endsWith("/manualimport") ? laced : queue),
+    );
+    const scanned = await scanTrackedDownload(harness.client, "sonarr", trackedRequest, {
+      offset: 0,
+      pageSize: 25,
+    });
+    if (scanned.status !== "ok") {
+      throw new Error("Expected a scan");
+    }
+
+    expect(scanned.scan.items).toHaveLength(3);
+    expect(scanned.scan.unmappable).toBe(1);
+    expect(scanned.scan.warnings?.join(" ")).toContain("no path to identify them");
   });
 
   it("maps a Radarr scan, including a rejected sample with no media mapping", async () => {
@@ -306,11 +358,14 @@ describe("candidate disclosure", () => {
     const harness = libraryHarness("sonarr", (call) =>
       jsonResponse(call.url.pathname.endsWith("/manualimport") ? laced : queue),
     );
-    const scanned = await scanTrackedDownload(harness.client, "sonarr", trackedRequest);
+    const scanned = await scanTrackedDownload(harness.client, "sonarr", trackedRequest, {
+      offset: 0,
+      pageSize: 25,
+    });
     if (scanned.status !== "ok") {
       throw new Error(`Expected a scan, got ${scanned.status}`);
     }
-    const serialized = JSON.stringify(scanned.scan.candidates);
+    const serialized = JSON.stringify(scanned.scan.items);
 
     // A control, so the assertions below cannot pass for the wrong reason.
     // The control reads the laced values back off the payload itself rather
@@ -328,8 +383,8 @@ describe("candidate disclosure", () => {
     expect(serialized).not.toContain("/media/private");
     // What was not a path survives, so the scrubbing is not simply dropping the
     // fields.
-    expect(scanned.scan.candidates[0]?.customFormats).toEqual(["Example Format"]);
-    expect(scanned.scan.candidates[0]?.indexerFlags).toEqual(["freeleech"]);
+    expect(scanned.scan.items[0]?.customFormats).toEqual(["Example Format"]);
+    expect(scanned.scan.items[0]?.indexerFlags).toEqual(["freeleech"]);
   });
 
   it("scrubs a rejection that quotes the path it objected to", async () => {
