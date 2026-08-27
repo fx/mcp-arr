@@ -127,15 +127,23 @@ export async function readDependencyCatalog(
 
     const body = parseCollection(await client.get(route), application, route);
     const records = parseConfiguration(dependencySchema, body, application, route);
-    catalog.set(
-      requirement.kind,
-      new Map(
-        records.map((record) => {
-          const value = dependencyValue(record.path);
-          return [record.id, { id: record.id, ...(value === undefined ? {} : { value }) }];
-        }),
-      ),
-    );
+    const entries = new Map<number, DependencyEntry>();
+    for (const record of records) {
+      const value = dependencyValue(record.path);
+      const seen = entries.get(record.id);
+      // An identifier reported twice still exists, so it still satisfies the
+      // pointer. What it stores is another matter: if the two rows disagree,
+      // the list has not said which path this identifier means, and a write
+      // that picked one of them would store a value the instance never
+      // singled out. Dropping the value there refuses the write rather than
+      // guessing, while two identical rows say the same thing and are kept.
+      const settled = seen !== undefined && seen.value !== value ? undefined : value;
+      entries.set(record.id, {
+        id: record.id,
+        ...(settled === undefined ? {} : { value: settled }),
+      });
+    }
+    catalog.set(requirement.kind, entries);
   }
 
   return { status: "ok", catalog };

@@ -574,6 +574,28 @@ describe("schema and resource fingerprints", () => {
     expect(planned.observations.map((entry) => entry.key)).toContain("provider-schema");
   });
 
+  it("says so when the instance offers the same implementation twice", async () => {
+    const templates = await fixtureBody<readonly UpstreamRecord[]>("sonarr", "indexer/schema");
+    const { outcome } = await reconcile(
+      "sonarr",
+      {
+        routes: {
+          "indexer/1": await first("sonarr", "indexer"),
+          // Two templates claiming the same implementation: the instance has
+          // not said which definition a write would be against.
+          "indexer/schema": [...templates, ...templates],
+        },
+      },
+      planning("indexers", 1, { fields: [{ name: "priority", value: 30 }] }),
+    );
+    const planned = expectPlanned(outcome);
+
+    expect(planned.warnings).toContain(
+      "this instance offers more than one provider template for this record's implementation, so which definition a write is against cannot be established",
+    );
+    expect(planned.observations.map((entry) => entry.key)).toContain("provider-schema");
+  });
+
   it("discloses an instance whose schema it could not read instead of refusing", async () => {
     const { outcome } = await reconcile(
       "sonarr",
@@ -747,6 +769,57 @@ describe("verifying what the instance stored", () => {
       clearing,
     );
     expect(expectApplied(cleared.outcome).verification).toEqual({ status: "succeeded" });
+  });
+
+  it("settles as unknown when the record repeats a field this apply wrote", async () => {
+    const instance = await newznab();
+    const { outcome } = await reconcile(
+      "sonarr",
+      {
+        ...instance,
+        // The same name twice, with different values. The record does not say
+        // what that field holds, so the write's effect cannot be established
+        // from it either way.
+        answerWrite: (sent) => {
+          const record = sent as UpstreamRecord;
+          return jsonResponse({
+            ...record,
+            fields: [
+              ...(record.fields as readonly UpstreamRecord[]),
+              { order: 9, name: "categories", value: [1010] },
+            ],
+          });
+        },
+      },
+      planning("indexers", 1, { mode: "apply", fields: [{ name: "categories", value: [5030] }] }),
+    );
+    const applied = expectApplied(outcome);
+
+    expect(applied.attempted).toBe(true);
+    expect(applied.verification).toEqual({ status: "indeterminate" });
+  });
+
+  it("settles as unknown when a credential this apply set reads back twice", async () => {
+    const instance = await newznab();
+    const { outcome } = await reconcile(
+      "sonarr",
+      {
+        ...instance,
+        answerWrite: (sent) => {
+          const record = sent as UpstreamRecord;
+          return jsonResponse({
+            ...record,
+            fields: [
+              ...(record.fields as readonly UpstreamRecord[]),
+              { order: 9, name: "apiKey", value: "", privacy: "apiKey" },
+            ],
+          });
+        },
+      },
+      changingApiKey({ mode: "apply" }),
+    );
+
+    expect(expectApplied(outcome).verification).toEqual({ status: "indeterminate" });
   });
 
   it("settles as unknown when a credential reads back as a switch", async () => {

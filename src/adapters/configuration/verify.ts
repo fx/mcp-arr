@@ -69,6 +69,17 @@ function contradicted(application: ApplicationId, paths: readonly string[]): App
 interface FieldEntry {
   readonly value: unknown;
   readonly privacy: string | undefined;
+  /**
+   * The record carries this name more than once.
+   *
+   * Kept rather than resolved. Two entries under one name may hold different
+   * values, so the record does not say what the field holds — and a reader that
+   * silently took the first would answer a question the payload has not
+   * answered. Everything that reads a field entry here treats this as "cannot
+   * be established", which is what keeps an ambiguous record from producing a
+   * confident verdict.
+   */
+  readonly duplicated: boolean;
 }
 
 function fieldValues(record: Record<string, unknown>): ReadonlyMap<string, FieldEntry> {
@@ -78,12 +89,17 @@ function fieldValues(record: Record<string, unknown>): ReadonlyMap<string, Field
     return values;
   }
   for (const field of fields) {
-    if (isUpstreamRecord(field) && typeof field.name === "string" && !values.has(field.name)) {
-      values.set(field.name, {
-        value: field.value,
-        privacy: typeof field.privacy === "string" ? field.privacy : undefined,
-      });
+    if (!isUpstreamRecord(field) || typeof field.name !== "string") {
+      continue;
     }
+    const seen = values.get(field.name);
+    // The first entry's value is kept only so the map has one; a duplicated
+    // name settles as unknown before that value is ever compared.
+    values.set(field.name, {
+      value: seen?.value ?? field.value,
+      privacy: seen?.privacy ?? (typeof field.privacy === "string" ? field.privacy : undefined),
+      duplicated: seen !== undefined,
+    });
   }
   return values;
 }
@@ -118,8 +134,12 @@ function matches(left: unknown, right: unknown, ordered: boolean): boolean {
 
 interface Check {
   readonly path: string;
-  /** True when the record no longer carries the field this apply wrote. */
-  readonly absent: boolean;
+  /**
+   * The record cannot answer for this field: it is gone, it came back in a
+   * shape this apply did not write, or it appears more than once. None of those
+   * is a verdict, so any one of them settles the whole verification as unknown.
+   */
+  readonly unsettled: boolean;
   readonly agrees: boolean;
 }
 
@@ -131,7 +151,7 @@ function checkProperty(
 ): Check {
   return {
     path: property,
-    absent: !(property in current),
+    unsettled: !(property in current),
     agrees: matches(current[property], sent[property], ordered),
   };
 }
@@ -146,10 +166,11 @@ function checksFor(
   const checks: Check[] = [];
 
   const checkField = (name: string): void => {
+    const entry = currentFields.get(name);
     checks.push({
       path: `fields.${name}`,
-      absent: !currentFields.has(name),
-      agrees: matches(currentFields.get(name)?.value, sentFields.get(name)?.value, true),
+      unsettled: entry === undefined || entry.duplicated,
+      agrees: matches(entry?.value, sentFields.get(name)?.value, true),
     });
   };
   const checkSecret = (name: string, expected: "configured" | "unconfigured"): void => {
@@ -159,8 +180,9 @@ function checksFor(
       // A boolean read back where a credential was written is not a credential
       // at all — the shared classifier calls that a switch — so the field this
       // apply wrote is no longer there in the form it wrote it. That is a
-      // changed shape rather than a verdict, and it settles as unknown.
-      absent: entry === undefined || typeof entry.value === "boolean",
+      // changed shape rather than a verdict, and it settles as unknown, as does
+      // a name the record now carries twice.
+      unsettled: entry === undefined || entry.duplicated || typeof entry.value === "boolean",
       agrees: describeSecret(name, entry?.value).state === expected,
     });
   };
@@ -227,8 +249,9 @@ function checksFor(
  *
  * The record is taken from the write's own answer where there is one, and read
  * back otherwise, so the ordinary case costs no extra request. A field the
- * record no longer carries is not a contradiction: the shape changed under the
- * apply, which is exactly the case nobody can settle from here.
+ * record no longer carries — or now carries twice — is not a contradiction:
+ * the shape changed under the apply, which is exactly the case nobody can
+ * settle from here.
  */
 export async function verifyConfigurationApply(
   client: UpstreamClient,
@@ -250,7 +273,7 @@ export async function verifyConfigurationApply(
   }
 
   const checks = checksFor(request.patch, current, request.sent);
-  if (checks.length === 0 || checks.some((check) => check.absent)) {
+  if (checks.length === 0 || checks.some((check) => check.unsettled)) {
     return indeterminate;
   }
   const disagreed = checks.filter((check) => !check.agrees).map((check) => check.path);

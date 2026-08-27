@@ -131,6 +131,13 @@ export interface WriteRequest {
 const fieldsProperty = "fields";
 
 /**
+ * What is observed where the record cannot say what a field holds. It is a
+ * value like any other, so a name that becomes ambiguous between a plan and its
+ * apply expires the plan rather than reading as unchanged.
+ */
+const ambiguous = "ambiguous";
+
+/**
  * The switches a provider may express "on" through. Exported because apply
  * verification has to check exactly the ones a write moved, and rediscovering
  * them by name prefix would check properties this write never touched.
@@ -743,16 +750,23 @@ export function configurationObservations(
     observations.push({ key: property, value: fingerprint(payload[property]) });
   };
   const observeField = (name: string): void => {
-    const [entry] = entries.get(name) ?? [];
+    const found = entries.get(name) ?? [];
+    const [entry] = found;
     const record = entry?.record;
     observations.push({
       key: fieldPath(name),
+      // A name the record carries twice is observed as ambiguous rather than by
+      // the first entry's value. The record does not say what that field holds,
+      // and a plan built on one of two answers would be validated against
+      // something the instance never said.
       value: fingerprint(
-        record === undefined
-          ? undefined
-          : isCredentialEntry(name, record)
-            ? describeSecret(name, record.value).state
-            : record.value,
+        found.length > 1
+          ? ambiguous
+          : record === undefined
+            ? undefined
+            : isCredentialEntry(name, record)
+              ? describeSecret(name, record.value).state
+              : record.value,
       ),
     });
   };

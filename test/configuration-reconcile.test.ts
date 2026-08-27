@@ -424,6 +424,35 @@ describe("dependency validation", () => {
     expect(JSON.stringify(applied.diff)).not.toContain("/media/example");
   });
 
+  it("refuses to store a path an ambiguous root-folder list does not settle", async () => {
+    // Two rows under one identifier, reporting different paths. The identifier
+    // exists, so the pointer resolves; what it means does not, and a write that
+    // picked one of the two would store a path the instance never singled out.
+    const list = await first("sonarr", "importlist");
+    const { outcome, dispatched } = await reconcile(
+      "sonarr",
+      {
+        routes: {
+          "importlist/1": list,
+          rootfolder: [
+            { id: 2, path: "/media/example/archive" },
+            { id: 2, path: "/media/example/other" },
+          ],
+        },
+      },
+      planning("import_lists", 1, {
+        mode: "apply",
+        fields: [{ name: "rootFolderId", value: 2 }],
+      }),
+    );
+
+    expect(expectRefused(outcome).error).toMatchObject({
+      code: "invalid_input",
+      message: expect.stringContaining("nothing usable for rootFolderId 2"),
+    });
+    expect(writes(dispatched)).toEqual([]);
+  });
+
   it("refuses a root folder the application does not report", async () => {
     const list = await first("sonarr", "importlist");
     const { outcome } = await reconcile(

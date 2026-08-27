@@ -72,6 +72,9 @@ const missingTemplate = "template-absent";
  */
 const unreadableSchema = "schema-unreadable";
 
+/** What is digested when the instance offers more than one matching template. */
+const ambiguousTemplate = "template-ambiguous";
+
 const degradableSchemaFailures: ReadonlySet<UpstreamErrorKind> = new Set([
   "not-found",
   "validation",
@@ -87,14 +90,25 @@ function implementationOf(resource: UpstreamResource): string | undefined {
   return trimmed === "" ? undefined : trimmed.toLowerCase();
 }
 
+/**
+ * The template this record is built from, or why there is not exactly one.
+ *
+ * An instance that offers the same implementation twice has not said which
+ * definition a write is against, so the answer is `ambiguous` rather than
+ * whichever matched first: a fingerprint taken from one of two candidates would
+ * claim a certainty the schema does not support.
+ */
 function templateFor(
   templates: readonly ProviderTemplate[],
   implementation: string | undefined,
-): ProviderTemplate | undefined {
+): ProviderTemplate | "ambiguous" | undefined {
   if (implementation === undefined) {
     return undefined;
   }
-  return templates.find((template) => template.implementation.toLowerCase() === implementation);
+  const matched = templates.filter(
+    (template) => template.implementation.toLowerCase() === implementation,
+  );
+  return matched.length > 1 ? "ambiguous" : matched[0];
 }
 
 /**
@@ -170,16 +184,20 @@ export async function readSchemaFingerprint(
   }
 
   const template = templateFor(templates, implementationOf(resource));
+  if (template === undefined || template === "ambiguous") {
+    return {
+      observations: [
+        { key: schemaKey, value: template === undefined ? missingTemplate : ambiguousTemplate },
+      ],
+      warnings: [
+        template === undefined
+          ? "this instance offers no provider template for this record's implementation"
+          : "this instance offers more than one provider template for this record's implementation, so which definition a write is against cannot be established",
+      ],
+    };
+  }
   return {
-    observations: [
-      {
-        key: schemaKey,
-        value: template === undefined ? missingTemplate : fingerprint(semanticsOf(template)),
-      },
-    ],
-    warnings:
-      template === undefined
-        ? ["this instance offers no provider template for this record's implementation"]
-        : [],
+    observations: [{ key: schemaKey, value: fingerprint(semanticsOf(template)) }],
+    warnings: [],
   };
 }
