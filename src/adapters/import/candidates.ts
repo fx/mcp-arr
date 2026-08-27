@@ -87,13 +87,16 @@ export function fileIdentity(path: string): string {
  * What survives goes through the sanitizer afterwards, so a name that still
  * carries a separator is redacted rather than disclosed.
  */
-export function fileNameOf(path: string | null | undefined): string | undefined {
+export function fileNameOf(
+  path: string | null | undefined,
+  known: readonly string[] = [],
+): string | undefined {
   const raw = text(path);
   if (raw === undefined) {
     return undefined;
   }
   const cut = Math.max(raw.lastIndexOf("/"), raw.lastIndexOf("\\"));
-  return safeLabel(cut < 0 ? raw : raw.slice(cut + 1));
+  return scrubLabel(cut < 0 ? raw : raw.slice(cut + 1), known);
 }
 
 const rejectionSchema = z.object({
@@ -315,17 +318,7 @@ function candidateRejections(
   context: ImportScanContext,
   record: UpstreamCandidate,
 ): readonly ImportRejection[] {
-  // The values this scan already knows, removed literally before the generic
-  // sanitizer runs. That sanitizer recognizes separators and long identifiers,
-  // which is everything it can know on its own — but a rejection that names a
-  // folder in prose ("could not import folder example-series") carries neither,
-  // and only the adapter knows what this scan's folder was called.
-  const known = [
-    context.downloadId,
-    context.folder,
-    context.folder === undefined ? undefined : folderNameOf(context.folder),
-    text(record.folderName),
-  ].filter((value): value is string => value !== undefined);
+  const known = knownLiterals(context, record);
 
   const scrub = (value: string | null | undefined): string | undefined =>
     safeText(safeReason(value, known));
@@ -356,12 +349,15 @@ function proper(version: number | undefined): boolean | undefined {
   return version === undefined ? undefined : version > 1;
 }
 
-function candidateQuality(record: UpstreamCandidate): ImportQuality | undefined {
+function candidateQuality(
+  record: UpstreamCandidate,
+  known: readonly string[],
+): ImportQuality | undefined {
   const quality = record.quality?.quality;
   const revision = record.quality?.revision;
   return present({
-    name: safeLabel(quality?.name),
-    source: safeLabel(quality?.source),
+    name: scrubLabel(quality?.name, known),
+    source: scrubLabel(quality?.source, known),
     resolution: count(quality?.resolution),
     // A revision above the first is what both applications call a proper. The
     // count is read once and tested for absence rather than for falsiness,
@@ -369,6 +365,34 @@ function candidateQuality(record: UpstreamCandidate): ImportQuality | undefined 
     proper: proper(count(revision?.version)),
     repack: flag(revision?.isRepack),
   });
+}
+
+/**
+ * The literals this scan knows and the generic sanitizer cannot.
+ *
+ * The sanitizer recognizes separators and long identifiers, which is all it can
+ * know on its own. What it cannot know is that *this* scan's folder is called
+ * "example-series" or that its download identifier is six characters long — so
+ * those are removed literally, and every upstream-derived text on a candidate
+ * goes through the same removal rather than only the rejections, which is where
+ * this started and where it would have stopped if the fix had been applied to
+ * the field that was demonstrated instead of to the class.
+ */
+function knownLiterals(context: ImportScanContext, record: UpstreamCandidate): readonly string[] {
+  return [
+    context.downloadId,
+    context.folder,
+    context.folder === undefined ? undefined : folderNameOf(context.folder),
+    text(record.folderName),
+  ].filter((value): value is string => value !== undefined);
+}
+
+/** One upstream label, with this scan's own literals removed before the rest. */
+function scrubLabel(
+  value: string | null | undefined,
+  known: readonly string[],
+): string | undefined {
+  return safeLabel(safeReason(value, known));
 }
 
 /**
@@ -383,19 +407,23 @@ function candidateQuality(record: UpstreamCandidate): ImportQuality | undefined 
  */
 function safeLabelList(
   values: readonly (string | null | undefined)[] | null | undefined,
+  known: readonly string[],
 ): readonly string[] | undefined {
   if (!Array.isArray(values)) {
     return undefined;
   }
   const cleaned = values
-    .map((value) => safeLabel(value))
+    .map((value) => scrubLabel(value, known))
     .filter((value): value is string => value !== undefined && !value.startsWith("[redacted"));
   return cleaned.length === 0 ? undefined : cleaned;
 }
 
-function indexerFlagNames(value: unknown): readonly string[] | undefined {
+function indexerFlagNames(value: unknown, known: readonly string[]): readonly string[] | undefined {
   return Array.isArray(value)
-    ? safeLabelList(value.filter((flagName): flagName is string => typeof flagName === "string"))
+    ? safeLabelList(
+        value.filter((flagName): flagName is string => typeof flagName === "string"),
+        known,
+      )
     : undefined;
 }
 
@@ -442,12 +470,16 @@ export function mapCandidate(
   const existingFileId = recordId(
     count(application === "sonarr" ? record.episodeFileId : record.movieFileId),
   );
+  const known = knownLiterals(context, record);
   const rejections = candidateRejections(context, record);
 
   return {
     application,
     sourceKind: context.sourceKind,
-    fileName: fileNameOf(record.relativePath) ?? fileNameOf(record.path) ?? safeLabel(record.name),
+    fileName:
+      fileNameOf(record.relativePath, known) ??
+      fileNameOf(record.path, known) ??
+      scrubLabel(record.name, known),
     fileIdentity: fileIdentity(path),
     sizeBytes: count(record.size),
     media:
@@ -459,13 +491,19 @@ export function mapCandidate(
       episodeIds.length === 0
         ? undefined
         : episodeIds.map((id) => mediaRef("sonarr", "episode", id)),
-    quality: candidateQuality(record),
-    languages: safeLabelList((record.languages ?? []).map((language) => language.name)),
-    releaseGroup: safeLabel(record.releaseGroup),
-    releaseType: safeLabel(record.releaseType),
-    customFormats: safeLabelList((record.customFormats ?? []).map((format) => format.name)),
+    quality: candidateQuality(record, known),
+    languages: safeLabelList(
+      (record.languages ?? []).map((language) => language.name),
+      known,
+    ),
+    releaseGroup: scrubLabel(record.releaseGroup, known),
+    releaseType: scrubLabel(record.releaseType, known),
+    customFormats: safeLabelList(
+      (record.customFormats ?? []).map((format) => format.name),
+      known,
+    ),
     customFormatScore: count(record.customFormatScore),
-    indexerFlags: indexerFlagNames(record.indexerFlags),
+    indexerFlags: indexerFlagNames(record.indexerFlags, known),
     decision: decisionFor(rejections),
     // A candidate the instance already associates with a library file is a file
     // the library holds, not a new import. Both applications report that as the

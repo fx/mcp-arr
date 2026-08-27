@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { safeLabel } from "../src/adapters/activity/parse.js";
 import {
   type CandidateScanResult,
   fileIdentity,
@@ -419,6 +420,53 @@ describe("candidate disclosure", () => {
     // fields.
     expect(scanned.scan.items[0]?.customFormats).toEqual(["Example Format"]);
     expect(scanned.scan.items[0]?.indexerFlags).toEqual(["freeleech"]);
+  });
+
+  it("removes this scan's own literals from every mapped label", async () => {
+    // The short download identifier and the bare folder component carry no
+    // separator and are too short for the generic identifier rule, so nothing
+    // but this scan's own knowledge removes them — and every label has to get
+    // that knowledge, not only the rejections.
+    const shortDownload = "q1-aB2xY9";
+    const queue = (
+      await activityFixture<Array<Record<string, unknown>>>("sonarr", "queue/details")
+    ).map((row) => (row.id === 502 ? { ...row, downloadId: shortDownload } : row));
+    const rows = await activityFixture<Array<Record<string, unknown>>>("sonarr", "manualimport");
+    const laced = rows.map((row, index) =>
+      index === 0
+        ? {
+            ...row,
+            releaseGroup: shortDownload,
+            releaseType: "example-series",
+            customFormats: [{ id: 9, name: `pack ${shortDownload}` }],
+            languages: [{ id: 1, name: "example-series" }],
+            indexerFlags: [`flag ${shortDownload}`],
+            quality: {
+              quality: { id: 6, name: "example-series", source: shortDownload, resolution: 1080 },
+              revision: { version: 1, real: 0, isRepack: false },
+            },
+          }
+        : row,
+    );
+    const harness = libraryHarness("sonarr", (call) =>
+      jsonResponse(call.url.pathname.endsWith("/manualimport") ? laced : queue),
+    );
+    const scanned = await scanTrackedDownload(harness.client, "sonarr", trackedRequest, {
+      offset: 0,
+      pageSize: 25,
+    });
+    if (scanned.status !== "ok") {
+      throw new Error("Expected a scan");
+    }
+
+    // A control: neither value is removed by anything generic, so a mapping
+    // that did not know this scan's literals would return both verbatim.
+    expect(safeLabel(shortDownload)).toBe(shortDownload);
+    expect(safeLabel("example-series")).toBe("example-series");
+
+    const serialized = JSON.stringify(scanned.scan.items);
+    expect(serialized).not.toContain(shortDownload);
+    expect(serialized).not.toContain("example-series");
   });
 
   it("removes a folder name a rejection mentions in prose", async () => {
