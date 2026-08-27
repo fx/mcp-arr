@@ -120,11 +120,23 @@ export const referencePrefixes: Readonly<Record<ReferenceKind, string>> = {
   job: "job",
 };
 
+/**
+ * The exact pattern a reference of this kind is published under.
+ *
+ * One definition, because the published pattern is read in both directions: the
+ * schema below builds a reference from it, and the tool-documentation generator
+ * reverses a pattern back to the kind it names in order to annotate a
+ * reference-typed argument. A second copy of the string would let the two drift
+ * apart silently — the reverse lookup would simply stop matching, and the
+ * annotation it produces would vanish from the generated prose rather than
+ * fail.
+ */
+export function referencePattern(kind: ReferenceKind): string {
+  return `^${referencePrefixes[kind]}_[A-Za-z0-9_-]{8,64}$`;
+}
+
 export function referenceSchema(kind: ReferenceKind): z.ZodString {
-  const prefix = referencePrefixes[kind];
-  return z
-    .string()
-    .regex(new RegExp(`^${prefix}_[A-Za-z0-9_-]{8,64}$`, "u"), `must be a ${kind} reference`);
+  return z.string().regex(new RegExp(referencePattern(kind), "u"), `must be a ${kind} reference`);
 }
 
 export const mediaReferenceSchema = referenceSchema("media");

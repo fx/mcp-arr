@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { type ReferenceKind, referenceKinds, referencePrefixes } from "./common.js";
+import { type ReferenceKind, referenceKinds, referencePattern } from "./common.js";
 
 /**
  * A converted JSON Schema node. Every node these unions produce is a plain
@@ -62,17 +62,28 @@ function collectBranches(node: JsonSchema, into: JsonSchema[]): JsonSchema[] {
 }
 
 /**
+ * Every keyword a node may carry and still be nothing but a choice among
+ * string values. The three that state the choice, plus `description`, which
+ * states nothing about the value at all.
+ */
+const stringChoiceKeywords: ReadonlySet<string> = new Set(["type", "const", "enum", "description"]);
+
+/**
  * Whether a node is nothing but a choice among string values.
  *
  * Only such nodes collapse into one root `enum`. Anything carrying a further
  * constraint — a length, a pattern, a default — would lose it in the collapse,
- * so it is published as an alternative instead.
+ * so it is published as an alternative instead. A `description` is not such a
+ * constraint: it is an annotation, and counting it as one would mean that
+ * describing a property on a single variant is enough to bury that property's
+ * whole accepted set under a nested `anyOf` — which is the exact combinator a
+ * host never inspects, reintroduced one property at a time.
  */
 function isStringChoice(node: JsonSchema): boolean {
   if (node.type !== "string") {
     return false;
   }
-  if (!Object.keys(node).every((keyword) => ["type", "const", "enum"].includes(keyword))) {
+  if (!Object.keys(node).every((keyword) => stringChoiceKeywords.has(keyword))) {
     return false;
   }
   if (typeof node.const === "string") {
@@ -123,41 +134,54 @@ function mergeProperty(shapes: readonly JsonSchema[]): JsonSchema {
 interface MergedRoot {
   readonly properties: Record<string, JsonSchema>;
   readonly required: readonly string[];
-  /** Each property's distinct per-variant shapes, in first-seen order. */
-  readonly shapes: ReadonlyMap<string, readonly JsonSchema[]>;
+}
+
+/** A property's distinct shapes, beside the serialized form each was kept by. */
+interface DistinctShapes {
+  readonly shapes: JsonSchema[];
+  readonly keys: Set<string>;
 }
 
 function mergeBranches(branches: readonly JsonSchema[]): MergedRoot {
-  const shapes = new Map<string, JsonSchema[]>();
+  const distinct = new Map<string, DistinctShapes>();
   for (const branch of branches) {
     for (const [name, declared] of Object.entries(propertiesOf(branch))) {
       if (!isRecord(declared)) {
         throw new Error(`The published property ${name} is not a schema`);
       }
-      const known = shapes.get(name) ?? [];
-      if (!known.some((shape) => JSON.stringify(shape) === JSON.stringify(declared))) {
-        known.push(declared);
+      // Serialized once and remembered, rather than once per shape already
+      // kept: deep equality here is what decides whether a variant's shape is
+      // new, and every variant asks it of every shape before it.
+      const key = JSON.stringify(declared);
+      let known = distinct.get(name);
+      if (known === undefined) {
+        known = { shapes: [], keys: new Set() };
+        distinct.set(name, known);
       }
-      shapes.set(name, known);
+      if (!known.keys.has(key)) {
+        known.keys.add(key);
+        known.shapes.push(declared);
+      }
     }
   }
 
   const properties: Record<string, JsonSchema> = {};
-  for (const [name, distinct] of shapes) {
-    properties[name] = mergeProperty(distinct);
+  for (const [name, known] of distinct) {
+    properties[name] = mergeProperty(known.shapes);
   }
 
   // The intersection, so the published root never refuses a call some variant
   // accepts. What each variant requires on its own moves into the generated
   // documentation below.
   const required = branches
+    .slice(1)
     .map(requiredOf)
     .reduce<readonly string[]>(
       (kept, next) => kept.filter((name) => next.includes(name)),
       requiredOf(branches[0] ?? {}),
     );
 
-  return { properties, required, shapes };
+  return { properties, required };
 }
 
 /**
@@ -171,10 +195,13 @@ function mergeBranches(branches: readonly JsonSchema[]): MergedRoot {
  * variant is this". `mode` never qualifies, because the plan-reference form
  * fixes it to a value the direct forms also accept.
  */
-function inferDiscriminator(branches: readonly JsonSchema[]): string | undefined {
+function inferDiscriminator(
+  branches: readonly JsonSchema[],
+  merged: MergedRoot,
+): string | undefined {
   let best: { readonly name: string; readonly declaring: number } | undefined;
 
-  for (const name of Object.keys(mergeBranches(branches).properties)) {
+  for (const name of Object.keys(merged.properties)) {
     const declared = branches
       .map((branch) => propertiesOf(branch)[name])
       .filter((node): node is JsonSchema => isRecord(node));
@@ -187,6 +214,10 @@ function inferDiscriminator(branches: readonly JsonSchema[]): string | undefined
       seen.add(value);
     }
     const disjoint = seen.size === values.length;
+    // Strictly greater, so a tie resolves to the first qualifying property in
+    // the merged root's key order — which is the order the converted union
+    // declares its properties in, and so is deterministic for a given union
+    // rather than merely arbitrary.
     if (disjoint && (best === undefined || declared.length > best.declaring)) {
       best = { name, declaring: declared.length };
     }
@@ -197,7 +228,7 @@ function inferDiscriminator(branches: readonly JsonSchema[]): string | undefined
 
 /** The reference pattern each reference kind publishes, reversed to its kind. */
 const referenceKindsByPattern: ReadonlyMap<string, ReferenceKind> = new Map(
-  referenceKinds.map((kind) => [`^${referencePrefixes[kind]}_[A-Za-z0-9_-]{8,64}$`, kind]),
+  referenceKinds.map((kind) => [referencePattern(kind), kind]),
 );
 
 function referenceKindOf(node: JsonSchema): ReferenceKind | undefined {
@@ -213,16 +244,18 @@ function referenceKindOf(node: JsonSchema): ReferenceKind | undefined {
  * discoverable only by triggering a validation error. Fixed values and value
  * sets are named outright, and a reference-typed argument names the kind of
  * reference it takes, which is the only narrowing a value set cannot express.
+ *
+ * The root's shape arrives already serialized, because it is the same shape for
+ * every variant that declares the property and only the variant's own side of
+ * the comparison changes.
  */
-function describeArgument(name: string, branchNode: JsonSchema, rootNode: JsonSchema): string {
-  if (JSON.stringify(branchNode) === JSON.stringify(rootNode)) {
+function describeArgument(name: string, branchNode: JsonSchema, publishedRoot: string): string {
+  if (JSON.stringify(branchNode) === publishedRoot) {
     return name;
   }
-  if (typeof branchNode.const === "string") {
-    return `${name}=${branchNode.const}`;
-  }
-  if (Array.isArray(branchNode.enum) && branchNode.enum.every((v) => typeof v === "string")) {
-    return `${name}=${branchNode.enum.join("|")}`;
+  const values = choiceValues(branchNode);
+  if (values.length > 0) {
+    return `${name}=${values.join("|")}`;
   }
   const kind = referenceKindOf(branchNode);
   if (kind !== undefined) {
@@ -270,16 +303,29 @@ function describeVariants(
   merged: MergedRoot,
   discriminator: string | undefined,
 ): string {
-  const groups = new Map<string, { values: string[]; line: string }>();
+  // One serialization of each published shape for the whole union: every
+  // variant compares its own node against the same root node, so serializing
+  // the root inside that comparison would repeat it once per variant.
+  const publishedRoots = new Map(
+    Object.entries(merged.properties).map(([name, node]) => [name, JSON.stringify(node)]),
+  );
+
+  interface VariantGroup {
+    readonly values: string[];
+    readonly required: readonly string[];
+    readonly optional: readonly string[];
+  }
+
+  const groups = new Map<string, VariantGroup>();
 
   for (const branch of branches) {
     const properties = propertiesOf(branch);
     const required = requiredOf(branch);
     const argument = (name: string): string => {
       const branchNode = properties[name];
-      const rootNode = merged.properties[name];
-      return isRecord(branchNode) && isRecord(rootNode)
-        ? describeArgument(name, branchNode, rootNode)
+      const publishedRoot = publishedRoots.get(name);
+      return isRecord(branchNode) && publishedRoot !== undefined
+        ? describeArgument(name, branchNode, publishedRoot)
         : name;
     };
 
@@ -301,24 +347,30 @@ function describeVariants(
       continue;
     }
 
-    const tail = optionalArguments.length === 0 ? "" : `optional ${optionalArguments.join(", ")}`;
     groups.set(signature, {
       values: discriminatorValues(branch, discriminator),
-      line:
-        requiredArguments.length === 0
-          ? tail
-          : `${requiredArguments.join(", ")}${tail === "" ? "" : `; ${tail}`}`,
+      required: requiredArguments,
+      optional: optionalArguments,
     });
   }
 
-  const lines = [...groups.values()].map(({ values, line }) => {
+  // Assembled once, from the two lists rather than from a half-built string.
+  // Whether a form has required arguments decides both how its label joins on
+  // and where the optional ones go, and that is a fact about the lists — an
+  // annotation that happened to begin with the word this used to look for would
+  // otherwise relabel the line it appears on.
+  const lines = [...groups.values()].map(({ values, required, optional }) => {
+    const tail = optional.length === 0 ? "" : `optional ${optional.join(", ")}`;
+    const body =
+      required.length === 0 ? tail : `${required.join(", ")}${tail === "" ? "" : `; ${tail}`}`;
     if (discriminator === undefined || values.length === 0) {
-      return `- ${line}`;
+      return `- ${body}`;
     }
     const label = `${discriminator}=${values.join("|")}`;
-    return line.startsWith("optional ") || line === ""
-      ? `- ${label}${line === "" ? "" : `; ${line}`}`
-      : `- ${label}: ${line}`;
+    if (required.length > 0) {
+      return `- ${label}: ${body}`;
+    }
+    return body === "" ? `- ${label}` : `- ${label}; ${body}`;
   });
 
   return [exclusivityHeader, ...lines].join("\n");
@@ -362,7 +414,7 @@ export function variantUnion<TSchema extends z.ZodType>(union: TSchema): TSchema
 
   const branches = collectBranches(converted as JsonSchema, []);
   const merged = mergeBranches(branches);
-  const discriminator = inferDiscriminator(branches);
+  const discriminator = inferDiscriminator(branches, merged);
 
   const published = z
     .looseObject({})

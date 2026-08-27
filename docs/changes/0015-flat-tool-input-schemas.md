@@ -72,7 +72,7 @@ The [Tool Contracts spec](../specs/tool-contracts/#stable-typed-surface) owns wh
 
 - Merge each union's converted branches into one flat object schema — properties unioned, `required` intersected, per-property shapes deduplicated — and publish that as the wrapper's root metadata in place of the alternatives.
 - Generate the per-variant documentation from the same converted branches and carry it in the published schema's root `description`.
-- Move `variantUnion` out of `src/tools/schemas/common.ts` into a new `src/tools/schemas/publish.ts`, since the flattener needs `referencePrefixes` from `common.ts` and delegating in the other direction would be an import cycle.
+- Move `variantUnion` out of `src/tools/schemas/common.ts` into a new `src/tools/schemas/publish.ts`, since the flattener needs `referencePattern` from `common.ts` and delegating in the other direction would be an import cycle.
 - Leave the wrapper's parse delegation completely untouched, which is what makes acceptance and every rejection message byte-identical.
 - Pin the rejection messages first, in their own commit against the unmodified source; land the root-combinator guard second, red; land the fix third.
 
@@ -92,7 +92,7 @@ The [Tool Contracts spec](../specs/tool-contracts/#stable-typed-surface) owns wh
   - **Why:** This is the largest thing flattening discards. `arr_config_reconcile` scopes `domain` by `intent` across three disjoint sets, and `arr_activity_change` requires history references for one intent and blocklist references for the other. Without the annotation both are discoverable only by triggering a validation error.
   - **Alternatives considered:** Hoisting `arr_config_reconcile`'s three repeated `domain` value sets into a trailing legend, rejected and recorded here so it is not re-litigated: it saves a few hundred bytes on one tool and costs every reader an indirection to resolve. Repetition that is predictable and local is cheaper to read than a reference.
 - **Decision:** Move `variantUnion` into its own module rather than leaving it in `common.ts`.
-  - **Why:** `common.ts` holds shared domain field schemas; the flattener is pure JSON Schema mechanism and needs `referencePrefixes` from `common.ts`. Moving it makes the dependency one-way. The five importing modules are repointed rather than served by a re-export shim, because two import paths for one symbol is worse than five edits.
+  - **Why:** `common.ts` holds shared domain field schemas; the flattener is pure JSON Schema mechanism and needs `referencePattern` from `common.ts`. Moving it makes the dependency one-way. The five importing modules are repointed rather than served by a re-export shim, because two import paths for one symbol is worse than five edits.
 - **Decision:** The rejection-message test lands first, green against the unmodified source.
   - **Why:** The promise is that messages are *unchanged*. Inline literals written after the fix would only restate whatever the new code produces. Captured before it, they are evidence — and a reviewer can check out that commit on top of the base branch and watch it pass.
 - **Decision:** Widen the throw-on-unknown-keyword guard in `test/support/json-schema.ts` to allow `description`.
