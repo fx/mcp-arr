@@ -308,8 +308,12 @@ describe("arr_library_query results", () => {
     expect(lookup.items.length).toBeGreaterThan(0);
     expect(lookup.items.some((item) => item.existing !== undefined)).toBe(true);
     expect(lookup.items.some((item) => item.existing === undefined)).toBe(true);
-    // A lookup result is metadata, never a library record of its own.
-    expect(lookup.items.every((item) => !("reference" in item))).toBe(true);
+    // A lookup result is metadata, so its own reference stands for the
+    // candidate rather than for a library record: a result already in the
+    // library reports both, and the two are different references.
+    expect(lookup.items.every((item) => item.reference !== undefined)).toBe(true);
+    const added = lookup.items.find((item) => item.existing !== undefined);
+    expect(added?.reference).not.toBe(added?.existing?.reference);
   });
 
   it("pages with a continuation and refuses one minted for another query", async () => {

@@ -1,0 +1,40 @@
+{
+  "metadata": {
+    "application": "sonarr",
+    "apiVersion": "v3",
+    "version": "4.0.19.2979",
+    "endpoint": "/api/v3/qualityprofile"
+  },
+  "body": [
+    {
+      "id": 1,
+      "name": "Example HD",
+      "upgradeAllowed": true,
+      "cutoff": 4,
+      "items": [],
+      "minFormatScore": 0,
+      "cutoffFormatScore": 0,
+      "formatItems": []
+    },
+    {
+      "id": 2,
+      "name": "Example Anime HD",
+      "upgradeAllowed": true,
+      "cutoff": 4,
+      "items": [],
+      "minFormatScore": 0,
+      "cutoffFormatScore": 0,
+      "formatItems": []
+    },
+    {
+      "id": 4,
+      "name": "Example Any",
+      "upgradeAllowed": false,
+      "cutoff": 1,
+      "items": [],
+      "minFormatScore": 0,
+      "cutoffFormatScore": 0,
+      "formatItems": []
+    }
+  ]
+}

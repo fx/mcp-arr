@@ -59,10 +59,10 @@ The [Library Management spec](../specs/library-management/#lookup-and-add) owns 
 
 ## Tasks
 
-- [ ] Implement add and monitoring mutations
-  - [ ] Add lookup-reference-based Sonarr series and Radarr movie creation
-  - [ ] Add typed monitoring, profile, root, tag, and application-specific edits
-  - [ ] Add duplicate detection, explicit search-on-add, dependency validation, and fixtures
+- [x] Implement add and monitoring mutations
+  - [x] Add lookup-reference-based Sonarr series and Radarr movie creation
+  - [x] Add typed monitoring, profile, root, tag, and application-specific edits
+  - [x] Add duplicate detection, explicit search-on-add, dependency validation, and fixtures
 - [ ] Implement file and path mutations
   - [ ] Add file metadata update/delete and safe bulk grouping
   - [ ] Add rename preview and allowlisted rename/move command workflows

@@ -1,5 +1,6 @@
 import type {
   CalendarEvent,
+  ConfigurationPointer,
   LookupResult,
   MediaDetail,
   MediaFile,
@@ -129,6 +130,17 @@ interface ReferenceMinter {
     kind: MediaRecordKind;
     id: string;
   };
+  /**
+   * A configuration object a record points at. It is minted as its own
+   * reference kind, so the profile a series uses can be supplied to an edit
+   * intent while remaining impossible to pass where a media reference belongs.
+   */
+  pointer(pointer: ConfigurationPointer): {
+    reference: string;
+    application: ConfigurationPointer["application"];
+    kind: ConfigurationPointer["kind"];
+    id: string;
+  };
 }
 
 /**
@@ -165,6 +177,32 @@ function createReferenceMinter(references: ReferenceStore): ReferenceMinter {
     return entry.reference;
   };
 
+  const pointerToken = (pointer: ConfigurationPointer): string => {
+    // Prefixed so a configuration key can never collide with a media key, even
+    // if the two vocabularies ever name a kind alike.
+    const key = `configuration:${pointer.application}:${pointer.kind}:${pointer.id}`;
+    const existing = minted.get(key);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const entry = references.mint({
+      kind: "configuration",
+      applications: [pointer.application],
+      payload: () => ({
+        kind: "domain",
+        snapshot: {
+          upstreamId: pointer.id,
+          // A pointer is named, not read, so the only thing there is to
+          // fingerprint is the identity itself.
+          fingerprint: queryDigest([pointer.application, pointer.kind, pointer.id]),
+          detail: { kind: pointer.kind },
+        },
+      }),
+    });
+    minted.set(key, entry.reference);
+    return entry.reference;
+  };
+
   return {
     token,
     identity: (ref) => ({
@@ -172,6 +210,12 @@ function createReferenceMinter(references: ReferenceStore): ReferenceMinter {
       application: ref.application,
       kind: ref.kind,
       id: ref.id,
+    }),
+    pointer: (pointer) => ({
+      reference: pointerToken(pointer),
+      application: pointer.application,
+      kind: pointer.kind,
+      id: pointer.id,
     }),
   };
 }
@@ -200,9 +244,10 @@ function publishRecordBase(item: MediaItem, mint: ReferenceMinter) {
     status: item.status,
     added: item.added,
     statistics: item.statistics,
-    qualityProfile: item.qualityProfile,
-    rootFolder: item.rootFolder,
-    tags: list(item.tags),
+    qualityProfile:
+      item.qualityProfile === undefined ? undefined : mint.pointer(item.qualityProfile),
+    rootFolder: item.rootFolder === undefined ? undefined : mint.pointer(item.rootFolder),
+    tags: item.tags?.map((tag) => mint.pointer(tag)),
     detail: publishDetail(item.detail),
   };
 }
@@ -406,6 +451,13 @@ function publishCalendarEvent(event: CalendarEvent, mint: ReferenceMinter): Libr
 
 function publishLookupResult(result: LookupResult, mint: ReferenceMinter): LibraryLookupResult {
   const base = {
+    // A candidate is named, not read: its metadata identity is the whole of
+    // what this reference stands for, and an add intent re-reads the candidate
+    // from the application before it sends anything.
+    reference:
+      result.ref === undefined
+        ? undefined
+        : mint.token(result.ref, identityFingerprint(result.ref)),
     title: result.title,
     sortTitle: result.sortTitle,
     year: result.year,

@@ -297,11 +297,13 @@ async function readPreconditions(
       readonly ok: true;
       readonly observations: readonly ReadSetObservation[];
       readonly warnings: readonly string[];
+      /** The reader's own resolved state, handed to the handler unchanged. */
+      readonly validated: unknown;
     }
   | { readonly ok: false; readonly error: ToolError }
 > {
   if (operation.readPreconditions === undefined) {
-    return { ok: true, observations: [], warnings: [] };
+    return { ok: true, observations: [], warnings: [], validated: undefined };
   }
 
   let read: Awaited<ReturnType<typeof operation.readPreconditions>>;
@@ -314,7 +316,12 @@ async function readPreconditions(
   if (read.status === "blocked") {
     return { ok: false, error: read.error };
   }
-  return { ok: true, observations: read.observations, warnings: read.warnings ?? [] };
+  return {
+    ok: true,
+    observations: read.observations,
+    warnings: read.warnings ?? [],
+    validated: read.validated,
+  };
 }
 
 interface RunOptions {
@@ -386,7 +393,10 @@ async function runPlan(
     return runFor(errorOutcome(options.application, preconditions.error));
   }
 
-  const outcome = await invokeHandler(options.operation, invocation);
+  const outcome = await invokeHandler(options.operation, {
+    ...invocation,
+    validated: preconditions.validated,
+  });
   if (outcome.status === "error") {
     return runFor(errorOutcome(options.application, outcome.error));
   }
@@ -458,6 +468,9 @@ function replayReceipt(options: RunOptions, existing: ApplyRecord): OperationRun
         ...options.warnings,
         "this exact mutation was already applied by this server; its existing receipt is returned and nothing was sent again",
       ],
+      // Replayed rather than recomputed: a bulk mutation that partly failed
+      // must repeat as the partial result it was, not as a clean success.
+      items: existing.items,
       error: existing.error,
     }),
     {
@@ -467,6 +480,27 @@ function replayReceipt(options: RunOptions, existing: ApplyRecord): OperationRun
       receipt: { reference: existing.reference, state: existing.state },
     },
   );
+}
+
+/**
+ * Decides how a completed handler settles its receipt.
+ *
+ * The three answers are not interchangeable. A mutation nothing was sent for
+ * settles as `failed`, which is the one state a later identical attempt may
+ * reuse; one whose answer was lost settles as outcome-unknown and stays
+ * reconcilable; everything else succeeded. Per-item outcomes are retained
+ * whichever it is, because a repeat is answered entirely from the receipt.
+ */
+function settlementForOutcome(
+  outcome: Extract<Awaited<ReturnType<OperationDefinition["handler"]>>, { status: "ok" }>,
+): ApplySettlement {
+  if (outcome.unattempted !== undefined) {
+    return { status: "failed", error: outcome.unattempted };
+  }
+  if (outcome.outcomeUnknown !== undefined) {
+    return { status: "outcome_unknown", error: outcome.outcomeUnknown, items: outcome.items };
+  }
+  return { status: "succeeded", job: outcome.job, items: outcome.items };
 }
 
 /**
@@ -524,7 +558,10 @@ async function runApply(
     return replayReceipt(options, attempt.record);
   }
 
-  const outcome = await invokeHandler(options.operation, invocation);
+  const outcome = await invokeHandler(options.operation, {
+    ...invocation,
+    validated: preconditions.validated,
+  });
   if (outcome.status === "error") {
     const settled = options.context.state.applies.settle(
       attempt.record.reference,
@@ -542,18 +579,26 @@ async function runApply(
   // would both mislead the caller and close the record to reconciliation.
   const settled = options.context.state.applies.settle(
     attempt.record.reference,
-    outcome.outcomeUnknown === undefined
-      ? { status: "succeeded", job: outcome.job }
-      : { status: "outcome_unknown", error: outcome.outcomeUnknown },
+    settlementForOutcome(outcome),
   );
+  const failure = outcome.outcomeUnknown ?? outcome.unattempted;
 
   return runFor(
     applicationOutcome({
       application: options.application,
-      status: "ok",
+      // Neither an outcome nothing established nor a mutation that was never
+      // sent is reported as `ok`. The receipt already says so, and an envelope
+      // that said otherwise would describe the call more favorably than the
+      // record it carries — a caller reading only the text summary would act on
+      // a success that nothing observed. A replayed receipt in the same state
+      // has always been reported this way; this is the first-time path
+      // agreeing. The per-item outcomes travel either way, because they are
+      // what says which selections failed.
+      status: failure === undefined ? "ok" : "error",
       warnings: [...options.warnings, ...preconditions.warnings, ...(outcome.warnings ?? [])],
       data: outcome.data,
       items: outcome.items,
+      error: failure,
     }),
     {
       requestedEffects: outcome.effects ?? plan?.requestedEffects ?? [],

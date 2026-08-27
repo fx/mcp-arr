@@ -44,6 +44,19 @@ export type PreconditionRead =
       readonly status: "ok";
       readonly observations: readonly ReadSetObservation[];
       readonly warnings?: readonly string[];
+      /**
+       * What the reader resolved while it read, handed to the operation's own
+       * handler unchanged.
+       *
+       * A mutation must act on the state it validated, not on state it re-read
+       * afterwards, and the two are not the same thing: re-reading opens a
+       * window in which the record changed between the check and the write.
+       * Carrying the reader's own result closes it, and saves every mutation a
+       * second round of upstream reads. It never leaves the process — nothing
+       * here reaches a tool result, and the plan record keeps only the
+       * fingerprints of {@link observations}.
+       */
+      readonly validated?: unknown;
     }
   | { readonly status: "blocked"; readonly error: ToolError };
 

@@ -198,7 +198,7 @@ const fileChangesSchema = z.strictObject({
  * such field. `rename` in plan mode is the rename preview — it returns the
  * proposed paths without starting a rename command.
  */
-const libraryChangeIntentSchema = z.discriminatedUnion("intent", [
+export const libraryChangeIntentSchema = z.discriminatedUnion("intent", [
   z.strictObject({
     intent: z.literal("add_media"),
     ...mutationBaseShape,
@@ -254,6 +254,13 @@ export const libraryChangeInputSchema = variantUnion(
 );
 
 export type LibraryQueryInput = z.infer<typeof libraryQueryInputSchema>;
+
+/**
+ * One direct mutation intent, as opposed to the plan-reference form the public
+ * input also accepts. A handler works on this: applying a recorded plan replays
+ * the intent it retained, so both apply forms reach a handler as the same shape.
+ */
+export type LibraryChangeIntent = z.infer<typeof libraryChangeIntentSchema>;
 
 export const libraryQueryOutputSchema = toolResultSchema({ data: libraryViewResultSchema });
 export const libraryChangeOutputSchema = toolResultSchema({ mutation: true });

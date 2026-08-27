@@ -386,8 +386,10 @@ export async function lookupMovies(
     window,
     map: (result): LookupResult => {
       const existingId = count(result.id);
+      const tmdbId = count(result.tmdbId);
       return {
         application,
+        ref: tmdbId === undefined ? undefined : mediaRef(application, "movie_lookup", tmdbId),
         title: result.title,
         sortTitle: text(result.sortTitle),
         year: count(result.year),
@@ -398,7 +400,7 @@ export async function lookupMovies(
             : mediaRef(application, "movie", existingId),
         detail: request.detail === "full" ? present(movieDetail(result)) : undefined,
         radarr: {
-          tmdbId: count(result.tmdbId),
+          tmdbId,
           imdbId: text(result.imdbId),
           studio: text(result.studio),
         },
