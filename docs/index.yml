@@ -80,7 +80,7 @@ changes:
     path: changes/0007-manual-import.md
     description: Implement candidate discovery, reprocessing, validation, import execution, and jobs
     spec: acquisition-and-import
-    status: draft
+    status: complete
     depends_on: ["0002", "0003", "0004", "0006"]
   - id: "0008"
     name: configuration-reconciliation

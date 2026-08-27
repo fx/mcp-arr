@@ -148,7 +148,7 @@ const candidateSchema = z.object({
   rejections: z.array(rejectionSchema).nullish(),
 });
 
-type UpstreamCandidate = z.infer<typeof candidateSchema>;
+export type UpstreamCandidate = z.infer<typeof candidateSchema>;
 
 const queueRowSchema = z.object({
   id: upstreamId,
@@ -171,7 +171,7 @@ const libraryRecordSchema = z.object({ id: upstreamId, path: upstreamText });
  * one are the two resolvers below, and both take their values from upstream
  * state rather than from an argument.
  */
-interface ImportScanContext {
+export interface ImportScanContext {
   readonly application: MediaApplication;
   readonly sourceKind: ImportSourceKind;
   readonly folder?: string | undefined;
@@ -821,19 +821,60 @@ export type ReprocessResult =
  * the re-decided row. It imports nothing: the import is a command, and this is
  * not it.
  */
-export async function reprocessCandidate(
+/**
+ * The folder an application holds for one library record.
+ *
+ * It is the destination an import would write into, which is what the
+ * free-space precondition is about. Read from the record itself rather than
+ * composed here: the path is the instance's own, it never leaves this adapter,
+ * and a record that reports none has no destination to check.
+ */
+export async function readMediaFolder(
+  client: UpstreamClient,
+  application: MediaApplication,
+  mediaId: number,
+): Promise<string | undefined> {
+  const route = `${application === "sonarr" ? seriesRoute : movieRoute}/${String(mediaId)}`;
+  const record = parseUpstream(libraryRecordSchema, await client.get(route), application, route);
+  return text(record.path);
+}
+
+/**
+ * The row one retained candidate stands for, found again from its origin.
+ *
+ * This is the recovery half of a reprocess, and it is shared with the import
+ * itself for one reason: both need the file's path, and neither may remember
+ * it. The scan is re-run from the origin, the row whose digest matches the one
+ * the reference retained is the row in question, and the path travels no
+ * further than the request being built from it. A file that is no longer under
+ * the folder has no matching digest and is absent, which is the answer a caller
+ * needs whether it is about to correct a mapping or import one.
+ */
+export interface RecoveredCandidateRow {
+  readonly context: ImportScanContext;
+  readonly row: UpstreamCandidate;
+  /** The canonical path, for building one upstream request and nothing else. */
+  readonly path: string;
+}
+
+export type RecoverResult =
+  | { readonly status: "ok"; readonly recovered: RecoveredCandidateRow }
+  | { readonly status: "absent"; readonly error: ToolError }
+  | { readonly status: "unmapped"; readonly error: ToolError };
+
+export async function recoverCandidateRow(
   client: UpstreamClient,
   application: MediaApplication,
   origin: CandidateOrigin,
   identity: string,
-  patch: UpstreamMappingPatch,
-): Promise<ReprocessResult> {
+): Promise<RecoverResult> {
   // An origin whose own identifier is missing names nothing, and there is no
   // number that stands in for one: substituting a default would turn an absent
   // identifier into a real-looking one and send it to the instance, where it
   // would either read an unrelated record or come back as "gone" — reporting a
   // malformed reference as a target that used to exist. It is refused here,
-  // where it is discovered, before any upstream read.
+  // where it is discovered, before any upstream read, and it guards the import
+  // as well as the reprocess because both reach the instance through this.
   const anchor = origin.sourceKind === "tracked_download" ? origin.queueItemId : origin.scanMediaId;
   if (anchor === undefined || !isRecordIdentifier(anchor)) {
     return { status: "unmapped", error: scanRefusal(application, "unmapped") };
@@ -860,15 +901,29 @@ export async function reprocessCandidate(
     application,
     manualImportRoute,
   );
-  const row = rows.find((candidate) => {
-    const path = identifiablePath(candidate);
-    return path !== undefined && fileIdentity(path) === identity;
-  });
-  if (row === undefined) {
-    // The folder still answers and this file is not in it, which is the file
-    // having gone rather than the scan having failed.
-    return { status: "absent", error: scanRefusal(application, "absent") };
+  for (const row of rows) {
+    const path = identifiablePath(row);
+    if (path !== undefined && fileIdentity(path) === identity) {
+      return { status: "ok", recovered: { context, row, path } };
+    }
   }
+  // The folder still answers and this file is not in it, which is the file
+  // having gone rather than the scan having failed.
+  return { status: "absent", error: scanRefusal(application, "absent") };
+}
+
+export async function reprocessCandidate(
+  client: UpstreamClient,
+  application: MediaApplication,
+  origin: CandidateOrigin,
+  identity: string,
+  patch: UpstreamMappingPatch,
+): Promise<ReprocessResult> {
+  const found = await recoverCandidateRow(client, application, origin, identity);
+  if (found.status !== "ok") {
+    return found;
+  }
+  const { context, row } = found.recovered;
 
   const answered = parseUpstream(
     z.array(candidateSchema),

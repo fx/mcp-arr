@@ -19,6 +19,8 @@ import { activityChangeHandler, activityChangePreconditions } from "./activity-c
 import { configReconcileHandler, configReconcilePreconditions } from "./config-reconcile.js";
 import { configObserveHandler } from "./configuration.js";
 import { createToolError, type ToolError } from "./errors.js";
+import { importExecuteHandler, importExecutePreconditions } from "./import-execute.js";
+import { importInspectHandler } from "./import-inspect.js";
 import { jobCancelHandler, jobCancelPreconditions, jobGetHandler } from "./jobs.js";
 import { libraryQueryHandler } from "./library.js";
 import { libraryChangeHandler, libraryChangePreconditions } from "./library-change.js";
@@ -306,6 +308,11 @@ const releaseSearch: DefineOptions = { handler: releaseSearchHandler };
  * intent registered with the handler and without the reader would apply
  * against state nothing had checked.
  */
+/** Every `arr_import_inspect` source runs the same handler; the source is the
+ * caller's own discriminator, which the handler re-validates against the
+ * published schema rather than taking from this table. */
+const importInspect: DefineOptions = { handler: importInspectHandler };
+
 const libraryChange: DefineOptions = {
   handler: libraryChangeHandler,
   readPreconditions: libraryChangePreconditions,
@@ -532,14 +539,33 @@ const definitions = [
   ),
 
   // arr_import_inspect
-  define("import.inspect.queue_item", "arr_import_inspect", "queue_item", media, "read"),
-  define("import.inspect.library_context", "arr_import_inspect", "library_context", media, "read"),
+  //
+  // A read on every source, reprocessing included: asking an application to
+  // re-decide a mapping changes nothing on disk, and the import that would is
+  // its own operation.
+  define(
+    "import.inspect.queue_item",
+    "arr_import_inspect",
+    "queue_item",
+    media,
+    "read",
+    importInspect,
+  ),
+  define(
+    "import.inspect.library_context",
+    "arr_import_inspect",
+    "library_context",
+    media,
+    "read",
+    importInspect,
+  ),
   define(
     "import.inspect.candidate_reprocess",
     "arr_import_inspect",
     "candidate_reprocess",
     media,
     "read",
+    importInspect,
   ),
 
   // arr_config_observe
@@ -800,7 +826,15 @@ const definitions = [
   ),
 
   // arr_import_execute
-  define("import.execute", "arr_import_execute", undefined, media, "destructive"),
+  //
+  // Destructive without qualification: an import moves or copies files on the
+  // operator's filesystem and, for a tracked download in any mode but `copy`,
+  // may consume the source. The handler discloses which of those this
+  // particular call reaches; the declaration is about what the operation is.
+  define("import.execute", "arr_import_execute", undefined, media, "destructive", {
+    handler: importExecuteHandler,
+    readPreconditions: importExecutePreconditions,
+  }),
 
   // arr_library_change
   define(

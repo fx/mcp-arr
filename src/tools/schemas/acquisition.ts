@@ -18,6 +18,7 @@ import {
   searchTermSchema,
   variantUnion,
 } from "./common.js";
+import { jobProjectionSchema } from "./jobs.js";
 
 const seasonNumberSchema = z.int().min(0).max(1000);
 
@@ -216,5 +217,71 @@ export const searchStartOutputSchema = toolResultSchema({
   data: searchStartDataSchema,
   mutation: true,
 });
-export const importInspectOutputSchema = toolResultSchema();
-export const importExecuteOutputSchema = toolResultSchema({ mutation: true });
+/**
+ * One manual-import candidate as a caller reads it.
+ *
+ * Named by a reference and by a bare file name, and by nothing else: there is
+ * no property here a path, a folder, or a download identifier could travel in,
+ * which is the whole point of this surface.
+ */
+const importCandidateSchema = z.strictObject({
+  reference: importCandidateReferenceSchema,
+  fileName: z.string().optional(),
+  sizeBytes: z.number().optional(),
+  seasonNumber: z.number().optional(),
+  quality: z
+    .strictObject({
+      name: z.string().optional(),
+      source: z.string().optional(),
+      resolution: z.number().optional(),
+      proper: z.boolean().optional(),
+      repack: z.boolean().optional(),
+    })
+    .optional(),
+  languages: z.array(z.string()).optional(),
+  releaseGroup: z.string().optional(),
+  releaseType: z.string().optional(),
+  customFormats: z.array(z.string()).optional(),
+  customFormatScore: z.number().optional(),
+  indexerFlags: z.array(z.string()).optional(),
+  decision: z.strictObject({
+    importable: z.boolean(),
+    rejections: z.array(
+      z.strictObject({
+        reason: z.string(),
+        type: z.enum(["permanent", "temporary", "unknown"]),
+      }),
+    ),
+  }),
+  /** Distinguished from a new import, because the two have different remedies. */
+  existingLibraryFile: z.boolean(),
+  sourceKind: z.enum(["tracked_download", "library_context"]),
+});
+
+export const importInspectDataSchema = z.strictObject({
+  source: z.enum(["queue_item", "library_context", "candidate_reprocess"]),
+  candidates: z.array(importCandidateSchema),
+});
+
+export const importInspectOutputSchema = toolResultSchema({ data: importInspectDataSchema });
+/**
+ * What an import answers with: the job it started, how many files that job
+ * carries, and the mode it was submitted under. The files are named by their
+ * own per-item outcomes rather than here, and nothing in either says where a
+ * file is.
+ */
+export const importExecuteDataSchema = z.strictObject({
+  job: jobProjectionSchema,
+  /**
+   * The files this job is about, by reference alone. There is no status here:
+   * these applications report one outcome for a whole `ManualImport`, so a
+   * per-file verdict would be one this server invented.
+   */
+  files: z.array(z.strictObject({ reference: importCandidateReferenceSchema })).min(1),
+  importMode: z.enum(["auto", "move", "copy"]),
+});
+
+export const importExecuteOutputSchema = toolResultSchema({
+  data: importExecuteDataSchema,
+  mutation: true,
+});

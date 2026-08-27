@@ -46,6 +46,7 @@ const routes: Readonly<Record<ApplicationId, readonly string[]>> = {
     "queue/status",
     "queue",
     "queue/details",
+    "manualimport",
     "history",
     "history/series",
     "blocklist",
@@ -75,6 +76,7 @@ const routes: Readonly<Record<ApplicationId, readonly string[]>> = {
     "queue/status",
     "queue",
     "queue/details",
+    "manualimport",
     "history",
     "history/movie",
     "blocklist",
@@ -275,6 +277,8 @@ export interface FixtureInstance {
    * asserting that one was or was not sent needs the record of it.
    */
   readonly providerTests: readonly { readonly route: string; readonly body: unknown }[];
+  /** The candidate rows a manual-import reprocess was asked to re-decide. */
+  readonly reprocessed: readonly Record<string, unknown>[];
   readonly failedHistory: readonly number[];
   readonly removedBlocklist: readonly number[];
   /**
@@ -360,6 +364,7 @@ export async function startFixtureInstance(
   const queueResolutions: UpstreamQueueResolution[] = [];
   const writes: UpstreamWrite[] = [];
   const providerTests: { route: string; body: unknown }[] = [];
+  const reprocessed: Record<string, unknown>[] = [];
   // Well clear of every identifier the recorded fixtures use, so a created
   // record is always distinguishable from one that was already there.
   let nextRecordId = 90_001;
@@ -683,6 +688,22 @@ export async function startFixtureInstance(
         return;
       }
 
+      // Manual-import reprocessing: a POST that decides rather than stores. It
+      // answers with the rows it was given, which is what an instance that
+      // re-ran its decision engine and changed nothing does, so a test that
+      // needs a different decision replaces the scan body instead.
+      if (route === "manualimport" && answers(route)) {
+        readPostedBody(request).then(
+          (body) => {
+            const sent = isRecord(body) && Array.isArray(body.files) ? body.files : [];
+            reprocessed.push(...(sent as Record<string, unknown>[]));
+            send(response, 200, sent);
+          },
+          () => send(response, 400, { message: "unreadable body" }),
+        );
+        return;
+      }
+
       const creating = createRoutes[application];
       const writable =
         route === grabRoutes[application] ||
@@ -837,6 +858,7 @@ export async function startFixtureInstance(
     failedHistory,
     removedBlocklist,
     providerTests,
+    reprocessed,
     queueResolutions,
     writes,
     close: () =>
