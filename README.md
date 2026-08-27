@@ -53,7 +53,10 @@ Call `arr_capabilities` first. It contacts each configured instance and reports,
 - `state` — `available`, `unconfigured`, `unavailable` (configured but not reachable), or `unsupported` (older than the minimum version below)
 - `version` — the version the instance reports, when it answered
 - `supportedOperations` — the tool calls that work against that instance right now
-- `unimplementedOperations` — tool calls this server publishes but has not implemented yet
+- `unimplementedOperationCount` — how many tool calls this server publishes but has not implemented yet
+- `unsupportedOperationCount` — how many would need a newer release of that application
+
+The report is bounded by default: what an instance can do is listed, and what it cannot do is counted. Pass `detail: "full"` to get `unimplementedOperations` and `unsupportedOperations` enumerated as well — several times the payload, and none of it callable, so ask for it only when you want to know what is coming.
 
 One unreachable instance never fails the whole report, and an unconfigured application is reported without needing placeholder credentials.
 
@@ -67,7 +70,7 @@ All fifteen tools are published with their full input and output schemas, but on
 - `arr_library_query` — reads Sonarr series, seasons, episodes, episode files, missing and cutoff-unmet episodes; Radarr movies, collections, movie files, missing and cutoff-unmet movies; the calendar and metadata lookup for both. Results are bounded (default 25 records, maximum 100) and a lookup adds nothing.
 - `arr_job_get` and `arr_job_cancel` — read and cancel jobs this server projected.
 
-Every other tool validates its arguments and then answers `unsupported_capability`, which `arr_capabilities` lists under `unimplementedOperations`. Prowlarr has no media library, so no `arr_library_query` view is offered for it.
+Every other tool validates its arguments and then answers `unsupported_capability`, which `arr_capabilities` counts under `unimplementedOperationCount` and lists at `detail: "full"`. Prowlarr has no media library, so no `arr_library_query` view is offered for it.
 
 Library records are returned with an opaque `reference`. That reference — not an upstream identifier — is what the views that take a parent (`seasons`, `episodes`, `episode_files`, `movie_files`) and the identifier filter (`media`) accept, so read the parent view first and pass the reference back. References are held in memory, expire after fifteen minutes, and do not survive a restart; a stale one is reported as `stale_reference` and is recovered by repeating the query that produced it.
 

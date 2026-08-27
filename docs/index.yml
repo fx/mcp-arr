@@ -120,7 +120,7 @@ changes:
     path: changes/0013-result-summary-fidelity.md
     description: Carry error codes and remediation into result summaries and bound the capability report
     spec: tool-contracts
-    status: draft
+    status: complete
     depends_on: []
   - id: "0014"
     name: calendar-anchoring

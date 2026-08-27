@@ -18,6 +18,7 @@ import {
   type CapabilityState,
   capabilityStates,
 } from "./schemas/capabilities.js";
+import type { DetailLevel } from "./schemas/common.js";
 
 interface ProjectedOperation {
   readonly tool: CapabilityReport["supportedOperations"][number]["tool"];
@@ -61,19 +62,29 @@ function warningsFor(capability: ApplicationCapability): readonly string[] {
  *
  * Only operations that name this application are considered, and each is
  * reported by the public tool and variant a caller would invoke. An operation
- * that needs a newer release is listed as unsupported with the version it
+ * that needs a newer release is counted as unsupported with the version it
  * needs, rather than being emulated or quietly omitted.
+ *
+ * What an instance cannot do is counted rather than listed unless the caller
+ * asked for `full` detail: those two lists together are most of the payload
+ * and none of it is callable, so the enumeration is the shape a caller has to
+ * request.
  */
 function projectOperations(
   capability: ApplicationCapability,
   operations: readonly OperationDefinition[],
+  detail: DetailLevel,
 ): Pick<
   CapabilityReport,
-  "supportedOperations" | "unsupportedOperations" | "unimplementedOperations"
+  | "supportedOperations"
+  | "unsupportedOperationCount"
+  | "unimplementedOperationCount"
+  | "unsupportedOperations"
+  | "unimplementedOperations"
 > {
   const supportedOperations: CapabilityReport["supportedOperations"] = [];
-  const unsupportedOperations: CapabilityReport["unsupportedOperations"] = [];
-  const unimplementedOperations: CapabilityReport["unimplementedOperations"] = [];
+  const unsupportedOperations: NonNullable<CapabilityReport["unsupportedOperations"]> = [];
+  const unimplementedOperations: NonNullable<CapabilityReport["unimplementedOperations"]> = [];
 
   for (const operation of operations) {
     const support = checkOperationSupport(operation, capability);
@@ -98,12 +109,18 @@ function projectOperations(
     }
   }
 
-  return { supportedOperations, unsupportedOperations, unimplementedOperations };
+  return {
+    supportedOperations,
+    unsupportedOperationCount: unsupportedOperations.length,
+    unimplementedOperationCount: unimplementedOperations.length,
+    ...(detail === "full" ? { unsupportedOperations, unimplementedOperations } : {}),
+  };
 }
 
 export function buildCapabilityReport(
   capability: ApplicationCapability,
   operations: readonly OperationDefinition[],
+  detail: DetailLevel,
 ): CapabilityReport {
   const descriptor = describeApplication(capability.application);
   const version =
@@ -116,7 +133,7 @@ export function buildCapabilityReport(
     apiVersion: descriptor.apiVersion,
     minimumVersion: descriptor.minimumVersion,
     ...(version === undefined ? {} : { version }),
-    ...projectOperations(capability, operations),
+    ...projectOperations(capability, operations, detail),
   };
 }
 
@@ -126,10 +143,15 @@ export function buildCapabilityReport(
  * Each application is reported as a successful outcome even when it is
  * unconfigured, unreachable, or too old: observing that fact is what the
  * caller asked for, so one unreachable instance never fails the whole result.
+ *
+ * The detail level bounds every state the same way, and anything short of an
+ * explicit `full` bounds the report — there is no second default to drift from
+ * the schema's own.
  */
 export async function reportCapabilities(
   context: ToolContext,
   applications: readonly ApplicationId[] | undefined,
+  detail?: DetailLevel,
 ): Promise<ToolResult<CapabilityReport>> {
   const selected = new Set<ApplicationId>(applications ?? applicationIds);
   const targets = applicationIds.filter((application) => selected.has(application));
@@ -141,7 +163,11 @@ export async function reportCapabilities(
         application,
         status: "ok",
         warnings: warningsFor(capability),
-        data: buildCapabilityReport(capability, context.operations.operations),
+        data: buildCapabilityReport(
+          capability,
+          context.operations.operations,
+          detail === "full" ? "full" : "summary",
+        ),
       });
     }),
   );

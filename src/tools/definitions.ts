@@ -27,6 +27,7 @@ import {
   queueResolveOutputSchema,
 } from "./schemas/activity.js";
 import { capabilitiesInputSchema, capabilitiesOutputSchema } from "./schemas/capabilities.js";
+import type { DetailLevel } from "./schemas/common.js";
 import {
   configObserveInputSchema,
   configObserveOutputSchema,
@@ -102,6 +103,18 @@ function readApplications(input: unknown): readonly ApplicationId[] | undefined 
   }
   const singular = input.application;
   return isApplicationId(singular) ? [singular] : undefined;
+}
+
+/**
+ * Reads the capability report's detail level. Anything other than an explicit
+ * `full` leaves the report bounded, so a caller that omits the argument — or a
+ * host that drops it — gets the summarized form rather than the enumeration.
+ */
+function readDetail(input: unknown): DetailLevel | undefined {
+  if (!isRecord(input)) {
+    return undefined;
+  }
+  return input.detail === "full" ? "full" : "summary";
 }
 
 function readPlanReference(input: unknown): string | undefined {
@@ -193,7 +206,8 @@ export const toolDefinitions: readonly ToolDefinition[] = [
     description:
       "Report which configured applications are reachable, which versions they run, and which " +
       "tool variants they support. Unconfigured applications are reported without credentials, " +
-      "and one unreachable application never fails the whole report.",
+      "and one unreachable application never fails the whole report. Operations an instance " +
+      "cannot currently run are counted rather than listed unless detail is full.",
     inputSchema: capabilitiesInputSchema,
     outputSchema: capabilitiesOutputSchema,
     annotations: { title: "Report application capabilities", ...readOnly },
@@ -201,7 +215,7 @@ export const toolDefinitions: readonly ToolDefinition[] = [
     summary: capabilitySummary,
 
     handle(context: ToolContext, input: unknown): Promise<ToolResult<unknown>> {
-      return reportCapabilities(context, readApplications(input));
+      return reportCapabilities(context, readApplications(input), readDetail(input));
     },
   },
 

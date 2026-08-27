@@ -10,6 +10,7 @@ import {
   type CapabilityReport,
   capabilitiesOutputSchema,
   capabilityOperationSchema,
+  capabilityReportSchema,
   capabilityUnsupportedOperationSchema,
 } from "../src/tools/schemas/capabilities.js";
 import type { VersionedFixture } from "./support/fixtures.js";
@@ -44,8 +45,8 @@ function operationKey(operation: { tool: string; variant?: string | undefined })
 function projectedKeys(report: CapabilityReport): string[] {
   return [
     ...report.supportedOperations,
-    ...report.unsupportedOperations,
-    ...report.unimplementedOperations,
+    ...(report.unsupportedOperations ?? []),
+    ...(report.unimplementedOperations ?? []),
   ].map(operationKey);
 }
 
@@ -91,6 +92,92 @@ describe("arr_capabilities", () => {
     expect(capabilitiesOutputSchema.safeParse(result).success).toBe(true);
   });
 
+  it("bounds every capability state by default", async () => {
+    // Reporting a state is not licence to enumerate: the two lists describing
+    // what an instance cannot do are counted at every state, so no caller
+    // receives the enumeration by accident on its first orienting call.
+    const configured = createTestToolContext({
+      environment: allApplicationsEnvironment,
+      fetch: async (url) => {
+        const application = applicationForUrl(url);
+        if (application === "radarr") {
+          throw new TypeError("fetch failed");
+        }
+        if (application === "prowlarr") {
+          return jsonResponse({ ...fixtureBody("prowlarr"), version: "2.0.0.1" });
+        }
+        return jsonResponse(fixtureBody("sonarr"));
+      },
+    });
+    const partial = createTestToolContext({
+      environment: {
+        SONARR_URL: "https://sonarr.example.invalid/sonarr",
+        SONARR_API_KEY: testApiKeys.sonarr,
+      },
+      fetch: async () => jsonResponse(fixtureBody("sonarr")),
+    });
+
+    const reports = [
+      ...(await reportCapabilities(configured, undefined)).applications,
+      ...(await reportCapabilities(partial, ["radarr"])).applications,
+    ].map((outcome) => outcome.data);
+
+    expect(reports.map((report) => report?.state)).toEqual([
+      "available",
+      "unavailable",
+      "unsupported",
+      "unconfigured",
+    ]);
+    for (const report of reports) {
+      expect(report?.unsupportedOperations, report?.state).toBeUndefined();
+      expect(report?.unimplementedOperations, report?.state).toBeUndefined();
+      expect(typeof report?.unsupportedOperationCount, report?.state).toBe("number");
+      expect(typeof report?.unimplementedOperationCount, report?.state).toBe("number");
+    }
+    // The available instance is the one with something to bound, and what it
+    // can do is still enumerated: a count of usable operations would tell a
+    // caller nothing it could call.
+    expect(reports[0]?.unimplementedOperationCount).toBeGreaterThan(0);
+    expect(reports[0]?.supportedOperations.length).toBeGreaterThan(0);
+  });
+
+  it("enumerates what an instance cannot do only at full detail", async () => {
+    const context = createTestToolContext({
+      environment: allApplicationsEnvironment,
+      fetch: async (url) => jsonResponse(fixtureBody(applicationForUrl(url))),
+    });
+
+    const bounded = await reportCapabilities(context, undefined);
+    const full = await reportCapabilities(context, undefined, "full");
+
+    const boundedSonarr = reportFor(bounded, "sonarr");
+    const fullSonarr = reportFor(full, "sonarr");
+
+    // At the bounded default the two lists are absent and the counts answer
+    // for them; at full detail the lists are present and each one is exactly
+    // as long as the count that stood in for it.
+    expect(boundedSonarr.unimplementedOperations).toBeUndefined();
+    expect(boundedSonarr.unsupportedOperations).toBeUndefined();
+    expect(typeof boundedSonarr.unimplementedOperationCount).toBe("number");
+    expect(typeof boundedSonarr.unsupportedOperationCount).toBe("number");
+    expect(fullSonarr.unimplementedOperations).toHaveLength(
+      boundedSonarr.unimplementedOperationCount,
+    );
+    expect(fullSonarr.unsupportedOperations).toHaveLength(boundedSonarr.unsupportedOperationCount);
+    // Enumerating is additive: the bounded report is the full one minus the
+    // two lists, so nothing a caller can act on is withheld by the default.
+    expect(boundedSonarr.supportedOperations).toEqual(fullSonarr.supportedOperations);
+    expect(capabilitiesOutputSchema.safeParse(bounded).success).toBe(true);
+    expect(capabilitiesOutputSchema.safeParse(full).success).toBe(true);
+
+    // The payload is the point, but only the direction of the difference is an
+    // invariant. How much smaller the bounded report is depends on how much of
+    // the inventory is still unimplemented, and that shrinks with every domain
+    // change that lands, so a ratio here would fail for reasons that have
+    // nothing to do with bounding.
+    expect(JSON.stringify(bounded).length).toBeLessThan(JSON.stringify(full).length);
+  });
+
   it("reports an unconfigured application without contacting anything", async () => {
     const requested: string[] = [];
     const context = createTestToolContext({
@@ -107,13 +194,13 @@ describe("arr_capabilities", () => {
     const result = await reportCapabilities(context, undefined);
 
     expect(requested).toEqual(["https://sonarr.example.invalid/sonarr/api/v3/system/status"]);
-    expect(reportFor(result, "radarr")).toMatchObject({
+    expect(reportFor(result, "radarr")).toEqual({
       state: "unconfigured",
       apiVersion: "v3",
       minimumVersion: "6.3.0.10514",
       supportedOperations: [],
-      unsupportedOperations: [],
-      unimplementedOperations: [],
+      unsupportedOperationCount: 0,
+      unimplementedOperationCount: 0,
     });
     expect("version" in reportFor(result, "radarr")).toBe(false);
     expect(result.applications[1]?.warnings).toEqual([
@@ -142,12 +229,12 @@ describe("arr_capabilities", () => {
 
     expect(result.status).toBe("ok");
     expect(reportFor(result, "sonarr").state).toBe("available");
-    expect(reportFor(result, "sonarr").unimplementedOperations.length).toBeGreaterThan(0);
+    expect(reportFor(result, "sonarr").unimplementedOperationCount).toBeGreaterThan(0);
     expect(reportFor(result, "radarr")).toMatchObject({
       state: "unavailable",
       supportedOperations: [],
-      unsupportedOperations: [],
-      unimplementedOperations: [],
+      unsupportedOperationCount: 0,
+      unimplementedOperationCount: 0,
     });
 
     const serialized = JSON.stringify(result);
@@ -162,7 +249,7 @@ describe("arr_capabilities", () => {
       fetch: async (url) => jsonResponse(fixtureBody(applicationForUrl(url))),
     });
 
-    const result = await reportCapabilities(context, undefined);
+    const result = await reportCapabilities(context, undefined, "full");
     const sonarr = reportFor(result, "sonarr");
     const prowlarr = reportFor(result, "prowlarr");
 
@@ -180,7 +267,10 @@ describe("arr_capabilities", () => {
         operation.applications.includes("sonarr") && !isImplementedOperation(operation),
     ).length;
     expect(sonarr.unimplementedOperations).toHaveLength(expectedSonarr);
-    expect(sonarr.unimplementedOperations.every((entry) => entry.sideEffect.length > 0)).toBe(true);
+    expect(sonarr.unimplementedOperationCount).toBe(expectedSonarr);
+    expect(
+      (sonarr.unimplementedOperations ?? []).every((entry) => entry.sideEffect.length > 0),
+    ).toBe(true);
   });
 
   it("advertises exactly the operations that already have adapter behavior", async () => {
@@ -189,7 +279,7 @@ describe("arr_capabilities", () => {
       fetch: async (url) => jsonResponse(fixtureBody(applicationForUrl(url))),
     });
 
-    const result = await reportCapabilities(context, undefined);
+    const result = await reportCapabilities(context, undefined, "full");
 
     // Job projection is process-local, so it is usable on every configured
     // application. The library views are advertised exactly where the adapters
@@ -226,7 +316,7 @@ describe("arr_capabilities", () => {
     for (const application of ["sonarr", "radarr", "prowlarr"] as const) {
       const report = reportFor(result, application);
       expect(
-        report.unimplementedOperations
+        (report.unimplementedOperations ?? [])
           .map(operationKey)
           .filter((key) => key.startsWith("arr_library_query/")),
         application,
@@ -254,7 +344,7 @@ describe("arr_capabilities", () => {
       fetch: async () => jsonResponse(fixtureBody("sonarr")),
     });
 
-    const report = reportFor(await reportCapabilities(context, undefined), "sonarr");
+    const report = reportFor(await reportCapabilities(context, undefined, "full"), "sonarr");
 
     expect(report.supportedOperations).toEqual([
       { tool: "arr_library_query", variant: "series", sideEffect: "read" },
@@ -279,10 +369,11 @@ describe("arr_capabilities", () => {
       fetch: async () => jsonResponse(fixtureBody("sonarr")),
     });
 
-    const report = reportFor(await reportCapabilities(context, undefined), "sonarr");
+    const report = reportFor(await reportCapabilities(context, undefined, "full"), "sonarr");
 
     expect(report.state).toBe("available");
     expect(report.supportedOperations).toEqual([]);
+    expect(report.unsupportedOperationCount).toBe(1);
     expect(report.unsupportedOperations).toEqual([
       {
         tool: "arr_library_query",
@@ -413,9 +504,38 @@ describe("arr_capabilities", () => {
 
     const parsed = definition.inputSchema.safeParse({ applications: ["sonarr"] });
     expect(parsed.success).toBe(true);
+    // A caller that names no detail level is the caller this default exists
+    // for, so the argument it never sent has to arrive as `summary`.
+    expect(parsed.success ? parsed.data : undefined).toEqual({
+      applications: ["sonarr"],
+      detail: "summary",
+    });
     const result = await definition.handle(context, parsed.success ? parsed.data : undefined);
 
     expect(result.applications.map((outcome) => outcome.application)).toEqual(["sonarr"]);
     expect(definition.outputSchema.safeParse(result).success).toBe(true);
+
+    const report = capabilityReportSchema.parse(result.applications[0]?.data);
+    expect(report.unimplementedOperations).toBeUndefined();
+    expect(report.unimplementedOperationCount).toBeGreaterThan(0);
+  });
+
+  it("enumerates through the registered definition when full detail is asked for", async () => {
+    const definition = findToolDefinition("arr_capabilities");
+    if (definition === undefined) {
+      throw new Error("arr_capabilities must be registered");
+    }
+    const context = createTestToolContext({
+      environment: allApplicationsEnvironment,
+      fetch: async (url) => jsonResponse(fixtureBody(applicationForUrl(url))),
+    });
+
+    const parsed = definition.inputSchema.safeParse({ applications: ["sonarr"], detail: "full" });
+    expect(parsed.success).toBe(true);
+    const result = await definition.handle(context, parsed.success ? parsed.data : undefined);
+    const report = capabilityReportSchema.parse(result.applications[0]?.data);
+
+    expect(report.unimplementedOperationCount).toBeGreaterThan(0);
+    expect(report.unimplementedOperations).toHaveLength(report.unimplementedOperationCount);
   });
 });
