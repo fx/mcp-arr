@@ -409,6 +409,10 @@ describe("schema and resource fingerprints", () => {
     const schema = (await fixtureBody<readonly UpstreamRecord[]>("sonarr", "indexer/schema")).map(
       (template) => ({
         ...template,
+        // Re-cased, not renamed: the same template is selected and the same
+        // write is produced, so a digest that moved for it would expire every
+        // plan over a spelling.
+        implementation: String(template.implementation).toLowerCase(),
         implementationName: "Newznab (renamed)",
         fields: [...(template.fields as readonly UpstreamRecord[])]
           .reverse()

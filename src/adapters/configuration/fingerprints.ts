@@ -97,11 +97,20 @@ function templateFor(
   return templates.find((template) => template.implementation.toLowerCase() === implementation);
 }
 
-/** The part of a template a write's meaning actually depends on. */
+/**
+ * The part of a template a write's meaning actually depends on.
+ *
+ * The two identifiers are folded to lower case because that is how they are
+ * matched: {@link templateFor} finds this template by a case-insensitive
+ * implementation, so an instance that re-cased its own name selects the same
+ * template and produces the same write, and a digest that moved for it would
+ * expire every plan over a spelling. A field name keeps its case, because the
+ * writer matches one exactly.
+ */
 function semanticsOf(template: ProviderTemplate): unknown {
   return {
-    implementation: template.implementation,
-    configContract: template.configContract,
+    implementation: template.implementation.toLowerCase(),
+    configContract: template.configContract?.toLowerCase(),
     fields: template.fields
       .map((field) => ({ name: field.name, type: field.type, secret: field.secret }))
       .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0)),

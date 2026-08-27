@@ -33,22 +33,28 @@ import {
  * The desired-state reconciliation runtime.
  *
  * One reconciliation is always the same sequence, whether it is being planned
- * or applied: compile the desired state into typed writes, read the current
- * resource, read only the dependency lists that desired state points at, check
- * the plan's preconditions if one is being applied, validate the pointers, and
+ * or applied: check that a plan being applied brought exactly the credentials
+ * it disclosed, compile the desired state into typed writes, read the current
+ * resource, read only the dependency lists that desired state points at,
+ * fingerprint the provider schema the record's fields are defined by, check the
+ * plan's preconditions if one is being applied, validate the pointers, and
  * build the complete resource the write would send. Planning stops there;
- * applying sends it.
+ * applying sends it and reads back what the instance stored.
  *
  * Running the identical sequence for both is the point. A plan that was
  * produced by different code than the apply would describe something the apply
- * does not do, and a caller would have no way to tell.
+ * does not do, and a caller would have no way to tell. It is also why planning
+ * a credential change requires the credential: the plan validates the request
+ * it would send, rather than an approximation of it.
  *
- * Two things this deliberately does not do yet, because they belong to later
- * work on this change: it does not accept transient secret values, so a
- * credential can only be cleared rather than set, and it does not re-read the
- * resource afterwards to verify what the instance stored. Neither absence is
- * hidden — a patch naming a credential is refused with the reason, and an apply
- * reports what it sent rather than claiming the instance agreed.
+ * A credential lives for exactly this call. The bundle is erased in an outer
+ * `finally`, so a refusal, a thrown upstream read, and a completed write all
+ * leave it empty, and nothing this returns has a field a value could travel in.
+ *
+ * One thing this deliberately does not do yet, because it belongs to the last
+ * subtask of this change: it has no typed provider-test intent and no explicit
+ * validation-bypass variant, so it never asks an instance to contact an
+ * external system and never sends `forceSave`.
  */
 
 export interface ConfigurationReconcileRequest {
