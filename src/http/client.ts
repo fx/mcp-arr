@@ -168,10 +168,14 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
         throw fail(timedOut ? "timeout" : "unavailable");
       }
 
-      if (payload.trim() === "") {
-        // An accepted write that answers with no content is not a broken
-        // response, and a read that does is caught by the adapter schema that
-        // was expecting a payload.
+      // Only a write may answer with no content. Several upstream writes do,
+      // and treating that as a broken response would fail a request the
+      // instance accepted. A read is held to its payload exactly as it always
+      // was: an empty body falls through to the parse below and is reported as
+      // an unexpected response carrying the status, because a read that
+      // returned nothing has not answered the question it was asked, and
+      // losing that status would leave the caller with less than it had.
+      if (method !== "GET" && payload.trim() === "") {
         return undefined;
       }
 

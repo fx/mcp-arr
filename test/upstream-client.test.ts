@@ -251,6 +251,22 @@ describe("createUpstreamClient", () => {
     await expect(client.put("series/12", { id: 12 })).resolves.toBeUndefined();
   });
 
+  it("accepts an empty body from a write and refuses one from a read", async () => {
+    // The same status and the same empty body, answered differently by method.
+    // A write that says nothing was still accepted; a read that says nothing
+    // has not answered the question it was asked, and reporting it as an
+    // unexpected response is what keeps the status with the failure.
+    const { client: writer } = harness(() => new Response("", { status: 200 }));
+    await expect(writer.post("series", { title: "Example" })).resolves.toBeUndefined();
+    await expect(writer.put("series/12", { id: 12 })).resolves.toBeUndefined();
+
+    const { client: reader } = harness(() => new Response("", { status: 200 }));
+    const error = await captureError(reader.get("series"));
+    expect(error.kind).toBe("unexpected-response");
+    expect(error.status).toBe(200);
+    expect(error.operation).toBe("series");
+  });
+
   it("redacts a failed write exactly as it redacts a failed read", async () => {
     const secret = "sensitive-title-value";
 
