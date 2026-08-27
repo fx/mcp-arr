@@ -19,6 +19,7 @@ import {
   type ReplacementSearch,
 } from "../adapters/activity/transitions.js";
 import { isMediaApplication, type MediaApplication } from "../adapters/library/model.js";
+import type { ApplicationId } from "../applications.js";
 import type { UpstreamClient } from "../http/client.js";
 import type {
   ApplyReconciliation,
@@ -103,9 +104,17 @@ function isQueueResolveContext(value: unknown): value is QueueResolveContext {
   );
 }
 
+/**
+ * One refusal, named for the application it is actually about.
+ *
+ * The parameter is the unnarrowed identifier rather than a media application on
+ * purpose: the one refusal that fires for a non-media application has to name
+ * that application, and a signature that could not express it is what led to a
+ * constant standing in for it.
+ */
 function toolError(
   code: "invalid_input" | "unsupported_capability" | "conflict" | "stale_reference",
-  application: MediaApplication,
+  application: ApplicationId,
   message: string,
 ): ToolError {
   return createToolError({ code, message: `${application}: ${message}`, application });
@@ -254,9 +263,7 @@ export const queueResolvePreconditions: PreconditionReader = async (invocation) 
     return blocked(
       toolError(
         "unsupported_capability",
-        // Narrowed for the message only; Prowlarr has no queue and the registry
-        // declares these variants for the media applications alone.
-        "sonarr",
+        application,
         "this application has no managed-download queue",
       ),
     );
@@ -442,7 +449,7 @@ async function applyItems(
       continue;
     }
 
-    const claim = perItemClaim(invocation, context, item.reference);
+    const claim = perItemClaim(invocation, context, item);
     let record: string | undefined;
     if (claim !== undefined) {
       const attempt = invocation.state.applies.begin(claim);
@@ -572,12 +579,13 @@ async function reconcileLostItem(
  * The claim one item's own apply record is created from, or `undefined` where
  * it needs none.
  *
- * Two cases need none. A transition that sends nothing — the routed manual
- * import — performs no egress at all, and a receipt for it would record a
- * mutation that never existed. And a selection of exactly one item is already
- * covered: the dispatcher's own record is keyed on that same single-item intent,
- * so creating a second one here would collide with it, be answered as a replay,
- * and stop the mutation being sent at all.
+ * Two cases need none, and they are decided differently on purpose. A
+ * transition that sends nothing — the routed manual import — performs no egress
+ * at all, so it is excluded by what it *is* rather than by any runtime count. A
+ * selection of exactly one item is excluded because the dispatcher's own record
+ * is already keyed on that same single-item intent, so creating a second one
+ * here would collide with it, be answered as a replay, and stop the mutation
+ * being sent at all.
  *
  * For everything else the key is the calling intent narrowed to this one item,
  * which is deliberately the identical key a caller would produce by applying
@@ -588,13 +596,22 @@ async function reconcileLostItem(
 function perItemClaim(
   invocation: OperationInvocation,
   context: QueueResolveContext,
-  reference: string,
+  item: { readonly status: "ok" } & ValidatedItem,
 ): BeginApplyInput | undefined {
+  // Decided from this transition's own kind, not from how many items happen to
+  // be sending. An inspect transition performs no upstream request at all, so
+  // it is categorically not a claiming operation and a record for it would
+  // stand for a mutation that never existed.
+  if (item.transition.action.kind === "inspect") {
+    return undefined;
+  }
+
   // Decided by how many items the *selection* names, not by how many of them
   // will send. Those are different questions, and using the second one left a
   // selection of one valid row beside one stale row with no record for the row
   // that did send — so a later direct apply of it, whose key differs from this
-  // call's, would have sent it a second time.
+  // call's, would have sent it a second time. A mixed selection of inspect and
+  // sending rows therefore still claims for the rows that send.
   if (context.items.length < 2) {
     return undefined;
   }
@@ -605,8 +622,8 @@ function perItemClaim(
     application: context.application,
     intent:
       typeof input === "object" && input !== null
-        ? { ...(input as Record<string, unknown>), items: [reference] }
-        : { items: [reference] },
+        ? { ...(input as Record<string, unknown>), items: [item.reference] }
+        : { items: [item.reference] },
   };
 }
 

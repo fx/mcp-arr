@@ -232,6 +232,8 @@ function deletes(): { route: string; query: URLSearchParams }[] {
 // 502 is the blocked import in the recorded fixture, and 503 the pending release.
 const blockedImport = 502;
 const pendingRelease = 503;
+/** The fixture's other tracked row: warning status, import pending. */
+const importPending = 504;
 
 describe("queue resolution plan mode", () => {
   it("plans a removal without sending anything and discloses its effects", async () => {
@@ -511,6 +513,47 @@ describe("queue resolution apply mode", () => {
     expect(items.find((item) => item.reference === first)?.status).toBe("error");
     expect(items.find((item) => item.reference === second)?.status).toBe("ok");
     expect(bulk.mutation?.receipt?.state).toBe("outcome_unknown");
+  });
+
+  it("claims a record for the sending rows of an inspect-and-send selection", async () => {
+    // Where both per-item defects meet: a selection carrying a routed manual
+    // import beside a row that really sends. The route must claim no record —
+    // it performs no upstream request, so one would stand for a mutation that
+    // never existed — while the sending row must still claim one, which is what
+    // stops a later direct apply of it being sent a second time.
+    const first = await referenceFor(blockedImport);
+    // The other tracked row a manual import can be routed for: the fixture's
+    // import-pending one. The downloading row would be refused on its state,
+    // which is a different test.
+    const second = await referenceFor(importPending);
+
+    const mixed = await run(resolveTool, {
+      intent: "route_to_manual_import",
+      mode: "apply",
+      items: [first, second],
+    });
+    expect(outcomeOf(mixed).items?.every((item) => item.status === "ok")).toBe(true);
+    expect(deletes()).toHaveLength(0);
+
+    // Nothing was recorded for either route, so resolving one of those rows for
+    // real afterwards is still sent rather than answered from a receipt.
+    const sent = await run(resolveTool, {
+      intent: "ignore_tracking",
+      mode: "apply",
+      items: [first, second],
+    });
+    expect(outcomeOf(sent).items?.every((item) => item.status === "ok")).toBe(true);
+    expect(deletes()).toHaveLength(2);
+
+    // And that sending row did claim its own record, so naming it alone now is
+    // answered from the receipt instead of being sent again.
+    const alone = await run(resolveTool, {
+      intent: "ignore_tracking",
+      mode: "apply",
+      items: [first],
+    });
+    expect(alone.applications[0]?.warnings.join(" ")).toContain("already applied");
+    expect(deletes()).toHaveLength(2);
   });
 
   it("answers a repeated apply from its receipt instead of sending again", async () => {
