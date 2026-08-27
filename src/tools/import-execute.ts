@@ -320,12 +320,22 @@ export const importExecutePreconditions: PreconditionReader = async (invocation)
   // destination and the check is repeated for the total.
   const totals = new Map<string, number>();
   for (const file of files) {
-    totals.set(file.destination, (totals.get(file.destination) ?? 0) + (file.sizeBytes ?? 0));
+    if (file.sizeBytes === undefined) {
+      // A file whose size this instance did not report cannot be added to a
+      // total, and treating it as zero would let it through by contributing
+      // nothing — the same shape as substituting an identifier nobody gave.
+      // An unestablished precondition is not a met one.
+      return blocked(
+        fail(
+          invocation,
+          "conflict",
+          "this application reports no size for one of these files, so there is no evidence they fit together",
+        ),
+      );
+    }
+    totals.set(file.destination, (totals.get(file.destination) ?? 0) + file.sizeBytes);
   }
   for (const [destination, bytes] of totals) {
-    if (bytes === 0) {
-      continue;
-    }
     const room = await checkFreeSpace(invocation.adapter.client, application, destination, bytes);
     if (room.status === "insufficient") {
       return blocked(

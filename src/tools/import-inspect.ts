@@ -210,13 +210,21 @@ async function scan(
   }
   const window = { offset: paging.offset, pageSize: input.pageSize };
 
+  // The published schema pairs each source with the reference it requires, so a
+  // missing one is a shape this handler was never given. It is refused rather
+  // than stood in for: an empty token would be resolved, refused, and reported
+  // as a reference the caller supplied, which is not what happened.
+  const token = input.source === "queue_item" ? input.queue : input.media;
+  if (token === undefined) {
+    return {
+      status: "error",
+      error: invalid(invocation, "that source names no reference to inspect"),
+    };
+  }
+
   let result: CandidateScanResult;
   if (input.source === "queue_item") {
-    const resolved = resolveQueueReference(
-      invocation.state.references,
-      input.queue ?? "",
-      application,
-    );
+    const resolved = resolveQueueReference(invocation.state.references, token, application);
     if (!resolved.ok) {
       return { status: "error", error: resolved.error };
     }
@@ -227,7 +235,7 @@ async function scan(
       window,
     );
   } else {
-    const media = mediaIdOf(invocation, input.media ?? "");
+    const media = mediaIdOf(invocation, token);
     if (!media.ok) {
       return { status: "error", error: media.error };
     }
@@ -283,9 +291,15 @@ async function reprocess(
   application: MediaApplication,
   input: InspectInput,
 ): Promise<Awaited<ReturnType<OperationHandler>>> {
+  if (input.candidate === undefined) {
+    return {
+      status: "error",
+      error: invalid(invocation, "reprocessing names no candidate to re-decide"),
+    };
+  }
   const resolved = resolveCandidateReference(
     invocation.state.references,
-    input.candidate ?? "",
+    input.candidate,
     application,
     "candidate",
   );
