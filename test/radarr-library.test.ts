@@ -326,6 +326,92 @@ describe("radarr library reads", () => {
     });
   });
 
+  it("anchors an entry to the release date inside the requested window", async () => {
+    // The recorded movie's three release dates fall in three different months,
+    // and its digital release is the earliest of them — so the fixed digital,
+    // physical, cinema precedence this replaces reported January for every
+    // window, including windows January is nowhere near.
+    async function anchored(start: string, end: string, id: string) {
+      const { outcome } = await run(
+        { view: "calendar", detail: "summary", start, end, paging: paging(25) },
+        serving("calendar"),
+      );
+      const event = calendarEvents(expectOk(outcome).data).find(
+        (candidate) => candidate.media.ref.id === id,
+      );
+      if (event === undefined) {
+        throw new Error(`Expected movie ${id} in the ${start}..${end} window`);
+      }
+      return event;
+    }
+
+    const march = await anchored("2023-03-01", "2023-03-31", "11");
+    expect(march).toMatchObject({
+      start: "2023-03-14T00:00:00Z",
+      // The end follows the anchor rather than trailing the date it replaced.
+      end: "2023-03-14T01:42:00.000Z",
+      radarr: { anchor: "physicalRelease" },
+    });
+
+    // The same movie, a different window: it belongs on a different date, and
+    // says which one.
+    const january = await anchored("2023-01-01", "2023-01-31", "11");
+    expect(january).toMatchObject({
+      start: "2023-01-10T00:00:00Z",
+      end: "2023-01-10T01:42:00.000Z",
+      radarr: { anchor: "digitalRelease" },
+    });
+
+    // A window holding more than one candidate anchors to the earliest of them.
+    const year = await anchored("2023-01-01", "2023-12-31", "11");
+    expect(year).toMatchObject({
+      start: "2023-01-10T00:00:00Z",
+      radarr: { anchor: "digitalRelease" },
+    });
+
+    for (const [event, from, to] of [
+      [march, "2023-03-01", "2023-03-31"],
+      [january, "2023-01-01", "2023-01-31"],
+      [year, "2023-01-01", "2023-12-31"],
+    ] as const) {
+      const start = Date.parse(event.start ?? "");
+      expect(start).toBeGreaterThanOrEqual(Date.parse(`${from}T00:00:00.000Z`));
+      expect(start).toBeLessThanOrEqual(Date.parse(`${to}T23:59:59.999Z`));
+    }
+
+    // A movie Radarr returned whose dates all sit outside the window keeps its
+    // entry, anchored to its earliest candidate and naming it, rather than
+    // being dropped or left dateless.
+    expect(await anchored("2023-03-01", "2023-03-31", "8")).toMatchObject({
+      start: "2021-06-01T00:00:00Z",
+      radarr: { anchor: "inCinemas" },
+    });
+  });
+
+  it("reports no anchor for a movie the instance gave no usable date", async () => {
+    const [recorded] = body("calendar") as readonly Record<string, unknown>[];
+    const undated = without(recorded ?? {}, "inCinemas", "physicalRelease", "digitalRelease");
+
+    const { outcome } = await run(
+      {
+        view: "calendar",
+        detail: "summary",
+        start: "2021-08-01",
+        end: "2021-08-31",
+        paging: paging(25),
+      },
+      () => jsonResponse([undated]),
+    );
+
+    // The record keeps its identity rather than disappearing from the page.
+    expect(calendarEvents(expectOk(outcome).data)[0]).toMatchObject({
+      media: { ref: { kind: "movie", id: "8" } },
+      start: undefined,
+      end: undefined,
+      radarr: undefined,
+    });
+  });
+
   it("looks a movie up without implying an add", async () => {
     const { outcome, calls } = await run(
       { view: "lookup", detail: "summary", term: "example movie", paging: paging(25) },

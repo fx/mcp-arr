@@ -7,9 +7,10 @@ import type {
   MediaFile,
   MediaItem,
   RadarrReleaseDates,
+  RadarrReleaseDateType,
   WantedItem,
 } from "./model.js";
-import { configurationPointer, mediaRef } from "./model.js";
+import { configurationPointer, mediaRef, radarrReleaseDateTypes } from "./model.js";
 import {
   type AdapterPage,
   type PageWindow,
@@ -165,6 +166,81 @@ function releaseDates(movie: RadarrMovie): RadarrReleaseDates {
 /** The instant a movie became available, preferring the most specific date. */
 function releasedAt(movie: RadarrMovie): string | undefined {
   return text(movie.digitalRelease) ?? text(movie.physicalRelease) ?? text(movie.inCinemas);
+}
+
+/** One date a movie could be anchored to, and which of the three it is. */
+interface ReleaseDateCandidate {
+  readonly at: string;
+  readonly type: RadarrReleaseDateType;
+  readonly instant: number;
+}
+
+/**
+ * The inclusive instants a calendar request asked for.
+ *
+ * Both bounds are dates rather than instants and both are inclusive, so the end
+ * covers the whole of its own day. A bound that does not parse yields no window
+ * at all rather than a half-open one, which leaves the anchor to fall back
+ * rather than to be selected against a range that was never asked for.
+ */
+function requestedWindow(
+  request: LibraryRequestFor<"calendar">,
+): { readonly from: number; readonly to: number } | undefined {
+  const from = Date.parse(`${request.start}T00:00:00.000Z`);
+  const to = Date.parse(`${request.end}T23:59:59.999Z`);
+  return Number.isNaN(from) || Number.isNaN(to) ? undefined : { from, to };
+}
+
+/**
+ * A movie's release dates, earliest first.
+ *
+ * A date the instance did not report, or reported unparsably, is left out: it
+ * cannot be shown to fall inside any window, and anchoring to it would report a
+ * start no consumer can place. Two candidates on the same instant keep the
+ * declared order of {@link radarrReleaseDateTypes}, because `sort` is stable.
+ */
+function releaseDateCandidates(movie: RadarrMovie): readonly ReleaseDateCandidate[] {
+  const dates = releaseDates(movie);
+  return radarrReleaseDateTypes
+    .flatMap((type): ReleaseDateCandidate[] => {
+      const at = dates[type];
+      if (at === undefined) {
+        return [];
+      }
+      const instant = Date.parse(at);
+      return Number.isNaN(instant) ? [] : [{ at, type, instant }];
+    })
+    .sort((left, right) => left.instant - right.instant);
+}
+
+/**
+ * The date one calendar entry is anchored to.
+ *
+ * Radarr places a movie in a window when any of its three release dates falls
+ * inside it, so the anchor is selected against the requested window rather than
+ * by a fixed precedence — the same movie belongs on its digital release in one
+ * month and on its physical release in another. The earliest candidate inside
+ * the window wins, which is deterministic and does not depend on which field a
+ * caller happens to care about.
+ *
+ * A movie Radarr returned whose candidates all fall outside the window keeps
+ * its entry and is anchored to its earliest candidate: Radarr was right to
+ * return it, and dropping it or blanking its date would lose a real result. The
+ * anchor names its own date type either way, so a consumer can tell the two
+ * cases apart by comparing the anchor against the window it asked for.
+ */
+function calendarAnchor(
+  movie: RadarrMovie,
+  window: ReturnType<typeof requestedWindow>,
+): ReleaseDateCandidate | undefined {
+  const candidates = releaseDateCandidates(movie);
+  const inside =
+    window === undefined
+      ? undefined
+      : candidates.find(
+          (candidate) => candidate.instant >= window.from && candidate.instant <= window.to,
+        );
+  return inside ?? candidates[0];
 }
 
 function mapMovie(movie: RadarrMovie, detail: DetailLevel): MediaItem {
@@ -424,6 +500,11 @@ export async function listWantedMovies(
  * The dated movie window. Radarr returns only monitored records unless
  * `unmonitored` is set, so an unfiltered query asks for both and a
  * monitored-state filter is applied on top of what comes back.
+ *
+ * Each entry's anchor is selected against the window the caller asked for
+ * rather than by a fixed release-date precedence; see {@link calendarAnchor},
+ * which also defines what a record with no candidate inside the window
+ * anchors to.
  */
 export async function listCalendar(
   client: UpstreamClient,
@@ -436,6 +517,7 @@ export async function listCalendar(
     { start: request.start, end: request.end, unmonitored: request.monitored !== true },
     movieSchema,
   );
+  const requested = requestedWindow(request);
 
   return projectPage({
     source: movies,
@@ -443,12 +525,14 @@ export async function listCalendar(
     include: (movie) =>
       request.monitored === undefined || (flag(movie.monitored) ?? false) === request.monitored,
     map: (movie): CalendarEvent => {
-      const start = releasedAt(movie);
+      const anchor = calendarAnchor(movie, requested);
+      const start = anchor?.at;
       return {
         media: mapMovie(movie, request.detail),
         start,
         end: endOf(start, count(movie.runtime)),
         hasFile: flag(movie.hasFile) ?? false,
+        radarr: anchor === undefined ? undefined : { anchor: anchor.type },
       };
     },
   });

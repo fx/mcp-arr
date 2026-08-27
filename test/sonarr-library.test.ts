@@ -379,6 +379,9 @@ describe("sonarr library reads", () => {
       hasFile: true,
       media: { ref: { kind: "episode", id: "1001" } },
     });
+    // An episode has a single air date, so a Sonarr entry names no anchor and
+    // carries no Radarr-only field.
+    expect(calendarEvents(ok.data).every((event) => event.radarr === undefined)).toBe(true);
 
     const monitoredOnly = await run(
       {
