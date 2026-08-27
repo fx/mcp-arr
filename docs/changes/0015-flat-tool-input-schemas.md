@@ -5,7 +5,7 @@
 Publish every tool input as a single flat object whose properties are the union of every variant's arguments, and move the per-variant structure into documentation generated from the same union that validates the input. Thirteen of the fifteen tools currently publish a root `oneOf` or `anyOf`, and a host that refuses a root combinator drops them all. Runtime validation is untouched: the same discriminated unions accept and reject exactly what they do today, with byte-identical messages.
 
 **Spec:** [Tool Contracts](../specs/tool-contracts/)
-**Status:** in-progress
+**Status:** complete
 **Depends On:** [0012](./0012-published-tool-schemas.md)
 
 ## Motivation
@@ -125,23 +125,23 @@ Change [0012](./0012-published-tool-schemas.md) recorded two decisions this chan
 
 ## Tasks
 
-- [ ] Pin what must not change before changing anything
-  - [ ] Add a rejection-message test to `test/tool-schemas.test.ts` covering each message-producing mechanism — unknown property, undeclared discriminator value, a variant-required property omitted, a wrong reference kind, a plan reference combined with a restated intent, and a `.refine`-backed rejection — with the exact strings captured by running against the unmodified implementation
-  - [ ] Extend the wire-reading test in `test/tool-stdio.test.ts` to assert for all fifteen tools that the published root carries no `anyOf`, `oneOf`, or `allOf`, that its `type` is `object`, and that `additionalProperties` is `false`, and confirm it fails against the unmodified implementation
-  - [ ] Add the property-key regex and structural well-formedness assertions over the existing closed keyword set, without adding a meta-schema dependency
-- [ ] Publish a flat object root for every variant union
-  - [ ] Create `src/tools/schemas/publish.ts`, move `variantUnion` into it with a rewritten doc comment, and implement branch collection, property merging, `required` intersection, and the generated variant documentation
-  - [ ] Repoint the thirteen call sites and register the new module in `scripts/verify-package.mjs`
-  - [ ] Allow `description` in the test validator's annotation keywords, and remove the per-tool published-contract block in `test/library-change-stdio.test.ts` that the generic coverage replaces
-  - [ ] Confirm the root-combinator guard is now green and that every `safeParse`-based assertion still passes unedited
-- [ ] Cover every union branch against the published schema
-  - [ ] Add a per-branch sample-argument table to `test/support/tool-context.ts` and round-trip every entry against both the published schema and the tool's own input schema
-  - [ ] Add the completeness guard that ties the table to the published discriminator enum and to the plan-reference form
-  - [ ] Assert the generated documentation names every discriminator value, every branch's arguments, the exclusivity header, and the discriminator-scoped value sets
-- [ ] Record the contract
-  - [ ] Amend the Tool Contracts spec for the flat published root, the generated variant documentation, and the deliberate looseness, with a changelog row
-  - [ ] Add the supersession pointers to `docs/changes/0012-published-tool-schemas.md` and soften the README's claim about published input schemas
-  - [ ] Tick these tasks and set the status to complete in the change document, `docs/index.yml`, and `docs/index.md`
+- [x] Pin what must not change before changing anything
+  - [x] Add a rejection-message test to `test/tool-schemas.test.ts` covering each message-producing mechanism — unknown property, undeclared discriminator value, a variant-required property omitted, a wrong reference kind, a plan reference combined with a restated intent, and a `.refine`-backed rejection — with the exact strings captured by running against the unmodified implementation
+  - [x] Extend the wire-reading test in `test/tool-stdio.test.ts` to assert for all fifteen tools that the published root carries no `anyOf`, `oneOf`, or `allOf`, that its `type` is `object`, and that `additionalProperties` is `false`, and confirm it fails against the unmodified implementation
+  - [x] Add the property-key regex and structural well-formedness assertions over the existing closed keyword set, without adding a meta-schema dependency
+- [x] Publish a flat object root for every variant union
+  - [x] Create `src/tools/schemas/publish.ts`, move `variantUnion` into it with a rewritten doc comment, and implement branch collection, property merging, `required` intersection, and the generated variant documentation
+  - [x] Repoint the thirteen call sites and register the new module in `scripts/verify-package.mjs`
+  - [x] Allow `description` in the test validator's annotation keywords, and remove the per-tool published-contract block in `test/library-change-stdio.test.ts` that the generic coverage replaces
+  - [x] Confirm the root-combinator guard is now green and that every `safeParse`-based assertion still passes unedited
+- [x] Cover every union branch against the published schema
+  - [x] Add a per-branch sample-argument table to `test/support/tool-context.ts` and round-trip every entry against both the published schema and the tool's own input schema
+  - [x] Add the completeness guard that ties the table to the published discriminator enum and to the plan-reference form
+  - [x] Assert the generated documentation names every discriminator value, every branch's arguments, the exclusivity header, and the discriminator-scoped value sets
+- [x] Record the contract
+  - [x] Amend the Tool Contracts spec for the flat published root, the generated variant documentation, and the deliberate looseness, with a changelog row
+  - [x] Add the supersession pointers to `docs/changes/0012-published-tool-schemas.md` and soften the README's claim about published input schemas
+  - [x] Tick these tasks and set the status to complete in the change document, `docs/index.yml`, and `docs/index.md`
 
 ## Open Questions
 

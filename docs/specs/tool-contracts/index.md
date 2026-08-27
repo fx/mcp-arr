@@ -25,10 +25,10 @@ Related behavior:
 - Tool inputs MUST reject unknown properties.
 - Domain variants MUST use typed discriminated unions rather than arbitrary operation names or argument objects.
 - A published input schema MUST be an object schema that describes every argument the tool accepts, and a tool that accepts arguments MUST NOT publish a schema declaring none.
-- Domain variants MUST be published as declared alternatives of that object schema, so a caller can discover every variant and its arguments without invoking the tool.
-- The input schema a tool publishes MUST be the schema its arguments are validated against, so no argument object is refused for a schema-level constraint the caller was never shown.
+- Domain variants MUST be discoverable from the published input schema without invoking the tool: the discriminator MUST publish the complete set of accepted values, every variant's arguments MUST appear as properties of that object schema, and each variant's required and optional arguments — including any value set narrower than the published property allows — MUST be described in documentation generated from the same union that validates the input, so the description cannot drift from what is accepted. A published schema MUST NOT rely on a root-level `anyOf`, `oneOf`, or `allOf`, which hosts drop.
+- Every value the published input schema admits for a single property MUST be a value some accepted variant admits, and every argument a tool accepts MUST be admitted by its published schema. Where a constraint holds only between properties — a variant's required arguments, a value set scoped by the discriminator, or two forms that may not be combined — the published schema MAY be broader than validation, and the constraint MUST then be described in the generated variant documentation rather than left discoverable only by triggering a validation error.
 
-This parity is about the argument schema only. Rejections that a schema cannot express — an expired or wrong-kind reference, an unsupported application or version, a bulk combination the upstream handler cannot process, or any current-state precondition — remain governed by the specification that owns them.
+This parity is about the argument schema only. Cross-property correlations disclosed as documentation, and rejections a schema cannot express — an expired or wrong-kind reference, an unsupported application or version, a bulk combination the upstream handler cannot process, or any current-state precondition — remain governed by the specification that owns them.
 - The server MUST NOT expose a generic HTTP, upstream endpoint, provider action, command-name, or filesystem-path dispatcher.
 
 #### Scenario: Reject an unknown operation
@@ -41,7 +41,7 @@ This parity is about the argument schema only. Rejections that a schema cannot e
 
 - **GIVEN** a caller has listed the available tools and has never invoked them
 - **WHEN** it reads the published input schema of a tool that accepts typed variants
-- **THEN** every accepted variant and its arguments are described there, and no variant is discoverable only by triggering a validation error
+- **THEN** the published schema names every accepted variant in its discriminator, publishes every argument any variant accepts, and describes each variant's own required and optional arguments in generated documentation, so no variant and no per-variant requirement is discoverable only by triggering a validation error
 
 ### Capabilities
 
@@ -197,3 +197,4 @@ None.
 | 2026-08-25 | Initial desired-state specification created | [0002-tool-runtime](../../changes/0002-tool-runtime.md) |
 | 2026-08-26 | Published input schemas required to describe every accepted variant | [0012-published-tool-schemas](../../changes/0012-published-tool-schemas.md) |
 | 2026-08-26 | Error summaries required to carry code and remediation; capability results bounded | [0013-result-summary-fidelity](../../changes/0013-result-summary-fidelity.md) |
+| 2026-08-27 | Published input schemas flattened to one object root; variant detail moved to generated documentation | [0015-flat-tool-input-schemas](../../changes/0015-flat-tool-input-schemas.md) |

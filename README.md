@@ -64,7 +64,7 @@ Minimum supported versions are Sonarr 4.0.19.2979 and Radarr 6.3.0.10514 (both A
 
 ## Implemented surface
 
-All fifteen tools are published with their full input and output schemas, but only some carry behavior yet:
+All fifteen tools are published with their full output schemas, and each publishes every argument it accepts as a property of one object schema, with each variant's own required and optional arguments described in that schema's documentation. Only some carry behavior yet:
 
 - `arr_capabilities` — reports the above.
 - `arr_library_query` — reads Sonarr series, seasons, episodes, episode files, missing and cutoff-unmet episodes; Radarr movies, collections, movie files, missing and cutoff-unmet movies; the calendar and metadata lookup for both. Results are bounded (default 25 records, maximum 100) and a lookup adds nothing.
