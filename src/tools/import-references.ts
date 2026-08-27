@@ -1,3 +1,4 @@
+import { fileIdentityLength } from "../adapters/import/candidates.js";
 import type { ImportCandidate, ImportCandidateContext } from "../adapters/import/model.js";
 import { importSourceKinds } from "../adapters/import/model.js";
 import type { MediaApplication } from "../adapters/library/model.js";
@@ -57,22 +58,49 @@ function candidateFingerprint(candidate: ImportCandidate): string {
 }
 
 /**
+ * The exact shape a file identity may take.
+ *
+ * Checked rather than assumed, and the reason is the whole point of this
+ * module: a bare "non-empty string" test would accept a canonical path or a
+ * download-client identifier, and a reference that stored one would have
+ * defeated the boundary at the last step. Only the digest
+ * {@link fileIdentity} produces matches this.
+ */
+const identityPattern = new RegExp(`^[0-9a-f]{${String(fileIdentityLength)}}$`, "u");
+
+function isFileIdentity(value: unknown): value is string {
+  return typeof value === "string" && identityPattern.test(value);
+}
+
+/**
  * Whether a candidate is one this module will name.
  *
  * Checked *before* anything is minted, and that ordering is the point: a store
  * that had already issued a token for a candidate this server cannot describe
  * would hold an entry nothing can safely resolve, and the refusal would arrive
- * after the damage. A candidate has to know which application it belongs to,
- * which kind of scan produced it, and how to recognize its own file; without
- * all three a later step could not re-read what it was validated against.
+ * after the damage.
+ *
+ * Three things have to hold. The candidate belongs to an application that has a
+ * library. Its file identity is a digest and not something that merely stands
+ * where one should. And it carries whatever its own kind of scan will need to
+ * be re-read later: a tracked candidate without its queue row, or a library
+ * candidate without its media record, could not be revalidated against current
+ * state at all — which is exactly what the later tasks of this change do before
+ * importing anything.
  */
 export function isNameableCandidate(candidate: ImportCandidate): boolean {
-  return (
-    (candidate.application === "sonarr" || candidate.application === "radarr") &&
-    (importSourceKinds as readonly string[]).includes(candidate.sourceKind) &&
-    typeof candidate.fileIdentity === "string" &&
-    candidate.fileIdentity.length > 0
-  );
+  if (candidate.application !== "sonarr" && candidate.application !== "radarr") {
+    return false;
+  }
+  if (!(importSourceKinds as readonly string[]).includes(candidate.sourceKind)) {
+    return false;
+  }
+  if (!isFileIdentity(candidate.fileIdentity)) {
+    return false;
+  }
+  return candidate.sourceKind === "tracked_download"
+    ? candidate.context.queueItemId !== undefined
+    : candidate.context.mediaId !== undefined;
 }
 
 /**
@@ -164,13 +192,16 @@ function storedIdList(value: unknown): StoredField<readonly number[]> {
     : { state: "invalid" };
 }
 
-function storedText(value: unknown): StoredField<string> {
+/**
+ * The retained file identity, held to the digest shape rather than to being a
+ * string. A payload carrying a path where the digest belongs is corrupt, and
+ * corrupt is refused rather than read.
+ */
+function storedIdentity(value: unknown): StoredField<string> {
   if (value === undefined || value === null) {
     return { state: "absent" };
   }
-  return typeof value === "string" && value.length > 0
-    ? { state: "present", value }
-    : { state: "invalid" };
+  return isFileIdentity(value) ? { state: "present", value } : { state: "invalid" };
 }
 
 /**
@@ -221,7 +252,7 @@ export function resolveCandidateReference(
     };
   }
 
-  const fileIdentity = storedText(detail.fileIdentity);
+  const fileIdentity = storedIdentity(detail.fileIdentity);
   const candidateId = storedId(detail.candidateId);
   const queueItemId = storedId(detail.queueItemId);
   const mediaId = storedId(detail.mediaId);
@@ -244,6 +275,20 @@ export function resolveCandidateReference(
     sizeBytes.state === "invalid" ||
     existingFileId.state === "invalid"
   ) {
+    return {
+      ok: false,
+      error: invalid(application, `${property} does not name an import candidate`),
+    };
+  }
+
+  // The same requirement the mint enforced, checked again on the way out: a
+  // payload that lost the queue row a tracked candidate is re-read through
+  // would resolve into a context no later step could revalidate.
+  const required =
+    sourceKind === "tracked_download"
+      ? queueItemId.state === "present"
+      : mediaId.state === "present";
+  if (!required) {
     return {
       ok: false,
       error: invalid(application, `${property} does not name an import candidate`),

@@ -11,7 +11,6 @@ import {
   parseUpstream,
   present,
   text,
-  textList,
   upstreamId,
   upstreamText,
 } from "../library/parse.js";
@@ -331,9 +330,31 @@ function candidateQuality(record: UpstreamCandidate): ImportQuality | undefined 
   });
 }
 
+/**
+ * A list of upstream labels, each sanitized rather than merely trimmed.
+ *
+ * `textList` normalizes; it does not scrub. Every member of these lists is a
+ * name an operator or an indexer chose — a custom format, a language, an
+ * indexer flag — so any of them can carry a path, a URL, or an identifier, and
+ * on this surface that is the one thing that must not travel. A member that is
+ * entirely redacted is dropped rather than returned as a marker, because a
+ * label that says only "[redacted path]" names nothing a caller can use.
+ */
+function safeLabelList(
+  values: readonly (string | null | undefined)[] | null | undefined,
+): readonly string[] | undefined {
+  if (!Array.isArray(values)) {
+    return undefined;
+  }
+  const cleaned = values
+    .map((value) => safeLabel(value))
+    .filter((value): value is string => value !== undefined && !value.startsWith("[redacted"));
+  return cleaned.length === 0 ? undefined : cleaned;
+}
+
 function indexerFlagNames(value: unknown): readonly string[] | undefined {
   return Array.isArray(value)
-    ? textList(value.filter((flagName): flagName is string => typeof flagName === "string"))
+    ? safeLabelList(value.filter((flagName): flagName is string => typeof flagName === "string"))
     : undefined;
 }
 
@@ -384,10 +405,10 @@ export function mapCandidate(
         ? undefined
         : episodeIds.map((id) => mediaRef("sonarr", "episode", id)),
     quality: candidateQuality(record),
-    languages: textList((record.languages ?? []).map((language) => language.name)),
+    languages: safeLabelList((record.languages ?? []).map((language) => language.name)),
     releaseGroup: safeLabel(record.releaseGroup),
     releaseType: safeLabel(record.releaseType),
-    customFormats: textList((record.customFormats ?? []).map((format) => format.name)),
+    customFormats: safeLabelList((record.customFormats ?? []).map((format) => format.name)),
     customFormatScore: count(record.customFormatScore),
     indexerFlags: indexerFlagNames(record.indexerFlags),
     decision: decisionFor(rejections),

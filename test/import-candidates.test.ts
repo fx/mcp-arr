@@ -222,6 +222,44 @@ describe("candidate disclosure", () => {
     expect(serialized).not.toContain("Season 02/");
   });
 
+  it("scrubs every upstream label, not only the free-text ones", async () => {
+    // A custom format, a language, and an indexer flag are all names somebody
+    // chose, so any of them can carry a path or an identifier. They are
+    // sanitized rather than merely trimmed, which a normalizing list helper
+    // would not have done.
+    const canaryPath = "/media/private/secret-library/file.mkv";
+    const canaryId = "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1";
+    const rows = await activityFixture<Array<Record<string, unknown>>>("sonarr", "manualimport");
+    const laced = rows.map((row, index) =>
+      index === 0
+        ? {
+            ...row,
+            customFormats: [
+              { id: 9, name: canaryPath },
+              { id: 10, name: "Example Format" },
+            ],
+            languages: [{ id: 1, name: canaryId }],
+            indexerFlags: [canaryPath, "freeleech"],
+          }
+        : row,
+    );
+    const harness = libraryHarness("sonarr", () => jsonResponse(laced));
+    const scanned = await readCandidates(harness.client, sonarrScan);
+    const serialized = JSON.stringify(scanned.candidates);
+
+    // A control, so the assertions below cannot pass for the wrong reason.
+    expect(JSON.stringify(laced)).toContain(canaryPath);
+    expect(JSON.stringify(laced)).toContain(canaryId);
+
+    expect(serialized).not.toContain(canaryPath);
+    expect(serialized).not.toContain(canaryId);
+    expect(serialized).not.toContain("/media/private");
+    // What was not a path survives, so the scrubbing is not simply dropping the
+    // fields.
+    expect(scanned.candidates[0]?.customFormats).toEqual(["Example Format"]);
+    expect(scanned.candidates[0]?.indexerFlags).toEqual(["freeleech"]);
+  });
+
   it("scrubs a rejection that quotes the path it objected to", async () => {
     const { candidates } = await scan("sonarr", sonarrScan);
     const reason = candidates[1]?.decision.rejections[0]?.reason ?? "";
@@ -286,11 +324,76 @@ describe("candidate references", () => {
     const candidate = await firstCandidate();
     const before = references.size();
 
-    // The kind is checked before minting, so a candidate this module cannot
+    // Everything is checked before minting, so a candidate this module cannot
     // describe leaves no entry behind that nothing could resolve.
-    expect(mintCandidateReference(references, { ...candidate, fileIdentity: "" })).toBeUndefined();
-    expect(isNameableCandidate({ ...candidate, fileIdentity: "" })).toBe(false);
+    const unnameable: readonly ImportCandidate[] = [
+      { ...candidate, fileIdentity: "" },
+      // The whole reason the identity is held to the digest shape: a path
+      // standing where a digest belongs would otherwise be stored verbatim.
+      { ...candidate, fileIdentity: "/media/example/downloads/complete/file.mkv" },
+      { ...candidate, fileIdentity: candidate.fileIdentity.toUpperCase() },
+      // A tracked candidate with no queue row cannot be re-read later, so it is
+      // not nameable either.
+      { ...candidate, context: { ...candidate.context, queueItemId: undefined } },
+    ];
+
+    for (const rejected of unnameable) {
+      expect(isNameableCandidate(rejected)).toBe(false);
+      expect(mintCandidateReference(references, rejected)).toBeUndefined();
+    }
     expect(references.size()).toBe(before);
+
+    // A library-context candidate is nameable on its media record instead.
+    expect(
+      isNameableCandidate({
+        ...candidate,
+        sourceKind: "library_context",
+        context: { ...candidate.context, sourceKind: "library_context", queueItemId: undefined },
+      }),
+    ).toBe(true);
+  });
+
+  it("refuses a stored identity that is not a digest", async () => {
+    const references = store();
+    const candidate = await firstCandidate();
+    const reference = mintCandidateReference(references, candidate) as string;
+
+    references.update(reference, "import_candidate", {
+      kind: "domain",
+      snapshot: {
+        upstreamId: "3001",
+        fingerprint: "x",
+        detail: {
+          kind: "import_candidate",
+          sourceKind: "tracked_download",
+          queueItemId: 502,
+          fileIdentity: "/media/example/downloads/complete/file.mkv",
+        },
+      },
+    });
+
+    expect(resolveCandidateReference(references, reference, "sonarr").ok).toBe(false);
+  });
+
+  it("refuses a stored payload missing what its own kind is re-read through", async () => {
+    const references = store();
+    const candidate = await firstCandidate();
+    const reference = mintCandidateReference(references, candidate) as string;
+
+    references.update(reference, "import_candidate", {
+      kind: "domain",
+      snapshot: {
+        upstreamId: "3001",
+        fingerprint: "x",
+        detail: {
+          kind: "import_candidate",
+          sourceKind: "tracked_download",
+          fileIdentity: candidate.fileIdentity,
+        },
+      },
+    });
+
+    expect(resolveCandidateReference(references, reference, "sonarr").ok).toBe(false);
   });
 
   it("refuses a reference bound to another application", async () => {
