@@ -1,11 +1,16 @@
-import type { ApplicationId } from "../../applications.js";
+import { type ApplicationId, applicationIds } from "../../applications.js";
 import type { UpstreamQuery } from "../../http/client.js";
 import { createToolError, type ToolError } from "../../tools/errors.js";
 import type { Effect } from "../../tools/results.js";
 import { isMediaApplication, type MediaApplication } from "../library/model.js";
 import { meetsMinimumVersion } from "../version.js";
 import type { QueueItemKind, QueueStatus, TrackedDownloadState } from "./model.js";
-import { queueItemKindForStatus } from "./model.js";
+import {
+  queueItemKindForStatus,
+  queueItemKinds,
+  queueStatuses,
+  trackedDownloadStates,
+} from "./model.js";
 
 /**
  * The queue state machine, compiled.
@@ -325,6 +330,73 @@ function describeKind(kind: QueueItemKind): string {
 }
 
 /**
+ * The refusal for a value that is not one of the words it had to be.
+ *
+ * It names no application and interpolates nothing, and both of those are the
+ * point. A value this module does not recognize is a value nothing has
+ * validated, so repeating it — in the message, or in the structured
+ * `application` field a caller reads it from — would return whatever was
+ * supplied, and what was supplied could be anything at all.
+ */
+function unrecognized(message: string): QueueTransitionCompilation {
+  return { status: "rejected", error: createToolError({ code: "invalid_input", message }) };
+}
+
+function isWord<TWord extends string>(value: unknown, allowed: readonly TWord[]): value is TWord {
+  return typeof value === "string" && (allowed as readonly string[]).includes(value);
+}
+
+function isRecordId(value: unknown): boolean {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+/**
+ * Holds every enumerated value in one request to the closed set it belongs to.
+ *
+ * This runs before anything else, because every check after it either branches
+ * on one of these words or names one in a message, and both are unsafe on a
+ * word this module does not know. An unrecognized value is not merely
+ * unhelpful: an intent outside the declared set would be classified as a
+ * pending one by elimination, an unknown status would be read as a finished
+ * tracked download, and a replacement-search choice that is neither `allow` nor
+ * `suppress` would compile as `allow` — starting the replacement search the
+ * caller may have been trying to suppress. Answering `undefined` means every
+ * word held.
+ */
+function checkRequestWords(
+  request: QueueTransitionRequest,
+): QueueTransitionCompilation | undefined {
+  if (!isWord(request.application, applicationIds)) {
+    return unrecognized("the target application is not one this server is configured for");
+  }
+  if (!isWord(request.observed.application, applicationIds)) {
+    return unrecognized("the observed queue item names no application this server knows");
+  }
+  if (!isWord(request.intent, queueResolveIntents)) {
+    return unrecognized("that is not a declared queue-resolution intent");
+  }
+  if (!isWord(request.observed.itemKind, queueItemKinds)) {
+    return unrecognized("the observed queue item reports no queue item kind this server knows");
+  }
+  if (!isWord(request.observed.status, queueStatuses)) {
+    return unrecognized("the observed queue item reports no queue status this server knows");
+  }
+  if (
+    request.observed.trackedState !== undefined &&
+    !isWord(request.observed.trackedState, trackedDownloadStates)
+  ) {
+    return unrecognized("the observed queue item reports no tracked state this server knows");
+  }
+  if (
+    request.replacementSearch !== undefined &&
+    !isWord(request.replacementSearch, replacementSearchChoices)
+  ) {
+    return unrecognized("the replacement-search choice must be allow or suppress");
+  }
+  return undefined;
+}
+
+/**
  * The statuses in which a download has produced nothing to act on yet.
  *
  * Two intents depend on the payload already being there — routing to a manual
@@ -497,18 +569,25 @@ function warningsFor(intent: QueueResolveIntent): readonly string[] {
 /**
  * Compiles one intent against one observed queue row.
  *
- * The order of the checks is the contract. The application, the observed row's
- * own consistency, and the item kind are settled before anything intent-
- * specific, because those refusals hold for every intent; then the
- * replacement-search choice, which is an argument error; then the row's current
- * state, which is a conflict; then the instance's version, which is a
- * capability. Every one of them happens without an upstream request, and a
- * compiled transition is a statement of what a later apply would send, not a
- * permission to send it.
+ * The order of the checks is the contract. Every value that crossed into this
+ * module is first held to the closed set it belongs to, because this compiler
+ * is exported and reachable from anything holding an observed row rather than
+ * only from a caller the published schema already validated. Then the
+ * application, the observed row's own consistency, and the item kind, because
+ * those refusals hold for every intent; then the replacement-search choice,
+ * which is an argument error; then the row's current state, which is a
+ * conflict; then the instance's version, which is a capability. Every one of
+ * them happens without an upstream request, and a compiled transition is a
+ * statement of what a later apply would send, not a permission to send it.
  */
 export function compileQueueTransition(
   request: QueueTransitionRequest,
 ): QueueTransitionCompilation {
+  const checked = checkRequestWords(request);
+  if (checked !== undefined) {
+    return checked;
+  }
+
   const application = request.application;
   if (!isMediaApplication(application)) {
     return unsupported(application, "this application has no managed-download queue");
@@ -518,8 +597,11 @@ export function compileQueueTransition(
   if (observed.application !== application) {
     return invalid(application, "the observed queue item belongs to a different application");
   }
-  if (!Number.isSafeInteger(observed.queueItemId) || observed.queueItemId <= 0) {
+  if (!isRecordId(observed.queueItemId)) {
     return invalid(application, "the observed queue item names no single queue record");
+  }
+  if (observed.mediaId !== undefined && !isRecordId(observed.mediaId)) {
+    return invalid(application, "the observed queue item names no single media record");
   }
   if (!isConsistent(observed)) {
     return invalid(
@@ -539,9 +621,8 @@ export function compileQueueTransition(
 
   // The published input schema already declares the replacement-search choice
   // on `blocklist_and_remove` alone, so a caller cannot supply one elsewhere.
-  // It is checked again here because this module is reachable from anything
-  // holding an observed row, and a choice that was silently ignored would be a
-  // caller believing it suppressed a search that was never at issue.
+  // It is checked again here because a choice that was silently ignored would
+  // be a caller believing it suppressed a search that was never at issue.
   if (intent !== "blocklist_and_remove" && request.replacementSearch !== undefined) {
     return invalid(
       application,
@@ -656,16 +737,21 @@ export type QueueBatchCompilation =
  * all of them.
  *
  * The empty selection is the one whole-call refusal, because there is no row
- * whose outcome could carry it.
+ * whose outcome could carry it. Its message names the application only once
+ * that application has been recognized, for the reason {@link unrecognized}
+ * gives: an empty selection is no excuse to echo an unvalidated value back.
  */
 export function compileQueueTransitions(batch: QueueTransitionBatch): QueueBatchCompilation {
   if (batch.items.length === 0) {
+    const known = isWord(batch.application, applicationIds);
     return {
       status: "rejected",
       error: createToolError({
         code: "invalid_input",
-        message: `${batch.application}: name at least one queue item to resolve`,
-        application: batch.application,
+        message: known
+          ? `${batch.application}: name at least one queue item to resolve`
+          : "name at least one queue item to resolve",
+        ...(known ? { application: batch.application } : {}),
       }),
     };
   }

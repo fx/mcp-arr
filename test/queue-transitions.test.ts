@@ -377,6 +377,72 @@ describe("queue item kind validation", () => {
   });
 });
 
+describe("values that crossed an untyped boundary", () => {
+  /**
+   * The compiler is exported, so its arguments can arrive from somewhere the
+   * published schema never validated. Each case below is a word outside the
+   * closed set it belongs to, cast in because that is exactly the situation the
+   * guard exists for: the type system is what is missing in the case under
+   * test.
+   */
+  const canary = "SUPPLIED-VALUE-a1b2c3";
+
+  function compileWith(overrides: Record<string, unknown>): QueueTransitionCompilation {
+    return compileQueueTransition({
+      application: "sonarr",
+      version: versions.sonarr,
+      intent: "ignore_tracking",
+      observed: tracked("sonarr"),
+      ...overrides,
+    } as Parameters<typeof compileQueueTransition>[0]);
+  }
+
+  it.each([
+    ["application", { application: canary }],
+    ["observed application", { observed: { ...tracked("sonarr"), application: canary } }],
+    ["intent", { intent: canary }],
+    ["item kind", { observed: { ...tracked("sonarr"), itemKind: canary } }],
+    ["status", { observed: { ...tracked("sonarr"), status: canary } }],
+    ["tracked state", { observed: { ...tracked("sonarr"), trackedState: canary } }],
+    ["replacement-search choice", { intent: "blocklist_and_remove", replacementSearch: canary }],
+  ])("refuses an unrecognized %s without repeating what it was given", (_name, overrides) => {
+    const error = expectRejected(compileWith(overrides));
+
+    expect(error.code).toBe("invalid_input");
+    // Neither half of the error may carry the value back: a word nothing
+    // validated could be anything at all, including a credential.
+    expect(JSON.stringify(error)).not.toContain(canary);
+    expect(error.application).toBeUndefined();
+  });
+
+  it("never compiles an unrecognized replacement-search choice as an allowed search", () => {
+    // The failure this guards is silent and one-directional: a value that is
+    // neither word would otherwise compile as `allow` and start the very search
+    // a caller supplying it may have been trying to suppress.
+    const compilation = compileWith({
+      intent: "blocklist_and_remove",
+      replacementSearch: "definitely-not-a-choice",
+    });
+
+    expect(compilation.status).toBe("rejected");
+  });
+
+  it("does not name an unrecognized application even when the selection is empty", () => {
+    const batch = compileQueueTransitions({
+      application: canary,
+      version: versions.sonarr,
+      intent: "ignore_tracking",
+      items: [],
+    } as unknown as Parameters<typeof compileQueueTransitions>[0]);
+
+    if (batch.status !== "rejected") {
+      throw new Error("Expected the empty selection to be refused");
+    }
+    expect(JSON.stringify(batch.error)).not.toContain(canary);
+    expect(batch.error.message).toContain("at least one queue item");
+  });
+});
+
 describe("impossible intent combinations", () => {
   it("requires an explicit replacement-search choice to blocklist and remove", () => {
     const error = expectRejected(compile("sonarr", "blocklist_and_remove", tracked("sonarr")));
