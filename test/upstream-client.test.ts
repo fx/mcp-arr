@@ -212,6 +212,147 @@ describe("createUpstreamClient", () => {
     expect(readError.message).not.toContain(apiKey);
   });
 
+  it("sends a write as JSON without disturbing how a read is sent", async () => {
+    const { client, calls } = harness(() => json({ id: 12 }));
+
+    await expect(client.post("series", { title: "Example Series" })).resolves.toEqual({ id: 12 });
+    await expect(
+      client.put("series/12", { id: 12, monitored: false }, { moveFiles: false }),
+    ).resolves.toEqual({
+      id: 12,
+    });
+
+    const created = calls[0];
+    expect(created?.url).toBe("https://sonarr.example.invalid/sonarr/api/v3/series");
+    expect(created?.init.method).toBe("POST");
+    expect(created?.init.body).toBe(JSON.stringify({ title: "Example Series" }));
+    const createdHeaders = new Headers(created?.init.headers);
+    // A write carries the same credential and the same base prefix a read
+    // does; the only difference is the body and the type that describes it.
+    expect(createdHeaders.get("X-Api-Key")).toBe(apiKey);
+    expect(createdHeaders.get("Accept")).toBe("application/json");
+    expect(createdHeaders.get("Content-Type")).toBe("application/json");
+    expect(created?.init.signal).toBeInstanceOf(AbortSignal);
+
+    const replaced = calls[1];
+    expect(replaced?.url).toBe(
+      "https://sonarr.example.invalid/sonarr/api/v3/series/12?moveFiles=false",
+    );
+    expect(replaced?.init.method).toBe("PUT");
+    expect(replaced?.init.body).toBe(JSON.stringify({ id: 12, monitored: false }));
+  });
+
+  it("resolves a write the instance accepted without a body", async () => {
+    const { client } = harness(() => new Response(null, { status: 204 }));
+
+    // Several upstream writes answer with no content. That is an accepted
+    // request, not a body this server failed to parse.
+    await expect(client.post("series", { title: "Example" })).resolves.toBeUndefined();
+    await expect(client.put("series/12", { id: 12 })).resolves.toBeUndefined();
+  });
+
+  it("accepts an empty body from a write and refuses one from a read", async () => {
+    // The same status and the same empty body, answered differently by method.
+    // A write that says nothing was still accepted; a read that says nothing
+    // has not answered the question it was asked, and reporting it as an
+    // unexpected response is what keeps the status with the failure.
+    const { client: writer } = harness(() => new Response("", { status: 200 }));
+    await expect(writer.post("series", { title: "Example" })).resolves.toBeUndefined();
+    await expect(writer.put("series/12", { id: 12 })).resolves.toBeUndefined();
+
+    const { client: reader } = harness(() => new Response("", { status: 200 }));
+    const error = await captureError(reader.get("series"));
+    expect(error.kind).toBe("unexpected-response");
+    expect(error.status).toBe(200);
+    expect(error.operation).toBe("series");
+  });
+
+  it("redacts a failed write exactly as it redacts a failed read", async () => {
+    const secret = "sensitive-title-value";
+
+    for (const status of [400, 401, 404, 429, 500]) {
+      const { client } = harness(() => json({ message: `raw upstream body ${apiKey}` }, status));
+      const error = await captureError(client.put("series/12", { title: secret }));
+      expect(error.kind).toBe(upstreamErrorKindForStatus(status));
+      expect(error.status).toBe(status);
+      expect(error.operation).toBe("series/12");
+      // Neither the response body nor the payload that was sent reaches the
+      // failure, and neither does the configured credential.
+      const disclosed = `${error.message}\n${JSON.stringify(error.toJSON())}`;
+      expect(disclosed).not.toContain(apiKey);
+      expect(disclosed).not.toContain(secret);
+      expect(disclosed).not.toContain("raw upstream body");
+    }
+  });
+
+  it("reports an unreachable instance and a silent one the same way for a write", async () => {
+    const unreachable = harness(() => {
+      throw new TypeError(`fetch failed for https://user:${apiKey}@sonarr.example.invalid`);
+    });
+    const failure = await captureError(unreachable.client.post("series", { title: "Example" }));
+    expect(failure.kind).toBe("unavailable");
+    expect(failure.message).not.toContain(apiKey);
+
+    const silent = harness(
+      (call) =>
+        new Promise<Response>((_resolve, reject) => {
+          call.init.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+            once: true,
+          });
+        }),
+      { timeoutMs: 5 },
+    );
+    const timeout = await captureError(silent.client.put("series/12", { id: 12 }));
+    expect(timeout.kind).toBe("timeout");
+    expect(timeout.message).toContain("timed out after 5ms");
+    expect(silent.calls[0]?.init.signal?.aborted).toBe(true);
+  });
+
+  it("refuses a body it cannot serialize and never reaches for the instance", async () => {
+    const { client, calls } = harness(() => json({ id: 12 }));
+    const secret = "sensitive-title-value";
+    const circular: Record<string, unknown> = { title: secret };
+    circular.self = circular;
+
+    for (const unserializable of [{ title: secret, size: 1n }, circular]) {
+      const rejection = client.post("series", unserializable);
+      await expect(rejection).rejects.toBeInstanceOf(UpstreamError);
+      const error = await captureError(rejection);
+      // A payload this project cannot represent is its own fault, not an
+      // unreachable instance: reporting `unavailable` would send the caller to
+      // look at a system that is working fine.
+      expect(error.kind).toBe("invalid-request");
+      expect(error.bodyProblem).toBe("unserializable");
+      expect(error.operation).toBe("series");
+      expect(error.status).toBeUndefined();
+      expect(error.message).toContain("body could not be serialized");
+      // A serializer quotes the value it choked on, so its message is dropped.
+      const disclosed = `${error.message}\n${JSON.stringify(error.toJSON())}`;
+      expect(disclosed).not.toContain(secret);
+      expect(disclosed).not.toContain(apiKey);
+    }
+
+    // Nothing was ever dispatched.
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses an unusable path on a write before anything is dispatched", async () => {
+    const { client, calls } = harness(() => json({ id: 12 }));
+
+    const rejection = client.post("../../admin", { title: "Example" });
+    await expect(rejection).rejects.toBeInstanceOf(UpstreamError);
+    expect((await captureError(rejection)).pathProblem).toBe("relative-segment");
+    expect(calls).toEqual([]);
+  });
+
+  it("reports a non-JSON success body on a write as an unexpected response", async () => {
+    const { client } = harness(() => new Response("<html>accepted</html>", { status: 201 }));
+
+    const error = await captureError(client.post("series", { title: "Example" }));
+    expect(error.kind).toBe("unexpected-response");
+    expect(error.status).toBe(201);
+  });
+
   it("normalizes an unusable path into an UpstreamError instead of a raw Error", async () => {
     const { client, calls } = harness(() => json({ version: "4.0.19.2979" }));
     const unusable: ReadonlyArray<readonly [string, UpstreamPathProblem]> = [
@@ -316,6 +457,7 @@ describe("UpstreamError", () => {
       operation: "system/status",
       status: 400,
       pathProblem: undefined,
+      bodyProblem: undefined,
       message: error.message,
     });
     expect(isUpstreamError(error)).toBe(true);

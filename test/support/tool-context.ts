@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { createAdapterRegistry } from "../../src/adapters/registry.js";
 import { type ApplicationId, applicationDescriptors } from "../../src/applications.js";
 import { type EnvironmentRecord, parseEnvironment } from "../../src/config/environment.js";
-import type { FetchLike } from "../../src/http/client.js";
+import type { FetchLike, UpstreamClient } from "../../src/http/client.js";
 import { createWorkflowState, type WorkflowState } from "../../src/state/workflow.js";
 import type { ToolContext } from "../../src/tools/dispatch.js";
 import type { ToolName } from "../../src/tools/names.js";
@@ -30,6 +30,22 @@ export const allApplicationsEnvironment: EnvironmentRecord = {
   PROWLARR_URL: "http://prowlarr.example.invalid:9696",
   PROWLARR_API_KEY: testApiKeys.prowlarr,
 };
+
+/**
+ * A client stub for a test that only reads.
+ *
+ * Both write methods reject, so a test that unexpectedly reaches one fails
+ * naming the route rather than silently doing nothing and passing.
+ */
+export function readOnlyClient(
+  application: ApplicationId,
+  get: UpstreamClient["get"],
+  apiBaseUrl = `https://${application}.example.invalid/api/v3`,
+): UpstreamClient {
+  const refuse = (path: string): Promise<never> =>
+    Promise.reject(new Error(`This stub is read-only; it was asked to write ${path}`));
+  return { application, apiBaseUrl, get, post: refuse, put: refuse };
+}
 
 export function applicationForUrl(url: string): ApplicationId {
   const descriptor = applicationDescriptors.find((candidate) =>

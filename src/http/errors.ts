@@ -14,6 +14,9 @@ export const upstreamErrorKinds = [
 
 export type UpstreamErrorKind = (typeof upstreamErrorKinds)[number];
 
+/** Why a request body could not be sent. Currently one case, kept typed. */
+export type UpstreamBodyProblem = "unserializable";
+
 export interface UpstreamErrorDetails {
   readonly application: ApplicationId;
   /**
@@ -28,6 +31,12 @@ export interface UpstreamErrorDetails {
    * a caller-supplied path can never be smuggled into the message.
    */
   readonly pathProblem?: UpstreamPathProblem | undefined;
+  /**
+   * Why a request body was unusable, for the same reason and in the same form.
+   * A serializer's own message can quote the value it choked on, so the value
+   * never travels: only this discriminant does.
+   */
+  readonly bodyProblem?: UpstreamBodyProblem | undefined;
 }
 
 export interface SerializedUpstreamError {
@@ -37,6 +46,7 @@ export interface SerializedUpstreamError {
   readonly operation: string | undefined;
   readonly status: number | undefined;
   readonly pathProblem: UpstreamPathProblem | undefined;
+  readonly bodyProblem: UpstreamBodyProblem | undefined;
   readonly message: string;
 }
 
@@ -51,6 +61,12 @@ function formatMessage(kind: UpstreamErrorKind, details: UpstreamErrorDetails): 
       : `${details.application}: the request to ${details.operation}`;
   switch (kind) {
     case "invalid-request":
+      // Which part of the request was unusable is named, because a failure that
+      // blamed the path for a body this project could not serialize would point
+      // at the wrong fault — and at the wrong system.
+      if (details.bodyProblem !== undefined) {
+        return `${details.application}: the request was not sent because its body could not be serialized as JSON`;
+      }
       return `${details.application}: the request was not sent because its path ${
         details.pathProblem === undefined
           ? "is unusable"
@@ -86,6 +102,7 @@ export class UpstreamError extends Error {
   readonly operation: string | undefined;
   readonly status: number | undefined;
   readonly pathProblem: UpstreamPathProblem | undefined;
+  readonly bodyProblem: UpstreamBodyProblem | undefined;
 
   constructor(kind: UpstreamErrorKind, details: UpstreamErrorDetails) {
     super(formatMessage(kind, details));
@@ -95,6 +112,7 @@ export class UpstreamError extends Error {
     this.operation = details.operation;
     this.status = details.status;
     this.pathProblem = details.pathProblem;
+    this.bodyProblem = details.bodyProblem;
   }
 
   toJSON(): SerializedUpstreamError {
@@ -105,6 +123,7 @@ export class UpstreamError extends Error {
       operation: this.operation,
       status: this.status,
       pathProblem: this.pathProblem,
+      bodyProblem: this.bodyProblem,
       message: this.message,
     };
   }
