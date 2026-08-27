@@ -5,6 +5,7 @@ import {
   importSourceKinds,
   isFileSize,
   isRecordIdentifier,
+  isRetainedLabel,
   isSeasonNumber,
 } from "../adapters/import/model.js";
 import type { MediaApplication, MediaRef } from "../adapters/library/model.js";
@@ -78,6 +79,7 @@ const detailKind = "import_candidate";
 const recordIdSchema = z.number().refine(isRecordIdentifier);
 const seasonNumberSchema = z.number().refine(isSeasonNumber);
 const sizeSchema = z.number().refine(isFileSize);
+const labelSchema = z.string().refine(isRetainedLabel);
 
 const candidateDetailSchema = z
   .strictObject({
@@ -123,9 +125,9 @@ const candidateDetailSchema = z
      */
     selected: z
       .strictObject({
-        quality: z.string().min(1).optional(),
-        languages: z.array(z.string().min(1)).optional(),
-        releaseGroup: z.string().min(1).optional(),
+        quality: labelSchema.optional(),
+        languages: z.array(labelSchema).optional(),
+        releaseGroup: labelSchema.optional(),
       })
       .optional(),
   })

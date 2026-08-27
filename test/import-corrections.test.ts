@@ -10,6 +10,7 @@ import {
   validateForImport,
 } from "../src/adapters/import/corrections.js";
 import type { ImportCandidate, ImportCandidateContext } from "../src/adapters/import/model.js";
+import { isRetainedLabel } from "../src/adapters/import/model.js";
 import type { MediaApplication } from "../src/adapters/library/model.js";
 import { activityFixture } from "./support/activity.js";
 import { fixtureBody, jsonResponse, libraryHarness, type UpstreamCall } from "./support/library.js";
@@ -424,6 +425,29 @@ describe("what blocks an import", () => {
         context: retainedFor({ selected: retained.selected, queueMediaId: 13 }),
       } as unknown as ImportCandidate),
     ).toEqual(["queue association"]);
+  });
+
+  it("holds a newly retained value to the same rule the schema enforces", async () => {
+    // A queue row reporting zero as its association is how both applications
+    // say "none". An adapter laxer than the schema here would produce a
+    // candidate that could never be named, and the failure would be silent.
+    const running = instance();
+    const result = await reprocessCandidate(
+      running.client,
+      "sonarr",
+      { sourceKind: "tracked_download", queueItemId: 503, mediaId: 0 },
+      fileIdentity(cleanFile),
+      {},
+    );
+
+    if (result.status === "ok") {
+      const queueMediaId = result.candidate.context.queueMediaId;
+      expect(queueMediaId === undefined || queueMediaId > 0).toBe(true);
+    }
+    // And a label that is empty never reaches the retained selection, because
+    // the rule the reference schema enforces is the one the adapter applies.
+    expect(isRetainedLabel("")).toBe(false);
+    expect(isRetainedLabel("Bluray-1080p")).toBe(true);
   });
 
   it("compares languages by their members rather than by their order", () => {

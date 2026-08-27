@@ -26,6 +26,7 @@ import {
   type ImportSourceKind,
   isFileSize,
   isRecordIdentifier,
+  isRetainedLabel,
   isSeasonNumber,
 } from "./model.js";
 
@@ -410,10 +411,10 @@ function folderNameOf(folder: string): string | undefined {
  * the adapter producing a candidate the reference boundary would then refuse —
  * which would be a candidate that looks fine and can never be named.
  */
-function retained(
-  value: number | undefined,
-  accepts: (candidate: number) => boolean,
-): number | undefined {
+function retained<TValue>(
+  value: TValue | undefined,
+  accepts: (candidate: TValue) => boolean,
+): TValue | undefined {
   return value !== undefined && accepts(value) ? value : undefined;
 }
 
@@ -617,17 +618,25 @@ export function mapCandidate(
       // The scan context's own media is the queue row's association, because
       // that is where it came from; the mapping's media is the one above, and a
       // correction moves only that one.
-      queueMediaId: context.sourceKind === "tracked_download" ? context.mediaId : undefined,
+      queueMediaId:
+        context.sourceKind === "tracked_download" ? recordId(context.mediaId) : undefined,
       seasonNumber,
       episodeIds: episodeIds.length === 0 ? undefined : episodeIds,
       fileIdentity: identity,
       sizeBytes,
       existingFileId,
       importable,
+      // Held to the retained-label rule the reference schema enforces, so the
+      // adapter cannot produce a selection the boundary would refuse. The
+      // mappers above already turn a blank upstream string into absence; this
+      // is what makes that a stated rule rather than a coincidence.
       selected: present({
-        quality: quality?.name,
-        languages: languages === undefined ? undefined : [...languages],
-        releaseGroup,
+        quality: retained(quality?.name, isRetainedLabel),
+        languages:
+          languages === undefined
+            ? undefined
+            : languages.filter((language) => isRetainedLabel(language)),
+        releaseGroup: retained(releaseGroup, isRetainedLabel),
       }),
     },
   };

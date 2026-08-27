@@ -32,7 +32,9 @@ import type { MediaApplication, MediaRef } from "../library/model.js";
  * The distinctions are real rather than stylistic. A record identifier is
  * positive because zero is how both applications report "none". A season may be
  * zero because specials are season 0. A size may be zero because an empty file
- * has one.
+ * has one. A label is non-empty because the mappers already turn a blank
+ * upstream string into absence, so an empty one reaching this boundary would
+ * mean a mapper stopped doing that rather than that the instance sent one.
  */
 export function isRecordIdentifier(value: number): boolean {
   return Number.isSafeInteger(value) && value > 0;
@@ -44,6 +46,11 @@ export function isSeasonNumber(value: number): boolean {
 
 export function isFileSize(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0;
+}
+
+/** A retained mapping label: the corrected quality, language, or release group. */
+export function isRetainedLabel(value: string): boolean {
+  return value.length > 0;
 }
 
 /**
