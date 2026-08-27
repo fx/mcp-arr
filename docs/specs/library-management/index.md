@@ -18,7 +18,8 @@ Shared tool behavior is owned by [Tool Contracts](../tool-contracts/).
 - `arr_library_query` MUST support typed views for Radarr movies, collections, movie files, missing movies, cutoff-unmet movies, and calendar entries.
 - Library queries MUST support application filtering, identifier filtering, monitored-state filtering, bounded pagination, and supported detail levels.
 - A view unsupported by the selected application MUST return an unsupported-capability error.
-- A calendar entry MUST be anchored to the date that placed it inside the requested window, and its anchor MUST fall within that window.
+- A calendar entry MUST be anchored to the date that placed it inside the requested window: where any of a record's candidate dates falls inside that window, the anchor MUST be one of them, and MUST be the earliest of them where several qualify.
+- An entry the application returned none of whose candidate dates falls inside the requested window MUST be retained and anchored to its earliest candidate rather than discarded or left undated.
 - Where a media record has several candidate dates, a calendar entry MUST identify which of them it was anchored to.
 
 #### Scenario: Query missing media
@@ -136,3 +137,4 @@ None.
 | 2026-08-25 | Initial desired-state specification created | [0003-library-queries](../../changes/0003-library-queries.md) |
 | 2026-08-25 | Library-mutation implementation planned | [0009-library-mutations](../../changes/0009-library-mutations.md) |
 | 2026-08-26 | Calendar entries required to anchor inside the requested window and name their anchor | [0014-calendar-anchoring](../../changes/0014-calendar-anchoring.md) |
+| 2026-08-27 | Earliest in-window candidate fixed as the anchor, and the out-of-window residual case defined | [0014-calendar-anchoring](../../changes/0014-calendar-anchoring.md) |

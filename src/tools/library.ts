@@ -400,6 +400,7 @@ function publishCalendarEvent(event: CalendarEvent, mint: ReferenceMinter): Libr
     start: event.start,
     end: event.end,
     hasFile: event.hasFile,
+    radarr: event.radarr,
   };
 }
 

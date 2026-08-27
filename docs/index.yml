@@ -127,5 +127,5 @@ changes:
     path: changes/0014-calendar-anchoring.md
     description: Anchor calendar entries to the date that placed them in the requested window and name it
     spec: library-management
-    status: draft
+    status: complete
     depends_on: []

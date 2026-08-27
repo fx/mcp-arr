@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   configurationPointerKinds,
   mediaRecordKinds,
+  radarrReleaseDateTypes,
   type WantedReason,
 } from "../../adapters/library/model.js";
 import {
@@ -286,9 +287,15 @@ const calendarMediaSchema = z.discriminatedUnion("kind", [episodeRecordSchema, m
 
 const calendarEventSchema = z.strictObject({
   media: calendarMediaSchema,
+  /** The date that placed the entry in the requested window. */
   start: z.string().optional(),
   end: z.string().optional(),
   hasFile: z.boolean(),
+  /**
+   * Present only on a Radarr entry, which is the only one whose record has
+   * several candidate dates to choose the anchor from.
+   */
+  radarr: z.strictObject({ anchor: z.enum(radarrReleaseDateTypes) }).optional(),
 });
 
 export type LibraryCalendarEvent = z.infer<typeof calendarEventSchema>;

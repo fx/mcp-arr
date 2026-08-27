@@ -123,6 +123,43 @@
       },
       "ratings": {},
       "images": []
+    },
+    {
+      "id": 11,
+      "title": "Example Staggered Movie",
+      "originalTitle": "Example Staggered Movie",
+      "sortTitle": "example staggered movie",
+      "status": "released",
+      "overview": "A sanitized movie whose three release dates fall in three different months",
+      "year": 2022,
+      "runtime": 102,
+      "path": "/media/example/movies/Example Staggered Movie (2022)",
+      "rootFolderPath": "/media/example/movies",
+      "qualityProfileId": 2,
+      "monitored": true,
+      "minimumAvailability": "released",
+      "hasFile": false,
+      "sizeOnDisk": 0,
+      "isAvailable": true,
+      "tmdbId": 200005,
+      "imdbId": "tt0000005",
+      "studio": "Example Studio",
+      "certification": "R",
+      "genres": ["Thriller"],
+      "tags": [],
+      "added": "2022-11-01T08:00:00Z",
+      "inCinemas": "2022-10-05T00:00:00Z",
+      "physicalRelease": "2023-03-14T00:00:00Z",
+      "digitalRelease": "2023-01-10T00:00:00Z",
+      "popularity": 8.1,
+      "collection": null,
+      "alternateTitles": [],
+      "originalLanguage": {
+        "id": 1,
+        "name": "English"
+      },
+      "ratings": {},
+      "images": []
     }
   ]
 }

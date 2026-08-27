@@ -5,7 +5,7 @@
 Anchor each calendar entry to the date that actually placed it inside the requested window, and name that date. Radarr entries are currently anchored by a fixed release-date precedence that ignores the query, so most entries report a date outside the window the caller asked for. The [Library Management spec](../specs/library-management/#library-queries) now states the rule.
 
 **Spec:** [Library Management](../specs/library-management/)
-**Status:** draft
+**Status:** complete
 **Depends On:** —
 
 ## Motivation
@@ -65,6 +65,11 @@ The [Library Management spec](../specs/library-management/#library-queries) owns
 - **Decision:** Fix anchoring in the adapter rather than filtering entries after mapping.
   - **Why:** The entries are genuinely in the window — Radarr is right to return them. Only the date the entry reports is wrong, so discarding them would lose real results and mask the defect.
   - **Alternatives considered:** Dropping entries whose anchor is outside the window, rejected because it would have silently hidden four of six correct results in the observed case.
+- **Decision:** When several candidate dates fall inside the requested window, the earliest one anchors the entry.
+  - **Why:** It is predictable and deterministic — the rule can be stated without naming any release-date type, so the same window always produces the same anchor and no consumer has to know which field the adapter favors.
+  - **Alternatives considered:** Letting the physical release win, rejected because it reintroduces a window-independent precedence, which is the defect this change removes.
+- **Decision:** An entry whose candidate dates all fall outside the requested window is kept and anchored to its earliest candidate.
+  - **Why:** Radarr returned it, so it is a real result; anchoring to a candidate and naming the type lets a consumer detect the case by comparing the anchor against the window it asked for, where a dropped entry or a blank date would tell it nothing.
 - **Decision:** Surface the anchor's date type as an application-specific field.
   - **Why:** Only Radarr has multiple candidate dates. Adding the concept to the shared model would impose a field Sonarr has no meaningful value for.
   - **Alternatives considered:** A normalized shared field, rejected for the reason above.
@@ -80,14 +85,14 @@ The [Library Management spec](../specs/library-management/#library-queries) owns
 
 ## Tasks
 
-- [ ] Anchor Radarr calendar entries to the matching date
-  - [ ] Select the anchor from the requested window instead of a fixed precedence, and define the tie-break when several candidates match
-  - [ ] Surface the anchor's date type as a Radarr extension field and keep the event end consistent with it
-  - [ ] Add fixture coverage for a movie whose matching date differs from the old precedence, asserting the anchor falls inside the requested window, and confirm the test fails against the current implementation
+- [x] Anchor Radarr calendar entries to the matching date
+  - [x] Select the anchor from the requested window instead of a fixed precedence, and define the tie-break when several candidates match
+  - [x] Surface the anchor's date type as a Radarr extension field and keep the event end consistent with it
+  - [x] Add fixture coverage for a movie whose matching date differs from the old precedence, asserting the anchor falls inside the requested window, and confirm the test fails against the current implementation
 
 ## Open Questions
 
-- [ ] When several candidate dates fall inside the same requested window, which one anchors the entry? The earliest inside the window is the most predictable and is the recommended default, but a consumer building a release calendar may expect the physical release to win. Worth confirming before implementation, and worth recording in the spec once chosen.
+None.
 
 ## References
 

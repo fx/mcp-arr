@@ -223,6 +223,22 @@ export interface RadarrReleaseDates {
   readonly digitalRelease?: string | undefined;
 }
 
+/**
+ * Which of a movie's release dates something was taken from.
+ *
+ * The members are the property names of {@link RadarrReleaseDates}, so naming
+ * one points at the field it was read from rather than at a separate vocabulary
+ * a consumer would have to map back. The declared order is also the tie-break
+ * between two candidates that fall on the same instant.
+ */
+export const radarrReleaseDateTypes = [
+  "digitalRelease",
+  "physicalRelease",
+  "inCinemas",
+] as const satisfies readonly (keyof RadarrReleaseDates)[];
+
+export type RadarrReleaseDateType = (typeof radarrReleaseDateTypes)[number];
+
 /** Radarr's own fields, discriminated by which library record they describe. */
 export type RadarrMediaFields =
   | {
@@ -310,6 +326,16 @@ export interface WantedItem {
   readonly wanted: WantedState;
 }
 
+/** Radarr's own calendar fields, which only a Radarr entry carries. */
+export interface RadarrCalendarFields {
+  /**
+   * Which release date `start` was taken from. A Sonarr episode has a single
+   * air date and so has nothing to name here, which is why this stays inside
+   * the namespaced Radarr property rather than joining the shared fields.
+   */
+  readonly anchor: RadarrReleaseDateType;
+}
+
 /**
  * One dated library event. `start` is absent when the application returned a
  * record with no usable date; the record keeps its media identity rather than
@@ -320,6 +346,7 @@ export interface CalendarEvent {
   readonly start?: string | undefined;
   readonly end?: string | undefined;
   readonly hasFile: boolean;
+  readonly radarr?: RadarrCalendarFields | undefined;
 }
 
 interface LookupResultBase {
