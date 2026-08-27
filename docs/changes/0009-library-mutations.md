@@ -5,7 +5,7 @@
 Implement typed add, monitoring, bulk edit, file metadata, rename, move, and deletion behavior through `arr_library_change` as defined by the [Library Management spec](../specs/library-management/).
 
 **Spec:** [Library Management](../specs/library-management/)
-**Status:** draft
+**Status:** complete
 **Depends On:** 0002, 0003
 
 ## Motivation
@@ -49,6 +49,9 @@ The [Library Management spec](../specs/library-management/#lookup-and-add) owns 
   - **Alternatives considered:** Split tools are appropriate if the resulting union becomes too large or risk metadata becomes misleading.
 - **Decision:** Never default to physical deletion or automatic search.
   - **Why:** Both are consequential follow-on effects that must remain explicit.
+- **Decision:** Keep the eight intents in one tool for this release rather than splitting them.
+  - **Why:** The evaluation this change called for was made against the two conditions the decision above names, and neither has been met. The union is not too large to discover: every member is discriminated by `intent`, each carries only the fields that intent uses, and a caller reads the one variant it named rather than the union. And the risk metadata is not misleading, because it is not shared — the registry classifies each intent on its own, so `set_monitoring` is declared a mutation while `delete_media`, `delete_file`, `rename`, and `move_media` are declared destructive, and `arr_capabilities` reports that per intent. A split would divide one set of application-qualified references, one precondition reader, and one plan-and-receipt lifecycle across several tools without removing anything a caller has to understand.
+  - **Alternatives considered:** Splitting the destructive intents into their own tool was the strongest candidate, because it would let a host withhold a whole tool rather than a variant. It is worth revisiting exactly there: if hosts come to gate at tool granularity, the argument changes, and nothing in this design prevents the split later — the intents are already separate operations behind one published union.
 
 ### Non-Goals
 
@@ -67,10 +70,10 @@ The [Library Management spec](../specs/library-management/#lookup-and-add) owns 
   - [x] Add file metadata update/delete and safe bulk grouping
   - [x] Add rename preview and allowlisted rename/move command workflows
   - [x] Add explicit physical-data effects and current-state fingerprints
-- [ ] Register and verify `arr_library_change`
-  - [ ] Add direct apply and plan/apply variants with per-item outcomes
-  - [ ] Add fixture and stdio tests for duplicates, stale references, partial bulk, deletion choices, rename/move, retry, and unknown outcome
-  - [ ] Evaluate whether the public union requires splitting before release
+- [x] Register and verify `arr_library_change`
+  - [x] Add direct apply and plan/apply variants with per-item outcomes
+  - [x] Add fixture and stdio tests for duplicates, stale references, partial bulk, deletion choices, rename/move, retry, and unknown outcome
+  - [x] Evaluate whether the public union requires splitting before release
 
 ## Open Questions
 

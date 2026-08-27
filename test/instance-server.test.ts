@@ -163,9 +163,53 @@ describe("the fixture instance's route and method surface", () => {
 
     // 405 where the route exists and 404 where it does not, so a client that
     // reached for the wrong verb cannot be mistaken for one that got it right.
+    // A collection is read-only even where its individual records are not.
     expect(await call(sonarr, "PUT", "series", { id: 12 })).toBe(405);
-    expect(await call(sonarr, "DELETE", "series/12")).toBe(405);
+    expect(await call(sonarr, "DELETE", "qualityprofile")).toBe(405);
     expect(await call(sonarr, "PUT", "movie", { id: 8 })).toBe(404);
+    // A record of a collection this application does not model is not a path it
+    // recognizes at all, whatever the verb.
+    expect(await call(sonarr, "PUT", "moviefile/501", { id: 501 })).toBe(404);
+    expect(await call(sonarr, "GET", "moviefile/501")).toBe(404);
+  });
+
+  it("keeps a library write, so the read after it sees what was written", async () => {
+    const sonarr = await instance("sonarr");
+
+    // A replacement that does not name the record it replaces is refused, and
+    // recorded nowhere: these APIs replace a whole resource, and a payload with
+    // no identity is not one.
+    expect(await call(sonarr, "PUT", "series/12", { monitored: false })).toBe(400);
+    expect(sonarr.writes).toEqual([]);
+
+    expect(await call(sonarr, "PUT", "series/12", { id: 12, monitored: false })).toBe(200);
+    expect(sonarr.writes).toEqual([
+      expect.objectContaining({
+        method: "PUT",
+        route: "series",
+        body: { id: 12, monitored: false },
+      }),
+    ]);
+
+    // Removing it takes it out of both the record read and the collection, and
+    // a second removal is the 404 a real instance gives — which is what makes a
+    // repeated deletion distinguishable from a first.
+    expect(await call(sonarr, "DELETE", "series/12")).toBe(200);
+    expect(await call(sonarr, "GET", "series/12")).toBe(404);
+    expect(await call(sonarr, "DELETE", "series/12")).toBe(404);
+    expect(sonarr.writes.filter((write) => write.method === "DELETE")).toHaveLength(1);
+  });
+
+  it("refuses a create that carries no metadata identifier", async () => {
+    const radarr = await instance("radarr");
+
+    // The metadata identifier is the one field this route exists to carry, so a
+    // create without it is a client defect rather than a record to invent.
+    expect(await call(radarr, "POST", "movie", { title: "Example" })).toBe(400);
+    expect(radarr.writes).toEqual([]);
+
+    expect(await call(radarr, "POST", "movie", { tmdbId: 200004, title: "Example" })).toBe(201);
+    expect(radarr.writes).toEqual([expect.objectContaining({ method: "POST", route: "movie" })]);
   });
 
   it("refuses an unknown path and a wrong API key before anything else", async () => {

@@ -34,6 +34,12 @@ const routes: Readonly<Record<ApplicationId, readonly string[]>> = {
     "series/lookup",
     "episode",
     "episodefile",
+    "rename",
+    "rootfolder",
+    "qualityprofile",
+    "qualitydefinition",
+    "language",
+    "tag",
     "wanted/missing",
     "wanted/cutoff",
     "calendar",
@@ -55,6 +61,12 @@ const routes: Readonly<Record<ApplicationId, readonly string[]>> = {
     "movie/lookup",
     "collection",
     "moviefile",
+    "rename",
+    "rootfolder",
+    "qualityprofile",
+    "qualitydefinition",
+    "language",
+    "tag",
     "wanted/missing",
     "wanted/cutoff",
     "calendar",
@@ -86,23 +98,57 @@ const routes: Readonly<Record<ApplicationId, readonly string[]>> = {
 };
 
 /**
- * Which query parameter narrows a route, where a real instance narrows one, and
- * which record field it is matched against. The two are named separately
- * because they differ: an aggregate search takes a plural `indexerIds` filter
- * and each release reports the singular `indexerId` it came from.
+ * Which query parameters narrow a route, where a real instance narrows one, and
+ * which record field each is matched against. The two halves are named
+ * separately because they differ: an aggregate search takes a plural
+ * `indexerIds` filter and each release reports the singular `indexerId` it came
+ * from. A route may carry several, because a rename preview is asked about one
+ * series and optionally one season of it, and a filter whose parameter the
+ * request omitted narrows nothing.
  */
-const parentFilters: Readonly<Record<string, { query: string; field: string } | undefined>> = {
-  episode: { query: "seriesId", field: "seriesId" },
-  episodefile: { query: "seriesId", field: "seriesId" },
-  moviefile: { query: "movieId", field: "movieId" },
-  search: { query: "indexerIds", field: "indexerId" },
-  "history/series": { query: "seriesId", field: "seriesId" },
-  "history/movie": { query: "movieId", field: "movieId" },
+const parentFilters: Readonly<
+  Record<string, readonly { query: string; field: string }[] | undefined>
+> = {
+  episode: [{ query: "seriesId", field: "seriesId" }],
+  episodefile: [{ query: "seriesId", field: "seriesId" }],
+  moviefile: [{ query: "movieId", field: "movieId" }],
+  search: [{ query: "indexerIds", field: "indexerId" }],
+  "history/series": [{ query: "seriesId", field: "seriesId" }],
+  "history/movie": [{ query: "movieId", field: "movieId" }],
+  rename: [
+    { query: "seriesId", field: "seriesId" },
+    { query: "movieId", field: "movieId" },
+    { query: "seasonNumber", field: "seasonNumber" },
+  ],
 };
 
-/** `history/failed/{id}` and `blocklist/{id}`, the two single-record writes. */
+/** `history/failed/{id}` and `blocklist/{id}`, the two activity single-record writes. */
 const historyFailedRoute = /^history\/failed\/(\d+)$/u;
 const blocklistRecordRoute = /^blocklist\/(\d+)$/u;
+
+/**
+ * The collections whose individual records this surface reads and writes.
+ *
+ * A library mutation is a read-modify-write over one record, so the double has
+ * to hold the record rather than only the collection it came from: a write is
+ * kept, and the read that follows it sees what was written. That is what makes a
+ * repeated apply, a stale reference, and a lost answer distinguishable from one
+ * another over a real socket instead of only in a unit test's memory.
+ */
+const recordRoutes: Readonly<Record<ApplicationId, readonly string[]>> = {
+  sonarr: ["series", "episodefile"],
+  radarr: ["movie", "moviefile", "collection"],
+  prowlarr: [],
+};
+
+/** The collections a create may append to, and the metadata identifier one carries. */
+const createRoutes: Readonly<
+  Record<ApplicationId, { route: string; metadataId: string } | undefined>
+> = {
+  sonarr: { route: "series", metadataId: "tvdbId" },
+  radarr: { route: "movie", metadataId: "tmdbId" },
+  prowlarr: undefined,
+};
 
 /** The route each application resolves a grab on, keyed by application. */
 const grabRoutes: Readonly<Record<ApplicationId, string>> = {
@@ -125,6 +171,15 @@ export interface FixtureInstanceOptions {
    * outcome without inventing a second server.
    */
   readonly staleGrabs?: readonly string[];
+  /**
+   * Records a library write, performs it, and then drops the connection instead
+   * of answering — which is what a caller sees when an instance took a request
+   * and the reply was lost on the way back. The write really happens, because
+   * that is the whole difficulty the outcome-unknown settlement exists for: the
+   * caller cannot tell this from a request that never arrived, and must not
+   * record it as one that certainly did not.
+   */
+  readonly loseWriteAnswers?: boolean;
 }
 
 export interface UpstreamSearch {
@@ -143,6 +198,15 @@ export interface UpstreamGrab {
 export interface UpstreamCommand {
   readonly name: string;
   readonly body: Readonly<Record<string, unknown>>;
+}
+
+/** One library write this instance performed, as it arrived. */
+export interface UpstreamWrite {
+  readonly method: "POST" | "PUT" | "DELETE";
+  readonly route: string;
+  /** The query a deletion carries its explicit choices in. */
+  readonly query: Readonly<Record<string, string>>;
+  readonly body?: Readonly<Record<string, unknown>> | undefined;
 }
 
 export interface FixtureInstance {
@@ -174,6 +238,13 @@ export interface FixtureInstance {
    */
   readonly failedHistory: readonly number[];
   readonly removedBlocklist: readonly number[];
+  /**
+   * The library records and media files this instance created, replaced, and
+   * removed, in order and on the same terms as the grabs above: a write this
+   * server refused is absent, so a test cannot mistake a rejected write for a
+   * performed one.
+   */
+  readonly writes: readonly UpstreamWrite[];
   close(): Promise<void>;
 }
 
@@ -182,12 +253,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function filtered(body: unknown, route: string, query: URLSearchParams): unknown {
-  const filter = parentFilters[route];
-  const wanted = filter === undefined ? null : query.get(filter.query);
-  if (filter === undefined || wanted === null || !Array.isArray(body)) {
+  const filters = parentFilters[route];
+  if (filters === undefined || !Array.isArray(body)) {
     return body;
   }
-  return body.filter((record) => isRecord(record) && String(record[filter.field]) === wanted);
+  return filters.reduce<unknown[]>((records, filter) => {
+    const wanted = query.get(filter.query);
+    return wanted === null
+      ? records
+      : records.filter((record) => isRecord(record) && String(record[filter.field]) === wanted);
+  }, body);
 }
 
 /** Reads the JSON object a write carried. Nothing here interprets it. */
@@ -232,6 +307,10 @@ export async function startFixtureInstance(
   // what a real instance does, and it is what lets a test that reconciles a
   // lost answer against upstream state mean anything.
   const removedBlocklist: number[] = [];
+  const writes: UpstreamWrite[] = [];
+  // Well clear of every identifier the recorded fixtures use, so a created
+  // record is always distinguishable from one that was already there.
+  let nextRecordId = 90_001;
   const stale = new Set(options.staleGrabs ?? []);
   const bodies = new Map<string, unknown>(
     await Promise.all(
@@ -266,12 +345,115 @@ export async function startFixtureInstance(
   };
 
   /**
+   * Answers a performed write, or loses the answer to it.
+   *
+   * The write has already happened by the time this is reached, and the record
+   * of it has already been kept, so a lost answer is exactly what it says: the
+   * instance did the thing and the caller never found out.
+   */
+  const settle = (response: ServerResponse, status: number, body: unknown): void => {
+    if (options.loseWriteAnswers === true) {
+      response.socket?.destroy();
+      return;
+    }
+    send(response, status, body);
+  };
+
+  /** The records of one collection, as this instance now holds them. */
+  const collectionOf = (route: string): Record<string, unknown>[] => {
+    const body = bodies.get(route);
+    return Array.isArray(body) ? (body as Record<string, unknown>[]) : [];
+  };
+
+  /**
+   * Replaces one record. A body that does not name the record it replaces is
+   * the `400` a real instance gives: these APIs replace a whole resource, and a
+   * payload with no identity is not one.
+   */
+  const replaceRecord = (
+    response: ServerResponse,
+    route: string,
+    id: number,
+    body: Record<string, unknown>,
+  ): void => {
+    if (body.id !== id) {
+      send(response, 400, { message: "A replacement must carry the identifier it replaces" });
+      return;
+    }
+    const records = collectionOf(route);
+    const index = records.findIndex((record) => record.id === id);
+    if (index < 0) {
+      send(response, 404, { message: "not found" });
+      return;
+    }
+    records[index] = body;
+    writes.push({ method: "PUT", route, query: {}, body });
+    settle(response, 200, body);
+  };
+
+  /** Removes one record, keeping whatever choices the caller sent with it. */
+  const removeRecord = (
+    response: ServerResponse,
+    route: string,
+    id: number,
+    query: URLSearchParams,
+  ): void => {
+    const records = collectionOf(route);
+    const index = records.findIndex((record) => record.id === id);
+    if (index < 0) {
+      send(response, 404, { message: "not found" });
+      return;
+    }
+    records.splice(index, 1);
+    writes.push({ method: "DELETE", route, query: Object.fromEntries(query) });
+    // A real deletion answers with no content at all, which is the answer a
+    // write has to accept without calling it broken.
+    if (options.loseWriteAnswers === true) {
+      response.socket?.destroy();
+      return;
+    }
+    response.writeHead(200);
+    response.end();
+  };
+
+  /**
+   * Creates one record. A create that names no metadata identifier is refused,
+   * because that identifier is the one field this route exists to carry: it is
+   * what the instance would match against its own metadata source.
+   */
+  const createRecord = (
+    response: ServerResponse,
+    route: string,
+    metadataId: string,
+    body: Record<string, unknown>,
+  ): void => {
+    if (typeof body[metadataId] !== "number") {
+      send(response, 400, { message: `A create must carry its ${metadataId}` });
+      return;
+    }
+    const records = collectionOf(route);
+    const created = { ...body, id: nextRecordId };
+    nextRecordId += 1;
+    records.push(created);
+    writes.push({ method: "POST", route, query: {}, body });
+    settle(response, 201, created);
+  };
+
+  /**
    * Whether this application exposes the route at all. The table is per
    * application because the applications differ, and a double that answered one
    * application's route on another would let a request no instance could have
    * served pass for a working one.
    */
   const answers = (candidate: string): boolean => routes[application].includes(candidate);
+
+  /**
+   * Matches any `<collection>/<id>` path. Whether *this* application models that
+   * collection is decided at the call site, so a path naming another
+   * application's collection is the `404` a real instance gives rather than a
+   * path this server does not recognize at all.
+   */
+  const singleRecordRoute = /^([a-z]+)\/(\d+)$/u;
 
   const server: Server = createServer((request, response) => {
     if (options.unreachable === true) {
@@ -351,7 +533,11 @@ export async function startFixtureInstance(
         return;
       }
 
-      const writable = route === grabRoutes[application] || (route === "command" && answers(route));
+      const creating = createRoutes[application];
+      const writable =
+        route === grabRoutes[application] ||
+        (route === "command" && answers(route)) ||
+        (creating !== undefined && route === creating.route);
       if (!writable) {
         send(response, 404, { message: "not found" });
         return;
@@ -360,6 +546,10 @@ export async function startFixtureInstance(
         (body) => {
           if (route === "command") {
             acceptCommand(body);
+            return;
+          }
+          if (creating !== undefined && route === creating.route) {
+            createRecord(response, creating.route, creating.metadataId, body);
             return;
           }
           // A grab without a cache identity is a client defect, not an expired
@@ -410,22 +600,46 @@ export async function startFixtureInstance(
       return;
     }
 
-    const single = application === "sonarr" ? /^series\/(\d+)$/u.exec(route) : null;
+    const single = singleRecordRoute.exec(route);
+    const collection = single === null ? undefined : single[1];
+    const recordId = single === null ? undefined : Number(single[2]);
+    const known = collection !== undefined && recordRoutes[application].includes(collection);
+
+    // A single record of a collection this application does model, replaced or
+    // removed in place. The write is kept, so the read after it sees what was
+    // written and a second removal is the `404` a real instance gives.
+    if (known && recordId !== undefined && collection !== undefined) {
+      if (request.method === "PUT") {
+        readPostedBody(request).then(
+          (body) => replaceRecord(response, collection, recordId, body),
+          () => send(response, 400, { message: "unreadable body" }),
+        );
+        return;
+      }
+      if (request.method === "DELETE") {
+        removeRecord(response, collection, recordId, url.searchParams);
+        return;
+      }
+    }
 
     // Everything left is a read, so every other method is one this instance
     // does not expose here. Answering it with the body a `GET` would have
     // returned is the whole defect class: a client that reached for the wrong
     // verb would be indistinguishable from one that got it right.
     if (request.method !== "GET") {
-      const known = answers(route) || single !== null;
-      send(response, known ? 405 : 404, {
-        message: known ? "method not allowed" : "not found",
+      const exposed = answers(route) || known;
+      send(response, exposed ? 405 : 404, {
+        message: exposed ? "method not allowed" : "not found",
       });
       return;
     }
 
     if (single !== null) {
-      const record = recordById(bodies.get("series"), Number(single[1]));
+      if (!known || collection === undefined || recordId === undefined) {
+        send(response, 404, { message: "not found" });
+        return;
+      }
+      const record = recordById(bodies.get(collection), recordId);
       send(response, record === undefined ? 404 : 200, record ?? { message: "not found" });
       return;
     }
@@ -454,6 +668,7 @@ export async function startFixtureInstance(
     commands: started,
     failedHistory,
     removedBlocklist,
+    writes,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => (error === undefined ? resolve() : reject(error)));
