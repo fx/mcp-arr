@@ -32,7 +32,9 @@ import type { MediaApplication, MediaRef } from "../library/model.js";
  * The distinctions are real rather than stylistic. A record identifier is
  * positive because zero is how both applications report "none". A season may be
  * zero because specials are season 0. A size may be zero because an empty file
- * has one.
+ * has one. A label is non-empty because the mappers already turn a blank
+ * upstream string into absence, so an empty one reaching this boundary would
+ * mean a mapper stopped doing that rather than that the instance sent one.
  */
 export function isRecordIdentifier(value: number): boolean {
   return Number.isSafeInteger(value) && value > 0;
@@ -44,6 +46,11 @@ export function isSeasonNumber(value: number): boolean {
 
 export function isFileSize(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0;
+}
+
+/** A retained mapping label: the corrected quality, language, or release group. */
+export function isRetainedLabel(value: string): boolean {
+  return value.length > 0;
 }
 
 /**
@@ -133,6 +140,16 @@ export interface ImportCandidateContext {
   readonly mediaId?: number | undefined;
   /** The library record a library-context scan was scoped to. */
   readonly scanMediaId?: number | undefined;
+  /**
+   * The media the *queue row* is filed under, where a tracked scan found one.
+   *
+   * Kept apart from {@link mediaId} because a correction moves that one and
+   * cannot move this one: re-reading the queue is how a later step finds the
+   * download again, and scoping that read by a corrected mapping would look for
+   * the row under a series it was never filed under. They are the same number
+   * until somebody corrects the mapping, which is exactly when it matters.
+   */
+  readonly queueMediaId?: number | undefined;
   readonly seasonNumber?: number | undefined;
   /** The episodes the proposed mapping names, as upstream identifiers. */
   readonly episodeIds?: readonly number[] | undefined;
@@ -156,6 +173,24 @@ export interface ImportCandidateContext {
    * step has to be able to see that rather than infer it.
    */
   readonly importable?: boolean | undefined;
+  /**
+   * The mapping fields a caller corrected that the record itself does not carry
+   * as an identifier.
+   *
+   * The media, the season, and the episodes are already here as identifiers, so
+   * a correction to any of them moves a value above. These three are text the
+   * instance echoes back rather than numbers it assigns, and the requirement is
+   * that a fingerprint cover *every* selected mapping field — so a candidate
+   * corrected to one quality must not be importable as another.
+   */
+  readonly selected?: SelectedMapping | undefined;
+}
+
+/** The corrected mapping fields a candidate reference carries with it. */
+export interface SelectedMapping {
+  readonly quality?: string | undefined;
+  readonly languages?: readonly string[] | undefined;
+  readonly releaseGroup?: string | undefined;
 }
 
 /**

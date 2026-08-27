@@ -55,6 +55,7 @@ const allowedFiles = [
   "dist/adapters/configuration/verify.js",
   "dist/adapters/configuration/write.js",
   "dist/adapters/import/candidates.js",
+  "dist/adapters/import/corrections.js",
   "dist/adapters/import/model.js",
   "dist/adapters/library/changes.js",
   "dist/adapters/library/files.js",
