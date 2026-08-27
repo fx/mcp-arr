@@ -230,9 +230,13 @@ describe("candidate disclosure", () => {
 
     // Read out of the recording rather than written here, so the assertion
     // cannot stop naming what the instance actually serves.
-    const rows = await activityFixture<Array<Record<string, unknown>>>("sonarr", "manualimport");
+    const rows = [
+      ...(await activityFixture<Array<Record<string, unknown>>>("sonarr", "manualimport")),
+      ...(await activityFixture<Array<Record<string, unknown>>>("radarr", "manualimport")),
+    ];
     const paths = rows.map((row) => String(row.path));
     const folders = rows.map((row) => String(row.folderName));
+    const names = rows.map((row) => String(row.relativePath));
 
     // A control: the same matchers fire on a payload that does carry these.
     const leaked = JSON.stringify({ path: paths[0], folderName: folders[0] });
@@ -242,7 +246,14 @@ describe("candidate disclosure", () => {
     for (const path of paths) {
       expect(serialized).not.toContain(path);
     }
-    for (const folder of folders) {
+    // A folder name is only assertable textually when it is not also part of a
+    // legitimate file name: the Radarr download folder is "Example Movie
+    // (2021)", which every file under it is named after. Those are covered by
+    // the structural assertion below instead, which is the stronger check
+    // anyway — it holds whatever the folder happens to be called.
+    const distinctive = folders.filter((folder) => !names.some((name) => name.includes(folder)));
+    expect(distinctive.length).toBeGreaterThan(0);
+    for (const folder of distinctive) {
       expect(serialized).not.toContain(folder);
     }
     expect(serialized).not.toContain("/media/example");
@@ -270,7 +281,11 @@ describe("candidate disclosure", () => {
     // sanitized rather than merely trimmed, which a normalizing list helper
     // would not have done.
     const canaryPath = "/media/private/secret-library/file.mkv";
-    const canaryId = "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1";
+    // A Windows path, which nothing but the sanitizer removes — and short
+    // enough that the generic identifier rule would not have caught it, so the
+    // assertion proves these lists are scrubbed rather than proving the
+    // redactor works.
+    const canaryWindows = "D:\\Secret\\file.mkv";
     const rows = await activityFixture<Array<Record<string, unknown>>>("sonarr", "manualimport");
     const laced = rows.map((row, index) =>
       index === 0
@@ -280,7 +295,7 @@ describe("candidate disclosure", () => {
               { id: 9, name: canaryPath },
               { id: 10, name: "Example Format" },
             ],
-            languages: [{ id: 1, name: canaryId }],
+            languages: [{ id: 1, name: canaryWindows }],
             indexerFlags: [canaryPath, "freeleech"],
           }
         : row,
@@ -296,11 +311,18 @@ describe("candidate disclosure", () => {
     const serialized = JSON.stringify(scanned.scan.candidates);
 
     // A control, so the assertions below cannot pass for the wrong reason.
+    // The control reads the laced values back off the payload itself rather
+    // than off its serialization, because JSON escapes a backslash and the
+    // escaped spelling is not the value.
+    const lacedFirst = laced[0] as { languages: Array<{ name: string }> };
+    expect(lacedFirst.languages[0]?.name).toBe(canaryWindows);
     expect(JSON.stringify(laced)).toContain(canaryPath);
-    expect(JSON.stringify(laced)).toContain(canaryId);
 
     expect(serialized).not.toContain(canaryPath);
-    expect(serialized).not.toContain(canaryId);
+    // Both spellings of the Windows path: as written, and as JSON renders it.
+    expect(serialized).not.toContain(canaryWindows);
+    expect(serialized).not.toContain(JSON.stringify(canaryWindows).slice(1, -1));
+    expect(serialized).not.toContain("Secret");
     expect(serialized).not.toContain("/media/private");
     // What was not a path survives, so the scrubbing is not simply dropping the
     // fields.
@@ -444,6 +466,43 @@ describe("candidate references", () => {
       expect(mintCandidateReference(references, rejected), label).toBeUndefined();
     }
     expect(references.size()).toBe(before);
+  });
+
+  it("refuses a snapshot whose own identifier or fingerprint is corrupt", async () => {
+    // The two fields the reference store owns are validated too, rather than
+    // trusted because this module wrote them: a payload carrying a path where
+    // the upstream identifier belongs would otherwise resolve on the strength
+    // of a plausible detail beside it.
+    const references = store();
+    const candidate = await firstCandidate();
+    const reference = mintCandidateReference(references, candidate) as string;
+    const detail = {
+      kind: "import_candidate",
+      sourceKind: "tracked_download",
+      candidateId: 3001,
+      queueItemId: 502,
+      fileIdentity: candidate.fileIdentity,
+    };
+
+    const corrupt: readonly [string, Record<string, unknown>][] = [
+      ["a path where the identifier belongs", { upstreamId: "/media/example/file.mkv" }],
+      ["an identifier naming another row", { upstreamId: "4242" }],
+      ["a fingerprint that is not a digest", { fingerprint: "/media/example" }],
+      ["an unknown field", { extra: "unexpected" }],
+    ];
+
+    for (const [label, overrides] of corrupt) {
+      references.update(reference, "import_candidate", {
+        kind: "domain",
+        snapshot: {
+          upstreamId: "3001",
+          fingerprint: "0123456789abcdef",
+          detail,
+          ...overrides,
+        },
+      });
+      expect(resolveCandidateReference(references, reference, "sonarr").ok, label).toBe(false);
+    }
   });
 
   it("refuses a stored identity that is not a digest", async () => {

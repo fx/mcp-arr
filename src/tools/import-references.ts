@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { fileIdentityLength } from "../adapters/import/candidates.js";
 import type { ImportCandidate, ImportCandidateContext } from "../adapters/import/model.js";
 import { importSourceKinds } from "../adapters/import/model.js";
@@ -33,6 +34,97 @@ export type ReferenceResolved<TValue> =
 const detailKind = "import_candidate";
 
 /**
+ * The one definition of what a candidate reference may hold.
+ *
+ * Everything about this boundary is checked against this schema and nothing
+ * else: minting parses the detail it is about to store, and resolving parses
+ * the snapshot it just read back. A rule stated once cannot be enforced on the
+ * way in and skipped on the way out, which is exactly how a reference came to
+ * be minted here that could never be resolved — and how a corrupt snapshot
+ * could resolve as valid because a hand-written walk happened not to look at
+ * the field that was wrong.
+ *
+ * It is strict, so a key nothing here writes is corruption rather than a field
+ * to ignore, and the numeric rules say what each identifier actually is: a
+ * record identifier is positive because zero is how the applications report
+ * "none", while a season may be zero because specials are season 0 and a size
+ * may be zero because an empty file has one.
+ */
+const recordIdSchema = z.number().int().positive();
+const seasonNumberSchema = z.number().int().nonnegative();
+const sizeSchema = z.number().int().nonnegative();
+
+const candidateDetailSchema = z
+  .strictObject({
+    kind: z.literal(detailKind),
+    sourceKind: z.enum(importSourceKinds),
+    candidateId: recordIdSchema.optional(),
+    queueItemId: recordIdSchema.optional(),
+    mediaId: recordIdSchema.optional(),
+    seasonNumber: seasonNumberSchema.optional(),
+    episodeIds: z.array(recordIdSchema).optional(),
+    /**
+     * The digest {@link fileIdentity} produces, held to that exact shape. A
+     * bare "some string" would accept a canonical path or a download-client
+     * identifier, and a reference that stored one would have defeated this
+     * boundary at its last step.
+     */
+    fileIdentity: z.string().regex(new RegExp(`^[0-9a-f]{${String(fileIdentityLength)}}$`, "u")),
+    sizeBytes: sizeSchema.optional(),
+    existingFileId: recordIdSchema.optional(),
+  })
+  .refine(
+    (detail) =>
+      detail.sourceKind === "tracked_download"
+        ? detail.queueItemId !== undefined
+        : detail.mediaId !== undefined,
+    {
+      // Whatever this kind of scan is re-read through has to be there at all: a
+      // tracked candidate without its queue row, or a library candidate without
+      // its media record, could not be revalidated against current state, which
+      // is what the later tasks of this change do before importing anything.
+      error: "an import candidate must carry the record its own scan is re-read through",
+    },
+  );
+
+/**
+ * The whole stored snapshot, including the two fields the reference store owns.
+ *
+ * They are validated too, rather than trusted because this module wrote them: a
+ * corrupt payload carrying a path where the upstream identifier belongs would
+ * otherwise resolve as valid on the strength of a plausible detail. The
+ * identifier is also required to agree with the detail it was derived from, so
+ * the two cannot drift into describing different rows.
+ */
+const candidateSnapshotSchema = z
+  .strictObject({
+    upstreamId: z.string().regex(/^\d+$/u),
+    fingerprint: z.string().regex(/^[0-9a-f]{8,}$/u),
+    detail: candidateDetailSchema,
+  })
+  .refine((snapshot) => snapshot.upstreamId === String(snapshot.detail.candidateId ?? 0), {
+    error: "the retained upstream identifier does not match the candidate it names",
+  });
+
+type CandidateDetail = z.infer<typeof candidateDetailSchema>;
+
+/** The detail one candidate would be stored as, before anything stores it. */
+function detailFor(candidate: ImportCandidate): Record<string, unknown> {
+  return {
+    kind: detailKind,
+    sourceKind: candidate.sourceKind,
+    candidateId: candidate.context.candidateId,
+    queueItemId: candidate.context.queueItemId,
+    mediaId: candidate.context.mediaId,
+    seasonNumber: candidate.context.seasonNumber,
+    episodeIds: candidate.context.episodeIds,
+    fileIdentity: candidate.fileIdentity,
+    sizeBytes: candidate.sizeBytes,
+    existingFileId: candidate.context.existingFileId,
+  };
+}
+
+/**
  * Digests the state a candidate's validity depends on.
  *
  * The parts are listed in a fixed, code-authored order, and each is either a
@@ -58,87 +150,31 @@ function candidateFingerprint(candidate: ImportCandidate): string {
 }
 
 /**
- * The exact shape a file identity may take.
- *
- * Checked rather than assumed, and the reason is the whole point of this
- * module: a bare "non-empty string" test would accept a canonical path or a
- * download-client identifier, and a reference that stored one would have
- * defeated the boundary at the last step. Only the digest
- * {@link fileIdentity} produces matches this.
- */
-const identityPattern = new RegExp(`^[0-9a-f]{${String(fileIdentityLength)}}$`, "u");
-
-function isFileIdentity(value: unknown): value is string {
-  return typeof value === "string" && identityPattern.test(value);
-}
-
-/**
  * Whether a candidate is one this module will name.
  *
- * Checked *before* anything is minted, and that ordering is the point: a store
- * that had already issued a token for a candidate this server cannot describe
- * would hold an entry nothing can safely resolve, and the refusal would arrive
- * after the damage.
- *
- * Three things have to hold. The candidate belongs to an application that has a
- * library. Its file identity is a digest and not something that merely stands
- * where one should. And it carries whatever its own kind of scan will need to
- * be re-read later: a tracked candidate without its queue row, or a library
- * candidate without its media record, could not be revalidated against current
- * state at all — which is exactly what the later tasks of this change do before
- * importing anything.
+ * Answered by parsing the very detail a mint would store, so the test a
+ * candidate passes here is the test its stored payload will face on the way
+ * back out — not a second, looser reading of the same rules. The application is
+ * checked separately because it is bound on the reference rather than stored in
+ * the detail, and the candidate's two records of its own scan kind have to
+ * agree because only one of them is stored.
  */
 export function isNameableCandidate(candidate: ImportCandidate): boolean {
-  if (candidate.application !== "sonarr" && candidate.application !== "radarr") {
-    return false;
-  }
-  if (!(importSourceKinds as readonly string[]).includes(candidate.sourceKind)) {
-    return false;
-  }
-  // The kind is recorded in two places on a candidate, and only one of them is
-  // stored on the reference. They have to agree, or a candidate could be minted
-  // as one kind and validated as the other — which is a reference that mints
-  // and then refuses to resolve.
-  if (candidate.sourceKind !== candidate.context.sourceKind) {
-    return false;
-  }
-  if (!fieldRules.identity(candidate.fileIdentity)) {
-    return false;
-  }
-
-  // Every optional field is held to exactly the rule the resolver will hold it
-  // to. Checking them only for presence here is how a reference comes to be
-  // minted that can never be resolved: upstream reports "none" as zero, and a
-  // zero stored where a record identifier belongs passes an
-  // is-it-defined test and fails an is-it-a-record test.
-  const context = candidate.context;
-  const optional: readonly [unknown, (value: unknown) => boolean][] = [
-    [context.candidateId, fieldRules.recordId],
-    [context.queueItemId, fieldRules.recordId],
-    [context.mediaId, fieldRules.recordId],
-    [context.seasonNumber, fieldRules.seasonNumber],
-    [context.episodeIds, isRecordIdList],
-    [candidate.sizeBytes, fieldRules.sizeBytes],
-    [context.existingFileId, fieldRules.recordId],
-  ];
-  if (optional.some(([value, accepts]) => value !== undefined && !accepts(value))) {
-    return false;
-  }
-
-  // And whatever this kind of scan is re-read through has to be there at all: a
-  // tracked candidate without its queue row, or a library candidate without its
-  // media record, could not be revalidated against current state.
-  return candidate.sourceKind === "tracked_download"
-    ? fieldRules.recordId(context.queueItemId)
-    : fieldRules.recordId(context.mediaId);
+  return (
+    (candidate.application === "sonarr" || candidate.application === "radarr") &&
+    candidate.sourceKind === candidate.context.sourceKind &&
+    candidateDetailSchema.safeParse(detailFor(candidate)).success
+  );
 }
 
 /**
  * Mints the reference one candidate is named by, or refuses to.
  *
  * `undefined` means the candidate was not nameable and nothing was written to
- * the store. A caller reports such a row as unmappable rather than handing back
- * a reference that cannot be resolved into anything.
+ * the store. Checking before minting is the point: a store that had already
+ * issued a token for a candidate this server cannot describe would hold an
+ * entry nothing can safely resolve, and the refusal would arrive after the
+ * damage.
  */
 export function mintCandidateReference(
   references: ReferenceStore,
@@ -160,18 +196,7 @@ export function mintCandidateReference(
         // its fingerprint, not a row number that may not exist.
         upstreamId: String(candidate.context.candidateId ?? 0),
         fingerprint: candidateFingerprint(candidate),
-        detail: {
-          kind: detailKind,
-          sourceKind: candidate.sourceKind,
-          candidateId: candidate.context.candidateId,
-          queueItemId: candidate.context.queueItemId,
-          mediaId: candidate.context.mediaId,
-          seasonNumber: candidate.context.seasonNumber,
-          episodeIds: candidate.context.episodeIds,
-          fileIdentity: candidate.fileIdentity,
-          sizeBytes: candidate.sizeBytes,
-          existingFileId: candidate.context.existingFileId,
-        },
+        detail: detailFor(candidate),
       },
     }),
   }).reference;
@@ -183,58 +208,6 @@ function invalid(application: MediaApplication, message: string): ToolError {
     message: `${application}: ${message}`,
     application,
   });
-}
-
-/**
- * What each retained field is allowed to be.
- *
- * These are the whole of the rule, and both sides of the boundary read them:
- * {@link isNameableCandidate} refuses to mint a candidate whose fields would
- * fail them, and the readers below refuse to resolve a payload that does. Two
- * copies of this rule is how a reference comes to exist that can never be
- * resolved — minted under a lax test and rejected under a strict one — so there
- * is one.
- */
-const fieldRules = {
-  /** An upstream record identifier. Zero is upstream's "none", never a row. */
-  recordId: (value: unknown): value is number =>
-    typeof value === "number" && Number.isSafeInteger(value) && value > 0,
-  /** A season number, where zero is real: specials are season 0. */
-  seasonNumber: (value: unknown): value is number =>
-    typeof value === "number" && Number.isSafeInteger(value) && value >= 0,
-  /** A size in bytes, where zero is real: an empty file has one. */
-  sizeBytes: (value: unknown): value is number =>
-    typeof value === "number" && Number.isSafeInteger(value) && value >= 0,
-  identity: isFileIdentity,
-} as const;
-
-function isRecordIdList(value: unknown): value is readonly number[] {
-  return Array.isArray(value) && value.every((entry) => fieldRules.recordId(entry));
-}
-
-/**
- * A field read back out of a stored snapshot.
- *
- * The three answers are kept apart for the reason the activity resolver gives:
- * collapsing them is how corruption becomes silence. A field this module never
- * wrote is legitimately absent, one it wrote is present, and one holding
- * something it would never have written is invalid — and that last has to be
- * refused rather than coerced, or a later import would act on a plausible
- * mapping that nothing vouches for.
- */
-type StoredField<TValue> =
-  | { readonly state: "present"; readonly value: TValue }
-  | { readonly state: "absent" }
-  | { readonly state: "invalid" };
-
-function stored<TValue>(
-  value: unknown,
-  accepts: (candidate: unknown) => candidate is TValue,
-): StoredField<TValue> {
-  if (value === undefined || value === null) {
-    return { state: "absent" };
-  }
-  return accepts(value) ? { state: "present", value } : { state: "invalid" };
 }
 
 /**
@@ -266,81 +239,42 @@ export function resolveCandidateReference(
   }
 
   const payload = entry.payload;
-  if (payload.kind !== "domain" || payload.snapshot.detail?.kind !== detailKind) {
+  if (payload.kind !== "domain") {
     return {
       ok: false,
       error: invalid(application, `${property} does not name an import candidate`),
     };
   }
 
-  const detail = payload.snapshot.detail;
-  const sourceKind = detail.sourceKind;
-  if (
-    typeof sourceKind !== "string" ||
-    !(importSourceKinds as readonly string[]).includes(sourceKind)
-  ) {
+  // One parse, against the same schema the mint was checked with. A field this
+  // module would never have written — a path where the digest belongs, a zero
+  // where a record identifier belongs, a key nothing here writes at all — is
+  // corruption, and corruption is refused rather than read around.
+  const parsed = candidateSnapshotSchema.safeParse(payload.snapshot);
+  if (!parsed.success) {
     return {
       ok: false,
       error: invalid(application, `${property} does not name an import candidate`),
     };
   }
 
-  const fileIdentity = stored(detail.fileIdentity, fieldRules.identity);
-  const candidateId = stored(detail.candidateId, fieldRules.recordId);
-  const queueItemId = stored(detail.queueItemId, fieldRules.recordId);
-  const mediaId = stored(detail.mediaId, fieldRules.recordId);
-  const seasonNumber = stored(detail.seasonNumber, fieldRules.seasonNumber);
-  const episodeIds = stored(detail.episodeIds, isRecordIdList);
-  const sizeBytes = stored(detail.sizeBytes, fieldRules.sizeBytes);
-  const existingFileId = stored(detail.existingFileId, fieldRules.recordId);
+  return { ok: true, value: contextFrom(application, parsed.data.detail) };
+}
 
-  // The file identity is the one field always written, so absent is as wrong as
-  // malformed for it. The rest are legitimately absent: a scan of a library
-  // context has no queue item, a movie has no season or episodes, and a
-  // candidate the library does not already hold has no existing file.
-  if (
-    fileIdentity.state !== "present" ||
-    candidateId.state === "invalid" ||
-    queueItemId.state === "invalid" ||
-    mediaId.state === "invalid" ||
-    seasonNumber.state === "invalid" ||
-    episodeIds.state === "invalid" ||
-    sizeBytes.state === "invalid" ||
-    existingFileId.state === "invalid"
-  ) {
-    return {
-      ok: false,
-      error: invalid(application, `${property} does not name an import candidate`),
-    };
-  }
-
-  // The same requirement the mint enforced, checked again on the way out: a
-  // payload that lost the queue row a tracked candidate is re-read through
-  // would resolve into a context no later step could revalidate.
-  const required =
-    sourceKind === "tracked_download"
-      ? queueItemId.state === "present"
-      : mediaId.state === "present";
-  if (!required) {
-    return {
-      ok: false,
-      error: invalid(application, `${property} does not name an import candidate`),
-    };
-  }
-
+function contextFrom(
+  application: MediaApplication,
+  detail: CandidateDetail,
+): CandidateReferenceContext {
   return {
-    ok: true,
-    value: {
-      application,
-      sourceKind: sourceKind as CandidateReferenceContext["sourceKind"],
-      candidateId: candidateId.state === "present" ? candidateId.value : undefined,
-      queueItemId: queueItemId.state === "present" ? queueItemId.value : undefined,
-      mediaId: mediaId.state === "present" ? mediaId.value : undefined,
-      seasonNumber: seasonNumber.state === "present" ? seasonNumber.value : undefined,
-      episodeIds: episodeIds.state === "present" ? episodeIds.value : undefined,
-      fileIdentity: fileIdentity.value,
-      sizeBytes: sizeBytes.state === "present" ? sizeBytes.value : undefined,
-      existingFileId: existingFileId.state === "present" ? existingFileId.value : undefined,
-    },
+    application,
+    sourceKind: detail.sourceKind,
+    candidateId: detail.candidateId,
+    queueItemId: detail.queueItemId,
+    mediaId: detail.mediaId,
+    seasonNumber: detail.seasonNumber,
+    episodeIds: detail.episodeIds,
+    fileIdentity: detail.fileIdentity,
+    sizeBytes: detail.sizeBytes,
+    existingFileId: detail.existingFileId,
   };
 }
