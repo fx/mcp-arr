@@ -27,6 +27,40 @@ function storeAt(now = 1_000, lifetimeId?: string) {
   return { store, advance: (ms: number) => clock.advance(ms) };
 }
 
+/**
+ * The exact shape every minted token has: a kind prefix, the store's lifetime
+ * segment, and a fixed-length random tail.
+ */
+const tokenShape = /^([a-z]+)_([A-Za-z0-9_-]{8})([A-Za-z0-9_-]{22})$/u;
+
+interface TokenParts {
+  readonly prefix: string;
+  readonly lifetime: string;
+  readonly tail: string;
+}
+
+/**
+ * Splits a token into the three parts the minting code builds it from.
+ *
+ * The opacity tests below are written in terms of these parts rather than as
+ * substring searches, because a substring search shows nothing either way: a
+ * short one appears in a random tail by coincidence often enough to fail a run
+ * at random, and its absence would not have established that the token carries
+ * nothing about its record. What the parts establish is where a record could
+ * possibly appear — and that only the tail varies, that it varies when the
+ * record does not, and that it is the same length whatever the record is.
+ */
+function tokenParts(store: ReferenceStore, token: string): TokenParts {
+  const [, prefix, lifetime, tail] = tokenShape.exec(token) ?? [];
+  if (prefix === undefined || lifetime === undefined || tail === undefined) {
+    throw new Error(`Not a token this server mints: ${token}`);
+  }
+  // The lifetime segment belongs to the store, not to the record: the same
+  // eight characters lead every token this store mints, whatever it names.
+  expect(lifetime).toBe(store.lifetimeId);
+  return { prefix, lifetime, tail };
+}
+
 function trackedItem(overrides: Partial<QueueItem> = {}): QueueItem {
   return {
     application: "sonarr",
@@ -99,25 +133,91 @@ function queueOf(store: ReferenceStore, item = trackedItem()) {
 }
 
 describe("activity references are opaque", () => {
-  it("mints a token that carries nothing about the record it names", () => {
+  it("mints a token that is a kind, this process's lifetime, and randomness", () => {
     const { store } = storeAt();
     const { reference } = queueOf(store);
+    const parts = tokenParts(store, reference);
 
     // The published cursor and reference schemas both accept only this
     // alphabet, and the prefix is the only part that means anything.
-    expect(reference).toMatch(/^que_[A-Za-z0-9_-]{8,64}$/u);
+    expect(parts.prefix).toBe("que");
+    // Nothing is left over. The token is exactly those three parts, so there is
+    // nowhere in it for anything the record carries to be.
+    expect(reference).toBe(`que_${store.lifetimeId}${parts.tail}`);
+    // The one substring check worth keeping: a long planted value could only
+    // appear by leaking, unlike a two-character one that a random tail produces
+    // by coincidence.
     expect(reference).not.toContain(canary);
-    expect(reference).not.toContain("502");
-    expect(reference).not.toContain("12");
-    expect(reference).not.toContain("sonarr");
+  });
+
+  it("shapes a token the same however large the record it names", () => {
+    const { store } = storeAt();
+    const small = mintQueueReference(
+      store,
+      trackedItem({
+        context: { application: "sonarr", kind: "tracked_download", queueItemId: 1 },
+        title: "S",
+        origin: undefined,
+      }),
+    );
+    const large = mintQueueReference(
+      store,
+      trackedItem({
+        context: {
+          application: "sonarr",
+          kind: "tracked_download",
+          queueItemId: Number.MAX_SAFE_INTEGER,
+          mediaId: 999_999,
+        },
+        title: `${canary} `.repeat(200),
+      }),
+    );
+
+    // A token derived in any part from its record could not be the same length
+    // for a one-character title and a two-thousand-character one.
+    expect(large.length).toBe(small.length);
+    const first = tokenParts(store, small);
+    const second = tokenParts(store, large);
+    expect(second.prefix).toBe(first.prefix);
+    expect(second.tail).not.toBe(first.tail);
+    expect(large).not.toContain(canary);
   });
 
   it("mints a different token for the same record every time", () => {
     const { store } = storeAt();
     const item = trackedItem();
-    // Nothing about the record determines the token, so two references to one
+    const tails = Array.from(
+      { length: 128 },
+      () => tokenParts(store, mintQueueReference(store, item)).tail,
+    );
+
+    // Nothing about the record determines the token: a hundred and twenty-eight
+    // references to one row are a hundred and twenty-eight different tokens, so
+    // the tail cannot be a function of what it names and two references to one
     // row cannot be recognized as the same row by comparing them.
-    expect(mintQueueReference(store, item)).not.toBe(mintQueueReference(store, item));
+    expect(new Set(tails).size).toBe(tails.length);
+    // And another row's token is not distinguishable from any of them.
+    const other = tokenParts(store, mintQueueReference(store, pendingItem()));
+    expect(tails).not.toContain(other.tail);
+    expect(new Set(tails.map((tail) => tail.length))).toEqual(new Set([other.tail.length]));
+  });
+
+  it("names its record only through the store that minted it", () => {
+    const { store } = storeAt();
+    const { reference } = queueOf(store);
+
+    // A second store sharing this one's lifetime segment accepts the token as
+    // well formed and current, and still cannot say what it names: everything
+    // about the record is held by the store that minted it, and none of it
+    // travels in the token. That is what makes the token opaque — not that some
+    // substring happens to be missing from it.
+    const sibling = storeAt(1_000, store.lifetimeId).store;
+    expect(sibling.resolve(reference, "queue")).toEqual({
+      ok: false,
+      reason: "unknown",
+      kind: "queue",
+    });
+    expect(resolveQueueReference(sibling, reference, "sonarr").ok).toBe(false);
   });
 
   it("keeps the download digest and every unmapped field out of what it retains", () => {
@@ -249,10 +349,13 @@ describe("activity references retain what a transition needs", () => {
     const history = mintHistoryReference(store, historyRecord());
     const blocklist = mintBlocklistReference(store, blocklistRecord());
 
-    expect(history).toMatch(/^his_[A-Za-z0-9_-]{8,64}$/u);
-    expect(blocklist).toMatch(/^blk_[A-Za-z0-9_-]{8,64}$/u);
-    expect(history).not.toContain("9001");
-    expect(blocklist).not.toContain("7101");
+    expect(tokenParts(store, history).prefix).toBe("his");
+    expect(tokenParts(store, blocklist).prefix).toBe("blk");
+    // The identifier is not what either token is made of: minting the same
+    // record again produces a different token that resolves to the same
+    // identifier, so neither can be derived from the other.
+    expect(mintHistoryReference(store, historyRecord())).not.toBe(history);
+    expect(mintBlocklistReference(store, blocklistRecord())).not.toBe(blocklist);
 
     expect(resolveHistoryReference(store, history, "prowlarr")).toEqual({
       ok: true,
