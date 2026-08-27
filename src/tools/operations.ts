@@ -7,6 +7,11 @@ import { meetsMinimumVersion } from "../adapters/version.js";
 import type { ApplicationId } from "../applications.js";
 import type { PlanRecord, PreconditionRead } from "../state/plans.js";
 import type { WorkflowState } from "../state/workflow.js";
+import {
+  releaseGrabHandler,
+  releaseGrabPreconditions,
+  releaseSearchHandler,
+} from "./acquisition.js";
 import { createToolError, type ToolError } from "./errors.js";
 import { jobCancelHandler, jobCancelPreconditions, jobGetHandler } from "./jobs.js";
 import { libraryQueryHandler } from "./library.js";
@@ -93,7 +98,19 @@ export type OperationOutcome =
        */
       readonly outcomeUnknown?: ToolError;
     }
-  | { readonly status: "error"; readonly error: ToolError };
+  | {
+      readonly status: "error";
+      readonly error: ToolError;
+      /**
+       * The per-item outcomes behind a failure, for a bulk operation in which
+       * every item failed. The call as a whole did fail — so the receipt
+       * settles from `error` and a retry stays open — but the reasons still
+       * belong to the items that produced them, and collapsing them into one
+       * error would conceal a mixed set of failures behind whichever one came
+       * first.
+       */
+      readonly items?: readonly ItemOutcome[];
+    };
 
 /**
  * Reads the current values a plan's validity depends on.
@@ -210,6 +227,13 @@ function define<const TId extends string>(
  */
 const libraryQuery: DefineOptions = { handler: libraryQueryHandler };
 
+/**
+ * Every `arr_release_search` target runs the same handler, for the same reason
+ * the library views do: the target is carried by the caller's own discriminator,
+ * which the handler re-validates against the published schema.
+ */
+const releaseSearch: DefineOptions = { handler: releaseSearchHandler };
+
 const every = ["sonarr", "radarr", "prowlarr"] as const;
 const media = ["sonarr", "radarr"] as const;
 const sonarr = ["sonarr"] as const;
@@ -314,15 +338,31 @@ const definitions = [
     "sonarr_episode",
     sonarr,
     "external",
+    releaseSearch,
   ),
-  define("release.search.sonarr_season", "arr_release_search", "sonarr_season", sonarr, "external"),
-  define("release.search.radarr_movie", "arr_release_search", "radarr_movie", radarr, "external"),
+  define(
+    "release.search.sonarr_season",
+    "arr_release_search",
+    "sonarr_season",
+    sonarr,
+    "external",
+    releaseSearch,
+  ),
+  define(
+    "release.search.radarr_movie",
+    "arr_release_search",
+    "radarr_movie",
+    radarr,
+    "external",
+    releaseSearch,
+  ),
   define(
     "release.search.prowlarr_aggregate",
     "arr_release_search",
     "prowlarr_aggregate",
     prowlarr,
     "external",
+    releaseSearch,
   ),
 
   // arr_import_inspect
@@ -399,7 +439,10 @@ const definitions = [
   define("search.start.cutoff_unmet", "arr_search_start", "cutoff_unmet", media, "start_job"),
 
   // arr_release_grab
-  define("release.grab", "arr_release_grab", undefined, every, "start_job"),
+  define("release.grab", "arr_release_grab", undefined, every, "start_job", {
+    handler: releaseGrabHandler,
+    readPreconditions: releaseGrabPreconditions,
+  }),
 
   // arr_queue_resolve
   define("queue.resolve.ignore_tracking", "arr_queue_resolve", "ignore_tracking", media, "mutate"),

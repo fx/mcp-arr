@@ -1,4 +1,4 @@
-import { createServer, type Server, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { type ApplicationId, describeApplication } from "../../src/applications.js";
 import { fixturePathFor, loadFixture } from "./fixtures.js";
@@ -16,7 +16,10 @@ import { fixtureRoot } from "./tool-context.js";
  * reimplementation of an *arr API: it answers recorded routes and nothing else.
  */
 
-/** The routes each application answers: its probe, plus its library reads. */
+/**
+ * The routes each application answers: its probe, its library reads, and the
+ * interactive release search a grab is resolved from.
+ */
 const routes: Readonly<Record<ApplicationId, readonly string[]>> = {
   sonarr: [
     "system/status",
@@ -27,6 +30,7 @@ const routes: Readonly<Record<ApplicationId, readonly string[]>> = {
     "wanted/missing",
     "wanted/cutoff",
     "calendar",
+    "release",
   ],
   radarr: [
     "system/status",
@@ -37,16 +41,31 @@ const routes: Readonly<Record<ApplicationId, readonly string[]>> = {
     "wanted/missing",
     "wanted/cutoff",
     "calendar",
+    "release",
   ],
-  // Prowlarr has no media library, so it answers only the capability probe.
-  prowlarr: ["system/status"],
+  // Prowlarr has no media library, so it answers the capability probe and the
+  // routes an aggregate search and a grab need.
+  prowlarr: ["system/status", "indexer", "indexerstatus", "search"],
 };
 
-/** Which query parameter narrows a route, where a real instance narrows one. */
-const parentFilters: Readonly<Record<string, string | undefined>> = {
-  episode: "seriesId",
-  episodefile: "seriesId",
-  moviefile: "movieId",
+/**
+ * Which query parameter narrows a route, where a real instance narrows one, and
+ * which record field it is matched against. The two are named separately
+ * because they differ: an aggregate search takes a plural `indexerIds` filter
+ * and each release reports the singular `indexerId` it came from.
+ */
+const parentFilters: Readonly<Record<string, { query: string; field: string } | undefined>> = {
+  episode: { query: "seriesId", field: "seriesId" },
+  episodefile: { query: "seriesId", field: "seriesId" },
+  moviefile: { query: "movieId", field: "movieId" },
+  search: { query: "indexerIds", field: "indexerId" },
+};
+
+/** The route each application resolves a grab on, keyed by application. */
+const grabRoutes: Readonly<Record<ApplicationId, string>> = {
+  sonarr: "release",
+  radarr: "release",
+  prowlarr: "search",
 };
 
 export interface FixtureInstanceOptions {
@@ -57,11 +76,24 @@ export interface FixtureInstanceOptions {
    * race one that was just released.
    */
   readonly unreachable?: boolean;
+  /**
+   * Refuses a grab for the named release GUIDs the way an instance whose search
+   * cache no longer holds them does, so a test can produce a mixed per-release
+   * outcome without inventing a second server.
+   */
+  readonly staleGrabs?: readonly string[];
 }
 
 export interface UpstreamSearch {
   readonly route: string;
   readonly query: URLSearchParams;
+}
+
+/** One grab this instance was asked for, as it arrived. */
+export interface UpstreamGrab {
+  readonly route: string;
+  readonly guid: string;
+  readonly indexerId: number | undefined;
 }
 
 export interface FixtureInstance {
@@ -72,6 +104,8 @@ export interface FixtureInstance {
   readonly requests: readonly string[];
   /** The same requests with their query parameters, for asserting what was sent. */
   readonly searches: readonly UpstreamSearch[];
+  /** The grabs this instance was asked to resolve, in order. */
+  readonly grabs: readonly UpstreamGrab[];
   close(): Promise<void>;
 }
 
@@ -80,14 +114,33 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function filtered(body: unknown, route: string, query: URLSearchParams): unknown {
-  const parameter = parentFilters[route];
-  const wanted = parameter === undefined ? null : query.get(parameter);
-  if (wanted === null || !Array.isArray(body)) {
+  const filter = parentFilters[route];
+  const wanted = filter === undefined ? null : query.get(filter.query);
+  if (filter === undefined || wanted === null || !Array.isArray(body)) {
     return body;
   }
-  return body.filter(
-    (record) => isRecord(record) && String(record[parameter as string]) === wanted,
-  );
+  return body.filter((record) => isRecord(record) && String(record[filter.field]) === wanted);
+}
+
+interface GrabBody {
+  readonly guid: string;
+  readonly indexerId: number | undefined;
+}
+
+/** Reads the body one grab carried, which is only ever a cache identity. */
+async function readGrabBody(request: IncomingMessage): Promise<GrabBody> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) {
+    chunks.push(chunk as Buffer);
+  }
+  const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  if (!isRecord(parsed) || typeof parsed.guid !== "string") {
+    throw new Error("A grab must carry a release GUID");
+  }
+  return {
+    guid: parsed.guid,
+    indexerId: typeof parsed.indexerId === "number" ? parsed.indexerId : undefined,
+  };
 }
 
 /** The single record `series/{id}` answers with, taken from the series fixture. */
@@ -105,6 +158,8 @@ export async function startFixtureInstance(
   const apiKey = `${application}-fixture-key`;
   const requests: string[] = [];
   const searches: UpstreamSearch[] = [];
+  const grabs: UpstreamGrab[] = [];
+  const stale = new Set(options.staleGrabs ?? []);
   const bodies = new Map<string, unknown>(
     await Promise.all(
       routes[application].map(
@@ -143,6 +198,36 @@ export async function startFixtureInstance(
       return;
     }
 
+    // A grab is the one thing this server is asked to do rather than to
+    // report. It resolves out of the recorded search body, exactly the way an
+    // instance resolves one out of its own short-lived cache, and answers `404`
+    // for a release the cache no longer holds.
+    if (request.method === "POST") {
+      if (route !== grabRoutes[application]) {
+        send(response, 404, { message: "not found" });
+        return;
+      }
+      readGrabBody(request).then(
+        (body) => {
+          grabs.push({ route, guid: body.guid, indexerId: body.indexerId });
+          const cached = Array.isArray(bodies.get(route))
+            ? (bodies.get(route) as unknown[]).find(
+                (record) => isRecord(record) && record.guid === body.guid,
+              )
+            : undefined;
+          if (cached === undefined || stale.has(body.guid)) {
+            send(response, 404, {
+              message: "Couldn't find requested release in cache, try searching again",
+            });
+            return;
+          }
+          send(response, 200, cached);
+        },
+        () => send(response, 400, { message: "unreadable body" }),
+      );
+      return;
+    }
+
     const single = /^series\/(\d+)$/u.exec(route);
     if (application === "sonarr" && single !== null) {
       const record = recordById(bodies.get("series"), Number(single[1]));
@@ -170,6 +255,7 @@ export async function startFixtureInstance(
     apiKey,
     requests,
     searches,
+    grabs,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => (error === undefined ? resolve() : reject(error)));

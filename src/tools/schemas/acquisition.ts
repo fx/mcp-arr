@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { toolResultSchema } from "../results.js";
+import { releaseGrabDataSchema, releaseSearchDataSchema } from "./acquisition-results.js";
 import {
   bulkReferences,
   importCandidateReferenceSchema,
@@ -182,8 +183,15 @@ export const importExecuteInputSchema = variantUnion(
   ]),
 );
 
-export const releaseSearchOutputSchema = toolResultSchema();
-export const releaseGrabOutputSchema = toolResultSchema({ mutation: true });
+export type ReleaseSearchInput = z.infer<typeof releaseSearchInputSchema>;
+
+export type ReleaseGrabInput = z.infer<typeof releaseGrabInputSchema>;
+
+export const releaseSearchOutputSchema = toolResultSchema({ data: releaseSearchDataSchema });
+export const releaseGrabOutputSchema = toolResultSchema({
+  data: releaseGrabDataSchema,
+  mutation: true,
+});
 export const searchStartOutputSchema = toolResultSchema({ mutation: true });
 export const importInspectOutputSchema = toolResultSchema();
 export const importExecuteOutputSchema = toolResultSchema({ mutation: true });

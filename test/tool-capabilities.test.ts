@@ -283,7 +283,9 @@ describe("arr_capabilities", () => {
 
     // Job projection is process-local, so it is usable on every configured
     // application. The library views are advertised exactly where the adapters
-    // model them, and Prowlarr has no media library so it advertises none.
+    // model them, and Prowlarr has no media library so it advertises none —
+    // but it does model an aggregate release search and a grab, which is why
+    // it is no longer the job tools alone.
     expect(reportFor(result, "sonarr").supportedOperations.map(operationKey)).toEqual([
       "arr_library_query/series",
       "arr_library_query/seasons",
@@ -293,7 +295,10 @@ describe("arr_capabilities", () => {
       "arr_library_query/cutoff_unmet_episodes",
       "arr_library_query/calendar",
       "arr_library_query/lookup",
+      "arr_release_search/sonarr_episode",
+      "arr_release_search/sonarr_season",
       "arr_job_get/-",
+      "arr_release_grab/-",
       "arr_job_cancel/-",
     ]);
     expect(reportFor(result, "radarr").supportedOperations.map(operationKey)).toEqual([
@@ -304,11 +309,15 @@ describe("arr_capabilities", () => {
       "arr_library_query/cutoff_unmet_movies",
       "arr_library_query/calendar",
       "arr_library_query/lookup",
+      "arr_release_search/radarr_movie",
       "arr_job_get/-",
+      "arr_release_grab/-",
       "arr_job_cancel/-",
     ]);
     expect(reportFor(result, "prowlarr").supportedOperations.map(operationKey)).toEqual([
+      "arr_release_search/prowlarr_aggregate",
       "arr_job_get/-",
+      "arr_release_grab/-",
       "arr_job_cancel/-",
     ]);
 

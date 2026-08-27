@@ -63,10 +63,10 @@ The [Acquisition and Import spec](../specs/acquisition-and-import/#release-searc
   - [x] Add Sonarr episode/season and Radarr movie search adapters
   - [x] Add Prowlarr aggregate search with per-indexer completeness
   - [x] Normalize decisions, rejections, quality, protocol, and safe metadata
-- [ ] Implement opaque release references and grab
-  - [ ] Bind search cache identity, application/media context, and expiration
-  - [ ] Implement typed single grab and Prowlarr per-item bulk grab
-  - [ ] Add direct apply, plan/apply, retry, and stale-cache reconciliation
+- [x] Implement opaque release references and grab
+  - [x] Bind search cache identity, application/media context, and expiration
+  - [x] Implement typed single grab and Prowlarr per-item bulk grab
+  - [x] Add direct apply, plan/apply, retry, and stale-cache reconciliation
 - [ ] Implement and register `arr_search_start`
   - [ ] Add typed episode/season/series/movie/missing/cutoff command variants with plan/direct-apply behavior
   - [ ] Project resulting commands into normalized jobs
