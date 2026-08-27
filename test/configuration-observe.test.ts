@@ -120,7 +120,7 @@ describe("observing providers", () => {
     );
     const records = providerRecords(outcome);
 
-    expect(records.map((record) => record.syncLevel)).toEqual(["fullSync", "addOnly"]);
+    expect(records.map((record) => record.syncLevel)).toEqual(["fullSync", "addOnly", "disabled"]);
     expect(firstRecord(records).secrets).toEqual([
       { name: "apiKey", state: "configured", masked: false },
     ]);

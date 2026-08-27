@@ -48,6 +48,7 @@ const allowedFiles = [
   "dist/adapters/configuration/resources.js",
   "dist/adapters/configuration/serialize.js",
   "dist/adapters/configuration/service.js",
+  "dist/adapters/configuration/sync.js",
   "dist/adapters/configuration/write.js",
   "dist/adapters/library/changes.js",
   "dist/adapters/library/files.js",

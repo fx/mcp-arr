@@ -1,0 +1,707 @@
+import { z } from "zod";
+import type { ApplicationId } from "../../applications.js";
+import type { UpstreamBody, UpstreamClient } from "../../http/client.js";
+import { UpstreamError } from "../../http/errors.js";
+import {
+  compareReadSet,
+  fingerprintReadSet,
+  type ReadSetFingerprint,
+  type ReadSetObservation,
+} from "../../state/plans.js";
+import { createToolError, type ToolError, toolErrorForThrown } from "../../tools/errors.js";
+import { routeFor } from "./domains.js";
+import { type ConfigurationRef, configurationRef } from "./model.js";
+import { isUpstreamRecord, parseCollection, parseConfiguration } from "./parse.js";
+import { captureUpstreamResource, type UpstreamResource, type UpstreamValue } from "./resources.js";
+
+/**
+ * Prowlarr application synchronization.
+ *
+ * Prowlarr does not hold indexers for its own sake: it pushes them into the
+ * Sonarr and Radarr instances it is mapped to, and each mapping decides for
+ * itself how much of that push it performs. This module models that decision
+ * and nothing else — it reads the mappings, the indexers, and the tags that
+ * connect them, and answers what changing a mapping's sync level would do to
+ * the indexers on the other side.
+ *
+ * Three rules hold throughout.
+ *
+ * Everything here is derived from what Prowlarr itself reports. This server
+ * does not read the target application's indexer list and does not claim to
+ * know what is on it: an effect is what Prowlarr *would do*, which is what a
+ * caller needs before flipping a level that can delete, and an effect is
+ * labelled proposed rather than certain wherever only Prowlarr can settle it.
+ *
+ * A mapping never silently stops mattering. Where a level cannot carry an
+ * effect out — an add-only mapping cannot refresh, a disabled one does nothing
+ * at all — the affected indexers are reported as stale rather than omitted,
+ * because the remote keeps whatever it already had and a caller reading a
+ * shorter list would conclude the opposite.
+ *
+ * And nothing here is atomic. Prowlarr synchronizes each mapping separately, so
+ * a call naming several gets an outcome for each; a partial result is the
+ * normal case rather than an error path, and this module never collapses one
+ * into a success or a total failure.
+ */
+
+/** The sync levels this server models, in the vocabulary its callers use. */
+export const syncLevels = ["disabled", "add_only", "full_sync"] as const;
+
+export type SyncLevel = (typeof syncLevels)[number];
+
+/**
+ * Prowlarr's own spelling of each level.
+ *
+ * The table is exhaustive in both directions and is the only place either
+ * vocabulary is written down. A level upstream reports that is not in it is not
+ * translated to the nearest one: this module's whole output is a claim about
+ * what a level will do, and a guess about which level a mapping is on would
+ * make that claim about the wrong one.
+ */
+const upstreamSyncLevels: Readonly<Record<SyncLevel, string>> = {
+  disabled: "disabled",
+  add_only: "addOnly",
+  full_sync: "fullSync",
+};
+
+export function upstreamSyncLevel(level: SyncLevel): string {
+  return upstreamSyncLevels[level];
+}
+
+export function readSyncLevel(value: string | null | undefined): SyncLevel | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  return syncLevels.find(
+    (level) => upstreamSyncLevels[level].toLowerCase() === normalized || level === normalized,
+  );
+}
+
+/**
+ * What each level is permitted to do to the indexers on the other side.
+ *
+ * This table is the specification of the four behaviors, stated once. Every
+ * effect below is decided by reading it rather than by testing the level again,
+ * so a level cannot come to mean one thing in the plan and another in the
+ * disclosure.
+ */
+export interface SyncCapability {
+  /** Whether the level pushes indexers the remote does not have yet. */
+  readonly adds: boolean;
+  /** Whether it re-pushes an indexer whose definition in Prowlarr has moved on. */
+  readonly updates: boolean;
+  /** Whether it deletes an indexer on the remote that its selection excludes. */
+  readonly removes: boolean;
+}
+
+export const syncCapabilities: Readonly<Record<SyncLevel, SyncCapability>> = {
+  disabled: { adds: false, updates: false, removes: false },
+  add_only: { adds: true, updates: false, removes: false },
+  full_sync: { adds: true, updates: true, removes: true },
+};
+
+const applicationSchema = z.object({
+  id: z.custom<number>((value) => typeof value === "number" && Number.isSafeInteger(value)),
+  name: z.string().nullish(),
+  implementation: z.string().nullish(),
+  syncLevel: z.string().nullish(),
+  tags: z.array(z.number()).nullish(),
+});
+
+const indexerSchema = z.object({
+  id: z.custom<number>((value) => typeof value === "number" && Number.isSafeInteger(value)),
+  name: z.string().nullish(),
+  enable: z.boolean().nullish(),
+  tags: z.array(z.number()).nullish(),
+});
+
+const tagSchema = z.object({
+  id: z.custom<number>((value) => typeof value === "number" && Number.isSafeInteger(value)),
+  label: z.string().nullish(),
+});
+
+/** One application mapping, reduced to what a sync decision turns on. */
+export interface ApplicationMapping {
+  readonly ref: ConfigurationRef;
+  readonly id: number;
+  readonly name: string;
+  readonly implementation?: string | undefined;
+  /** Absent when the instance reports a level this server does not model. */
+  readonly level?: SyncLevel | undefined;
+  readonly reportedLevel?: string | undefined;
+  readonly tagIds: readonly number[];
+  /** The untouched payload a level change is written over. */
+  readonly resource: UpstreamResource;
+}
+
+/** One Prowlarr indexer, reduced to what decides whether a mapping carries it. */
+export interface SyncIndexer {
+  readonly ref: ConfigurationRef;
+  readonly id: number;
+  readonly name: string;
+  readonly enabled: boolean;
+  readonly tagIds: readonly number[];
+}
+
+/** Everything one sync decision is read from, in one observation. */
+export interface SyncObservation {
+  readonly mappings: readonly ApplicationMapping[];
+  readonly indexers: readonly SyncIndexer[];
+  /** Tag identifiers to labels, for naming a selection without inventing one. */
+  readonly tagLabels: ReadonlyMap<number, string>;
+}
+
+function text(value: string | null | undefined): string | undefined {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  return trimmed === "" ? undefined : trimmed;
+}
+
+function tagIdsOf(tags: readonly number[] | null | undefined): readonly number[] {
+  return Array.isArray(tags) ? tags.filter((tag) => Number.isSafeInteger(tag)) : [];
+}
+
+async function readCollection(
+  client: UpstreamClient,
+  application: ApplicationId,
+  route: string,
+): Promise<readonly unknown[]> {
+  return parseCollection(await client.get(route), application, route);
+}
+
+/**
+ * Reads the mappings, the indexers, and the tags in one pass.
+ *
+ * All three are read together because a sync decision is a statement about how
+ * they relate: which indexers a mapping's tags select, and what that selection
+ * is called. Reading them at different moments would let the plan describe a
+ * relationship that never held at any single instant.
+ */
+export async function readSyncObservation(
+  application: ApplicationId,
+  client: UpstreamClient,
+): Promise<SyncObservation> {
+  const applicationsRoute = routeFor("applications", application);
+  const indexerRoute = routeFor("indexers", application);
+  const tagRoute = routeFor("tags", application);
+  if (applicationsRoute === undefined || indexerRoute === undefined || tagRoute === undefined) {
+    throw new UpstreamError("unexpected-response", { application, operation: "applications" });
+  }
+
+  const [applicationBodies, indexerBodies, tagBodies] = await Promise.all([
+    readCollection(client, application, applicationsRoute),
+    readCollection(client, application, indexerRoute),
+    readCollection(client, application, tagRoute),
+  ]);
+
+  const mappings = applicationBodies.map((body): ApplicationMapping => {
+    const parsed = parseConfiguration(applicationSchema, body, application, applicationsRoute);
+    const reported = text(parsed.syncLevel);
+    return {
+      ref: configurationRef(application, "applications", parsed.id),
+      id: parsed.id,
+      name: text(parsed.name) ?? `application ${String(parsed.id)}`,
+      implementation: text(parsed.implementation),
+      level: readSyncLevel(parsed.syncLevel),
+      reportedLevel: reported,
+      tagIds: tagIdsOf(parsed.tags),
+      resource: captureUpstreamResource(application, "applications", body as UpstreamValue),
+    };
+  });
+
+  const indexers = indexerBodies.map((body): SyncIndexer => {
+    const parsed = parseConfiguration(indexerSchema, body, application, indexerRoute);
+    return {
+      ref: configurationRef(application, "indexers", parsed.id),
+      id: parsed.id,
+      name: text(parsed.name) ?? `indexer ${String(parsed.id)}`,
+      // Absent means enabled: Prowlarr omits the flag on an indexer it has
+      // never disabled, and reading that omission as "disabled" would report
+      // every such indexer as excluded from every mapping.
+      enabled: parsed.enable !== false,
+      tagIds: tagIdsOf(parsed.tags),
+    };
+  });
+
+  const tagLabels = new Map<number, string>();
+  for (const body of tagBodies) {
+    const parsed = parseConfiguration(tagSchema, body, application, tagRoute);
+    const label = text(parsed.label);
+    if (label !== undefined) {
+      tagLabels.set(parsed.id, label);
+    }
+  }
+
+  return { mappings, indexers, tagLabels };
+}
+
+/**
+ * Whether one mapping's tag selection carries one indexer.
+ *
+ * Prowlarr's rule, stated once: a mapping with no tags carries every indexer,
+ * and a mapping with tags carries the indexers sharing at least one of them. An
+ * indexer Prowlarr has disabled is carried by none of them, which is decided
+ * here rather than by each caller, so "selected" means the same thing
+ * everywhere it is asked.
+ */
+export function selects(mapping: ApplicationMapping, indexer: SyncIndexer): boolean {
+  if (!indexer.enabled) {
+    return false;
+  }
+  return mapping.tagIds.length === 0 || mapping.tagIds.some((tag) => indexer.tagIds.includes(tag));
+}
+
+/** What a sync level change would do to one indexer on the other side. */
+export const syncEffectKinds = ["add", "update", "remove", "stale"] as const;
+
+export type SyncEffectKind = (typeof syncEffectKinds)[number];
+
+export interface SyncEffect {
+  readonly indexer: ConfigurationRef;
+  readonly name: string;
+  readonly effect: SyncEffectKind;
+  /** Why this indexer gets this effect, in terms a caller can act on. */
+  readonly reason: string;
+}
+
+/**
+ * The effects of moving one mapping from its current level to another.
+ *
+ * The two levels are compared through {@link syncCapabilities} rather than by
+ * name, so what an effect is depends only on what each level may do. An effect
+ * the target level may not carry out is not dropped — it becomes stale, which
+ * is the disclosure that the remote keeps something Prowlarr is no longer
+ * maintaining.
+ */
+export function planSyncEffects(
+  mapping: ApplicationMapping,
+  indexers: readonly SyncIndexer[],
+  desired: SyncLevel,
+): readonly SyncEffect[] {
+  const current = mapping.level;
+  const before = current === undefined ? syncCapabilities.disabled : syncCapabilities[current];
+  const after = syncCapabilities[desired];
+  const effects: SyncEffect[] = [];
+
+  for (const indexer of indexers) {
+    const selected = selects(mapping, indexer);
+    const base = { indexer: indexer.ref, name: indexer.name };
+
+    if (selected) {
+      if (after.adds && !before.adds) {
+        effects.push({
+          ...base,
+          effect: "add",
+          reason: "this level begins synchronizing the indexer, which the current level does not",
+        });
+        continue;
+      }
+      if (after.updates) {
+        effects.push({
+          ...base,
+          effect: "update",
+          reason: "this level re-sends the indexer whenever its definition here changes",
+        });
+        continue;
+      }
+      effects.push({
+        ...base,
+        effect: "stale",
+        reason: after.adds
+          ? "this level adds the indexer but never re-sends it, so a later change here does not reach the remote"
+          : "this level synchronizes nothing, so whatever the remote already holds for this indexer stays as it is",
+      });
+      continue;
+    }
+
+    // Not selected: either disabled here, or outside the mapping's tags. Both
+    // mean Prowlarr will not maintain it, and the level decides whether the
+    // remote's copy is deleted or merely abandoned.
+    const reason = indexer.enabled
+      ? "this indexer is outside the mapping's tag selection"
+      : "this indexer is disabled here, so no mapping carries it";
+    if (after.removes) {
+      effects.push({
+        ...base,
+        effect: "remove",
+        reason: `${reason}, and this level deletes an excluded indexer from the remote`,
+      });
+      continue;
+    }
+    if (before.removes) {
+      effects.push({
+        ...base,
+        effect: "stale",
+        reason: `${reason}; the current level would have deleted it and this one leaves it in place`,
+      });
+    }
+  }
+
+  return effects;
+}
+
+/** How a mapping's tag selection reads, without inventing a name for it. */
+export function describeSelection(
+  mapping: ApplicationMapping,
+  tagLabels: ReadonlyMap<number, string>,
+): string {
+  if (mapping.tagIds.length === 0) {
+    return "every enabled indexer";
+  }
+  const named = mapping.tagIds.map((tag) => tagLabels.get(tag) ?? `tag ${String(tag)}`);
+  return `enabled indexers tagged ${named.join(" or ")}`;
+}
+
+/**
+ * The state one mapping's plan rests on.
+ *
+ * The level and the tag selection are here because the effects are computed
+ * from them, and every selected indexer's identity and enabled state are here
+ * because each of those decided one effect. An indexer that was disabled while
+ * a removal was planned for it must make that plan stale rather than be deleted
+ * from the remote on the strength of a plan that described a different set.
+ */
+export function syncObservations(
+  mapping: ApplicationMapping,
+  indexers: readonly SyncIndexer[],
+): readonly ReadSetObservation[] {
+  return [
+    {
+      key: `application:${String(mapping.id)}`,
+      value: { level: mapping.reportedLevel, tags: [...mapping.tagIds].sort((a, b) => a - b) },
+    },
+    {
+      key: `selection:${String(mapping.id)}`,
+      value: indexers
+        .map((indexer) => ({
+          id: indexer.id,
+          enabled: indexer.enabled,
+          selected: selects(mapping, indexer),
+        }))
+        .sort((left, right) => left.id - right.id),
+    },
+  ];
+}
+
+/**
+ * The command Prowlarr synchronizes its applications with.
+ *
+ * One name, written here and nowhere else. The command endpoint will start
+ * anything an instance knows how to do, so what this server may name there is
+ * the whole of the guarantee — and a sync is a consequential push into another
+ * application, so it runs only when a caller asked for it explicitly.
+ */
+export const syncCommandName = "ApplicationIndexerSync";
+
+/** The payload that starts one sync. It names no application: Prowlarr syncs all. */
+export function syncCommandPayload(): UpstreamBody {
+  return { name: syncCommandName };
+}
+
+/**
+ * Writes a new sync level over the mapping the instance reported.
+ *
+ * The level is written over the untouched payload, so every field this project
+ * does not model — the mapping's credentials, its category selections, whatever
+ * a newer Prowlarr adds — survives, because no line here touches them. The
+ * value written is Prowlarr's own spelling of the level, never the normalized
+ * one this project's callers use.
+ */
+export function rewriteSyncLevel(mapping: ApplicationMapping, desired: SyncLevel): UpstreamBody {
+  const payload = mapping.resource.payload();
+  if (!isUpstreamRecord(payload)) {
+    throw new UpstreamError("unexpected-response", {
+      application: mapping.ref.application,
+      operation: "applications",
+    });
+  }
+  return { ...payload, syncLevel: upstreamSyncLevel(desired) };
+}
+
+/** One mapping this call named, and what happened to it. */
+export interface SyncItemOutcome {
+  readonly ref: ConfigurationRef;
+  readonly name: string;
+  readonly selection: string;
+  readonly currentLevel?: SyncLevel | undefined;
+  readonly desiredLevel: SyncLevel;
+  readonly effects: readonly SyncEffect[];
+  readonly changed: boolean;
+  /**
+   * Whether an upstream write was dispatched for this mapping.
+   *
+   * A proof rather than an inference: it is set where the request is sent and
+   * nowhere else, so a caller settling a receipt can tell a mapping that was
+   * never written from one whose answer never came back.
+   */
+  readonly attempted: boolean;
+  /** Set once the write has been confirmed by re-reading the mapping. */
+  readonly verified?: boolean | undefined;
+  readonly error?: ToolError | undefined;
+  readonly warnings: readonly string[];
+}
+
+export interface ApplicationSyncRequest {
+  /** The application mappings this call names, each answered on its own. */
+  readonly targets: readonly number[];
+  readonly syncLevel: SyncLevel;
+  /**
+   * Whether to start a synchronization once the levels are written. Explicit
+   * and never defaulted: a sync pushes indexers into another application, and a
+   * level that can remove pushes deletions.
+   */
+  readonly startSync: boolean;
+  readonly mode: "plan" | "apply";
+  readonly planned?: readonly ReadSetFingerprint[] | undefined;
+}
+
+interface SyncOutcomeBase {
+  readonly items: readonly SyncItemOutcome[];
+  readonly observations: readonly ReadSetObservation[];
+  readonly warnings: readonly string[];
+}
+
+export type ApplicationSyncOutcome =
+  | ({ readonly status: "planned" } & SyncOutcomeBase)
+  | ({
+      readonly status: "applied";
+      /**
+       * How many upstream writes were dispatched, counted rather than inferred.
+       *
+       * Zero is what lets a caller record that nothing happened upstream. "Every
+       * item failed" does not establish it: one mapping whose write timed out
+       * produces exactly that, and the request was sent.
+       */
+      readonly dispatched: number;
+      /** Set when a started sync could not be confirmed, never on its own. */
+      readonly unresolved?: ToolError | undefined;
+    } & SyncOutcomeBase)
+  | { readonly status: "error"; readonly error: ToolError; readonly dispatched: number };
+
+function failure(
+  application: ApplicationId,
+  code: "invalid_input" | "stale_reference" | "stale_plan" | "unsupported_capability" | "conflict",
+  message: string,
+): ToolError {
+  return createToolError({ code, message: `${application}: ${message}`, application });
+}
+
+/**
+ * Answers one application-sync reconciliation.
+ *
+ * Planning and applying run the same sequence — observe, resolve each named
+ * mapping, compute its effects, check the plan's preconditions — and applying
+ * continues past where planning stops. Running the identical sequence for both
+ * is the point: a plan produced by different code than the apply would describe
+ * something the apply does not do.
+ */
+export async function runApplicationSync(
+  application: ApplicationId,
+  client: UpstreamClient,
+  request: ApplicationSyncRequest,
+): Promise<ApplicationSyncOutcome> {
+  if (application !== "prowlarr") {
+    return {
+      status: "error",
+      dispatched: 0,
+      error: failure(
+        application,
+        "unsupported_capability",
+        "only Prowlarr synchronizes indexers into other applications",
+      ),
+    };
+  }
+  if (request.targets.length === 0) {
+    return {
+      status: "error",
+      dispatched: 0,
+      error: failure(application, "invalid_input", "no application mapping was named"),
+    };
+  }
+
+  let observation: SyncObservation;
+  try {
+    observation = await readSyncObservation(application, client);
+  } catch (error) {
+    return { status: "error", dispatched: 0, error: toolErrorForThrown(error, application) };
+  }
+
+  const resolved: { mapping: ApplicationMapping; effects: readonly SyncEffect[] }[] = [];
+  const items: SyncItemOutcome[] = [];
+  const observations: ReadSetObservation[] = [];
+
+  for (const target of request.targets) {
+    const mapping = observation.mappings.find((candidate) => candidate.id === target);
+    if (mapping === undefined) {
+      return {
+        status: "error",
+        dispatched: 0,
+        error: failure(
+          application,
+          "stale_reference",
+          "this instance no longer reports that application mapping",
+        ),
+      };
+    }
+    // A level this server does not model blocks the whole call rather than one
+    // mapping: every effect below is a claim about what the current level does,
+    // and there is no honest claim to make about one that is unrecognized.
+    if (mapping.level === undefined) {
+      return {
+        status: "error",
+        dispatched: 0,
+        error: failure(
+          application,
+          "unsupported_capability",
+          "that application mapping reports a synchronization level this server does not model",
+        ),
+      };
+    }
+
+    observations.push(...syncObservations(mapping, observation.indexers));
+    const effects = planSyncEffects(mapping, observation.indexers, request.syncLevel);
+    resolved.push({ mapping, effects });
+    items.push({
+      ref: mapping.ref,
+      name: mapping.name,
+      selection: describeSelection(mapping, observation.tagLabels),
+      currentLevel: mapping.level,
+      desiredLevel: request.syncLevel,
+      effects,
+      changed: mapping.level !== request.syncLevel,
+      attempted: false,
+      warnings:
+        mapping.level === request.syncLevel
+          ? ["this mapping is already at the requested synchronization level"]
+          : [],
+    });
+  }
+
+  if (request.planned !== undefined) {
+    const comparison = compareReadSet(request.planned, fingerprintReadSet(observations));
+    if (comparison.status === "changed") {
+      const moved = [...comparison.changed, ...comparison.missing].sort().join(", ");
+      return {
+        status: "error",
+        dispatched: 0,
+        error: failure(
+          application,
+          "stale_plan",
+          `the synchronization state this plan described has changed (${moved})`,
+        ),
+      };
+    }
+  }
+
+  const warnings = callWarnings(items, request);
+  if (request.mode === "plan") {
+    return { status: "planned", items, observations, warnings };
+  }
+
+  const settled: SyncItemOutcome[] = [];
+  let dispatched = 0;
+  for (const [index, entry] of resolved.entries()) {
+    const item = items[index];
+    if (item === undefined) {
+      continue;
+    }
+    if (!item.changed) {
+      settled.push(item);
+      continue;
+    }
+
+    dispatched += 1;
+    try {
+      const route = `${routeFor("applications", application) ?? "applications"}/${String(entry.mapping.id)}`;
+      await client.put(route, rewriteSyncLevel(entry.mapping, request.syncLevel));
+      const verified = await confirmSyncLevel(application, client, entry.mapping.id, request);
+      settled.push({ ...item, attempted: true, verified });
+    } catch (error) {
+      settled.push({ ...item, attempted: true, error: toolErrorForThrown(error, application) });
+    }
+  }
+
+  // Started once, after the levels are written, because Prowlarr synchronizes
+  // every mapping on one command and starting it per mapping would ask for the
+  // same work several times over.
+  let unresolved: ToolError | undefined;
+  if (request.startSync && settled.some((item) => item.error === undefined && item.changed)) {
+    try {
+      await client.post("command", syncCommandPayload());
+    } catch (error) {
+      unresolved = toolErrorForThrown(error, application);
+    }
+  }
+
+  return {
+    status: "applied",
+    items: settled,
+    observations,
+    warnings,
+    dispatched,
+    ...(unresolved === undefined ? {} : { unresolved }),
+  };
+}
+
+/**
+ * Re-reads one mapping and reports whether the level actually landed.
+ *
+ * Verification is a separate read rather than a reading of the write's own
+ * answer, because the question is what the instance now stores. An unreadable
+ * answer is reported as unverified rather than as a failure: the write was
+ * accepted, and saying otherwise would send a caller to undo something that
+ * worked.
+ */
+async function confirmSyncLevel(
+  application: ApplicationId,
+  client: UpstreamClient,
+  id: number,
+  request: ApplicationSyncRequest,
+): Promise<boolean> {
+  try {
+    const route = `${routeFor("applications", application) ?? "applications"}/${String(id)}`;
+    const body = await client.get(route);
+    const parsed = applicationSchema.safeParse(body);
+    return parsed.success && readSyncLevel(parsed.data.syncLevel) === request.syncLevel;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The call-level notes both a plan and an apply repeat.
+ *
+ * The removal notice is the one that matters: a level that deletes indexers on
+ * another application is the most consequential thing this surface does, and it
+ * is disclosed by counting the effects rather than by testing the level again,
+ * so a plan that found nothing to remove does not warn about removals it is not
+ * going to perform.
+ */
+function callWarnings(
+  items: readonly SyncItemOutcome[],
+  request: ApplicationSyncRequest,
+): readonly string[] {
+  const counted = (kind: SyncEffectKind): number =>
+    items.reduce(
+      (total, item) => total + item.effects.filter((effect) => effect.effect === kind).length,
+      0,
+    );
+  const removals = counted("remove");
+  const stale = counted("stale");
+
+  return [
+    ...(removals === 0
+      ? []
+      : [
+          `this level deletes ${String(removals)} indexer(s) from the applications these mappings point at`,
+        ]),
+    ...(stale === 0
+      ? []
+      : [
+          `${String(stale)} indexer mapping(s) are left as the remote already has them and are no longer maintained from here`,
+        ]),
+    ...(request.startSync
+      ? ["a synchronization is started, which pushes these effects immediately"]
+      : ["no synchronization is started; Prowlarr applies these effects on its own schedule"]),
+  ];
+}

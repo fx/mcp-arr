@@ -174,6 +174,7 @@ export const referenceProperties = [
   "series",
   "tags",
   "target",
+  "targets",
 ] as const;
 
 const referencePropertySet: ReadonlySet<string> = new Set(referenceProperties);

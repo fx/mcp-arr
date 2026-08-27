@@ -75,10 +75,10 @@ The [Configuration Reconciliation spec](../specs/configuration-reconciliation/) 
   - [ ] Add typed provider-test and explicit validation-bypass variants with warnings, external-effect metadata, and no default `forceSave`
   - [ ] Add fixtures and stdio tests for provider tests, sent notifications, test failures, warning bypass, and hard validation failures
   - [ ] Add schema/resource fingerprints, stale rejection, transient-secret handling, apply verification, and direct-apply tests
-- [ ] Implement Prowlarr application synchronization
-  - [ ] Observe remote mappings and model Disabled/AddOnly/FullSync/tag behavior
-  - [ ] Plan explicit additions, updates, removals, and stale mappings
-  - [ ] Apply and verify per-item outcomes without claiming atomicity
+- [x] Implement Prowlarr application synchronization
+  - [x] Observe remote mappings and model Disabled/AddOnly/FullSync/tag behavior
+  - [x] Plan explicit additions, updates, removals, and stale mappings
+  - [x] Apply and verify per-item outcomes without claiming atomicity
 - [ ] Register and verify configuration tools
   - [ ] Add typed variants to `arr_config_observe` and `arr_config_reconcile`
   - [ ] Add version-labelled adapter fixtures and stdio tests for every supported family

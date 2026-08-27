@@ -1,7 +1,9 @@
 import { z } from "zod";
+import { syncLevels } from "../../adapters/configuration/sync.js";
 import { toolResultSchema } from "../results.js";
 import {
   applicationIdSchema,
+  bulkReferences,
   configurationReferenceSchema,
   mutationBaseShape,
   planApplyShape,
@@ -179,12 +181,26 @@ const configReconcileIntentSchema = z.discriminatedUnion("intent", [
     target: configurationReferenceSchema,
   }),
   z.strictObject({
-    /** Prowlarr application sync, whose full-sync level can remove remote indexers. */
+    /**
+     * Prowlarr application sync, whose full-sync level can remove remote
+     * indexers.
+     *
+     * Several mappings may be named, and each is answered on its own: Prowlarr
+     * synchronizes each mapping separately, so a partial result is the normal
+     * case rather than an error path and there is nothing here for a single
+     * target to report.
+     */
     intent: z.literal("reconcile_application_sync"),
     ...mutationBaseShape,
     application: z.literal("prowlarr"),
-    target: configurationReferenceSchema,
-    syncLevel: z.enum(["disabled", "add_only", "full_sync"]),
+    targets: bulkReferences(configurationReferenceSchema),
+    syncLevel: z.enum(syncLevels),
+    /**
+     * Whether to start a synchronization once the levels are written. Explicit
+     * and never defaulted: a sync pushes indexers into another application, and
+     * a full-sync level pushes deletions with them.
+     */
+    startSync: z.boolean(),
   }),
 ]);
 

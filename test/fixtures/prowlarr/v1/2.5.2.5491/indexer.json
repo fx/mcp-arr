@@ -40,7 +40,7 @@
       "protocol": "usenet",
       "priority": 25,
       "appProfileId": 1,
-      "tags": [],
+      "tags": [1],
       "implementation": "Newznab",
       "implementationName": "Newznab",
       "configContract": "NewznabSettings",
