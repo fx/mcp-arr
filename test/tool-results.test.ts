@@ -225,6 +225,42 @@ describe("tool result envelope", () => {
     );
   });
 
+  it("names an item's failure ahead of the application and envelope failures", () => {
+    const result = buildToolResult({
+      applications: [
+        applicationOutcome({
+          application: "sonarr",
+          status: "error",
+          items: [
+            {
+              reference: "que_00000001",
+              status: "error",
+              warnings: [],
+              error: createToolError({
+                code: "conflict",
+                message: "the queue item changed while it was being resolved",
+                application: "sonarr",
+              }),
+            },
+          ],
+          error: createToolError({
+            code: "upstream_rejection",
+            message: "sonarr rejected the request",
+            application: "sonarr",
+          }),
+        }),
+        okOutcome("radarr"),
+      ],
+    });
+
+    // An item names the one thing that went wrong; its application's own error
+    // only names that something did. The narrowest scope leads, so the first
+    // code a caller reads from the line is the actionable one.
+    expect(summarizeToolResult("arr_queue_resolve", result)).toBe(
+      "arr_queue_resolve: partial; sonarr error (1 item(s) failed), radarr ok; errors: conflict (Re-read the current state, resolve the conflicting change, then retry.), upstream_rejection (Adjust the requested values to satisfy the application's own validation.), partial_failure (Inspect the per-application and per-item outcomes and retry only the failures.)",
+    );
+  });
+
   it("keeps upstream content out of the summary even when an error carries it", () => {
     // The HTTP boundary redacts before an error is built, so this message is
     // deliberately hostile: it proves the summary is safe because of what it

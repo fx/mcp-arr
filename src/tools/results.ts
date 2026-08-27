@@ -314,9 +314,13 @@ function describeOutcome(outcome: ApplicationOutcome<unknown>, summary?: ToolSum
  * The envelope's own `errors` list is not the whole story: a call that failed
  * everywhere records each cause on the application that produced it and leaves
  * the top-level list empty, so a summary built from `result.errors` alone
- * describes a total failure without naming a single code. Per-application and
- * per-item causes therefore come first, and the top-level list — where the
- * summarizing `partial_failure` sits — comes after them.
+ * describes a total failure without naming a single code.
+ *
+ * Ordering runs from the narrowest scope outwards: an application's item
+ * failures, then that application's own failure, then the envelope's errors —
+ * where the summarizing `partial_failure` sits. An item names the one thing
+ * that went wrong and its outcome only names that something did, so leading
+ * with the item is what makes the first code in the line the actionable one.
  *
  * Codes are deduplicated because several applications failing the same way is
  * the common shape, and repeating one code and one hint per application would
@@ -331,10 +335,10 @@ function collectErrors(result: ToolResult<unknown>): readonly ToolError[] {
   };
 
   for (const outcome of result.applications) {
-    record(outcome.error);
     for (const item of outcome.items ?? []) {
       record(item.error);
     }
+    record(outcome.error);
   }
   for (const error of result.errors) {
     record(error);
