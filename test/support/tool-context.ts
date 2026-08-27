@@ -142,6 +142,63 @@ export const sampleToolInputs: Readonly<Record<ToolName, Record<string, unknown>
   arr_job_cancel: { mode: "apply", job: sampleReferences.job },
 };
 
+/**
+ * A minimal accepted argument object for each `arr_library_change` intent.
+ *
+ * Registering an intent publishes it, so every one of them has to survive the
+ * conversion to the schema a host reads over `tools/list` — a variant that is
+ * accepted in process and rejected by its own published schema is a contract a
+ * caller cannot use. {@link sampleToolInputs} carries one entry per tool and so
+ * exercises one variant; this covers the rest of this tool's union, and it
+ * lives here rather than beside a single tool's stdio suite because the
+ * per-branch coverage it feeds is generic over every tool.
+ */
+export const libraryChangeIntentArguments: Readonly<Record<string, Record<string, unknown>>> = {
+  add_media: {
+    intent: "add_media",
+    mode: "plan",
+    application: "sonarr",
+    lookup: sampleReferences.media,
+    rootFolder: sampleReferences.configuration,
+    qualityProfile: sampleReferences.configuration,
+    monitor: "all",
+    searchOnAdd: false,
+  },
+  set_monitoring: {
+    intent: "set_monitoring",
+    mode: "plan",
+    items: [sampleReferences.media],
+    monitored: true,
+  },
+  edit_media: {
+    intent: "edit_media",
+    mode: "plan",
+    items: [sampleReferences.media],
+    changes: { monitored: true },
+  },
+  delete_media: {
+    intent: "delete_media",
+    mode: "plan",
+    items: [sampleReferences.media],
+    deleteFiles: false,
+    addImportListExclusion: false,
+  },
+  update_file_metadata: {
+    intent: "update_file_metadata",
+    mode: "plan",
+    files: [sampleReferences.mediaFile],
+    changes: { releaseGroup: "EXAMPLEGRP" },
+  },
+  delete_file: { intent: "delete_file", mode: "plan", files: [sampleReferences.mediaFile] },
+  rename: { intent: "rename", mode: "plan", media: sampleReferences.media },
+  move_media: {
+    intent: "move_media",
+    mode: "plan",
+    media: sampleReferences.media,
+    rootFolder: sampleReferences.configuration,
+  },
+};
+
 export interface TestContextOptions {
   readonly environment?: EnvironmentRecord;
   readonly fetch?: FetchLike;

@@ -12,13 +12,11 @@ import {
   instanceEnvironment,
   startFixtureInstance,
 } from "./support/instance-server.js";
-import { schemaFailures } from "./support/json-schema.js";
 import {
   assertCleanProtocolStdout,
   type SpawnedStdioProcess,
   spawnBuiltServer,
 } from "./support/spawned-stdio.js";
-import { sampleReferences } from "./support/tool-context.js";
 
 /**
  * `arr_library_change` over the transport, against running instances.
@@ -190,129 +188,6 @@ async function finish(child: SpawnedStdioProcess): Promise<void> {
   assertCleanProtocolStdout(child.stdout);
   expect(child.stderr).toBe("");
 }
-
-interface ToolListResult {
-  result?: { tools?: Array<{ name: string; inputSchema?: Record<string, unknown> }> };
-}
-
-/**
- * A minimal argument object for each declared intent.
- *
- * Registering an intent publishes it, so every one of them has to survive the
- * conversion to the schema a host reads over `tools/list` — a variant that is
- * accepted in process and rejected by its own published schema is a contract a
- * caller cannot use. The shared sample set carries one entry per tool and so
- * exercises one variant; this covers the rest of this tool's union.
- */
-const intentArguments: Readonly<Record<string, Record<string, unknown>>> = {
-  add_media: {
-    intent: "add_media",
-    mode: "plan",
-    application: "sonarr",
-    lookup: sampleReferences.media,
-    rootFolder: sampleReferences.configuration,
-    qualityProfile: sampleReferences.configuration,
-    monitor: "all",
-    searchOnAdd: false,
-  },
-  set_monitoring: {
-    intent: "set_monitoring",
-    mode: "plan",
-    items: [sampleReferences.media],
-    monitored: true,
-  },
-  edit_media: {
-    intent: "edit_media",
-    mode: "plan",
-    items: [sampleReferences.media],
-    changes: { monitored: true },
-  },
-  delete_media: {
-    intent: "delete_media",
-    mode: "plan",
-    items: [sampleReferences.media],
-    deleteFiles: false,
-    addImportListExclusion: false,
-  },
-  update_file_metadata: {
-    intent: "update_file_metadata",
-    mode: "plan",
-    files: [sampleReferences.mediaFile],
-    changes: { releaseGroup: "EXAMPLEGRP" },
-  },
-  delete_file: { intent: "delete_file", mode: "plan", files: [sampleReferences.mediaFile] },
-  rename: { intent: "rename", mode: "plan", media: sampleReferences.media },
-  move_media: {
-    intent: "move_media",
-    mode: "plan",
-    media: sampleReferences.media,
-    rootFolder: sampleReferences.configuration,
-  },
-};
-
-describe("arr_library_change published contract", () => {
-  it("publishes a schema that admits every registered intent and refuses what they reject", async () => {
-    // Listing the published schemas contacts no instance, so a placeholder
-    // configuration is all the server needs to start.
-    const child = spawnBuiltServer(
-      {
-        SONARR_URL: "https://sonarr.example.invalid/sonarr",
-        SONARR_API_KEY: "library-change-stdio-placeholder",
-      },
-      15_000,
-    );
-    let schema: Record<string, unknown> = {};
-    try {
-      await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
-      const listed = (await child.request(2, "tools/list")) as ToolListResult;
-      schema =
-        listed.result?.tools?.find((tool) => tool.name === "arr_library_change")?.inputSchema ?? {};
-      await child.terminateGracefully();
-    } finally {
-      await child.forceCleanup().catch(() => undefined);
-    }
-
-    // Every intent the registry declares, checked against the schema a host
-    // actually reads rather than against the one this process holds.
-    expect(Object.keys(intentArguments).sort()).toEqual(
-      [
-        "add_media",
-        "delete_file",
-        "delete_media",
-        "edit_media",
-        "move_media",
-        "rename",
-        "set_monitoring",
-        "update_file_metadata",
-      ].sort(),
-    );
-
-    for (const [intent, args] of Object.entries(intentArguments)) {
-      expect(schemaFailures(schema, args), `${intent} accepted`).toEqual([]);
-      // A property this intent does not declare, and an apply form that
-      // restates the intent alongside a plan reference: the tool refuses both,
-      // so a schema that admitted either would tell a host something untrue.
-      expect(
-        schemaFailures(schema, { ...args, unexpectedProperty: 1 }),
-        `${intent} extra`,
-      ).not.toEqual([]);
-      expect(
-        schemaFailures(schema, { ...args, mode: "apply", plan: sampleReferences.plan }),
-        `${intent} plan and intent`,
-      ).not.toEqual([]);
-    }
-
-    // The plan-apply form on its own is the other half of the union.
-    expect(
-      schemaFailures(schema, { mode: "apply", plan: sampleReferences.plan }),
-      "plan reference",
-    ).toEqual([]);
-    expect(
-      schemaFailures(schema, { intent: "not_an_intent", mode: "plan" }),
-      "undeclared intent",
-    ).not.toEqual([]);
-  }, 30_000);
-});
 
 describe("arr_library_change over stdio", () => {
   it("plans a monitoring change, applies the plan, and answers a repeat from its receipt", async () => {

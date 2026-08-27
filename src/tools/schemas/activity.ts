@@ -12,8 +12,8 @@ import {
   planApplySchema,
   queryBaseShape,
   queueReferenceSchema,
-  variantUnion,
 } from "./common.js";
+import { variantUnion } from "./publish.js";
 
 const mediaFilter = z.array(mediaReferenceSchema).min(1).max(maxBulkItems).optional();
 

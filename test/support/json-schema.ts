@@ -15,9 +15,16 @@ type Schema = Record<string, unknown>;
 
 /**
  * Keywords that carry no constraint here. `$schema` names the dialect, and
- * `default` and `format` are annotations in draft-7 rather than assertions.
+ * `default`, `description`, and `format` are annotations in draft-7 rather
+ * than assertions.
+ *
+ * `description` is here rather than absent because the throw-on-unknown guard
+ * below exists to catch a *constraint* this validator has not implemented, and
+ * an annotation asserts nothing there is to implement. Every published input
+ * root now carries the generated variant documentation, and one nested
+ * property already carried a description that no sample happened to reach.
  */
-const annotationKeywords = new Set(["$schema", "default", "format"]);
+const annotationKeywords = new Set(["$schema", "default", "description", "format"]);
 
 const supportedKeywords = new Set([
   "additionalProperties",

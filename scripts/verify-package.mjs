@@ -117,6 +117,7 @@ const allowedFiles = [
   "dist/tools/schemas/jobs.js",
   "dist/tools/schemas/library-results.js",
   "dist/tools/schemas/library.js",
+  "dist/tools/schemas/publish.js",
   "package.json",
 ].sort();
 const strictNpmEnvironment = {

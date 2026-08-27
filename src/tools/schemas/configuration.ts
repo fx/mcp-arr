@@ -8,12 +8,12 @@ import {
   mutationBaseShape,
   planApplyShape,
   queryBaseShape,
-  variantUnion,
 } from "./common.js";
 import {
   configurationReconcileDataSchema,
   configurationViewSchema,
 } from "./configuration-results.js";
+import { variantUnion } from "./publish.js";
 
 /**
  * Provider domains share a dynamic upstream schema; profile and resource
