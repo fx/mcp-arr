@@ -151,6 +151,34 @@ const configReconcileIntentSchema = z.discriminatedUnion("intent", [
     secrets: transientSecretsSchema.optional(),
   }),
   z.strictObject({
+    /**
+     * Saving a provider the instance would refuse over validation warnings.
+     *
+     * Its own intent rather than a flag on `reconcile_provider`, because a
+     * bypass has to be something a caller asked for and not something that
+     * happened because a save was easier that way. Reaching it means naming it.
+     *
+     * It bypasses warnings and only warnings. The provider is tested first, and
+     * a provider that fails validation outright is refused however explicitly
+     * the bypass was requested — the instance reported something that is not a
+     * warning, and no field on a request turns it into one.
+     */
+    intent: z.literal("force_provider_save"),
+    ...reconcileBaseShape,
+    domain: providerDomainSchema,
+    /** Absent creates a new provider; present updates that one. */
+    target: configurationReferenceSchema.optional(),
+    fields: desiredFieldsSchema,
+    removeFields: removeFieldsSchema.optional(),
+    secrets: transientSecretsSchema.optional(),
+    /**
+     * The caller's acknowledgement, required and required to be true. A field
+     * that could be `false` would make the intent mean two things, one of which
+     * `reconcile_provider` already means.
+     */
+    acceptValidationWarnings: z.literal(true),
+  }),
+  z.strictObject({
     intent: z.literal("reconcile_profile"),
     ...reconcileBaseShape,
     domain: profileDomainSchema,

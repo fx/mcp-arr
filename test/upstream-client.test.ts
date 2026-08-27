@@ -353,6 +353,122 @@ describe("createUpstreamClient", () => {
     expect(error.status).toBe(201);
   });
 
+  it("answers a validating write's rejection instead of throwing it away", async () => {
+    const findings = [{ isWarning: true, propertyName: "onGrab", errorMessage: "example" }];
+    const { client, calls } = harness(() => json(findings, 400));
+
+    const answered = await client.validate("notification/test", { id: 1 });
+
+    // The refusal is the answer for this endpoint, so the body comes back as
+    // data. Everything else about the request is what `post` would have sent.
+    expect(answered).toEqual({
+      accepted: false,
+      status: 400,
+      body: findings,
+      unreadableBody: false,
+    });
+    expect(calls[0]?.init.method).toBe("POST");
+    expect(calls[0]?.init.body).toBe(JSON.stringify({ id: 1 }));
+    expect(new Headers(calls[0]?.init.headers).get("X-Api-Key")).toBe(apiKey);
+  });
+
+  it("keeps a validating write's other failures as failures", async () => {
+    // Above 500 the instance is reporting that it failed rather than that the
+    // request did, and a transport failure answered nothing at all. Neither is
+    // a validation result, so both still throw.
+    const { client: broken } = harness(() => json({ message: "boom" }, 503));
+    const serverError = await captureError(broken.validate("notification/test", { id: 1 }));
+    expect(serverError.kind).toBe("unexpected-response");
+
+    const { client: unreachable } = harness(() => {
+      throw new Error("connection reset");
+    });
+    const lost = await captureError(unreachable.validate("notification/test", { id: 1 }));
+    expect(lost.kind).toBe("unavailable");
+  });
+
+  it("answers an accepted validating write and a body-less one alike", async () => {
+    const { client: clean } = harness(() => json([], 200));
+    await expect(clean.validate("notification/test", { id: 1 })).resolves.toEqual({
+      accepted: true,
+      status: 200,
+      body: [],
+      unreadableBody: false,
+    });
+
+    // Nothing arrived, which is not the same fact as something arriving that
+    // could not be read — and the two are now told apart by a field rather
+    // than by a comment explaining that they cannot be.
+    const { client: silent } = harness(() => new Response(null, { status: 200 }));
+    await expect(silent.validate("notification/test", { id: 1 })).resolves.toEqual({
+      accepted: true,
+      status: 200,
+      body: undefined,
+      unreadableBody: false,
+    });
+
+    // A rejection that is not JSON at all is common for these endpoints, and it
+    // is still a rejection rather than a broken response — but the instance did
+    // have something to say, and this says that it went unheard.
+    const { client: prose } = harness(() => new Response("not json", { status: 400 }));
+    await expect(prose.validate("notification/test", { id: 1 })).resolves.toEqual({
+      accepted: false,
+      status: 400,
+      body: undefined,
+      unreadableBody: true,
+    });
+  });
+
+  it("surfaces a redirect as itself rather than following it with the credential", async () => {
+    const { client, calls } = harness(() => new Response(null, { status: 302 }));
+
+    // Asked for, not assumed: the request declares that a redirect is to be
+    // reported rather than followed, because following one would send this
+    // instance's API key to a location the instance named rather than the one
+    // an operator configured.
+    await captureError(client.get("system/status"));
+    expect(calls[0]?.init.redirect).toBe("manual");
+
+    // A redirect is neither a success nor a validation the instance performed,
+    // so its status is reported and it is not acceptance. Without the mode
+    // above the client would never see the 3xx at all: the runtime would follow
+    // it and hand back whatever answered, and a redirect could stand in for a
+    // test that passed.
+    await expect(client.validate("notification/test", { id: 1 })).resolves.toMatchObject({
+      accepted: false,
+      status: 302,
+    });
+
+    // On the ordinary paths it is the error a misconfigured base URL deserves,
+    // rather than something this client quietly works around.
+    const read = await captureError(client.get("system/status"));
+    expect(read.kind).toBe("unexpected-response");
+    expect(read.status).toBe(302);
+    const written = await captureError(client.post("notification", { id: 1 }));
+    expect(written.kind).toBe("unexpected-response");
+    expect(written.status).toBe(302);
+  });
+
+  it("fails a validating write whose rejection body never arrived", async () => {
+    const { client } = harness(
+      () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(new Error("stream failed"));
+            },
+          }),
+          { status: 400 },
+        ),
+    );
+
+    // The body is what this answer consists of. Reading its loss as an empty
+    // rejection would report a test the caller could act on where nothing was
+    // learned at all.
+    const error = await captureError(client.validate("notification/test", { id: 1 }));
+    expect(error.kind).toBe("unavailable");
+  });
+
   it("sends a delete with its query, its credential, and no body at all", async () => {
     const { client, calls } = harness(() => json({ id: 7001 }));
 

@@ -794,6 +794,13 @@ const definitions = [
     "destructive",
   ),
   define(
+    "config.reconcile.force_provider_save",
+    "arr_config_reconcile",
+    "force_provider_save",
+    every,
+    "mutate",
+  ),
+  define(
     "config.reconcile.test_provider",
     "arr_config_reconcile",
     "test_provider",
