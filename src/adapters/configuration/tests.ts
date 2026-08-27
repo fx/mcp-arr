@@ -2,8 +2,11 @@ import { z } from "zod";
 import type { ApplicationId } from "../../applications.js";
 import type { UpstreamBody, UpstreamClient } from "../../http/client.js";
 import { UpstreamError } from "../../http/errors.js";
+import type { ReadSetObservation } from "../../state/plans.js";
 import { createToolError, type ToolError, toolErrorForThrown } from "../../tools/errors.js";
 import { type ProviderDomain, routeFor } from "./domains.js";
+import { classifyProviderField, describeSecret } from "./fields.js";
+import { isUpstreamRecord } from "./parse.js";
 
 /**
  * Provider tests, and the one bypass that may follow a warned one.
@@ -243,6 +246,47 @@ export type ProviderTestOutcomeResult =
        */
       readonly effect?: ExternalEffect | undefined;
     };
+
+/**
+ * What a plan for a provider test depends on.
+ *
+ * A test sends the provider as the instance currently holds it, so what the
+ * plan disclosed — which service will be contacted, and as whom — depends on
+ * the whole resource rather than on its identity. Observing only the row and
+ * the implementation would let the URL or the account change between a plan and
+ * its apply while the plan still looked fresh, and the apply would then contact
+ * something nobody was shown.
+ *
+ * Credentials are folded to their configured state before the digest, for the
+ * same reason every other read set in this adapter does it: a rotated password
+ * changes nothing about which service is reached, and a plan that expired on
+ * one would teach a caller to re-plan for no reason.
+ */
+export function providerTestObservations(payload: unknown): readonly ReadSetObservation[] {
+  if (!isUpstreamRecord(payload)) {
+    return [{ key: "provider", value: undefined }];
+  }
+  const fields = Array.isArray(payload.fields) ? payload.fields : [];
+  return [
+    {
+      key: "provider",
+      value: {
+        ...Object.fromEntries(
+          Object.entries(payload).filter(([property]) => property !== "fields"),
+        ),
+        fields: fields.map((field) => {
+          if (!isUpstreamRecord(field) || typeof field.name !== "string") {
+            return field;
+          }
+          const privacy = typeof field.privacy === "string" ? field.privacy : undefined;
+          return classifyProviderField({ name: field.name, privacy }) === "secret"
+            ? { name: field.name, value: describeSecret(field.name, field.value).state }
+            : { name: field.name, value: field.value };
+        }),
+      },
+    },
+  ];
+}
 
 /** The route a provider domain's test is sent to. */
 export function providerTestRoute(
