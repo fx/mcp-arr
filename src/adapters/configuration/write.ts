@@ -267,6 +267,33 @@ function fieldEntries(
   return entries;
 }
 
+/**
+ * The provider's field list as a shape rather than as contents.
+ *
+ * Names are kept with their multiplicity and sorted, not deduplicated: a second
+ * entry appearing under a name the patch writes is a material change to the
+ * record — it is the case the writer refuses as ambiguous — so a plan made
+ * before it has to expire rather than being carried into a refusal that blames
+ * the response. Entries the reader cannot name are counted for the same reason:
+ * they are part of the shape even though nothing can address them.
+ */
+function fieldShape(payload: Record<string, unknown>): unknown {
+  const fields = payload[fieldsProperty];
+  if (!Array.isArray(fields)) {
+    return { named: [], unreadable: 0 };
+  }
+  const named: string[] = [];
+  let unreadable = 0;
+  for (const field of fields) {
+    if (isUpstreamRecord(field) && typeof field.name === "string") {
+      named.push(field.name);
+    } else {
+      unreadable += 1;
+    }
+  }
+  return { named: named.sort(), unreadable };
+}
+
 interface WriteState {
   readonly application: ApplicationId;
   readonly payload: Record<string, unknown>;
@@ -707,7 +734,7 @@ export function configurationObservations(
         // shape fingerprint may move for it.
         implementation: identifierOf(payload.implementation),
         configContract: identifierOf(payload.configContract),
-        fields: [...entries.keys()].sort(),
+        fields: fieldShape(payload),
       }),
     });
   }

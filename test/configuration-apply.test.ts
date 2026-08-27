@@ -519,6 +519,7 @@ describe("schema and resource fingerprints", () => {
     const planned = expectPlanned(outcome);
 
     const record = await first("sonarr", "indexer");
+    const quoting = { readSet: fingerprintReadSet(planned.observations) };
     const reshaped = {
       ...record,
       fields: [...(record.fields as readonly UpstreamRecord[]), { order: 9, name: "seedRatio" }],
@@ -526,13 +527,30 @@ describe("schema and resource fingerprints", () => {
     const { outcome: stale } = await reconcile(
       "sonarr",
       { routes: { ...instance.routes, "indexer/1": reshaped } },
-      { ...request, mode: "apply", planned: { readSet: fingerprintReadSet(planned.observations) } },
+      { ...request, mode: "apply", planned: quoting },
     );
 
     expect(expectRefused(stale).error).toMatchObject({
       code: "stale_plan",
       message: expect.stringContaining("resource-shape"),
     });
+
+    // A second entry under a name that already exists is the same kind of
+    // change, and it must expire the plan rather than reach the writer, which
+    // would refuse it as an unreadable response and blame the instance.
+    const duplicated = {
+      ...record,
+      fields: [
+        ...(record.fields as readonly UpstreamRecord[]),
+        { order: 9, name: "apiKey", value: "CANARY-SECOND-ENTRY-0003" },
+      ],
+    };
+    const { outcome: ambiguous } = await reconcile(
+      "sonarr",
+      { routes: { ...instance.routes, "indexer/1": duplicated } },
+      { ...request, mode: "apply", planned: quoting },
+    );
+    expect(expectRefused(ambiguous).error.code).toBe("stale_plan");
   });
 
   it("says so when the instance offers no template for this record's implementation", async () => {
