@@ -455,6 +455,31 @@ export async function startFixtureInstance(
    */
   const singleRecordRoute = /^([a-z]+)\/(\d+)$/u;
 
+  /**
+   * Whether this instance exposes the path at all, under any method.
+   *
+   * Every place a method is refused asks this one question, so the two answers
+   * cannot drift: a client that reached for the wrong verb is told so, and a
+   * client that reached for a path this application does not have is told that
+   * instead. Deciding it separately per branch is how a wrong verb on one route
+   * came to look like an absent route while the same mistake on another route
+   * was named correctly.
+   */
+  const exposes = (candidate: string): boolean => {
+    if (answers(candidate)) {
+      return true;
+    }
+    const record = singleRecordRoute.exec(candidate);
+    if (record !== null) {
+      const collection = record[1] ?? "";
+      return (
+        recordRoutes[application].includes(collection) ||
+        (collection === "blocklist" && answers("blocklist"))
+      );
+    }
+    return historyFailedRoute.test(candidate) && answers("history");
+  };
+
   const server: Server = createServer((request, response) => {
     if (options.unreachable === true) {
       request.socket.destroy();
@@ -539,7 +564,14 @@ export async function startFixtureInstance(
         (route === "command" && answers(route)) ||
         (creating !== undefined && route === creating.route);
       if (!writable) {
-        send(response, 404, { message: "not found" });
+        // An application that exposes no command route at all still gives the
+        // `404` a real instance gives for a route it does not have; one that
+        // exposes the path for another method gives the refusal that names the
+        // verb, rather than denying the path exists.
+        const exposed = exposes(route);
+        send(response, exposed ? 405 : 404, {
+          message: exposed ? "method not allowed" : "not found",
+        });
         return;
       }
       readPostedBody(request).then(
@@ -627,7 +659,7 @@ export async function startFixtureInstance(
     // returned is the whole defect class: a client that reached for the wrong
     // verb would be indistinguishable from one that got it right.
     if (request.method !== "GET") {
-      const exposed = answers(route) || known;
+      const exposed = exposes(route);
       send(response, exposed ? 405 : 404, {
         message: exposed ? "method not allowed" : "not found",
       });

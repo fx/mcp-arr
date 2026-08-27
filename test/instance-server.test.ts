@@ -139,8 +139,10 @@ describe("the fixture instance's route and method surface", () => {
     // Each application writes on its own grab route and nowhere else, so a
     // write aimed at another application's route is the 404 it would really be.
     expect((await post(sonarr, "search", { guid: "example" })).status).toBe(404);
-    expect((await post(sonarr, "wanted/missing", { guid: "example" })).status).toBe(404);
     expect((await post(prowlarr, "release", { guid: "example" })).status).toBe(404);
+    // A write aimed at one of its own read routes is the other answer: the path
+    // is there and the verb is not.
+    expect((await post(sonarr, "wanted/missing", { guid: "example" })).status).toBe(405);
     expect(sonarr.grabs).toEqual([]);
     expect(prowlarr.grabs).toEqual([]);
   });
@@ -167,6 +169,11 @@ describe("the fixture instance's route and method surface", () => {
     expect(await call(sonarr, "PUT", "series", { id: 12 })).toBe(405);
     expect(await call(sonarr, "DELETE", "qualityprofile")).toBe(405);
     expect(await call(sonarr, "PUT", "movie", { id: 8 })).toBe(404);
+    // Every method asks the same question, so a POST at a route that exists for
+    // reading is refused by verb rather than denied as an absent path.
+    expect(await call(sonarr, "POST", "episodefile", { id: 2001 })).toBe(405);
+    expect(await call(sonarr, "POST", "blocklist/7001", {})).toBe(405);
+    expect(await call(sonarr, "POST", "nothing/here", {})).toBe(404);
     // A record of a collection this application does not model is not a path it
     // recognizes at all, whatever the verb.
     expect(await call(sonarr, "PUT", "moviefile/501", { id: 501 })).toBe(404);
