@@ -311,6 +311,11 @@ function candidateRejections(record: UpstreamCandidate): readonly ImportRejectio
   }));
 }
 
+/** An upstream record identifier, where zero means the instance named none. */
+function recordId(value: number | undefined): number | undefined {
+  return value !== undefined && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
 function proper(version: number | undefined): boolean | undefined {
   return version === undefined ? undefined : version > 1;
 }
@@ -377,15 +382,17 @@ export function mapCandidate(
     return undefined;
   }
 
-  const mediaId = count(application === "sonarr" ? record.series?.id : record.movie?.id);
+  // Zero is how both applications report "no record", so it becomes absence
+  // here rather than travelling as an identifier that names nothing.
+  const mediaId = recordId(count(application === "sonarr" ? record.series?.id : record.movie?.id));
   const episodeIds =
     application === "sonarr"
       ? (record.episodes ?? [])
-          .map((episode) => count(episode.id))
+          .map((episode) => recordId(count(episode.id)))
           .filter((id): id is number => id !== undefined)
       : [];
-  const existingFileId = count(
-    application === "sonarr" ? record.episodeFileId : record.movieFileId,
+  const existingFileId = recordId(
+    count(application === "sonarr" ? record.episodeFileId : record.movieFileId),
   );
   const rejections = candidateRejections(record);
 
@@ -416,11 +423,11 @@ export function mapCandidate(
     // the library holds, not a new import. Both applications report that as the
     // file identifier on the row, and a positive one is the only signal either
     // gives.
-    existingLibraryFile: existingFileId !== undefined && existingFileId > 0,
+    existingLibraryFile: existingFileId !== undefined,
     context: {
       application,
       sourceKind: context.sourceKind,
-      candidateId: count(record.id),
+      candidateId: recordId(count(record.id)),
       queueItemId: context.queueItemId,
       mediaId: mediaId ?? context.mediaId,
       seasonNumber: count(record.seasonNumber) ?? context.seasonNumber,

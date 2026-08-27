@@ -95,12 +95,35 @@ export function isNameableCandidate(candidate: ImportCandidate): boolean {
   if (!(importSourceKinds as readonly string[]).includes(candidate.sourceKind)) {
     return false;
   }
-  if (!isFileIdentity(candidate.fileIdentity)) {
+  if (!fieldRules.identity(candidate.fileIdentity)) {
     return false;
   }
-  return candidate.sourceKind === "tracked_download"
-    ? candidate.context.queueItemId !== undefined
-    : candidate.context.mediaId !== undefined;
+
+  // Every optional field is held to exactly the rule the resolver will hold it
+  // to. Checking them only for presence here is how a reference comes to be
+  // minted that can never be resolved: upstream reports "none" as zero, and a
+  // zero stored where a record identifier belongs passes an
+  // is-it-defined test and fails an is-it-a-record test.
+  const context = candidate.context;
+  const optional: readonly [unknown, (value: unknown) => boolean][] = [
+    [context.candidateId, fieldRules.recordId],
+    [context.queueItemId, fieldRules.recordId],
+    [context.mediaId, fieldRules.recordId],
+    [context.seasonNumber, fieldRules.seasonNumber],
+    [context.episodeIds, isRecordIdList],
+    [candidate.sizeBytes, fieldRules.sizeBytes],
+    [context.existingFileId, fieldRules.recordId],
+  ];
+  if (optional.some(([value, accepts]) => value !== undefined && !accepts(value))) {
+    return false;
+  }
+
+  // And whatever this kind of scan is re-read through has to be there at all: a
+  // tracked candidate without its queue row, or a library candidate without its
+  // media record, could not be revalidated against current state.
+  return context.sourceKind === "tracked_download"
+    ? fieldRules.recordId(context.queueItemId)
+    : fieldRules.recordId(context.mediaId);
 }
 
 /**
@@ -156,6 +179,33 @@ function invalid(application: MediaApplication, message: string): ToolError {
 }
 
 /**
+ * What each retained field is allowed to be.
+ *
+ * These are the whole of the rule, and both sides of the boundary read them:
+ * {@link isNameableCandidate} refuses to mint a candidate whose fields would
+ * fail them, and the readers below refuse to resolve a payload that does. Two
+ * copies of this rule is how a reference comes to exist that can never be
+ * resolved — minted under a lax test and rejected under a strict one — so there
+ * is one.
+ */
+const fieldRules = {
+  /** An upstream record identifier. Zero is upstream's "none", never a row. */
+  recordId: (value: unknown): value is number =>
+    typeof value === "number" && Number.isSafeInteger(value) && value > 0,
+  /** A season number, where zero is real: specials are season 0. */
+  seasonNumber: (value: unknown): value is number =>
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0,
+  /** A size in bytes, where zero is real: an empty file has one. */
+  sizeBytes: (value: unknown): value is number =>
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0,
+  identity: isFileIdentity,
+} as const;
+
+function isRecordIdList(value: unknown): value is readonly number[] {
+  return Array.isArray(value) && value.every((entry) => fieldRules.recordId(entry));
+}
+
+/**
  * A field read back out of a stored snapshot.
  *
  * The three answers are kept apart for the reason the activity resolver gives:
@@ -170,38 +220,14 @@ type StoredField<TValue> =
   | { readonly state: "absent" }
   | { readonly state: "invalid" };
 
-function storedId(value: unknown): StoredField<number> {
+function stored<TValue>(
+  value: unknown,
+  accepts: (candidate: unknown) => candidate is TValue,
+): StoredField<TValue> {
   if (value === undefined || value === null) {
     return { state: "absent" };
   }
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
-    ? { state: "present", value }
-    : { state: "invalid" };
-}
-
-function storedIdList(value: unknown): StoredField<readonly number[]> {
-  if (value === undefined || value === null) {
-    return { state: "absent" };
-  }
-  if (!Array.isArray(value)) {
-    return { state: "invalid" };
-  }
-  const ids = value.map((entry) => storedId(entry));
-  return ids.every((entry) => entry.state === "present")
-    ? { state: "present", value: ids.map((entry) => (entry as { value: number }).value) }
-    : { state: "invalid" };
-}
-
-/**
- * The retained file identity, held to the digest shape rather than to being a
- * string. A payload carrying a path where the digest belongs is corrupt, and
- * corrupt is refused rather than read.
- */
-function storedIdentity(value: unknown): StoredField<string> {
-  if (value === undefined || value === null) {
-    return { state: "absent" };
-  }
-  return isFileIdentity(value) ? { state: "present", value } : { state: "invalid" };
+  return accepts(value) ? { state: "present", value } : { state: "invalid" };
 }
 
 /**
@@ -252,14 +278,14 @@ export function resolveCandidateReference(
     };
   }
 
-  const fileIdentity = storedIdentity(detail.fileIdentity);
-  const candidateId = storedId(detail.candidateId);
-  const queueItemId = storedId(detail.queueItemId);
-  const mediaId = storedId(detail.mediaId);
-  const seasonNumber = storedSeason(detail.seasonNumber);
-  const episodeIds = storedIdList(detail.episodeIds);
-  const sizeBytes = storedSize(detail.sizeBytes);
-  const existingFileId = storedId(detail.existingFileId);
+  const fileIdentity = stored(detail.fileIdentity, fieldRules.identity);
+  const candidateId = stored(detail.candidateId, fieldRules.recordId);
+  const queueItemId = stored(detail.queueItemId, fieldRules.recordId);
+  const mediaId = stored(detail.mediaId, fieldRules.recordId);
+  const seasonNumber = stored(detail.seasonNumber, fieldRules.seasonNumber);
+  const episodeIds = stored(detail.episodeIds, isRecordIdList);
+  const sizeBytes = stored(detail.sizeBytes, fieldRules.sizeBytes);
+  const existingFileId = stored(detail.existingFileId, fieldRules.recordId);
 
   // The file identity is the one field always written, so absent is as wrong as
   // malformed for it. The rest are legitimately absent: a scan of a library
@@ -310,29 +336,4 @@ export function resolveCandidateReference(
       existingFileId: existingFileId.state === "present" ? existingFileId.value : undefined,
     },
   };
-}
-
-/**
- * A season number, which differs from every other retained identifier in one
- * way: season zero is real. Specials are season 0 on both applications, so the
- * positive-integer test the other identifiers use would refuse a legitimate
- * mapping.
- */
-function storedSeason(value: unknown): StoredField<number> {
-  if (value === undefined || value === null) {
-    return { state: "absent" };
-  }
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
-    ? { state: "present", value }
-    : { state: "invalid" };
-}
-
-/** A size in bytes, where zero is a real answer for an empty file. */
-function storedSize(value: unknown): StoredField<number> {
-  if (value === undefined || value === null) {
-    return { state: "absent" };
-  }
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
-    ? { state: "present", value }
-    : { state: "invalid" };
 }

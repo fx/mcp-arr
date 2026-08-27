@@ -353,6 +353,34 @@ describe("candidate references", () => {
     ).toBe(true);
   });
 
+  it("mints nothing it could not resolve", async () => {
+    // The rule each retained field is held to is one rule, read by both sides.
+    // A field that would fail on the way out has to fail on the way in, or the
+    // store ends up holding a reference nothing can ever resolve.
+    const references = store();
+    const candidate = await firstCandidate();
+    const before = references.size();
+
+    const invalidClasses: readonly [string, ImportCandidate][] = [
+      ["queue item zero", { ...candidate, context: { ...candidate.context, queueItemId: 0 } }],
+      ["candidate zero", { ...candidate, context: { ...candidate.context, candidateId: 0 } }],
+      ["media zero", { ...candidate, context: { ...candidate.context, mediaId: 0 } }],
+      ["negative season", { ...candidate, context: { ...candidate.context, seasonNumber: -1 } }],
+      ["episode zero", { ...candidate, context: { ...candidate.context, episodeIds: [0] } }],
+      ["negative size", { ...candidate, sizeBytes: -1 }],
+      [
+        "existing file zero",
+        { ...candidate, context: { ...candidate.context, existingFileId: 0 } },
+      ],
+    ];
+
+    for (const [label, rejected] of invalidClasses) {
+      expect(isNameableCandidate(rejected), label).toBe(false);
+      expect(mintCandidateReference(references, rejected), label).toBeUndefined();
+    }
+    expect(references.size()).toBe(before);
+  });
+
   it("refuses a stored identity that is not a digest", async () => {
     const references = store();
     const candidate = await firstCandidate();
