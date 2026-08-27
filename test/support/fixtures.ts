@@ -84,6 +84,8 @@ const approvedRoutes: Readonly<Record<FixtureApplication, readonly string[]>> = 
     "tag",
     "downloadclient",
     "config/downloadclient",
+    "customformat",
+    "importlistexclusion",
   ],
   prowlarr: [
     "system/status",
@@ -96,6 +98,7 @@ const approvedRoutes: Readonly<Record<FixtureApplication, readonly string[]>> = 
     "indexerstats",
     "applications",
     "notification",
+    "appprofile",
   ],
 };
 

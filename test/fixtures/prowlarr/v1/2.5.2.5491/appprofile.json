@@ -1,0 +1,18 @@
+{
+  "metadata": {
+    "application": "prowlarr",
+    "apiVersion": "v1",
+    "version": "2.5.2.5491",
+    "endpoint": "/api/v1/appprofile"
+  },
+  "body": [
+    {
+      "id": 1,
+      "name": "Example App Profile",
+      "enableRss": true,
+      "enableAutomaticSearch": true,
+      "enableInteractiveSearch": true,
+      "minimumSeeders": 1
+    }
+  ]
+}

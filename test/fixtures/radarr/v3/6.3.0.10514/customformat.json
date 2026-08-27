@@ -1,0 +1,24 @@
+{
+  "metadata": {
+    "application": "radarr",
+    "apiVersion": "v3",
+    "version": "6.3.0.10514",
+    "endpoint": "/api/v3/customformat"
+  },
+  "body": [
+    {
+      "id": 1,
+      "name": "Example Format",
+      "includeCustomFormatWhenRenaming": false,
+      "specifications": [
+        {
+          "name": "Example Release Title Specification",
+          "implementation": "ReleaseTitleSpecification",
+          "negate": false,
+          "required": true,
+          "fields": [{ "order": 0, "name": "value", "value": "example-release-tag" }]
+        }
+      ]
+    }
+  ]
+}
