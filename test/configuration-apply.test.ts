@@ -731,6 +731,30 @@ describe("verifying what the instance stored", () => {
     expect(expectApplied(cleared.outcome).verification).toEqual({ status: "succeeded" });
   });
 
+  it("settles as unknown when a credential reads back as a switch", async () => {
+    const instance = await newznab();
+    const { outcome } = await reconcile(
+      "sonarr",
+      {
+        ...instance,
+        // A boolean where a credential was written is not a credential at all,
+        // so nothing about the write has been established either way.
+        answerWrite: (sent) => {
+          const record = sent as UpstreamRecord;
+          return jsonResponse({
+            ...record,
+            fields: (record.fields as readonly UpstreamRecord[]).map((field) =>
+              field.name === "apiKey" ? { ...field, value: true } : field,
+            ),
+          });
+        },
+      },
+      changingApiKey({ mode: "apply" }),
+    );
+
+    expect(expectApplied(outcome).verification).toEqual({ status: "indeterminate" });
+  });
+
   it("reports a cleared credential the instance still holds as a conflict", async () => {
     const instance = await newznab();
     const { outcome } = await reconcile(

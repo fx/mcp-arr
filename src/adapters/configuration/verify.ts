@@ -153,10 +153,15 @@ function checksFor(
     });
   };
   const checkSecret = (name: string, expected: "configured" | "unconfigured"): void => {
+    const entry = currentFields.get(name);
     checks.push({
       path: `fields.${name}`,
-      absent: !currentFields.has(name),
-      agrees: describeSecret(name, currentFields.get(name)?.value).state === expected,
+      // A boolean read back where a credential was written is not a credential
+      // at all — the shared classifier calls that a switch — so the field this
+      // apply wrote is no longer there in the form it wrote it. That is a
+      // changed shape rather than a verdict, and it settles as unknown.
+      absent: entry === undefined || typeof entry.value === "boolean",
+      agrees: describeSecret(name, entry?.value).state === expected,
     });
   };
   /**
