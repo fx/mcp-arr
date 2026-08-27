@@ -4,6 +4,8 @@ import { runActivityQuery } from "../src/adapters/activity/service.js";
 import {
   compileQueueTransition,
   compileQueueTransitions,
+  describeVersionRefusal,
+  flagMinimumVersions,
   type ObservedQueueItem,
   pendingQueueIntents,
   type QueueResolveIntent,
@@ -15,6 +17,7 @@ import {
   trackedQueueIntents,
 } from "../src/adapters/activity/transitions.js";
 import type { MediaApplication } from "../src/adapters/library/model.js";
+import { compareToMinimumVersion, parseVersionSegments } from "../src/adapters/version.js";
 import { type ApplicationId, describeApplication } from "../src/applications.js";
 import { createManualClock } from "../src/state/clock.js";
 import { createReferenceStore } from "../src/state/references.js";
@@ -583,6 +586,45 @@ describe("impossible intent combinations", () => {
           }),
         ).message,
       ).toContain("radarr 5.0.0 or newer");
+    }
+  });
+
+  it("blames this repository, not the instance, for a minimum it cannot read", () => {
+    // The one branch the table cannot reach, and the reason the refusal is a
+    // function rather than one string with a clause appended. A minimum is
+    // authored in this repository, so a minimum that will not parse is our
+    // defect — and an operator sent to inspect a healthy instance for it would
+    // be looking at the wrong system entirely.
+    const refusal = describeVersionRefusal("sonarr", "unreadable_minimum", "not-a-version");
+
+    expect(refusal).toContain("defect in this server");
+    expect(refusal).not.toContain("this instance reported");
+    expect(refusal).not.toContain("or newer");
+    // The unreadable minimum is repository-authored, but there is no reason to
+    // echo it either: the message says where to look without it.
+    expect(refusal).not.toContain("not-a-version");
+  });
+
+  it("blames the instance only for a version the instance reported", () => {
+    const reported = describeVersionRefusal("sonarr", "unreadable_reported", "4.0.0");
+    const below = describeVersionRefusal("radarr", "below", "5.0.0");
+
+    expect(reported).toContain("this instance reported a version that could not be read");
+    expect(reported).toContain("sonarr 4.0.0 or newer");
+    expect(below).toBe("this intent needs radarr 5.0.0 or newer");
+    expect(below).not.toContain("could not be read");
+    expect(describeVersionRefusal("sonarr", "meets", "4.0.0")).toBeUndefined();
+  });
+
+  it("keeps every recorded flag minimum readable, so the defect branch stays unreachable", () => {
+    // The companion to the test above: it proves the message is right if the
+    // table ever went wrong, and this proves the table has not.
+    for (const support of flagMinimumVersions) {
+      for (const [application, minimum] of Object.entries(support.minimums)) {
+        expect(parseVersionSegments(minimum)).toBeDefined();
+        expect(compareToMinimumVersion(minimum, minimum)).toBe("meets");
+        expect(application).toMatch(/^(sonarr|radarr)$/u);
+      }
     }
   });
 

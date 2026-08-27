@@ -3,7 +3,7 @@ import type { UpstreamQuery } from "../../http/client.js";
 import { createToolError, type ToolError } from "../../tools/errors.js";
 import type { Effect } from "../../tools/results.js";
 import { isMediaApplication, type MediaApplication } from "../library/model.js";
-import { compareToMinimumVersion } from "../version.js";
+import { compareToMinimumVersion, type VersionComparison } from "../version.js";
 import type { QueueItemKind, QueueStatus, TrackedDownloadState } from "./model.js";
 import {
   queueItemKindForStatus,
@@ -230,7 +230,7 @@ interface FlagSupport {
   readonly minimums: Readonly<Record<MediaApplication, string>>;
 }
 
-const flagMinimumVersions: readonly FlagSupport[] = [
+export const flagMinimumVersions: readonly FlagSupport[] = [
   // Both applications renamed the blocklist flag from its former spelling, and
   // an instance older than the rename would silently ignore the one sent here.
   { flag: "blocklist", minimums: { sonarr: "4.0.0", radarr: "5.0.0" } },
@@ -453,17 +453,14 @@ function isConsistent(observed: ObservedQueueItem): boolean {
 /**
  * Whether the instance is one this project vouches for each set flag on.
  *
- * The gate fails closed, and the third comparison outcome is why it can. A
- * version string this server cannot read establishes nothing: the instance may
- * be new enough and may not, and sending a consequential flag on the strength
- * of a version nobody could parse is acting on a guess. So `unreadable` is
- * refused exactly as `below` is, and says which of the two it was — the two
- * have different remedies, and a caller told only "too old" would go looking
- * for an upgrade that may already have happened.
+ * The gate fails closed, and the comparison's unreadable outcomes are why it
+ * can. A version string this server cannot read establishes nothing: the
+ * instance may be new enough and may not, and sending a consequential flag on
+ * the strength of a version nobody could parse is acting on a guess. So an
+ * unreadable version is refused exactly as `below` is.
  *
- * The reported version is deliberately not quoted back. It is upstream text
- * this server did not author, and a capability message is not a place to repeat
- * one.
+ * What it must not do is refuse in a way that blames the wrong system. Each
+ * outcome therefore gets its own sentence, from {@link describeVersionRefusal}.
  */
 function checkVersion(
   application: MediaApplication,
@@ -475,16 +472,59 @@ function checkVersion(
       continue;
     }
     const minimum = support.minimums[application];
-    switch (compareToMinimumVersion(version, minimum)) {
-      case "meets":
-        continue;
-      case "below":
-        return `this intent needs ${application} ${minimum} or newer`;
-      case "unreadable":
-        return `this intent needs ${application} ${minimum} or newer, and this instance reported a version that could not be read`;
+    const refusal = describeVersionRefusal(
+      application,
+      compareToMinimumVersion(version, minimum),
+      minimum,
+    );
+    if (refusal !== undefined) {
+      return refusal;
     }
   }
   return undefined;
+}
+
+/**
+ * The sentence each comparison outcome refuses with, or `undefined` to pass.
+ *
+ * Three of the four are refusals and they name different systems, which is the
+ * whole reason this is a function rather than one string with a clause appended.
+ *
+ * - `below` is a fact about the instance an operator can act on: upgrade it.
+ * - `unreadable_reported` is also about the instance, but it says so without
+ *   claiming the instance is too old — the version may be perfectly new and
+ *   merely spelled in a way this server does not parse, and an operator told
+ *   "too old" would go hunting for an upgrade that already happened.
+ * - `unreadable_minimum` is a fault in **this repository**: the minimums are
+ *   authored in the table above, so a minimum that will not parse is a defect
+ *   here. Reporting it as an instance problem would send an operator to inspect
+ *   a healthy instance while the actual fault sits in our source, so this
+ *   message says plainly where to look and never mentions the instance.
+ *
+ * Every ingredient is either a closed value or repository-authored: the
+ * application name, the outcome itself, and the minimum from our own table. The
+ * instance's reported version is never among them — it is upstream text this
+ * server did not author, and a capability message is not a place to repeat one.
+ *
+ * Exported for its tests. The `unreadable_minimum` branch is unreachable from
+ * the table as it currently stands, which is exactly why it needs a test that
+ * reaches it directly; a companion test asserts the table stays that way.
+ */
+export function describeVersionRefusal(
+  application: MediaApplication,
+  comparison: VersionComparison,
+  minimum: string,
+): string | undefined {
+  switch (comparison) {
+    case "meets":
+      return undefined;
+    case "below":
+      return `this intent needs ${application} ${minimum} or newer`;
+    case "unreadable_reported":
+      return `this intent needs ${application} ${minimum} or newer, and this instance reported a version that could not be read`;
+    case "unreadable_minimum":
+      return `this intent is gated on a minimum version this server could not read, which is a defect in this server rather than a problem with the instance; report it against mcp-arr rather than changing anything on ${application}`;
+  }
 }
 
 /* -------------------------------------------------------------------------- */

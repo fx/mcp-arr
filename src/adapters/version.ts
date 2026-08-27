@@ -37,14 +37,26 @@ export function compareVersionSegments(left: readonly number[], right: readonly 
 /**
  * How a reported version stands against a recorded minimum.
  *
- * The third answer is the point of having three. A version neither side can
- * parse is not a version that is new enough and not one that is too old — it is
- * one this server could not read, and which of those two it actually is remains
- * unknown. Callers that must not act on a guess branch on `unreadable`
+ * The answers beyond `meets` and `below` are the point of having four. A version
+ * that will not parse is not one that is new enough and not one that is too old
+ * — it is one this server could not read, and which of those two it actually is
+ * remains unknown. Callers that must not act on a guess branch on that
  * explicitly rather than receiving whichever boolean happened to be safer for
  * somebody else's question.
+ *
+ * The two unreadable answers are kept apart because they are faults in
+ * different systems. `unreadable_reported` is a fact about the instance, which
+ * an operator can go and look at. `unreadable_minimum` is a fact about this
+ * repository — the minimums are authored here — so an error derived from it
+ * must not send anybody to inspect a perfectly healthy instance. Collapsing the
+ * two would produce exactly that confidently wrong direction.
  */
-export const versionComparisons = ["meets", "below", "unreadable"] as const;
+export const versionComparisons = [
+  "meets",
+  "below",
+  "unreadable_reported",
+  "unreadable_minimum",
+] as const;
 
 export type VersionComparison = (typeof versionComparisons)[number];
 
@@ -52,16 +64,19 @@ export type VersionComparison = (typeof versionComparisons)[number];
  * Compares a reported version to a recorded minimum without deciding what an
  * unreadable one means.
  *
- * Either side being unparsable answers `unreadable`, including the minimum:
- * that one is authored in this repository, so a minimum this function cannot
- * read is a defect here rather than a fact about the instance, and answering
- * `meets` for it would hide the defect behind a pass.
+ * The minimum is checked first, and that order is deliberate: when neither side
+ * parses, a defect in this repository's own table is the more useful thing to
+ * report, because it is the one that is certainly wrong and the one whose fix is
+ * ours. Reporting the instance in that case would be true and useless.
  */
 export function compareToMinimumVersion(reported: string, minimum: string): VersionComparison {
-  const reportedSegments = parseVersionSegments(reported);
   const minimumSegments = parseVersionSegments(minimum);
-  if (reportedSegments === undefined || minimumSegments === undefined) {
-    return "unreadable";
+  if (minimumSegments === undefined) {
+    return "unreadable_minimum";
+  }
+  const reportedSegments = parseVersionSegments(reported);
+  if (reportedSegments === undefined) {
+    return "unreadable_reported";
   }
   return compareVersionSegments(reportedSegments, minimumSegments) >= 0 ? "meets" : "below";
 }

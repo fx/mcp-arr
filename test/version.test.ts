@@ -76,19 +76,28 @@ describe("compareToMinimumVersion", () => {
   });
 
   it("answers unreadable rather than folding it into either verdict", () => {
-    // This is the whole reason the third answer exists. `meetsMinimumVersion`
-    // reports the same inputs as `true`, which is right for deciding whether to
-    // report an instance as supported and wrong for deciding whether to send it
-    // something — so a caller that must not act on a guess needs to see the
-    // difference rather than inherit somebody else's safe direction.
+    // This is the whole reason the answers beyond two exist.
+    // `meetsMinimumVersion` reports the same inputs as `true`, which is right
+    // for deciding whether to report an instance as supported and wrong for
+    // deciding whether to send it something — so a caller that must not act on
+    // a guess needs to see the difference rather than inherit somebody else's
+    // safe direction.
     for (const reported of ["nightly", "main", "", "   ", "v"]) {
-      expect(compareToMinimumVersion(reported, "4.0.19.2979")).toBe("unreadable");
+      expect(compareToMinimumVersion(reported, "4.0.19.2979")).toBe("unreadable_reported");
       expect(meetsMinimumVersion(reported, "4.0.19.2979")).toBe(true);
     }
+  });
 
-    // An unreadable minimum is a defect in this repository's own table rather
-    // than a fact about the instance, and it is reported rather than passed.
-    expect(compareToMinimumVersion("4.0.19.2979", "unversioned")).toBe("unreadable");
+  it("separates an unreadable minimum from an unreadable reported version", () => {
+    // They are faults in different systems: the minimums are authored in this
+    // repository, so one that will not parse is our defect, while a reported
+    // version that will not parse is a fact about the instance. An error
+    // derived from these must not send anybody to inspect the wrong one.
+    expect(compareToMinimumVersion("4.0.19.2979", "unversioned")).toBe("unreadable_minimum");
+
+    // When neither parses the repository's own defect wins, because it is the
+    // one that is certainly wrong and the one whose fix is ours.
+    expect(compareToMinimumVersion("nightly", "unversioned")).toBe("unreadable_minimum");
   });
 
   it("agrees with meetsMinimumVersion wherever the comparison is decidable", () => {
