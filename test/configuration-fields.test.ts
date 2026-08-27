@@ -88,11 +88,39 @@ describe("safe field values", () => {
     expect(safeFieldValue(2, "number")).toBe(2);
     expect(safeFieldValue("true", "boolean")).toBeUndefined();
     expect(safeFieldValue(false, "boolean")).toBe(false);
-    expect(safeFieldValue(7, "string")).toBeUndefined();
-    expect(safeFieldValue("radarr", "string")).toBe("radarr");
+    expect(safeFieldValue(7, "label")).toBeUndefined();
+    expect(safeFieldValue("radarr", "label")).toBe("radarr");
     expect(safeFieldValue(["CANARY-PASSKEY"], "numberList")).toBeUndefined();
     expect(safeFieldValue([5030, 5040], "numberList")).toEqual([5030, 5040]);
     expect(safeFieldValue(5030, "numberList")).toBeUndefined();
+  });
+
+  /**
+   * The hole this shape closes: a credential is itself a bounded primitive
+   * string, so a kind meaning "any string" would publish a passkey to anything
+   * that named its field after a text-valued setting.
+   */
+  it("refuses a credential-shaped value under an allowlisted label name", () => {
+    for (const credential of [
+      // Long.
+      "CANARY-PASSKEY-0123456789abcdef0123456789abcdef",
+      // High-entropy hex, short enough to pass a length bound on its own.
+      "0123456789abcdef0123",
+      // Base64-ish.
+      "YWJjZGVmZ2hpamts+/==",
+      // A query fragment of the kind a tracker definition really carries.
+      "passkey=abc123&uid=42",
+      // Long enough to be a token even though the characters are innocent.
+      "a".repeat(25),
+    ]) {
+      expect(safeFieldValue(credential, "label")).toBeUndefined();
+    }
+  });
+
+  it("still reports an honest category label", () => {
+    for (const label of ["radarr", "tv-sonarr", "movies_hd", "Example Category", "abcdef", "4k"]) {
+      expect(safeFieldValue(label, "label")).toBe(label);
+    }
   });
 
   it("refuses a value that carries a URL even under an allowlisted name", () => {
@@ -173,12 +201,19 @@ describe("classifying a whole dynamic field list", () => {
       // A dynamic definition naming its passkey after an operational setting.
       { name: "minimumSeeders", value: "CANARY-BORROWED-NAME" },
       { name: "categories", value: ["CANARY-BORROWED-LIST"] },
+      // The text-valued case: the name is innocent and the kind matches, so
+      // only the value shape stands between the passkey and the result.
+      { name: "movieCategory", value: "CANARY-PASSKEY-0123456789abcdef01" },
       { name: "minimumSeeders", value: 3 },
+      { name: "movieCategory", value: "radarr" },
     ]);
 
-    expect(classified.fields).toEqual([{ name: "minimumSeeders", value: 3 }]);
+    expect(classified.fields).toEqual([
+      { name: "minimumSeeders", value: 3 },
+      { name: "movieCategory", value: "radarr" },
+    ]);
     expect(classified.secrets).toEqual([]);
-    expect(classified.withheldCount).toBe(2);
+    expect(classified.withheldCount).toBe(3);
   });
 
   it("withholds a credential-named switch rather than calling a toggle configured", () => {

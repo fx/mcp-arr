@@ -12,8 +12,15 @@ import type { ConfigurationDomain, ProviderDomain } from "./domains.js";
  * two are deliberately separate types so no code path can mistake one for the
  * other.
  *
- * No type here has a field that can hold a secret value. A secret is reported
- * only as {@link ConfiguredSecret}, which says *that* one is configured.
+ * No type here has a field a secret is *meant* to travel in: a secret is
+ * reported only as {@link ConfiguredSecret}, which says that one is configured
+ * without saying what it is. That is a statement about intent, not a guarantee
+ * the types can make — {@link SafeField} holds a primitive, and a primitive is
+ * what a secret is. The guarantee lives in the classifier in
+ * {@link ./fields.js}, which decides what may reach a `SafeField` at all, and
+ * in the serializers that build these records one named property at a time.
+ * Widening a type here without widening that classifier is how a leak would be
+ * introduced, so the two are changed together.
  */
 
 /**
@@ -43,9 +50,10 @@ export type SafeFieldValue = string | number | boolean | readonly (string | numb
 /**
  * One allowlisted field and its current value.
  *
- * A field reaches this type only by being named in the classifier's allowlist
- * for its family, so an unknown, dynamic, or secret-bearing field has no path
- * into it.
+ * A dynamic field reaches this type only by being named in the classifier's
+ * allowlist *and* carrying a value of the kind and shape that allowlist records
+ * for the name. Both halves are load-bearing: the name was chosen by the same
+ * definition that supplied the value, so on its own it vouches for nothing.
  */
 export interface SafeField {
   readonly name: string;

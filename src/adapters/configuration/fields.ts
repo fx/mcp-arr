@@ -13,13 +13,20 @@ import type { ConfiguredSecret, SafeField, SafeFieldValue } from "./model.js";
  * 1. A field whose name reads as a credential — or whose upstream descriptor
  *    says so — is a secret. Only that it is configured is reported.
  * 2. A field explicitly named in {@link providerFieldAllowlist} carries its
- *    value out, and only if the value is a bounded primitive.
+ *    value out, and only if the value also has the kind and shape that
+ *    allowlist records for the name. The name alone never decides: it was
+ *    chosen by the same definition that supplied the value.
  * 3. Everything else is withheld and counted.
  *
  * The order matters: the secret test runs first, so adding a name to the
  * allowlist can never turn a credential into output. Upstream privacy metadata
  * can only escalate a field to secret, never de-escalate one — a definition
  * file that declares its passkey "normal" does not get to be believed.
+ *
+ * Recognizing a payload is allowed only where it tightens the result. The
+ * serializer suppresses field values outright for a provider it recognizes as
+ * definition-driven; nothing anywhere may recognize a payload in order to
+ * publish more of it.
  */
 
 /**
@@ -65,7 +72,35 @@ const secretPrivacyWords: ReadonlySet<string> = new Set(["password", "apikey", "
  * because a credential is a string and almost every operational setting here is
  * a number, a boolean, or a list of numbers.
  */
-export type FieldValueKind = "number" | "boolean" | "string" | "numberList";
+export type FieldValueKind = "number" | "boolean" | "label" | "numberList";
+
+/**
+ * The shape a `label` value must have.
+ *
+ * There is deliberately no unconstrained string kind. A credential is itself a
+ * bounded primitive string, so a kind that accepted "any string" would let a
+ * definition publish a passkey simply by naming the field after a setting whose
+ * value happens to be text — the name would be doing all the deciding, which is
+ * the recognition strategy rule 3 exists to avoid.
+ *
+ * Every string-valued setting in the allowlist is a short human label: a
+ * download client's category is `radarr` or `tv-sonarr`. So the shape is
+ * twenty-four characters at most, drawn from letters, digits, spaces, hyphens
+ * and underscores, and starting with a letter or digit. That excludes a base64
+ * blob and a query fragment, which carry `+/=` and `&`, and it excludes any
+ * token long enough to be worth stealing.
+ *
+ * The hex rule closes what length alone leaves open: a short all-hex string is
+ * still credential-shaped, and no honest category is nine or more hex digits
+ * with nothing else in it.
+ */
+const labelValue = /^[A-Za-z0-9][A-Za-z0-9 _-]{0,23}$/u;
+
+const hexLikeValue = /^[0-9a-f]{9,}$/iu;
+
+function isLabel(value: unknown): value is string {
+  return typeof value === "string" && labelValue.test(value) && !hexLikeValue.test(value);
+}
 
 /**
  * The provider field names whose values may be reported.
@@ -91,9 +126,9 @@ export const providerFieldAllowlist: ReadonlyMap<string, FieldValueKind> = new M
   ["firstAndLast", "boolean"],
   ["initialState", "number"],
   ["minimumSeeders", "number"],
-  ["movieCategory", "string"],
+  ["movieCategory", "label"],
   ["multiLanguages", "numberList"],
-  ["musicCategory", "string"],
+  ["musicCategory", "label"],
   ["olderMoviePriority", "number"],
   ["olderTvPriority", "number"],
   ["packSeedTime", "number"],
@@ -113,10 +148,15 @@ export const providerFieldAllowlist: ReadonlyMap<string, FieldValueKind> = new M
   ["startOnAdd", "boolean"],
   ["syncCategories", "numberList"],
   ["syncRejectBlocklistedTorrentHashes", "boolean"],
-  ["tvCategory", "string"],
+  ["tvCategory", "label"],
   ["useSsl", "boolean"],
 ]);
-/** The longest string value that may be reported, allowlisted or not. */
+/**
+ * The ceiling on a string reported through the kindless path, which serves the
+ * fixed-shape records whose property names come from the application's own
+ * schema. A dynamic field never reaches it: its kind is always known, and no
+ * kind admits an arbitrary string.
+ */
 export const maxSafeFieldValueLength = 200;
 
 /** The most values one allowlisted array-valued field may report. */
@@ -173,18 +213,27 @@ function isSafePrimitive(value: unknown): value is string | number | boolean {
  *
  * Supplying the {@link FieldValueKind} the name is supposed to carry narrows it
  * further, and that is what a *dynamic* field must always do: the name came
- * from a definition file, so it is not evidence about the value. A fixed-shape
- * upstream record needs no kind, because its property names come from the
- * application's own schema rather than from a file an operator installed.
+ * from a definition file, so it is not evidence about the value. Every kind
+ * constrains the value, `label` included — there is no kind meaning "any
+ * string", because a credential is one.
+ *
+ * The kindless form remains for fixed-shape upstream records, whose property
+ * names come from the application's own compiled schema rather than from a file
+ * an operator installed, so there the name genuinely is evidence.
  */
 export function safeFieldValue(value: unknown, kind?: FieldValueKind): SafeFieldValue | undefined {
-  if (kind === "numberList") {
-    return numberList(value);
+  switch (kind) {
+    case "numberList":
+      return numberList(value);
+    case "label":
+      return isLabel(value) ? value : undefined;
+    case "number":
+      return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+    case "boolean":
+      return typeof value === "boolean" ? value : undefined;
+    default:
+      return isSafePrimitive(value) ? value : primitiveList(value);
   }
-  if (kind !== undefined) {
-    return typeof value === kind && isSafePrimitive(value) ? value : undefined;
-  }
-  return isSafePrimitive(value) ? value : primitiveList(value);
 }
 
 function numberList(value: unknown): readonly number[] | undefined {
@@ -219,7 +268,8 @@ function primitiveList(value: unknown): SafeFieldValue | undefined {
  * Whether a secret field currently holds a value, and whether the instance
  * answered with a mask.
  *
- * Absence, null, and the empty string all mean unconfigured. A run of asterisks
+ * Absence, null, and a blank string all mean unconfigured — blank, not merely
+ * empty, because the value is trimmed first. A run of asterisks
  * is the sentinel these applications substitute for a stored secret, so it
  * means configured — the value is set, this server simply was not told it.
  */
