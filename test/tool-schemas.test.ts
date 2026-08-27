@@ -374,3 +374,213 @@ describe("published tool surface", () => {
     }
   });
 });
+
+/**
+ * Every issue message a rejected input produces, sorted.
+ *
+ * The whole list rather than a distinct set, so an issue that appears twice or
+ * an extra one nobody asked for fails rather than collapsing into the expected
+ * value; sorted rather than in Zod's own order, because what is pinned here is
+ * the wording each mechanism produces and not the sequence it collects them in.
+ */
+function rejectionMessages(name: (typeof toolNames)[number], value: unknown): readonly string[] {
+  const parsed = parseInput(name, value);
+  if (parsed.success) {
+    throw new Error(`${name} accepted an input this test requires it to reject`);
+  }
+  return parsed.error.issues.map((issue) => issue.message).sort();
+}
+
+/** A `strictObject` refusing a key it does not declare. */
+const unrecognizedKey = 'Unrecognized key: "unexpectedProperty"';
+
+/**
+ * A plain `z.union` reporting that no member matched. It is the same string
+ * whatever went wrong inside the members, which is exactly why the eight
+ * mutation tools — whose intents are a discriminated union nested inside a
+ * union with the plan-reference form — say this where the five read variant
+ * tools name the property or the discriminator.
+ */
+const noAlternativeMatched = "Invalid input";
+
+/** A `strictObject` reporting a required string that was not supplied. */
+const missingRequiredString = "Invalid input: expected string, received undefined";
+
+/** `z.discriminatedUnion` reporting a value outside its declared set. */
+function discriminatorMismatch(variants: readonly string[]): string {
+  return `Invalid discriminator value. Expected ${variants.map((variant) => `'${variant}'`).join(" | ")}`;
+}
+
+/**
+ * The discriminator values a tool's published schema declares, in the order it
+ * declares them.
+ *
+ * Harvested from the schema rather than written out so that adding a variant
+ * extends this test instead of breaking it: the discriminator wording
+ * enumerates the accepted set, and the set is not what these assertions are
+ * about.
+ */
+function declaredVariantValues(name: (typeof toolNames)[number]): readonly string[] {
+  const discriminator = toolDefinitions.find((candidate) => candidate.name === name)?.discriminator;
+  const found = new Set<string>();
+  if (discriminator === undefined) {
+    return [];
+  }
+
+  const visit = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        visit(child);
+      }
+      return;
+    }
+    if (typeof node !== "object" || node === null) {
+      return;
+    }
+    const record = node as Record<string, unknown>;
+    const property = (record.properties as Record<string, unknown> | undefined)?.[discriminator] as
+      | Record<string, unknown>
+      | undefined;
+    if (typeof property?.const === "string") {
+      found.add(property.const);
+    }
+    for (const value of Array.isArray(property?.enum) ? property.enum : []) {
+      if (typeof value === "string") {
+        found.add(value);
+      }
+    }
+    for (const value of Object.values(record)) {
+      visit(value);
+    }
+  };
+
+  visit(inputJsonSchema(name));
+  return [...found];
+}
+
+/**
+ * A tool whose input is a union of a direct intent and the plan-reference form.
+ * Those are the eight mutation tools, and the outer plain union is what decides
+ * their rejection wording.
+ */
+function isPlanReferenceTool(name: (typeof toolNames)[number]): boolean {
+  return "mode" in sampleToolInputs[name];
+}
+
+/**
+ * The exact wording of every class of refused input.
+ *
+ * These are the messages a caller reads when a call is refused, and they are
+ * pinned as literals because the promise attached to any change in how the
+ * schemas are *published* is that nothing about what is *accepted* — including
+ * how a rejection reads — changes with it. The cases are chosen by the
+ * mechanism that produces the message rather than by tool, so each one covers a
+ * distinct code path rather than restating a neighbour.
+ */
+describe("input rejection messages", () => {
+  it("words an unknown property the way the form that refused it does", () => {
+    for (const name of toolNames) {
+      const withExtra = { ...sampleFor(name), unexpectedProperty: "value" };
+      expect(rejectionMessages(name, withExtra), name).toEqual(
+        isPlanReferenceTool(name) ? [noAlternativeMatched] : [unrecognizedKey],
+      );
+    }
+  });
+
+  it("words an undeclared discriminator value by naming the accepted set", () => {
+    for (const definition of toolDefinitions) {
+      const discriminator = definition.discriminator;
+      if (discriminator === undefined) {
+        continue;
+      }
+      const name = definition.name;
+      const withBadVariant = { ...sampleFor(name), [discriminator]: "not_a_variant" };
+      expect(rejectionMessages(name, withBadVariant), name).toEqual(
+        isPlanReferenceTool(name)
+          ? [noAlternativeMatched]
+          : [discriminatorMismatch(declaredVariantValues(name))],
+      );
+    }
+  });
+
+  it("words a variant-required property that was not supplied", () => {
+    // One case per variant tool that has a required argument beyond its own
+    // discriminator. `arr_config_observe` is absent because none of its sixteen
+    // domains requires anything else, so it has no such case to word.
+    const cases: ReadonlyArray<
+      readonly [(typeof toolNames)[number], Record<string, unknown>, readonly string[]]
+    > = [
+      ["arr_library_query", { view: "seasons" }, [missingRequiredString]],
+      ["arr_activity_query", { view: "queue_details" }, [missingRequiredString]],
+      ["arr_release_search", { target: "radarr_movie" }, [missingRequiredString]],
+      ["arr_import_inspect", { source: "queue_item" }, [missingRequiredString]],
+      ["arr_search_start", { target: "sonarr_series", mode: "plan" }, [noAlternativeMatched]],
+      ["arr_release_grab", { mode: "apply" }, [noAlternativeMatched]],
+      ["arr_queue_resolve", { intent: "ignore_tracking", mode: "plan" }, [noAlternativeMatched]],
+      [
+        "arr_activity_change",
+        { intent: "mark_history_failed", mode: "plan" },
+        [noAlternativeMatched],
+      ],
+      [
+        "arr_import_execute",
+        { mode: "plan", candidates: [sampleReferences.importCandidate] },
+        [noAlternativeMatched],
+      ],
+      [
+        "arr_library_change",
+        { intent: "set_monitoring", mode: "plan", items: [sampleReferences.media] },
+        [noAlternativeMatched],
+      ],
+      [
+        "arr_config_reconcile",
+        { intent: "reconcile_provider", mode: "plan", application: "sonarr", domain: "indexers" },
+        [noAlternativeMatched],
+      ],
+      ["arr_job_cancel", { mode: "apply" }, [noAlternativeMatched]],
+    ];
+
+    for (const [name, input, expected] of cases) {
+      expect(rejectionMessages(name, input), name).toEqual(expected);
+    }
+  });
+
+  it("words a reference of the wrong kind by naming the kind it wanted", () => {
+    expect(rejectionMessages("arr_job_get", { job: sampleReferences.release })).toEqual([
+      "must be a job reference",
+    ]);
+    expect(
+      rejectionMessages("arr_job_cancel", { mode: "apply", job: sampleReferences.release }),
+    ).toEqual(["must be a job reference"]);
+  });
+
+  it("words a plan reference restated alongside its intent", () => {
+    const mutationTools = toolNames.filter(isPlanReferenceTool);
+    expect(mutationTools).toHaveLength(8);
+
+    for (const name of mutationTools) {
+      const both = { ...sampleFor(name), mode: "apply", plan: sampleReferences.plan };
+      expect(rejectionMessages(name, both), name).toEqual([noAlternativeMatched]);
+    }
+  });
+
+  it("carries a refinement's own message out of the variant it belongs to", () => {
+    expect(
+      rejectionMessages("arr_library_query", {
+        view: "calendar",
+        start: "2026-08-31",
+        end: "2026-08-01",
+      }),
+    ).toEqual([
+      "start and end must be real dates, in order, and cover at most 366 days including both bounds",
+    ]);
+    expect(
+      rejectionMessages("arr_library_change", {
+        intent: "update_file_metadata",
+        mode: "plan",
+        files: [sampleReferences.mediaFile],
+        changes: {},
+      }),
+    ).toEqual(["at least one file metadata field must be supplied"]);
+  });
+});
