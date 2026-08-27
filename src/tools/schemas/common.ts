@@ -200,16 +200,51 @@ export const queryBaseShape = {
 } as const;
 
 /**
- * Declares a variant union as an object at the JSON Schema root.
+ * Publishes a variant union under the object root the protocol requires.
  *
  * MCP requires a published tool input schema to carry `type: "object"` at its
- * root, and the Zod-to-JSON-Schema conversion emits only `oneOf` for a
- * discriminated union. Every member of these unions is an object, so declaring
- * the root type is accurate as well as required — without it a client rejects
- * the whole `tools/list` response.
+ * root, and the server SDK enforces that by refusing to convert a registered
+ * schema that is not a Zod object at all: a union reaches `tools/list` as an
+ * empty object, so a caller can discover no variant and no argument. Root
+ * metadata cannot rescue that, because the union never reaches the conversion.
+ *
+ * So the union is wrapped in an object that parses by delegating to it. The
+ * wrapper accepts exactly what the union accepts, returns exactly what the
+ * union returns, and reports the union's own issues verbatim, while the
+ * union's alternatives ride to `tools/list` as the wrapper's root metadata.
+ * The wrapper is deliberately loose: it must hand the union the caller's
+ * object unchanged, and it is the union's members that refuse an unknown
+ * property.
  */
 export function variantUnion<TSchema extends z.ZodType>(union: TSchema): TSchema {
-  return union.meta({ type: "object" });
+  // The document keyword belongs to the published root, which the server SDK
+  // emits for the wrapper itself; carrying a second one in the metadata would
+  // only restate it.
+  const { $schema: _target, ...alternatives } = z.toJSONSchema(union, {
+    target: "draft-7",
+    io: "input",
+  });
+
+  const published = z
+    .looseObject({})
+    .check((context) => {
+      const parsed = union.safeParse(context.value);
+      if (parsed.success) {
+        context.value = parsed.data as Record<string, unknown>;
+        return;
+      }
+      // Each issue is already finalized, message included, so re-raising it
+      // reproduces the union's own wording; only the raw-issue input field has
+      // to be restored.
+      for (const issue of parsed.error.issues) {
+        context.issues.push({ input: context.value, ...issue } as z.core.$ZodRawIssue);
+      }
+    })
+    .meta(alternatives);
+
+  // The wrapper parses to whatever the union parses to, so it stands in for the
+  // union at the type level as well as at runtime.
+  return published as unknown as TSchema;
 }
 
 /** Fields every direct mutation intent shares. */

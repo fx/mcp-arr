@@ -5,7 +5,7 @@
 Publish the argument contract for every tool. Thirteen of the fifteen tools currently advertise an empty input schema, so a calling agent cannot discover any variant or argument without provoking a validation error. This closes the gap the [Tool Contracts spec](../specs/tool-contracts/#stable-typed-surface) now names explicitly.
 
 **Spec:** [Tool Contracts](../specs/tool-contracts/)
-**Status:** draft
+**Status:** complete
 **Depends On:** —
 
 ## Motivation
@@ -72,6 +72,9 @@ The [Tool Contracts spec](../specs/tool-contracts/#stable-typed-surface) owns wh
 - **Decision:** Prefer preserving the current call shape over the most convenient publication mechanism.
   - **Why:** The server already works against real instances and a host is configured against it. A mechanism that publishes correctly but renames or nests arguments imposes a breaking change on a working integration to fix a defect callers never caused.
   - **Alternatives considered:** Nesting each union under a single wrapper property publishes cleanly with the least machinery, but changes every call. Treat it as the fallback if the current shape cannot be published, and say so explicitly rather than adopting it silently.
+- **Decision:** Publish each union by wrapping it in a loose object whose parse delegates to the union, and carry the union's converted alternatives as that object's root metadata.
+  - **Why:** The server SDK refuses to convert a registered schema that is not a Zod object, so a union reached `tools/list` as an empty object and no root metadata could rescue it — the union never reached the conversion. An object wrapper does reach it, and because the wrapper parses by handing the caller's object to the union unchanged and re-raising the union's own finalized issues, the accepted arguments, the parsed result, and every rejection message are byte-identical to before. The fallback was not needed: no call shape changed.
+  - **Alternatives considered:** Replacing the SDK's `tools/list` handler with one that publishes schemas this project converts itself, rejected because it duplicates response construction the SDK owns and would drift from it silently.
 
 ### Non-Goals
 
@@ -82,18 +85,14 @@ The [Tool Contracts spec](../specs/tool-contracts/#stable-typed-surface) owns wh
 
 ## Tasks
 
-- [ ] Publish the variant contract for every tool
-  - [ ] Establish the publication path that carries variant alternatives under an object root, and apply it to all thirteen affected tools
-  - [ ] Remove the metadata helper whose effect does not occur, along with its incorrect comment
-  - [ ] Confirm every accepted input and rejection message is unchanged, including against the live-instance calls already exercised
-- [ ] Close the test gap that allowed this
-  - [ ] Strengthen the stdio schema assertion so an empty published schema fails it
-  - [ ] Add a round-trip test validating accepted and rejected inputs against the published schema
-  - [ ] Verify both tests fail against the pre-fix implementation
-
-## Open Questions
-
-- [ ] If the current call shape proves impossible to publish under the protocol's object-root requirement, the fallback nests each union under a wrapper property, which changes every call. That is a breaking change to a working integration and MUST be raised before it is adopted, not decided during implementation.
+- [x] Publish the variant contract for every tool
+  - [x] Establish the publication path that carries variant alternatives under an object root, and apply it to all thirteen affected tools
+  - [x] Remove the metadata helper whose effect does not occur, along with its incorrect comment
+  - [x] Confirm every accepted input and rejection message is unchanged, including against the live-instance calls already exercised
+- [x] Close the test gap that allowed this
+  - [x] Strengthen the stdio schema assertion so an empty published schema fails it
+  - [x] Add a round-trip test validating accepted and rejected inputs against the published schema
+  - [x] Verify both tests fail against the pre-fix implementation
 
 ## References
 

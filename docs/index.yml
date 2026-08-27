@@ -113,7 +113,7 @@ changes:
     path: changes/0012-published-tool-schemas.md
     description: Publish the argument contract for the thirteen tools that advertise an empty input schema
     spec: tool-contracts
-    status: draft
+    status: complete
     depends_on: []
   - id: "0013"
     name: result-summary-fidelity

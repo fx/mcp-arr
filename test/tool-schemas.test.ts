@@ -11,6 +11,7 @@ import {
   referencePrefixes,
   referenceProperties,
 } from "../src/tools/schemas/common.js";
+import { publishedPropertyNames } from "./support/json-schema.js";
 import { sampleReferences, sampleToolInputs } from "./support/tool-context.js";
 
 function inputJsonSchema(name: (typeof toolNames)[number]): Record<string, unknown> {
@@ -54,28 +55,6 @@ const forbiddenPropertyNames = [
   "operationId",
   "method",
 ];
-
-function collectPropertyNames(node: unknown, found: Set<string>): void {
-  if (Array.isArray(node)) {
-    for (const child of node) {
-      collectPropertyNames(child, found);
-    }
-    return;
-  }
-  if (typeof node !== "object" || node === null) {
-    return;
-  }
-  const record = node as Record<string, unknown>;
-  const properties = record.properties;
-  if (typeof properties === "object" && properties !== null) {
-    for (const key of Object.keys(properties)) {
-      found.add(key);
-    }
-  }
-  for (const value of Object.values(record)) {
-    collectPropertyNames(value, found);
-  }
-}
 
 const referencePatterns = new Set(
   Object.values(referencePrefixes).map((prefix) => `^${prefix}_[A-Za-z0-9_-]{8,64}$`),
@@ -184,8 +163,7 @@ describe("published tool surface", () => {
 
   it("exposes no endpoint, path, command, credential, or operation-name property", () => {
     for (const definition of toolDefinitions) {
-      const found = new Set<string>();
-      collectPropertyNames(inputJsonSchema(definition.name), found);
+      const found = publishedPropertyNames(inputJsonSchema(definition.name));
       for (const forbidden of forbiddenPropertyNames) {
         expect(found.has(forbidden), `${definition.name} exposes ${forbidden}`).toBe(false);
       }
