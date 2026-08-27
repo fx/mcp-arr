@@ -41,6 +41,22 @@ const detailKind = "import_candidate";
 /**
  * The one definition of what a candidate reference may hold.
  *
+ * Two invariants hold across this file and the adapter that feeds it, and both
+ * were learned by breaking them.
+ *
+ * **One rule per value, read by everyone who applies it.** The numeric
+ * predicates below come from the adapter's own model, so the adapter cannot
+ * normalize to something this schema would refuse, and this schema cannot admit
+ * something the adapter would never build. Two statements of one rule drift, and
+ * a drift here is either a reference that mints and can never resolve, or one
+ * that resolves into something nothing produced.
+ *
+ * **What is fingerprinted and what is stored are the same value**, not two
+ * values that happen to agree. The detail is derived once, validated once, and
+ * then both hashed and written — see {@link mintCandidateReference}. Deriving
+ * it twice would leave the fingerprint describing a candidate other than the one
+ * beside it, which is exactly the corruption resolution refuses.
+ *
  * Everything about this boundary is checked against this schema and nothing
  * else: minting parses the detail it is about to store, and resolving parses
  * the snapshot it just read back. A rule stated once cannot be enforced on the
@@ -148,22 +164,36 @@ export type CandidateDetail = z.infer<typeof candidateDetailSchema>;
  * the one presented. Deriving from what was presented makes the two agree by
  * construction instead of by a check that has to remember every field.
  */
-function detailFor(candidate: ImportCandidate): Record<string, unknown> {
+function detailFor(candidate: ImportCandidate): Record<string, unknown> | undefined {
   const context = candidate.context;
+  // Derived once and checked here rather than computed again by a separate
+  // storability test: two derivations of the same identifier are two things
+  // that can disagree, and the disagreement would be invisible.
+  const mediaId = mappedId(candidate.media, candidate.application, [mediaKindFor(candidate)]);
+  const episodeIds = (candidate.episodes ?? []).map((episode) =>
+    mappedId(episode, candidate.application, ["episode"]),
+  );
+
+  // A reference that names another application or another kind of record is not
+  // this candidate's mapping, and dropping it quietly would be worse than
+  // refusing: the stored mapping would claim less than the candidate presented,
+  // so a later step would import against a mapping the caller never saw.
+  if (candidate.media !== undefined && mediaId === undefined) {
+    return undefined;
+  }
+  if (episodeIds.some((id) => id === undefined)) {
+    return undefined;
+  }
+
   return {
     kind: detailKind,
     sourceKind: candidate.sourceKind,
     candidateId: context.candidateId,
     queueItemId: context.queueItemId,
-    mediaId: mappedId(candidate.media, candidate.application, [mediaKindFor(candidate)]),
+    mediaId,
     scanMediaId: context.scanMediaId,
     seasonNumber: candidate.seasonNumber,
-    episodeIds:
-      candidate.episodes === undefined
-        ? undefined
-        : candidate.episodes.map((episode) =>
-            mappedId(episode, candidate.application, ["episode"]),
-          ),
+    episodeIds: candidate.episodes === undefined ? undefined : episodeIds,
     fileIdentity: candidate.fileIdentity,
     sizeBytes: candidate.sizeBytes,
     // The boolean the caller saw decides whether the identifier is stored at
@@ -258,35 +288,33 @@ export function fingerprintFor(detail: CandidateDetail): string {
  * agree because only one of them is stored.
  */
 export function isNameableCandidate(candidate: ImportCandidate): boolean {
-  return (
-    (candidate.application === "sonarr" || candidate.application === "radarr") &&
-    candidate.sourceKind === candidate.context.sourceKind &&
-    mappingIsStorable(candidate) &&
-    candidateDetailSchema.safeParse(detailFor(candidate)).success
-  );
+  return storableDetail(candidate) !== undefined;
 }
 
 /**
- * Whether the mapping the caller was shown can be stored as what it says.
+ * The detail this candidate would be stored as, or nothing.
  *
- * A reference that names another application or another kind of record cannot,
- * and dropping it quietly would be worse than refusing: the stored mapping
- * would claim less than the candidate presented, so a later step would import
- * against a mapping the caller never saw. A candidate with no mapping at all is
- * a different thing and remains nameable — an unmapped file under a folder is a
- * real answer.
+ * One function answers both questions a mint asks — may this be named, and what
+ * exactly is written — because they are the same question. Answering them
+ * separately is what produced two computations of one value on this path, and
+ * two computations are two things that can drift.
  */
-function mappingIsStorable(candidate: ImportCandidate): boolean {
-  const media = candidate.media;
-  if (
-    media !== undefined &&
-    mappedId(media, candidate.application, [mediaKindFor(candidate)]) === undefined
-  ) {
-    return false;
+function storableDetail(candidate: ImportCandidate): CandidateDetail | undefined {
+  if (candidate.application !== "sonarr" && candidate.application !== "radarr") {
+    return undefined;
   }
-  return (candidate.episodes ?? []).every(
-    (episode) => mappedId(episode, candidate.application, ["episode"]) !== undefined,
-  );
+  // The kind is recorded twice on a candidate and stored once, so the two have
+  // to agree or a candidate could be minted as one kind and validated as the
+  // other.
+  if (candidate.sourceKind !== candidate.context.sourceKind) {
+    return undefined;
+  }
+  const detail = detailFor(candidate);
+  if (detail === undefined) {
+    return undefined;
+  }
+  const parsed = candidateDetailSchema.safeParse(detail);
+  return parsed.success ? parsed.data : undefined;
 }
 
 function mediaKindFor(candidate: ImportCandidate): string {
@@ -306,7 +334,8 @@ export function mintCandidateReference(
   references: ReferenceStore,
   candidate: ImportCandidate,
 ): string | undefined {
-  if (!isNameableCandidate(candidate)) {
+  const detail = storableDetail(candidate);
+  if (detail === undefined) {
     return undefined;
   }
 
@@ -320,9 +349,12 @@ export function mintCandidateReference(
         // scan of a folder the instance has not indexed answers without one,
         // and such a candidate is still nameable: what identifies the file is
         // its fingerprint, not a row number that may not exist.
-        upstreamId: String(candidate.context.candidateId ?? 0),
-        fingerprint: fingerprintFor(candidateDetailSchema.parse(detailFor(candidate))),
-        detail: detailFor(candidate),
+        upstreamId: String(detail.candidateId ?? 0),
+        // The invariant this whole path exists to keep: what is fingerprinted
+        // and what is stored are the *same value*, not two values that happen
+        // to agree. Both read `detail`, which was derived and validated once.
+        fingerprint: fingerprintFor(detail),
+        detail,
       },
     }),
   }).reference;

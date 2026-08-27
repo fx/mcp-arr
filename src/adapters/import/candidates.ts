@@ -18,7 +18,6 @@ import {
 } from "../library/parse.js";
 import {
   type ImportCandidate,
-  type ImportDecision,
   type ImportQuality,
   type ImportRejection,
   type ImportRejectionType,
@@ -203,6 +202,14 @@ async function readTrackedScanContext(
   application: MediaApplication,
   request: { readonly queueItemId: number; readonly mediaId?: number | undefined },
 ): Promise<ScanResolution> {
+  // Held to the same rule every other retained identifier is, so a scan cannot
+  // start from a row number that could never be stored on a reference — which
+  // would yield candidates that each fail to be named for the same reason,
+  // silently.
+  if (!isRecordIdentifier(request.queueItemId)) {
+    return { ok: false, reason: "absent" };
+  }
+
   const parameter = application === "sonarr" ? "seriesId" : "movieId";
   const query: UpstreamQuery =
     request.mediaId === undefined ? {} : { [parameter]: request.mediaId };
@@ -476,8 +483,15 @@ export function mapCandidate(
     return undefined;
   }
 
+  // Every value below is derived exactly once and then used wherever it is
+  // needed, including by the context. Deriving the same thing twice is how two
+  // copies of one fact come to disagree — and a candidate whose context said
+  // something different from what it displayed would bind a reference to a
+  // mapping nobody was shown.
+  //
   // Zero is how both applications report "no record", so it becomes absence
-  // here rather than travelling as an identifier that names nothing.
+  // rather than travelling as an identifier that names nothing.
+  const identity = fileIdentity(path);
   const mediaId = recordId(count(application === "sonarr" ? record.series?.id : record.movie?.id));
   const episodeIds =
     application === "sonarr"
@@ -488,8 +502,14 @@ export function mapCandidate(
   const existingFileId = recordId(
     count(application === "sonarr" ? record.episodeFileId : record.movieFileId),
   );
+  const candidateId = recordId(count(record.id));
+  const sizeBytes = retained(count(record.size), isFileSize);
+  const seasonNumber =
+    retained(count(record.seasonNumber), isSeasonNumber) ??
+    retained(context.seasonNumber, isSeasonNumber);
   const known = knownLiterals(context, record);
   const rejections = candidateRejections(context, record);
+  const importable = rejections.length === 0;
 
   return {
     application,
@@ -498,13 +518,13 @@ export function mapCandidate(
       fileNameOf(record.relativePath, known) ??
       fileNameOf(record.path, known) ??
       scrubLabel(record.name, known),
-    fileIdentity: fileIdentity(path),
-    sizeBytes: retained(count(record.size), isFileSize),
+    fileIdentity: identity,
+    sizeBytes,
     media:
       mediaId === undefined
         ? undefined
         : mediaRef(application, application === "sonarr" ? "series" : "movie", mediaId),
-    seasonNumber: retained(count(record.seasonNumber), isSeasonNumber),
+    seasonNumber,
     episodes:
       episodeIds.length === 0
         ? undefined
@@ -522,7 +542,7 @@ export function mapCandidate(
     ),
     customFormatScore: count(record.customFormatScore),
     indexerFlags: indexerFlagNames(record.indexerFlags, known),
-    decision: decisionFor(rejections),
+    decision: { importable, rejections },
     // A candidate the instance already associates with a library file is a file
     // the library holds, not a new import. Both applications report that as the
     // file identifier on the row, and a positive one is the only signal either
@@ -531,33 +551,18 @@ export function mapCandidate(
     context: {
       application,
       sourceKind: context.sourceKind,
-      candidateId: recordId(count(record.id)),
+      candidateId,
       queueItemId: context.queueItemId,
       mediaId,
       scanMediaId: context.sourceKind === "library_context" ? context.mediaId : undefined,
-      seasonNumber:
-        retained(count(record.seasonNumber), isSeasonNumber) ??
-        retained(context.seasonNumber, isSeasonNumber),
+      seasonNumber,
       episodeIds: episodeIds.length === 0 ? undefined : episodeIds,
-      fileIdentity: fileIdentity(path),
-      sizeBytes: count(record.size),
-      existingFileId:
-        existingFileId !== undefined && existingFileId > 0 ? existingFileId : undefined,
+      fileIdentity: identity,
+      sizeBytes,
+      existingFileId,
+      importable,
     },
   };
-}
-
-/**
- * Whether the file can be imported as mapped.
- *
- * Any rejection at all makes it unimportable. The applications distinguish
- * permanent from temporary, but the specification does not: a candidate that
- * carries a blocking rejection must not be executed, and treating a temporary
- * one as importable would be this server deciding that upstream's objection did
- * not count.
- */
-function decisionFor(rejections: readonly ImportRejection[]): ImportDecision {
-  return { importable: rejections.length === 0, rejections };
 }
 
 /**

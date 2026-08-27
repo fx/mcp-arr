@@ -123,6 +123,15 @@ describe("candidate scan context", () => {
     expect(calls[1]?.url.searchParams.get("folder")).toBe(recordedFolder);
   });
 
+  it("refuses a scan whose own row identifier could never be stored", async () => {
+    // The identifiers a scan starts from are held to the same rule every
+    // retained identifier is. Starting a scan from one that could not be stored
+    // would yield candidates that each fail to be named for the same reason,
+    // and fail silently.
+    expect((await scanTracked("sonarr", { queueItemId: 0 })).result.status).toBe("absent");
+    expect((await scanTracked("sonarr", { queueItemId: 2 ** 53 })).result.status).toBe("absent");
+  });
+
   it("reports a row that is gone and one that names no location differently", async () => {
     expect((await scanTracked("sonarr", { queueItemId: 9999 })).result.status).toBe("absent");
     // The pending release in the recorded queue reports neither an output path
