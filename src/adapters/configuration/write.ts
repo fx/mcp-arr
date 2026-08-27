@@ -15,7 +15,9 @@ import { type ConfigurationRef, configurationRef, type SafeFieldValue } from "./
 import { isUpstreamRecord } from "./parse.js";
 import type { CompiledPatch, PatchAssignment } from "./patches.js";
 import type { UpstreamResource } from "./resources.js";
+import type { TransientSecrets } from "./secrets.js";
 import { isDynamicallyDefined } from "./serialize.js";
+import { readSyncLevel, syncCapabilities } from "./sync.js";
 
 /**
  * The lossless full-resource write.
@@ -73,11 +75,14 @@ export interface ConfigurationChange {
  *
  * `preserved` is the disposition of every secret this server was not asked to
  * change, and it is the interesting one: it is the promise that a credential
- * the caller never supplied is still there afterwards.
+ * the caller never supplied is still there afterwards. `set` and `changed` are
+ * told apart by what the record held before — an instance that answered with a
+ * mask still said that something was configured — so a caller learns whether it
+ * has replaced a credential or supplied a first one.
  */
 export interface SecretDisposition {
   readonly name: string;
-  readonly disposition: "preserved" | "cleared";
+  readonly disposition: "preserved" | "cleared" | "set" | "changed";
 }
 
 /** How much of the resource this write carried through without touching it. */
@@ -113,12 +118,32 @@ export interface WriteRequest {
   readonly patch: CompiledPatch;
   readonly catalog: DependencyCatalog;
   readonly id: number;
+  /**
+   * The credentials supplied for this request.
+   *
+   * Read here and nowhere else: this is the only place a value is needed, so it
+   * is the only place one is taken. The runtime erases the bundle on its way
+   * out, whatever this function answered.
+   */
+  readonly secrets: TransientSecrets;
 }
 
 /** The dynamic field array's property name, and the diff prefix for its entries. */
 const fieldsProperty = "fields";
 
-const enableSwitches = [
+/**
+ * What is observed where the record cannot say what a field holds. It is a
+ * value like any other, so a name that becomes ambiguous between a plan and its
+ * apply expires the plan rather than reading as unchanged.
+ */
+const ambiguous = "ambiguous";
+
+/**
+ * The switches a provider may express "on" through. Exported because apply
+ * verification has to check exactly the ones a write moved, and rediscovering
+ * them by name prefix would check properties this write never touched.
+ */
+export const enableSwitches = [
   "enable",
   "enableRss",
   "enableAutomaticSearch",
@@ -135,6 +160,15 @@ function toolError(
 
 function fieldPath(name: string): string {
   return `${fieldsProperty}.${name}`;
+}
+
+/**
+ * An upstream identifier, in the one casing everything here compares it in.
+ * Anything that is not a string is passed through, so a payload that reports
+ * something else still fingerprints as itself rather than as absent.
+ */
+function identifierOf(value: unknown): unknown {
+  return typeof value === "string" ? value.trim().toLowerCase() : value;
 }
 
 function sameValue(left: unknown, right: unknown): boolean {
@@ -190,6 +224,28 @@ interface FieldEntry {
 }
 
 /**
+ * Whether one dynamic field entry actually holds a credential.
+ *
+ * The name and the instance's privacy word decide it, and the current value
+ * gets a veto: the observation classifier treats a boolean under a
+ * credential-shaped name as a switch rather than a credential — `useAuthentication`
+ * and `requireLogin` are switches — and withholds it instead of calling it
+ * configured. The write side has to agree, or the secret channel becomes a way
+ * to overwrite an ordinary switch with a supplied string, which is the generic
+ * passthrough this whole surface exists to prevent.
+ *
+ * Every place the writer asks "is this a credential" asks it here: the supplied
+ * secret, the explicit removal, the dispositions, and the read set.
+ */
+function isCredentialEntry(name: string, record: Record<string, unknown>): boolean {
+  if (typeof record.value === "boolean") {
+    return false;
+  }
+  const privacy = typeof record.privacy === "string" ? record.privacy : undefined;
+  return classifyProviderField({ name, privacy }) === "secret";
+}
+
+/**
  * Locates a provider's dynamic field entries by name.
  *
  * The entries themselves are handed back rather than copies, because the write
@@ -219,12 +275,42 @@ function fieldEntries(
   return entries;
 }
 
+/**
+ * The provider's field list as a shape rather than as contents.
+ *
+ * Names are kept with their multiplicity and sorted, not deduplicated: a second
+ * entry appearing under a name the patch writes is a material change to the
+ * record — it is the case the writer refuses as ambiguous — so a plan made
+ * before it has to expire rather than being carried into a refusal that blames
+ * the response. Entries the reader cannot name are counted for the same reason:
+ * they are part of the shape even though nothing can address them.
+ */
+function fieldShape(payload: Record<string, unknown>): unknown {
+  const fields = payload[fieldsProperty];
+  if (!Array.isArray(fields)) {
+    return { named: [], unreadable: 0 };
+  }
+  const named: string[] = [];
+  let unreadable = 0;
+  for (const field of fields) {
+    if (isUpstreamRecord(field) && typeof field.name === "string") {
+      named.push(field.name);
+    } else {
+      unreadable += 1;
+    }
+  }
+  return { named: named.sort(), unreadable };
+}
+
 interface WriteState {
   readonly application: ApplicationId;
   readonly payload: Record<string, unknown>;
   readonly entries: ReadonlyMap<string, readonly FieldEntry[]>;
   /** Whether a tracker definition, rather than the application, named the fields. */
   readonly definitionDriven: boolean;
+  readonly secrets: TransientSecrets;
+  /** Credentials this write supplied a value for, and whether one was already set. */
+  readonly supplied: Map<string, "set" | "changed">;
   readonly changes: ConfigurationChange[];
   readonly warnings: string[];
   readonly writtenProperties: Set<string>;
@@ -387,6 +473,43 @@ function applyAssignment(
       state.changes.push(fieldChange(state, assignment.name, "set", before, assignment.value));
       return undefined;
     }
+    case "secret": {
+      const entry = resolveField(state, assignment.name);
+      if (!("record" in entry)) {
+        return entry;
+      }
+      // The instance has the last word. A name that reads as a credential got
+      // the patch this far; a record that does not actually treat the field as
+      // one — because nothing marks it, or because it holds a switch — would be
+      // written through a channel whose whole purpose is that the value is
+      // never retained, and a value that is not a credential belongs in a
+      // desired field where it can be described.
+      if (!isCredentialEntry(assignment.name, entry.record)) {
+        return toolError(
+          state.application,
+          "invalid_input",
+          `${assignment.name} is not a credential on this record; state it as a desired field instead`,
+        );
+      }
+      const value = state.secrets.take(assignment.name);
+      if (value === undefined) {
+        return toolError(
+          state.application,
+          "invalid_input",
+          `no value was supplied for ${assignment.name}; a credential is supplied again with every request that needs it`,
+        );
+      }
+      // Told apart by what was configured before, never by comparing values: a
+      // comparison would need the old credential, and an instance that answered
+      // with a mask never gave one. A supplied credential is therefore always a
+      // change to send, even where it happens to match what is stored.
+      const configured = describeSecret(assignment.name, entry.record.value).state;
+      entry.record.value = value;
+      state.writtenFields.add(entry.index);
+      state.supplied.set(assignment.name, configured === "configured" ? "changed" : "set");
+      state.changes.push({ path: fieldPath(assignment.name), action: "set", redacted: true });
+      return undefined;
+    }
     default:
       return unreachable(patch, assignment);
   }
@@ -425,15 +548,23 @@ function applyRemoval(
   if (!("record" in entry)) {
     return entry;
   }
+  const secret = isCredentialEntry(name, entry.record);
+  if (!secret && !providerFieldAllowlist.has(name)) {
+    // The compiler cleared this name by reading it alone; the record says it is
+    // a switch rather than a credential, and a switch this server cannot
+    // describe is one it will not clear either. Refusing here rather than
+    // silently writing null keeps removal to fields it can say something about.
+    return toolError(
+      state.application,
+      "invalid_input",
+      `${name} is a switch on this record rather than a credential, and is not a field this server can clear`,
+    );
+  }
   const before = entry.record.value;
   entry.record.value = null;
   state.writtenFields.add(entry.index);
-  const secret = classifyProviderField({
-    name,
-    privacy: typeof entry.record.privacy === "string" ? entry.record.privacy : undefined,
-  });
   state.changes.push(
-    secret === "secret"
+    secret
       ? { path: fieldPath(name), action: before === null ? "unchanged" : "clear", redacted: true }
       : fieldChange(state, name, "clear", before, null),
   );
@@ -451,6 +582,7 @@ function applyRemoval(
 function secretDispositions(
   payload: Record<string, unknown>,
   cleared: ReadonlySet<string>,
+  supplied: ReadonlyMap<string, "set" | "changed">,
 ): readonly SecretDisposition[] {
   const fields = payload[fieldsProperty];
   if (!Array.isArray(fields)) {
@@ -461,22 +593,57 @@ function secretDispositions(
     if (!isUpstreamRecord(value) || typeof value.name !== "string") {
       continue;
     }
-    const privacy = typeof value.privacy === "string" ? value.privacy : undefined;
-    if (classifyProviderField({ name: value.name, privacy }) !== "secret") {
-      continue;
-    }
     // A boolean under a credential-shaped name is a switch, not a credential;
     // the observation classifier withholds it rather than calling it
     // configured, and calling it preserved here would say the same false thing.
-    if (typeof value.value === "boolean") {
+    if (!isCredentialEntry(value.name, value)) {
       continue;
     }
     dispositions.push({
       name: value.name,
-      disposition: cleared.has(value.name) ? "cleared" : "preserved",
+      disposition: supplied.get(value.name) ?? (cleared.has(value.name) ? "cleared" : "preserved"),
     });
   }
   return dispositions;
+}
+
+/**
+ * What changing a Prowlarr application's tag selection does beyond this record.
+ *
+ * A synchronized application's tags decide which indexers it pushes to the
+ * instance on the other side, so a write whose diff shows one field moving can
+ * add, re-push, or delete indexers on a system this reconciliation never named.
+ * That is wider than the record, so it is disclosed before the write rather
+ * than discovered afterwards — the level's own capability table decides what to
+ * say, so this cannot describe a level as doing something the sync code would
+ * not do.
+ *
+ * A level this server cannot read is disclosed as exactly that. An unreadable
+ * level is not a quiet "probably nothing": it is the case where what this write
+ * propagates has not been established.
+ */
+function syncPropagation(payload: Record<string, unknown>): readonly string[] {
+  const reported = payload.syncLevel;
+  const level = readSyncLevel(typeof reported === "string" ? reported : undefined);
+  if (level === undefined) {
+    return reported === undefined
+      ? []
+      : [
+          "this application reports a synchronization level this server does not recognize, so what a change to its tag selection propagates cannot be established",
+        ];
+  }
+  const capability = syncCapabilities[level];
+  if (!capability.adds && !capability.updates && !capability.removes) {
+    return [];
+  }
+  const effects = [
+    ...(capability.adds ? ["push newly selected indexers"] : []),
+    ...(capability.updates ? ["re-push the ones it still selects"] : []),
+    ...(capability.removes ? ["delete the ones it no longer selects"] : []),
+  ];
+  return [
+    `changing this application's tags changes which indexers it synchronizes: at its current level it will ${effects.join(", ")} on the remote instance`,
+  ];
 }
 
 /**
@@ -505,6 +672,8 @@ export function writeConfigurationPatch(request: WriteRequest): WriteOutcome {
     payload,
     entries: fieldEntries(payload),
     definitionDriven: isDynamicallyDefined(payload),
+    secrets: request.secrets,
+    supplied: new Map(),
     changes: [],
     warnings: [],
     writtenProperties: new Set(),
@@ -529,9 +698,13 @@ export function writeConfigurationPatch(request: WriteRequest): WriteOutcome {
     }
   }
 
+  if (state.writtenProperties.has("tags") && patch.domain === "applications") {
+    state.warnings.push(...syncPropagation(payload));
+  }
+
   const fields = payload[fieldsProperty];
   const fieldCount = Array.isArray(fields) ? fields.length : 0;
-  const secrets = secretDispositions(payload, cleared);
+  const secrets = secretDispositions(payload, cleared, state.supplied);
   if (secrets.some((secret) => secret.disposition === "cleared")) {
     state.warnings.push(
       "clearing a credential leaves this record without it until one is supplied again",
@@ -578,6 +751,14 @@ export function writeConfigurationPatch(request: WriteRequest): WriteOutcome {
  * A secret is observed by presence before it is digested. That is not only
  * hygiene: a plan whose validity depended on a credential's exact bytes would
  * go stale on a rotation that changes nothing about what the patch does.
+ *
+ * One observation is about shape rather than about a value. A provider's field
+ * list is defined by the instance, so a field entry that appears or disappears,
+ * or an implementation that has been swapped underneath, changes what this
+ * patch means even though every value it names still reads the same. That is
+ * the resource-side half of the schema fingerprint in {@link ./fingerprints.js},
+ * and it is deliberately an inventory of names rather than of contents, so it
+ * moves when the record's shape moves and not when its settings do.
  */
 export function configurationObservations(
   resource: UpstreamResource,
@@ -593,23 +774,59 @@ export function configurationObservations(
     return observations;
   }
   const entries = fieldEntries(payload);
+  if (patch.family === "provider") {
+    observations.push({
+      key: "resource-shape",
+      value: fingerprint({
+        // Folded exactly as the schema side folds them, because they are the
+        // same two identifiers matched the same case-insensitive way. A record
+        // whose instance re-cased its own implementation still selects the same
+        // template and still produces the same write, so neither half of the
+        // shape fingerprint may move for it.
+        implementation: identifierOf(payload.implementation),
+        configContract: identifierOf(payload.configContract),
+        fields: fieldShape(payload),
+      }),
+    });
+  }
 
   const observeProperty = (property: string): void => {
     observations.push({ key: property, value: fingerprint(payload[property]) });
   };
+  /**
+   * The synchronization level, where the record has one and this patch touches
+   * the selection it governs.
+   *
+   * Observed because the plan's *disclosure* depends on it, not because the
+   * write does: the same tag change is inert at one level and deletes remote
+   * indexers at another, so a level that moved between the plan and its apply
+   * would make the plan's warning describe effects that are no longer the ones
+   * about to happen.
+   */
+  const observeSyncLevel = (): void => {
+    if (patch.domain === "applications") {
+      observeProperty("syncLevel");
+    }
+  };
+
   const observeField = (name: string): void => {
-    const [entry] = entries.get(name) ?? [];
+    const found = entries.get(name) ?? [];
+    const [entry] = found;
     const record = entry?.record;
-    const privacy = typeof record?.privacy === "string" ? record.privacy : undefined;
-    const secret = classifyProviderField({ name, privacy }) === "secret";
     observations.push({
       key: fieldPath(name),
+      // A name the record carries twice is observed as ambiguous rather than by
+      // the first entry's value. The record does not say what that field holds,
+      // and a plan built on one of two answers would be validated against
+      // something the instance never said.
       value: fingerprint(
-        record === undefined
-          ? undefined
-          : secret
-            ? describeSecret(name, record.value).state
-            : record.value,
+        found.length > 1
+          ? ambiguous
+          : record === undefined
+            ? undefined
+            : isCredentialEntry(name, record)
+              ? describeSecret(name, record.value).state
+              : record.value,
       ),
     });
   };
@@ -622,13 +839,23 @@ export function configurationObservations(
         break;
       case "enabled":
         for (const name of enableSwitches) {
-          observeProperty(name);
+          // A switch the writer cannot move is observed as unwritable rather
+          // than by value: an instance changing a legacy `enable: "yes"` to
+          // some other non-boolean neither changes what this write does nor is
+          // disclosed by its diff, while one that becomes a real boolean does
+          // change it and still expires the plan.
+          observations.push({
+            key: name,
+            value: fingerprint(typeof payload[name] === "boolean" ? payload[name] : "unwritable"),
+          });
         }
         break;
       case "tags":
         observeProperty("tags");
+        observeSyncLevel();
         break;
       case "field":
+      case "secret":
         observeField(assignment.name);
         break;
     }
@@ -637,6 +864,7 @@ export function configurationObservations(
   for (const removal of patch.removals) {
     if (removal.target === "tags") {
       observeProperty("tags");
+      observeSyncLevel();
     } else {
       observeField(removal.name);
     }

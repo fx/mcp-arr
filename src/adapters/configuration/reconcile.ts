@@ -1,15 +1,18 @@
 import type { ApplicationId } from "../../applications.js";
 import type { UpstreamClient } from "../../http/client.js";
 import { UpstreamError } from "../../http/errors.js";
+import type { ApplyReconciliation } from "../../state/apply-records.js";
 import {
   compareReadSet,
   fingerprintReadSet,
   type ReadSetFingerprint,
   type ReadSetObservation,
+  type SecretRequirement,
 } from "../../state/plans.js";
 import { createToolError, type ToolError, toolErrorForThrown } from "../../tools/errors.js";
 import { readDependencyCatalog, validateDependencies } from "./dependencies.js";
 import { type ConfigurationDomain, routeFor } from "./domains.js";
+import { readSchemaFingerprint } from "./fingerprints.js";
 import { isUpstreamRecord } from "./parse.js";
 import { compileConfigurationPatch, type DesiredField } from "./patches.js";
 import {
@@ -17,6 +20,8 @@ import {
   captureUpstreamResource,
   type UpstreamValue,
 } from "./resources.js";
+import { noTransientSecrets, type TransientSecrets } from "./secrets.js";
+import { verifyConfigurationApply } from "./verify.js";
 import {
   type ConfigurationDiff,
   configurationObservations,
@@ -28,22 +33,28 @@ import {
  * The desired-state reconciliation runtime.
  *
  * One reconciliation is always the same sequence, whether it is being planned
- * or applied: compile the desired state into typed writes, read the current
- * resource, read only the dependency lists that desired state points at, check
- * the plan's preconditions if one is being applied, validate the pointers, and
+ * or applied: check that a plan being applied brought exactly the credentials
+ * it disclosed, compile the desired state into typed writes, read the current
+ * resource, read only the dependency lists that desired state points at,
+ * fingerprint the provider schema the record's fields are defined by, check the
+ * plan's preconditions if one is being applied, validate the pointers, and
  * build the complete resource the write would send. Planning stops there;
- * applying sends it.
+ * applying sends it and reads back what the instance stored.
  *
  * Running the identical sequence for both is the point. A plan that was
  * produced by different code than the apply would describe something the apply
- * does not do, and a caller would have no way to tell.
+ * does not do, and a caller would have no way to tell. It is also why planning
+ * a credential change requires the credential: the plan validates the request
+ * it would send, rather than an approximation of it.
  *
- * Two things this deliberately does not do yet, because they belong to later
- * work on this change: it does not accept transient secret values, so a
- * credential can only be cleared rather than set, and it does not re-read the
- * resource afterwards to verify what the instance stored. Neither absence is
- * hidden — a patch naming a credential is refused with the reason, and an apply
- * reports what it sent rather than claiming the instance agreed.
+ * A credential lives for exactly this call. The bundle is erased in an outer
+ * `finally`, so a refusal, a thrown upstream read, and a completed write all
+ * leave it empty, and nothing this returns has a field a value could travel in.
+ *
+ * One thing this deliberately does not do yet, because it belongs to the last
+ * subtask of this change: it has no typed provider-test intent and no explicit
+ * validation-bypass variant, so it never asks an instance to contact an
+ * external system and never sends `forceSave`.
  */
 
 export interface ConfigurationReconcileRequest {
@@ -54,11 +65,37 @@ export interface ConfigurationReconcileRequest {
   readonly removeFields?: readonly string[] | undefined;
   readonly mode: "plan" | "apply";
   /**
-   * The read set a recorded plan captured, supplied when that plan is being
-   * applied. Its absence means a direct apply, which validates the same current
-   * state but has no earlier observation to be stale against.
+   * What a recorded plan captured, supplied when that plan is being applied.
+   * Its absence means a direct apply, which validates the same current state
+   * but has no earlier observation to be stale against.
    */
-  readonly planned?: readonly ReadSetFingerprint[] | undefined;
+  readonly planned?: PlannedApply | undefined;
+  /**
+   * The credentials supplied for this request.
+   *
+   * The names in it are the desired state's secret channel: a credential is
+   * changed by supplying its value, so the fields this reconciliation writes as
+   * secrets are exactly the ones the bundle carries. Deriving them from the
+   * bundle rather than from a second list is what keeps the two from
+   * disagreeing about which credentials this request is changing.
+   *
+   * The bundle is erased once the upstream request has been built, so it is
+   * good for one reconciliation. Applying a recorded plan therefore always
+   * needs the credentials again, which is the rule rather than an inconvenience
+   * of it: the plan never held them.
+   */
+  readonly secrets?: TransientSecrets | undefined;
+}
+
+/** What a recorded plan carries into the apply that quotes it. */
+export interface PlannedApply {
+  readonly readSet: readonly ReadSetFingerprint[];
+  /**
+   * The credentials the plan validated, by name and by a process-local presence
+   * fingerprint. The values were never retained, so each one has to be supplied
+   * again for the request this apply builds.
+   */
+  readonly requiredSecrets?: readonly SecretRequirement[] | undefined;
 }
 
 interface ReconcileSuccessBase {
@@ -66,6 +103,14 @@ interface ReconcileSuccessBase {
   readonly changed: boolean;
   readonly observations: readonly ReadSetObservation[];
   readonly warnings: readonly string[];
+  /**
+   * The credentials this reconciliation used, by name and presence only.
+   *
+   * A plan records these so the apply that quotes it can insist each one is
+   * supplied again. There is no field here a value could travel in, and by the
+   * time this is returned the bundle that held them has been erased.
+   */
+  readonly requiredSecrets: readonly SecretRequirement[];
 }
 
 export type ConfigurationReconcileOutcome =
@@ -80,6 +125,12 @@ export type ConfigurationReconcileOutcome =
        * distinguish "nothing happened upstream" from "something may have".
        */
       readonly attempted: boolean;
+      /**
+       * What upstream state says about the write, present only when one was
+       * dispatched. `indeterminate` is a real answer: the instance could not be
+       * read back, so the outcome stays unknown rather than being guessed.
+       */
+      readonly verification?: ApplyReconciliation | undefined;
     } & ReconcileSuccessBase)
   | {
       readonly status: "error";
@@ -113,6 +164,24 @@ export async function runConfigurationReconciliation(
   client: UpstreamClient,
   request: ConfigurationReconcileRequest,
 ): Promise<ConfigurationReconcileOutcome> {
+  const secrets = request.secrets ?? noTransientSecrets();
+  try {
+    return await reconcileWithSecrets(application, client, request, secrets);
+  } finally {
+    // One erase site, on every path out — a refusal and a thrown request as
+    // much as a successful write. A credential this server was handed does not
+    // outlive the call it was handed to, so there is no path on which one
+    // survives because a check happened to fail first.
+    secrets.erase();
+  }
+}
+
+async function reconcileWithSecrets(
+  application: ApplicationId,
+  client: UpstreamClient,
+  request: ConfigurationReconcileRequest,
+  secrets: TransientSecrets,
+): Promise<ConfigurationReconcileOutcome> {
   const route = routeFor(request.domain, application);
   if (route === undefined) {
     return refuse(
@@ -127,12 +196,45 @@ export async function runConfigurationReconciliation(
     return refuse(failure(application, "invalid_input", "that is not a configuration identifier"));
   }
 
-  const compilation = compileConfigurationPatch(
-    application,
-    request.domain,
-    request.fields,
-    request.removeFields ?? [],
-  );
+  // First, and before the desired state is even compiled. A plan applied
+  // without its credentials is not a stale plan and must not be reported as
+  // one: the credential is the desired state's secret channel, so a patch
+  // compiled without it is missing that assignment entirely — it would refuse
+  // as naming nothing, or the read-set comparison would blame the record for a
+  // field this call never asked about.
+  const resupply = secrets.check(request.planned?.requiredSecrets ?? []);
+  if (resupply.status === "missing") {
+    return refuse(
+      failure(
+        application,
+        "invalid_input",
+        `this plan changes ${resupply.names.join(", ")}, so each value must be supplied again with the apply`,
+      ),
+    );
+  }
+  if (request.planned !== undefined) {
+    const disclosed = new Set((request.planned.requiredSecrets ?? []).map((secret) => secret.name));
+    const undisclosed = secrets.names().filter((name) => !disclosed.has(name));
+    if (undisclosed.length > 0) {
+      // An apply does what its plan disclosed. A credential the plan never
+      // mentioned would change a field nobody was shown, which is the whole
+      // reason a plan is worth reading before it is applied.
+      return refuse(
+        failure(
+          application,
+          "invalid_input",
+          `this plan does not change ${undisclosed.join(", ")}; plan the change that does`,
+        ),
+      );
+    }
+  }
+  const requiredSecrets = secrets.requirements();
+
+  const compilation = compileConfigurationPatch(application, request.domain, {
+    fields: request.fields,
+    removeFields: request.removeFields ?? [],
+    secretNames: secrets.names(),
+  });
   if (compilation.status === "error") {
     return refuse(compilation.error);
   }
@@ -163,16 +265,22 @@ export async function runConfigurationReconciliation(
     }
     const catalog = catalogRead.catalog;
 
+    // The provider schema is read for its own sake: a plan can be made against
+    // one dynamic field list and applied against another while the record it
+    // names sits untouched, and nothing in the resource would show it.
+    const schema = await readSchemaFingerprint(application, client, request.domain, resource);
+
     const observations = [
       ...configurationObservations(resource, patch),
       ...dependencyObservations(patch, catalog),
+      ...schema.observations,
     ];
 
     // Before the dependency check, deliberately. A pointer that has since been
     // deleted makes a recorded plan stale, and reporting that as an invalid
     // argument would tell the caller to fix arguments it cannot fix.
     if (request.planned !== undefined) {
-      const comparison = compareReadSet(request.planned, fingerprintReadSet(observations));
+      const comparison = compareReadSet(request.planned.readSet, fingerprintReadSet(observations));
       if (comparison.status === "changed") {
         const moved = [...comparison.changed, ...comparison.missing].sort().join(", ");
         return refuse(
@@ -196,14 +304,16 @@ export async function runConfigurationReconciliation(
       patch,
       catalog,
       id: request.targetId,
+      secrets,
     });
     if (written.status === "error") {
       return refuse(written.error);
     }
-    const { diff, changed, warnings, payload } = written.write;
+    const { diff, changed, payload } = written.write;
+    const warnings = [...written.write.warnings, ...schema.warnings, ...resupply.warnings];
 
     if (request.mode === "plan") {
-      return { status: "planned", diff, changed, observations, warnings };
+      return { status: "planned", diff, changed, observations, warnings, requiredSecrets };
     }
     if (!changed) {
       return {
@@ -212,13 +322,29 @@ export async function runConfigurationReconciliation(
         diff,
         changed: false,
         observations,
+        requiredSecrets,
         warnings: [...warnings, "this record already matches the desired state; nothing was sent"],
       };
     }
 
     dispatched = true;
-    await client.put(resourceRoute, payload);
-    return { status: "applied", attempted: true, diff, changed, observations, warnings };
+    const answered = await client.put(resourceRoute, payload);
+    return {
+      status: "applied",
+      attempted: true,
+      diff,
+      changed,
+      observations,
+      warnings,
+      requiredSecrets,
+      verification: await verifyConfigurationApply(client, {
+        application,
+        route: resourceRoute,
+        patch,
+        sent: payload,
+        answered,
+      }),
+    };
   } catch (error) {
     return {
       status: "error",

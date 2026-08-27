@@ -28,10 +28,11 @@ import type { SafeFieldValue } from "./model.js";
  *    `tags` cannot be given anything but identifiers.
  * 2. **A credential is never a desired field.** A name the classifier reads as
  *    a secret is refused here, so a credential cannot arrive through the
- *    ordinary field channel and be retained in a plan's intent. Supplying one
- *    is its own typed channel, which arrives with the transient-secret work;
- *    clearing one needs no value and is therefore already possible, through an
- *    explicit removal.
+ *    ordinary field channel and be retained in a plan's intent. It has two
+ *    channels of its own instead: an explicit removal clears one and needs no
+ *    value at all, and the secret channel supplies one — as a name here and a
+ *    value that stays in the bundle in {@link ./secrets.js} until the writer
+ *    builds the payload.
  * 3. **Absence is never removal.** A field the patch does not name is
  *    preserved, and a `null` value is refused with the removal channel named,
  *    so "unset this" is always something a caller states rather than something
@@ -46,6 +47,21 @@ export interface DesiredField {
   readonly name: string;
   /** Unknown by design: what a name is allowed to hold is decided below. */
   readonly value: unknown;
+}
+
+/**
+ * One desired state, in the three channels the published surface gives it.
+ *
+ * They are separate because they mean different things, not because they are
+ * shaped differently: a field states a value, a removal states an absence, and
+ * a secret states that a credential was supplied for this request. Only the
+ * names of the third reach a compiled patch.
+ */
+export interface DesiredState {
+  readonly fields: readonly DesiredField[];
+  readonly removeFields?: readonly string[] | undefined;
+  /** The credential fields the caller supplied a transient value for. */
+  readonly secretNames?: readonly string[] | undefined;
 }
 
 /**
@@ -78,7 +94,19 @@ export type PatchAssignment =
       readonly dependency: DependencyKind;
       readonly id: number;
     }
-  | { readonly target: "field"; readonly name: string; readonly value: SafeFieldValue };
+  | { readonly target: "field"; readonly name: string; readonly value: SafeFieldValue }
+  | {
+      /**
+       * A credential the caller supplied for this request only.
+       *
+       * It carries the name and nothing else. The value stays in the transient
+       * bundle in {@link ./secrets.js} until the writer builds the payload,
+       * which is what leaves a compiled patch — the object a plan retains —
+       * with nowhere to hold a credential even in principle.
+       */
+      readonly target: "secret";
+      readonly name: string;
+    };
 
 export type PatchRemoval =
   | { readonly target: "field"; readonly name: string }
@@ -424,7 +452,7 @@ function compileDynamicField(state: CompilationState, field: DesiredField): Tool
   if (classifyProviderField({ name }) === "secret") {
     return invalid(
       application,
-      `${name} holds a credential, which is never supplied as a desired field; clear it with an explicit removal instead`,
+      `${name} holds a credential; supply it through this request's secrets, clear it with an explicit removal, but never state it as a desired field`,
     );
   }
   const kind = providerFieldAllowlist.get(name);
@@ -450,6 +478,29 @@ function describeKind(kind: FieldValueKind): string {
     case "numberList":
       return "a list of numbers";
   }
+}
+
+/**
+ * Compiles one supplied credential.
+ *
+ * Which fields may travel this way is decided at write time rather than here,
+ * and deliberately so: a field is a credential because its name reads as one
+ * *or* because the instance's own privacy word says so, and only the resource
+ * knows the second. Compiling a name is therefore not a decision that it may be
+ * written — the writer refuses a field neither this server nor the instance
+ * calls a credential, which is what keeps this channel from becoming the
+ * generic passthrough the typed tables exist to prevent.
+ *
+ * The two channels are complementary, and each is closed in the direction the
+ * other is open. A desired field is refused the moment the instance marks it as
+ * a credential; a supplied secret is refused unless something marks it as one.
+ */
+function compileSecret(state: CompilationState, name: string): ToolError | undefined {
+  if (state.family !== "provider") {
+    return invalid(state.application, `a ${state.domain} record holds no credentials`);
+  }
+  state.assignments.push({ target: "secret", name });
+  return undefined;
 }
 
 /**
@@ -490,8 +541,7 @@ function compileRemoval(state: CompilationState, name: string): ToolError | unde
 export function compileConfigurationPatch(
   application: ApplicationId,
   domain: ConfigurationDomain,
-  fields: readonly DesiredField[],
-  removeFields: readonly string[] = [],
+  desired: DesiredState,
 ): PatchCompilation {
   if (!patchableDomains.has(domain)) {
     return {
@@ -514,8 +564,9 @@ export function compileConfigurationPatch(
   };
   const managed = propertiesFor(family);
   const named = new Set<string>();
+  const secretNames = new Set<string>();
 
-  for (const field of fields) {
+  for (const field of desired.fields) {
     if (named.has(field.name)) {
       return { status: "error", error: invalid(application, `${field.name} is named twice`) };
     }
@@ -540,7 +591,7 @@ export function compileConfigurationPatch(
   }
 
   const removed = new Set<string>();
-  for (const name of removeFields) {
+  for (const name of desired.removeFields ?? []) {
     if (named.has(name)) {
       return {
         status: "error",
@@ -552,6 +603,26 @@ export function compileConfigurationPatch(
     }
     removed.add(name);
     const error = compileRemoval(state, name);
+    if (error !== undefined) {
+      return { status: "error", error };
+    }
+  }
+
+  for (const name of desired.secretNames ?? []) {
+    if (named.has(name) || removed.has(name)) {
+      return {
+        status: "error",
+        error: invalid(
+          application,
+          `${name} is named both as a credential and as an ordinary field of this desired state`,
+        ),
+      };
+    }
+    if (secretNames.has(name)) {
+      return { status: "error", error: invalid(application, `${name} is supplied twice`) };
+    }
+    secretNames.add(name);
+    const error = compileSecret(state, name);
     if (error !== undefined) {
       return { status: "error", error };
     }
