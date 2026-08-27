@@ -21,17 +21,26 @@ import { enableSwitches } from "./write.js";
  * lost: did the mutation take effect? Sharing the type is what lets this double
  * as the reader an outcome-unknown record is later reconciled with.
  *
- * `indeterminate` is the important case and is never guessed past. Upstream not
- * answering, answering with something unreadable, or no longer reporting the
- * record at all leaves the outcome unknown — the write may well have succeeded
- * — and an unknown outcome outranks a comfortable verdict.
+ * `indeterminate` is the important case and is never guessed past. It covers
+ * the instance not answering, answering with something unreadable, or no longer
+ * reporting the record — and, field by field, a field the record no longer
+ * carries, one that came back in a shape this apply did not write, and one the
+ * record now carries twice. The write may well have succeeded in every one of
+ * those cases, and an unknown outcome outranks a comfortable verdict.
  *
- * A credential is verified by presence, which is all a credential can be
- * verified by: an instance that returns a mask has said that something is
- * stored, and this checks that it says so where a secret was set and stops
- * saying so where one was cleared. Presence is the weaker check, so it is used
- * nowhere else — every ordinary field, including a cleared one, is held to the
- * value this apply actually sent.
+ * Two questions are asked of every field, in this order, and keeping them apart
+ * is what the checks below are built around. *Is the field there to be read?* —
+ * a name that is missing, duplicated, or answered in another shape settles as
+ * unknown, whatever it holds. Only then: *does what it holds match what was
+ * sent?*
+ *
+ * The second question is where a credential differs. It is answered by presence
+ * — an instance that returns a mask has said that something is stored, and
+ * nothing more — so a set credential is checked for being configured and a
+ * cleared one for not being, and an entry holding a null, a blank string, or no
+ * value at all is a confirmed clear rather than a missing field. Presence is the
+ * weaker answer, so it is used nowhere else: every ordinary field, including a
+ * cleared one, is held to the value this apply actually sent.
  */
 
 export interface VerificationRequest {
@@ -107,9 +116,12 @@ function fieldValues(record: Record<string, unknown>): ReadonlyMap<string, Field
 /**
  * Whether two stored values are the same.
  *
- * A tag list is compared as a set: these applications are free to return the
- * identifiers in their own order, and reporting a reordered list as a
- * contradiction would turn a successful apply into a conflict for no reason.
+ * A tag list is compared as a set: a record's tags are a membership upstream,
+ * these applications are free to return the identifiers in their own order, and
+ * reporting a reordered list as a contradiction would turn a successful apply
+ * into a conflict for no reason. Every other list is compared in order, because
+ * a provider's own list fields were sent in the order the caller asked for and
+ * nothing says the instance may reorder them.
  */
 function matches(left: unknown, right: unknown, ordered: boolean): boolean {
   if (Array.isArray(left) && Array.isArray(right)) {
@@ -177,12 +189,15 @@ function checksFor(
     const entry = currentFields.get(name);
     checks.push({
       path: `fields.${name}`,
-      // A boolean read back where a credential was written is not a credential
-      // at all — the shared classifier calls that a switch — so the field this
-      // apply wrote is no longer there in the form it wrote it. That is a
-      // changed shape rather than a verdict, and it settles as unknown, as does
-      // a name the record now carries twice.
+      // Whether the field is there to be read, which is a different question
+      // from what it holds. No entry at all means the record dropped the field
+      // this apply wrote, rather than that the field is empty; two entries mean
+      // it does not say which; and a boolean is not a credential at all — the
+      // shared classifier calls that a switch. None of the three is a verdict.
       unsettled: entry === undefined || entry.duplicated || typeof entry.value === "boolean",
+      // And only then, what it holds. An entry carrying a null, a blank string,
+      // or no value at all is unconfigured, so a clear is confirmed by any of
+      // the three spellings an application might answer with.
       agrees: describeSecret(name, entry?.value).state === expected,
     });
   };
@@ -229,11 +244,11 @@ function checksFor(
       continue;
     }
     // Presence is the weaker check and is used only where it is the only one
-    // available. A cleared credential can be verified no other way — an
-    // application may answer with an empty string, a null, or nothing at all,
-    // and all three say the same thing — while an ordinary setting was sent an
-    // explicit value and is held to it, so a clear that stored something else
-    // cannot pass as a success.
+    // available. A cleared credential can be verified no other way, since an
+    // entry holding an empty string, a null, or no value at all all say the one
+    // thing a credential can say. An ordinary setting was sent an explicit
+    // value and is held to it, so a clear that stored something else cannot
+    // pass as a success.
     if (isCredential(removal.name)) {
       checkSecret(removal.name, "unconfigured");
     } else {
@@ -252,6 +267,11 @@ function checksFor(
  * record no longer carries — or now carries twice — is not a contradiction:
  * the shape changed under the apply, which is exactly the case nobody can
  * settle from here.
+ *
+ * A patch that produced no check at all is a floor rather than a case. Nothing
+ * that reaches here can produce one — a desired state naming nothing is refused
+ * at compilation, and an enable with no switch to move is refused by the writer
+ * — so if one ever did, it would have established nothing.
  */
 export async function verifyConfigurationApply(
   client: UpstreamClient,

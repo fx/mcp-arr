@@ -846,6 +846,61 @@ describe("verifying what the instance stored", () => {
     expect(expectApplied(outcome).verification).toEqual({ status: "indeterminate" });
   });
 
+  it("confirms a clear however the instance spells an empty credential", async () => {
+    const instance = await newznab();
+    const clearing = planning("indexers", 1, { mode: "apply", removeFields: ["apiKey"] });
+
+    // Null, blank, and no `value` property at all: three spellings of the same
+    // statement, and the entry is still the field the apply wrote.
+    for (const spelling of [{ value: null }, { value: "" }, {}] as const) {
+      const { outcome } = await reconcile(
+        "sonarr",
+        {
+          ...instance,
+          answerWrite: (sent) => {
+            const record = sent as UpstreamRecord;
+            return jsonResponse({
+              ...record,
+              fields: (record.fields as readonly UpstreamRecord[]).map((field) =>
+                field.name === "apiKey"
+                  ? { order: field.order, name: "apiKey", privacy: "apiKey", ...spelling }
+                  : field,
+              ),
+            });
+          },
+        },
+        clearing,
+      );
+
+      expect(expectApplied(outcome).verification).toEqual({ status: "succeeded" });
+    }
+  });
+
+  it("settles as unknown when the cleared credential is no longer a field at all", async () => {
+    const instance = await newznab();
+    const { outcome } = await reconcile(
+      "sonarr",
+      {
+        ...instance,
+        // The entry is gone from the record, which is not the same statement as
+        // an entry holding nothing: the field this apply wrote is not there to
+        // be read, and a record that dropped it says nothing about the clear.
+        answerWrite: (sent) => {
+          const record = sent as UpstreamRecord;
+          return jsonResponse({
+            ...record,
+            fields: (record.fields as readonly UpstreamRecord[]).filter(
+              (field) => field.name !== "apiKey",
+            ),
+          });
+        },
+      },
+      planning("indexers", 1, { mode: "apply", removeFields: ["apiKey"] }),
+    );
+
+    expect(expectApplied(outcome).verification).toEqual({ status: "indeterminate" });
+  });
+
   it("reports a cleared credential the instance still holds as a conflict", async () => {
     const instance = await newznab();
     const { outcome } = await reconcile(
