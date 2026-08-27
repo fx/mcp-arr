@@ -106,6 +106,7 @@ const approvedRoutes: Readonly<Record<FixtureApplication, readonly string[]>> = 
     "applications",
     "notification",
     "appprofile",
+    "tag",
   ],
 };
 

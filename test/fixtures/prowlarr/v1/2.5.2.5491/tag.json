@@ -1,0 +1,18 @@
+{
+  "metadata": {
+    "application": "prowlarr",
+    "apiVersion": "v1",
+    "version": "2.5.2.5491",
+    "endpoint": "/api/v1/tag"
+  },
+  "body": [
+    {
+      "id": 1,
+      "label": "example-movies"
+    },
+    {
+      "id": 2,
+      "label": "example-series"
+    }
+  ]
+}

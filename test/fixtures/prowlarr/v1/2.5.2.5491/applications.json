@@ -39,6 +39,20 @@
         { "order": 1, "name": "apiKey", "value": "********", "privacy": "apiKey" },
         { "order": 2, "name": "syncCategories", "value": [2000] }
       ]
+    },
+    {
+      "id": 3,
+      "name": "Example Paused Application",
+      "implementation": "Sonarr",
+      "implementationName": "Sonarr",
+      "configContract": "SonarrSettings",
+      "syncLevel": "disabled",
+      "tags": [],
+      "fields": [
+        { "order": 0, "name": "baseUrl", "value": "example-paused-application" },
+        { "order": 1, "name": "apiKey", "value": "********", "privacy": "apiKey" },
+        { "order": 2, "name": "syncCategories", "value": [5000] }
+      ]
     }
   ]
 }

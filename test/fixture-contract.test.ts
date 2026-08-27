@@ -127,6 +127,7 @@ describe("versioned fixture contract", () => {
       "prowlarr/v1/2.5.2.5491/applications.json",
       "prowlarr/v1/2.5.2.5491/notification.json",
       "prowlarr/v1/2.5.2.5491/appprofile.json",
+      "prowlarr/v1/2.5.2.5491/tag.json",
     ]);
     await expect(listFiles(fixtureRoot)).resolves.toEqual([...approvedFixtureInventory].sort());
 
