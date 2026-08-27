@@ -452,14 +452,24 @@ async function applyItems(
     if (sent.dispatched) {
       dispatched += 1;
     }
-    if (sent.error !== undefined && unresolved === undefined) {
-      // Only a failure that does not prove the instance ignored the request
-      // leaves the outcome unknown. One the instance demonstrably refused is
-      // that item's error and nothing more.
-      if (!toolErrorProvesNoEffect(sent.error.code)) {
-        unresolved = sent.error;
+
+    // A failure the instance demonstrably refused is that item's error and
+    // nothing more. One that does not prove the request was ignored leaves the
+    // outcome unknown — and that is the case worth asking upstream about, right
+    // now, while this call still holds the state the mutation was compiled
+    // against.
+    if (sent.error !== undefined && !toolErrorProvesNoEffect(sent.error.code)) {
+      const settled = await reconcileLostItem(invocation, context, item, sent.error);
+      if (settled.unresolved !== undefined && unresolved === undefined) {
+        unresolved = settled.unresolved;
       }
+      if (record !== undefined) {
+        invocation.state.applies.settle(record, settled.settlement);
+      }
+      outcomes.push(settled.outcome);
+      continue;
     }
+
     if (record !== undefined) {
       invocation.state.applies.settle(record, settlementForItem(sent.error));
     }
@@ -467,6 +477,77 @@ async function applyItems(
   }
 
   return { outcomes, unresolved, dispatched };
+}
+
+/**
+ * Asks authoritative state what a lost request actually did.
+ *
+ * This is where reconciliation is reached in production. It runs the moment a
+ * request's answer is lost, which is the moment this server knows most: the
+ * state the mutation was compiled against is still in hand, so the row can be
+ * compared to it rather than to a second, later reading of itself.
+ *
+ * The three verdicts settle three different ways, and none of them rounds
+ * toward the convenient answer. A row that has left the queue settles the item
+ * succeeded. A row still queued exactly as it was settles it failed, which is
+ * the one state a later identical attempt may reuse — nothing moved, so nothing
+ * arrived. Anything else keeps the item outcome-unknown and returns the failure
+ * that keeps the whole call's receipt reconcilable.
+ */
+async function reconcileLostItem(
+  invocation: OperationInvocation,
+  context: QueueResolveContext,
+  item: { readonly status: "ok" } & ValidatedItem,
+  lost: ToolError,
+): Promise<{
+  outcome: ItemOutcome;
+  settlement: ApplySettlement;
+  unresolved?: ToolError | undefined;
+}> {
+  const verdict = await reconcileTarget(
+    {
+      client: invocation.adapter.client,
+      application: context.application,
+      intent: context.intent,
+      targets: [],
+      ...(context.replacementSearch === undefined
+        ? {}
+        : { replacementSearch: context.replacementSearch }),
+    },
+    {
+      queueItemId: item.observed.queueItemId,
+      mediaId: item.observed.mediaId,
+      observedStatus: item.observed.status,
+      observedTrackedState: item.observed.trackedState,
+      downloadIdentity: item.downloadIdentity,
+    },
+  );
+
+  if (verdict === "succeeded") {
+    return {
+      outcome: itemOutcome(item.reference, undefined, [
+        "the answer to this request was lost, and upstream state confirms it was applied",
+      ]),
+      settlement: { status: "succeeded" },
+    };
+  }
+
+  // A `failed` verdict is deliberately not acted on here, and this is the one
+  // place the ladder is read more conservatively than it is written. Reaching it
+  // means the row still looks untouched — but this runs moments after the answer
+  // was lost, which is exactly when an instance that did process the request may
+  // not yet answer its queue any differently. `failed` is the one settlement a
+  // later identical attempt may reuse, so acting on it here would license
+  // re-sending a mutation that may already have applied. The record stays
+  // outcome-unknown instead, and the same verdict is safe for the store's own
+  // reconciliation later, once that race has passed.
+  return {
+    outcome: itemOutcome(item.reference, lost, [
+      "the answer to this request was lost and upstream state could not establish what it did",
+    ]),
+    settlement: { status: "outcome_unknown", error: lost },
+    unresolved: lost,
+  };
 }
 
 /**

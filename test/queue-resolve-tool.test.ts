@@ -60,8 +60,13 @@ interface Instance {
   blocklist: Record<string, unknown>[];
   history: Record<string, unknown>[];
   commands: Record<string, unknown>[];
-  /** How a delete behaves, so a lost answer can be produced deliberately. */
-  deleteBehavior: "accept" | "lose" | "refuse";
+  /**
+   * How a delete behaves, so each lost-answer shape can be produced
+   * deliberately. `lose` never applies the change and then drops the
+   * connection; `lose_after_applying` applies it first, which is the realistic
+   * case — the instance did the work and only the answer went missing.
+   */
+  deleteBehavior: "accept" | "lose" | "lose_after_applying" | "refuse";
   unreachable: boolean;
 }
 
@@ -110,7 +115,10 @@ async function createInstance(): Promise<Instance> {
           return jsonResponse({ message: "rejected" }, 400);
         }
         if (instance.deleteBehavior === "lose") {
-          // The instance may well have applied it; the answer never arrives.
+          throw new Error("socket hang up");
+        }
+        if (instance.deleteBehavior === "lose_after_applying") {
+          instance.rows = instance.rows.filter((row) => row.id !== id);
           throw new Error("socket hang up");
         }
         instance.rows = instance.rows.filter((row) => row.id !== id);
@@ -441,6 +449,25 @@ describe("queue resolution apply mode", () => {
     expect(first.mutation?.receipt?.reference).toBe(second.mutation?.receipt?.reference);
     expect(second.applications[0]?.warnings.join(" ")).toContain("already applied");
     expect(deletes()).toHaveLength(1);
+  });
+
+  it("resolves a lost answer against upstream state before reporting it", async () => {
+    // The instance applied the delete and the answer never arrived. Asking the
+    // queue immediately is what turns an unknown outcome into a known one, and
+    // it is the reason reconciliation is reachable without a second tool call.
+    const reference = await referenceFor(blockedImport);
+    instance.deleteBehavior = "lose_after_applying";
+
+    const result = await run(resolveTool, {
+      intent: "ignore_tracking",
+      mode: "apply",
+      items: [reference],
+    });
+
+    const item = outcomeOf(result).items?.[0];
+    expect(item?.status).toBe("ok");
+    expect(item?.warnings.join(" ")).toContain("upstream state confirms it was applied");
+    expect(result.mutation?.receipt?.state).toBe("succeeded");
   });
 
   it("settles as outcome-unknown when the answer is lost", async () => {
