@@ -357,9 +357,18 @@ export interface DiskCondition {
   readonly totalBytes?: number | undefined;
 }
 
-/** A Prowlarr indexer, named by the identifier its own records key on. */
+/**
+ * A Prowlarr indexer, named by the identifier its own records key on.
+ *
+ * Prowlarr is the only application that models an indexer as a record with an
+ * identity: Sonarr and Radarr name theirs by label alone — a queue row's origin,
+ * a blocklist record's indexer, a history bag's `indexer` — and none of those is
+ * a thing to key on. The application is a literal rather than any of the three
+ * so a reader that mapped a media application's label into this shape would fail
+ * to compile instead of publishing an identity that names nothing.
+ */
 export interface IndexerRef {
-  readonly application: ApplicationId;
+  readonly application: "prowlarr";
   readonly indexerId: number;
   readonly name?: string | undefined;
 }

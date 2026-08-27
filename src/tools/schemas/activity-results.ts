@@ -120,9 +120,18 @@ export const activityQueueSummarySchema = z.strictObject({
   unknownWarnings: z.boolean(),
 });
 
-/** A Prowlarr indexer, named by the identifier its own records key on. */
+/**
+ * A Prowlarr indexer, named by the identifier its own records key on.
+ *
+ * The application is the literal and not the wider identifier union, because
+ * only Prowlarr models an indexer as a record: Sonarr and Radarr name theirs by
+ * label alone, and those labels are published as the plain strings they are.
+ * The three views that carry this shape — Prowlarr history, indexer status, and
+ * indexer statistics — are Prowlarr's alone, so a wider field would advertise a
+ * value no result can hold.
+ */
 const indexerIdentitySchema = z.strictObject({
-  application: applicationIdSchema,
+  application: z.literal("prowlarr"),
   indexerId: z.number(),
   name: z.string().optional(),
 });
