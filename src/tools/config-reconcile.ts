@@ -589,11 +589,6 @@ async function readTestPreconditions(
     return blocked(target.error);
   }
 
-  const payload = await readProviderPayload(invocation, domain, target.value);
-  if (!payload.ok) {
-    return blocked(payload.error);
-  }
-
   const context: ReconcileContext = {
     kind: contextKind,
     intent: intent.intent,
@@ -606,6 +601,16 @@ async function readTestPreconditions(
     readSet: [],
     data: undefined,
   };
+
+  // Built here exactly as the apply builds it, credential and all, and then
+  // discarded. A plan is worth reading only if it validated the request it
+  // would send: a name that is not a credential on this record, or one the
+  // record does not carry, is refused now rather than after an apply has been
+  // authorized and before any test could be sent.
+  const payload = await buildTestPayload(invocation, context, intent, domain);
+  if (!payload.ok) {
+    return blocked(payload.error);
+  }
 
   return {
     status: "ok",

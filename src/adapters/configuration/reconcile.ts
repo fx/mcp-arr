@@ -329,18 +329,10 @@ async function reconcileWithSecrets(
     if (request.mode === "plan") {
       return { status: "planned", diff, changed, observations, warnings, requiredSecrets };
     }
-    if (!changed) {
-      return {
-        status: "applied",
-        attempted: false,
-        diff,
-        changed: false,
-        observations,
-        requiredSecrets,
-        warnings: [...warnings, "this record already matches the desired state; nothing was sent"],
-      };
-    }
-
+    // Before the no-change return, because a bypass tests on every apply and
+    // says so in the effects it requests. A desired state that already matches
+    // still sends nothing, but it does not silently skip the contact a caller
+    // was told to expect.
     let query: Readonly<Record<string, boolean>> = {};
     const bypassWarnings: string[] = [];
     if (request.bypassValidationWarnings === true) {
@@ -361,14 +353,36 @@ async function reconcileWithSecrets(
         payload,
       });
       if (tested.status === "error") {
-        return { status: "error", error: tested.error, attempted: false };
+        // A test whose answer was lost may already have delivered a
+        // notification, so what it reports about being sent is carried through
+        // rather than flattened: the caller settles this as outcome-unknown,
+        // not as a call that certainly did nothing.
+        return { status: "error", error: tested.error, attempted: tested.attempted };
       }
       const decision = planBypass(application, tested);
       if (decision.refusal !== undefined) {
-        return { status: "error", error: decision.refusal, attempted: false };
+        // The refusal is about the save, which was never sent. The test was,
+        // and its own disclosure travels with the outcome.
+        return { status: "error", error: decision.refusal, attempted: tested.attempted };
       }
       query = decision.query;
       bypassWarnings.push(...decision.warnings);
+    }
+
+    if (!changed) {
+      return {
+        status: "applied",
+        attempted: false,
+        diff,
+        changed: false,
+        observations,
+        requiredSecrets,
+        warnings: [
+          ...warnings,
+          ...bypassWarnings,
+          "this record already matches the desired state; nothing was sent",
+        ],
+      };
     }
 
     dispatched = true;

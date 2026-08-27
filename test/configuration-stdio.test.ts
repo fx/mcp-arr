@@ -393,6 +393,39 @@ describe("arr_config_reconcile over stdio", () => {
     }
   });
 
+  it("tests the provider even where the desired state changes nothing", async () => {
+    // The bypass says in its effects that it contacts the provider on every
+    // apply. A desired state that already matches still sends no save, and it
+    // must not silently skip the contact the caller was told to expect.
+    const sonarr = await instance("sonarr");
+    const child = spawnBuiltServer(instanceEnvironment([sonarr]), 10_000);
+
+    try {
+      await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
+      const target = await indexerReference(child, 2);
+
+      const applied = await reconcile(child, 3, {
+        intent: "force_provider_save",
+        mode: "apply",
+        application: "sonarr",
+        // The recorded indexer already has priority 25.
+        fields: [{ name: "priority", value: 25 }],
+        domain: "indexers",
+        target,
+        acceptValidationWarnings: true,
+      });
+
+      expect(applied.isError).toBe(false);
+      expect(sonarr.providerTests).toHaveLength(1);
+      expect(sonarr.writes.filter((entry) => entry.method === "PUT")).toEqual([]);
+
+      await child.terminateGracefully();
+      assertCleanProtocolStdout(child.stdout);
+    } finally {
+      await child.forceCleanup().catch(() => undefined);
+    }
+  });
+
   it("refuses a bypass the instance's objections do not justify", async () => {
     // The instance answers the test with a failure rather than a warning. A
     // bypass overrides warnings and only warnings, so this is refused however
