@@ -657,7 +657,13 @@ const definitions = [
     "arr_queue_resolve",
     "route_to_manual_import",
     media,
-    "mutate",
+    // Declared `read` because that is what it is: the transition sends no
+    // upstream request and changes nothing, answering with the import
+    // inspection to perform next. Declaring it `mutate` would have been the
+    // safe-looking direction and still a false statement — `arr_capabilities`
+    // publishes this per intent, and a caller reading `mutate` would believe
+    // the call changes state.
+    "read",
     queueResolve,
   ),
   define(

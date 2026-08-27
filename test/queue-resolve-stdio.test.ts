@@ -6,6 +6,7 @@ import {
   queueResolveOutputSchema,
 } from "../src/tools/schemas/activity.js";
 import type { ActivityViewResult } from "../src/tools/schemas/activity-results.js";
+import { fixturePathFor, loadFixture } from "./support/fixtures.js";
 import {
   type FixtureInstance,
   instanceEnvironment,
@@ -16,6 +17,7 @@ import {
   type SpawnedStdioProcess,
   spawnBuiltServer,
 } from "./support/spawned-stdio.js";
+import { fixtureRoot } from "./support/tool-context.js";
 
 /**
  * `arr_queue_resolve` over the transport, against running instances.
@@ -144,6 +146,31 @@ function referenceOf(
     throw new Error(`The recorded queue holds no ${description}`);
   }
   return row.reference;
+}
+
+/**
+ * The values the recorded queue holds that must never cross the transport: the
+ * upstream queue identifier, the download-client identifier, and the canonical
+ * path on the operator's disk.
+ */
+async function queueSecrets(): Promise<{
+  queueItemId: number;
+  downloadId: string;
+  outputPath: string;
+}> {
+  const fixture = await loadFixture<Array<Record<string, unknown>>>(
+    fixtureRoot,
+    fixturePathFor("sonarr", "queue/details"),
+  );
+  const row = fixture.body.find((record) => record.status === "completed");
+  if (row === undefined) {
+    throw new Error("The recorded queue detail holds no completed row");
+  }
+  return {
+    queueItemId: Number(row.id),
+    downloadId: String(row.downloadId),
+    outputPath: String(row.outputPath),
+  };
 }
 
 const blockedImport = (row: { kind: string; status: string }): boolean =>
@@ -375,13 +402,37 @@ describe("arr_queue_resolve over stdio", () => {
         plan: planned.structured.mutation?.plan,
       });
 
+      // Read out of the recording rather than written here, so the assertion
+      // cannot quietly stop naming what the instance actually serves. A
+      // hand-written identifier that no fixture contains passes for the wrong
+      // reason and proves nothing.
+      const secrets = await queueSecrets();
+      expect(secrets.downloadId).toMatch(/^[0-9a-f]{16,}$/u);
+      expect(secrets.outputPath.startsWith("/")).toBe(true);
+
+      // A control, because a no-leak assertion that cannot fail is the defect
+      // it is meant to catch: the same matchers fire on a payload that does
+      // carry these values.
+      const leaked = JSON.stringify({
+        queueItemId: secrets.queueItemId,
+        downloadId: secrets.downloadId,
+        outputPath: secrets.outputPath,
+      });
+      expect(leaked).toContain(secrets.downloadId);
+      expect(leaked).toMatch(
+        new RegExp(`[:\\[,]\\s*${String(secrets.queueItemId)}\\s*[,\\]}]`, "u"),
+      );
+
       for (const answer of [planned, applied]) {
-        // The queue identifier the recorded fixture uses, the download-client
-        // identifier beside it, and the canonical path it reports.
-        expect(answer.raw).not.toContain('"502"');
-        expect(answer.raw).not.toContain("SABnzbd_nzo");
-        expect(answer.raw.toLowerCase()).not.toContain("/downloads");
+        expect(answer.raw).not.toContain(secrets.downloadId);
+        expect(answer.raw).not.toContain(secrets.outputPath);
         expect(answer.raw).not.toContain(sonarr.apiKey);
+        // Both spellings of the upstream identifier: quoted as a string and
+        // bare as a JSON number, which the first form alone would miss.
+        expect(answer.raw).not.toContain(`"${String(secrets.queueItemId)}"`);
+        expect(answer.raw).not.toMatch(
+          new RegExp(`[:\\[,]\\s*${String(secrets.queueItemId)}\\s*[,\\]}]`, "u"),
+        );
       }
       expect(applied.structured.mutation?.receipt?.state).toBe("succeeded");
 

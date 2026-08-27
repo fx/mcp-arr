@@ -742,6 +742,17 @@ export async function startFixtureInstance(
       return;
     }
 
+    // The queue transition paths exist, but not for reading: `queue/{id}` is
+    // resolved with a delete and `queue/grab/{id}` with a post, and neither
+    // answers a `GET`. Deciding that here keeps the promise `exposes` makes —
+    // a path this instance has, reached with the wrong verb, is told so.
+    if (queueItemRoute.test(route) || queueGrabRoute.test(route)) {
+      send(response, answers("queue") ? 405 : 404, {
+        message: answers("queue") ? "method not allowed" : "not found",
+      });
+      return;
+    }
+
     if (single !== null) {
       if (!known || collection === undefined || recordId === undefined) {
         send(response, 404, { message: "not found" });
