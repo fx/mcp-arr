@@ -4,6 +4,8 @@ import type {
   DiskCondition,
   HealthCheck,
   HistoryRecord,
+  IndexerStatistic,
+  IndexerStatus,
   QueueItem,
   QueueSummary,
 } from "../../src/adapters/activity/model.js";
@@ -133,6 +135,20 @@ export function commandActivity(data: ActivityViewData): readonly CommandActivit
 export function diskConditions(data: ActivityViewData): readonly DiskCondition[] {
   if (data.view !== "disk_space") {
     throw new Error(`Expected the disk_space view, got ${data.view}`);
+  }
+  return data.items;
+}
+
+export function indexerStatuses(data: ActivityViewData): readonly IndexerStatus[] {
+  if (data.view !== "indexer_status") {
+    throw new Error(`Expected the indexer_status view, got ${data.view}`);
+  }
+  return data.items;
+}
+
+export function indexerStatistics(data: ActivityViewData): readonly IndexerStatistic[] {
+  if (data.view !== "indexer_statistics") {
+    throw new Error(`Expected the indexer_statistics view, got ${data.view}`);
   }
   return data.items;
 }

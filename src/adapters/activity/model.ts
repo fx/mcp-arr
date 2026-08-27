@@ -348,3 +348,38 @@ export interface IndexerRef {
   readonly indexerId: number;
   readonly name?: string | undefined;
 }
+
+/**
+ * One indexer's failure state. `disabledUntil` is the field that says an
+ * indexer is currently out of rotation, which is the evidence a failed search
+ * is diagnosed from.
+ */
+export interface IndexerStatus {
+  readonly application: "prowlarr";
+  readonly indexer: IndexerRef;
+  readonly disabledUntil?: string | undefined;
+  readonly initialFailure?: string | undefined;
+  readonly mostRecentFailure?: string | undefined;
+}
+
+/**
+ * One indexer's performance aggregate.
+ *
+ * The upstream statistics payload also aggregates by caller host and by user
+ * agent. Those two are never mapped — not filtered later, not mapped and then
+ * dropped: the schema does not read them and this record has no field they
+ * could occupy.
+ */
+export interface IndexerStatistic {
+  readonly application: "prowlarr";
+  readonly indexer: IndexerRef;
+  readonly queries?: number | undefined;
+  readonly grabs?: number | undefined;
+  readonly rssQueries?: number | undefined;
+  readonly authQueries?: number | undefined;
+  readonly failedQueries?: number | undefined;
+  readonly failedGrabs?: number | undefined;
+  readonly failedRssQueries?: number | undefined;
+  readonly failedAuthQueries?: number | undefined;
+  readonly averageResponseTimeMs?: number | undefined;
+}

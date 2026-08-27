@@ -17,6 +17,8 @@ import type {
   DiskCondition,
   HealthCheck,
   HistoryRecord,
+  IndexerStatistic,
+  IndexerStatus,
   QueueItem,
   QueueSummary,
 } from "./model.js";
@@ -59,7 +61,9 @@ export type ActivityViewData =
   | { readonly view: "blocklist"; readonly items: readonly BlocklistRecord[] }
   | { readonly view: "health"; readonly items: readonly HealthCheck[] }
   | { readonly view: "commands"; readonly items: readonly CommandActivity[] }
-  | { readonly view: "disk_space"; readonly items: readonly DiskCondition[] };
+  | { readonly view: "disk_space"; readonly items: readonly DiskCondition[] }
+  | { readonly view: "indexer_status"; readonly items: readonly IndexerStatus[] }
+  | { readonly view: "indexer_statistics"; readonly items: readonly IndexerStatistic[] };
 
 export type ActivityQueryOutcome =
   | {
@@ -187,15 +191,24 @@ async function runView(
       const page = await media.readDiskSpace(client, window, profile);
       return pageResult({ view: request.view, items: page.items }, page);
     }
+    case "indexer_status": {
+      const page = await prowlarr.readIndexerStatus(client, window);
+      return pageResult({ view: request.view, items: page.items }, page);
+    }
+    case "indexer_statistics": {
+      const page = await prowlarr.readIndexerStatistics(client, window, request);
+      return pageResult({ view: request.view, items: page.items }, page);
+    }
   }
 }
 
 /**
  * Answers one bounded activity query.
  *
- * A view the selected application does not model — a queue or a blocklist asked
- * of Prowlarr — is refused as an unsupported capability before a request is
- * sent, rather than being emulated or answered with an empty page.
+ * A view the selected application does not model — a queue asked of Prowlarr,
+ * or an indexer aggregate asked of Sonarr — is refused as an unsupported
+ * capability before a request is sent, rather than being emulated or answered
+ * with an empty page.
  */
 export async function runActivityQuery(
   application: ApplicationId,
