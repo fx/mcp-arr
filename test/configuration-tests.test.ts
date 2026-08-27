@@ -2,13 +2,11 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { ProviderDomain } from "../src/adapters/configuration/domains.js";
 import { providerDomains } from "../src/adapters/configuration/domains.js";
 import {
-  bypassQuery,
-  checkBypass,
   classifyTest,
-  describeBypass,
   describeExternalEffect,
   externalEffectOf,
   isBypassable,
+  planBypass,
   providerTestOutcomes,
   providerTestRoute,
   readValidation,
@@ -48,6 +46,7 @@ interface Answer {
 
 interface Instance {
   readonly calls: UpstreamCall[];
+  readonly client: Parameters<typeof runProviderTest>[1];
   readonly bodies: Record<string, unknown>[];
   run(domain?: ProviderDomain): ReturnType<typeof runProviderTest>;
 }
@@ -68,6 +67,7 @@ function instance(answer: Answer, options: { unreachable?: boolean } = {}): Inst
 
   return {
     calls: harness.calls,
+    client: harness.client,
     bodies,
     run: (domain = "notifications") =>
       runProviderTest("sonarr", harness.client, {
@@ -277,6 +277,27 @@ describe("running a test", () => {
     expect(result.effect).toBeUndefined();
   });
 
+  it("reports a payload the client refused as never having been sent", async () => {
+    const running = instance({ status: 200 });
+    const circular: Record<string, unknown> = { id: 1 };
+    circular.self = circular;
+    const result = failed(
+      await runProviderTest("sonarr", running.client, {
+        domain: "notifications",
+        payload: circular,
+      }),
+    );
+
+    // The client refuses a payload it cannot serialize before it reaches for
+    // the instance, so nothing was delivered and nothing may be claimed. A flag
+    // set beside the call would have reported a notification sent for a payload
+    // that never left this process.
+    expect(running.calls).toEqual([]);
+    expect(result.attempted).toBe(false);
+    expect(result.effect).toBeUndefined();
+    expect(result.error.code).toBe("invalid_input");
+  });
+
   it("still fails a server error rather than reading it as a validation answer", async () => {
     const result = failed(await instance({ status: 500, body: warningOnly() }).run());
 
@@ -288,60 +309,75 @@ describe("running a test", () => {
 });
 
 describe("bypassing warnings", () => {
-  it("emits the bypass parameter only when one was asked for", () => {
-    // Never a default: absent unless asked for, and only ever emitted as true,
-    // because an explicit false and no parameter mean the same thing upstream
-    // and sending one would suggest a decision where none was made.
-    expect(bypassQuery(false)).toEqual({});
-    expect(bypassQuery(true)).toEqual({ forceSave: true });
-  });
+  const warned = { severity: "warning" as const, field: "onGrab", message: "example warning" };
+  const base = {
+    findings: [warned],
+    unreadable: 0,
+    effect: "delivers_message" as const,
+    attempted: true,
+  };
 
   it("permits a bypass past warnings and refuses one past a failure", () => {
-    const warned = { severity: "warning" as const, message: "example" };
-    const base = {
-      findings: [warned],
-      unreadable: 0,
-      effect: "delivers_message" as const,
-      attempted: true,
-    };
-
     expect(isBypassable("warned")).toBe(true);
     expect(isBypassable("failed")).toBe(false);
     expect(isBypassable("passed")).toBe(false);
-    expect(checkBypass("sonarr", { ...base, outcome: "warned" })).toBeUndefined();
-    // A save that needed no bypass is not refused for having asked for one.
-    expect(checkBypass("sonarr", { ...base, outcome: "passed" })).toBeUndefined();
 
-    const refused = checkBypass("sonarr", { ...base, outcome: "failed" });
-    expect(refused?.code).toBe("upstream_rejection");
-    expect(refused?.message).toContain("does not override a failure");
+    const permitted = planBypass("sonarr", { ...base, outcome: "warned" });
+    expect(permitted.refusal).toBeUndefined();
+    // The parameter is emitted only because something needed overriding, and
+    // only ever as true.
+    expect(permitted.query).toEqual({ forceSave: true });
 
-    // And where the refusal was unreadable, the reason says so rather than
-    // describing a failure the instance never named.
-    const unread = checkBypass("sonarr", { ...base, outcome: "failed", unreadable: 2 });
-    expect(unread?.message).toContain("2 objection(s) this server could not read");
+    const refused = planBypass("sonarr", { ...base, outcome: "failed" });
+    expect(refused.refusal?.code).toBe("upstream_rejection");
+    expect(refused.refusal?.message).toContain("does not override a failure");
+    // A refused bypass sends nothing and claims nothing.
+    expect(refused.query).toEqual({});
+    expect(refused.warnings).toEqual([]);
+  });
+
+  it("says nothing was skipped where nothing was raised", () => {
+    const clean = planBypass("sonarr", { ...base, outcome: "passed", findings: [] });
+
+    // The caller asked for a save and it would have succeeded, so it is not
+    // refused — but sending the parameter or claiming that checks were skipped
+    // would describe something that did not happen.
+    expect(clean.refusal).toBeUndefined();
+    expect(clean.query).toEqual({});
+    expect(clean.warnings).toEqual([expect.stringContaining("nothing was skipped")]);
+    expect(clean.warnings.join(" ")).not.toContain("skipped the instance's validation warnings");
   });
 
   it("names every warning it skipped rather than counting them", async () => {
     const result = ok(await instance({ status: 400, body: warningOnly() }).run());
-    const described = describeBypass("sonarr", result.findings);
+    const decided = planBypass("sonarr", result);
 
     // A bypass that reported only how many warnings there were would let a
     // caller record having overridden something without recording what.
-    expect(described[0]).toContain("skipped the instance's validation warnings");
-    expect(described[1]).toContain("onGrab");
-    expect(described[1]).toContain("no grab events are selected");
-    expect(described).toHaveLength(2);
+    expect(decided.warnings[0]).toContain("skipped the instance's validation warnings");
+    expect(decided.warnings[1]).toContain("onGrab");
+    expect(decided.warnings[1]).toContain("no grab events are selected");
+    expect(decided.warnings).toHaveLength(2);
   });
 
   it("describes only the warnings, never an error it did not skip", () => {
-    const described = describeBypass("sonarr", [
-      { severity: "warning", message: "a skipped warning" },
-      { severity: "error", message: "a failure nothing skipped" },
-    ]);
+    const decided = planBypass("sonarr", {
+      ...base,
+      outcome: "warned",
+      findings: [
+        { severity: "warning", message: "a skipped warning" },
+        { severity: "error", message: "a failure nothing skipped" },
+      ],
+    });
 
-    expect(described.join(" ")).toContain("a skipped warning");
-    expect(described.join(" ")).not.toContain("a failure nothing skipped");
+    expect(decided.warnings.join(" ")).toContain("a skipped warning");
+    expect(decided.warnings.join(" ")).not.toContain("a failure nothing skipped");
+  });
+
+  it("says which objections nobody could read where that is why it refused", () => {
+    const unread = planBypass("sonarr", { ...base, outcome: "failed", unreadable: 2 });
+
+    expect(unread.refusal?.message).toContain("2 objection(s) this server could not read");
   });
 });
 

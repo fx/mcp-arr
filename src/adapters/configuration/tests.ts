@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ApplicationId } from "../../applications.js";
 import type { UpstreamBody, UpstreamClient } from "../../http/client.js";
+import { UpstreamError } from "../../http/errors.js";
 import { createToolError, type ToolError, toolErrorForThrown } from "../../tools/errors.js";
 import { type ProviderDomain, routeFor } from "./domains.js";
 
@@ -275,9 +276,7 @@ export async function runProviderTest(
     };
   }
 
-  let dispatched = false;
   try {
-    dispatched = true;
     const answered = await client.validate(route, request.payload);
     const reading = readValidation(answered.body);
     return {
@@ -289,6 +288,14 @@ export async function runProviderTest(
       effect: domainEffects[request.domain],
     };
   } catch (error) {
+    // Whether the request went out is read from the client's own contract
+    // rather than from a flag set beside the call. The client refuses an
+    // unusable path and a payload it cannot serialize *before* it reaches for
+    // the instance, and reports both as `invalid-request`; everything else it
+    // raises happened at or after the request. A flag set before the await
+    // would have claimed a delivered notification for a payload that never
+    // left this process.
+    const dispatched = !(error instanceof UpstreamError && error.kind === "invalid-request");
     return {
       status: "error",
       attempted: dispatched,
@@ -298,60 +305,75 @@ export async function runProviderTest(
   }
 }
 
-/**
- * The query a save carries when a caller explicitly asked to bypass warnings.
- *
- * Absent unless asked for. The parameter is only ever emitted with `true`,
- * because an explicit `false` and no parameter at all mean the same thing to
- * these applications and sending one would suggest a decision was made where
- * none was.
- */
-export function bypassQuery(bypass: boolean): Readonly<Record<string, boolean>> {
-  return bypass ? { forceSave: true } : {};
+/** What a requested bypass amounts to, once the test that preceded it answered. */
+export interface BypassDecision {
+  /** Set where the bypass may not proceed, which no field on a request changes. */
+  readonly refusal?: ToolError | undefined;
+  /**
+   * The query the save carries. Empty unless something actually needed
+   * overriding: the parameter is only ever emitted as `true`, because an
+   * explicit `false` and no parameter at all mean the same thing to these
+   * applications and sending one would suggest a decision where none was made.
+   */
+  readonly query: Readonly<Record<string, boolean>>;
+  readonly warnings: readonly string[];
 }
 
 /**
- * What a bypass skipped, said plainly, for the result to carry.
+ * Decides what an explicitly requested bypass does, in one place.
  *
- * Every warning is named. A bypass that reported only how many there were would
- * let a caller record having overridden something without recording what.
- */
-export function describeBypass(
-  application: ApplicationId,
-  findings: readonly ValidationFinding[],
-): readonly string[] {
-  return [
-    `${application}: this save skipped the instance's validation warnings, which it would otherwise have refused`,
-    ...findings
-      .filter((finding) => finding.severity === "warning")
-      .map(
-        (finding) =>
-          `${application}: skipped warning${finding.field === undefined ? "" : ` on ${finding.field}`}: ${finding.message}`,
-      ),
-  ];
-}
-
-/**
- * Whether a bypass may proceed, and why not where it may not.
+ * The refusal, the parameter, and the disclosure are one answer rather than
+ * three, because they have to agree: a save that claimed to have skipped checks
+ * while sending no parameter, or that sent one while reporting that nothing was
+ * overridden, would describe something that did not happen. Deciding them
+ * together is what makes that impossible rather than merely unlikely.
  *
- * This is the gate the whole bypass rests on, so it is one function with one
- * answer. A failed test is refused however explicitly the bypass was asked for:
- * the instance reported something that is not a warning, and no field on a
- * request makes that into one.
+ * A failed test is refused however explicitly the bypass was asked for — the
+ * instance reported something that is not a warning, and no field on a request
+ * makes it into one. A passed test is not refused, because the caller asked for
+ * a save and it would have succeeded; it simply carries no parameter and says
+ * that nothing needed skipping.
  */
-export function checkBypass(
-  application: ApplicationId,
-  result: ProviderTestResult,
-): ToolError | undefined {
-  if (isBypassable(result.outcome) || result.outcome === "passed") {
-    return undefined;
+export function planBypass(application: ApplicationId, result: ProviderTestResult): BypassDecision {
+  if (result.outcome === "failed") {
+    return {
+      query: {},
+      warnings: [],
+      refusal: createToolError({
+        code: "upstream_rejection",
+        message:
+          result.unreadable > 0
+            ? `${application}: this instance raised ${String(result.unreadable)} objection(s) this server could not read, and a bypass does not override something nobody can name`
+            : `${application}: this provider failed validation rather than raising warnings, and a bypass does not override a failure`,
+        application,
+      }),
+    };
   }
-  return createToolError({
-    code: "upstream_rejection",
-    message:
-      result.unreadable > 0
-        ? `${application}: this instance raised ${String(result.unreadable)} objection(s) this server could not read, and a bypass does not override something nobody can name`
-        : `${application}: this provider failed validation rather than raising warnings, and a bypass does not override a failure`,
-    application,
-  });
+
+  if (!isBypassable(result.outcome)) {
+    // Passed. The save proceeds as an ordinary one: no parameter, and no claim
+    // to have skipped anything, because nothing was raised to skip.
+    return {
+      query: {},
+      warnings: [
+        `${application}: this provider raised no validation warnings, so nothing was skipped and the save was sent as an ordinary one`,
+      ],
+    };
+  }
+
+  // Every warning is named. A bypass that reported only how many there were
+  // would let a caller record having overridden something without recording
+  // what.
+  return {
+    query: { forceSave: true },
+    warnings: [
+      `${application}: this save skipped the instance's validation warnings, which it would otherwise have refused`,
+      ...result.findings
+        .filter((finding) => finding.severity === "warning")
+        .map(
+          (finding) =>
+            `${application}: skipped warning${finding.field === undefined ? "" : ` on ${finding.field}`}: ${finding.message}`,
+        ),
+    ],
+  };
 }
