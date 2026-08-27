@@ -29,6 +29,16 @@ export type UpstreamQueryValue = string | number | boolean;
  */
 export type UpstreamQuery = Readonly<Record<string, UpstreamQueryValue | undefined>>;
 
+/**
+ * A request body an adapter sends upstream.
+ *
+ * It is always a value this project built — a resource read from the instance
+ * with the fields a validated mutation changes written over it, or a payload
+ * assembled from validated arguments — never a caller-supplied blob passed
+ * through, because no published input accepts one.
+ */
+export type UpstreamBody = Readonly<Record<string, unknown>>;
+
 export interface UpstreamClient {
   readonly application: ApplicationId;
   /**
@@ -39,6 +49,10 @@ export interface UpstreamClient {
    */
   readonly apiBaseUrl: string;
   get(path: string, query?: UpstreamQuery): Promise<unknown>;
+  /** Creates an upstream resource. Only a mutation adapter may call this. */
+  post(path: string, body: UpstreamBody, query?: UpstreamQuery): Promise<unknown>;
+  /** Replaces an upstream resource. Only a mutation adapter may call this. */
+  put(path: string, body: UpstreamBody, query?: UpstreamQuery): Promise<unknown>;
 }
 
 /**
@@ -84,73 +98,112 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
   const apiBaseUrl = apiBase.url;
   const fetchImpl: FetchLike = options.fetch ?? ((input, init) => fetch(input, init));
 
+  /**
+   * Sends one request and returns its parsed body.
+   *
+   * Every method shares this path, so a write is redacted, timed out, and
+   * normalized exactly like a read. A write differs only in carrying a body:
+   * the payload is serialized here rather than by the caller, so no adapter can
+   * send something that is not JSON, and a successful response with no body —
+   * which several upstream writes answer with — resolves as `undefined` rather
+   * than as a parse failure.
+   */
+  const send = async (
+    method: "GET" | "POST" | "PUT",
+    path: string,
+    query: UpstreamQuery | undefined,
+    body: UpstreamBody | undefined,
+  ): Promise<unknown> => {
+    const joined = joinUpstreamUrl(apiBaseUrl, path);
+    if (!joined.ok) {
+      throw new UpstreamError("invalid-request", { application, pathProblem: joined.problem });
+    }
+
+    // Appended after the path is validated and joined, and deliberately kept
+    // out of `operation` below: the route names the failure, while a query
+    // value can be caller-derived and must never reach a diagnostic.
+    const url = `${joined.url}${query === undefined ? "" : buildQueryString(query)}`;
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+    timer.unref();
+
+    const fail = (kind: UpstreamErrorKind): UpstreamError =>
+      new UpstreamError(kind, { application, operation: path, timeoutMs });
+
+    try {
+      let response: Response;
+      try {
+        response = await fetchImpl(url, {
+          method,
+          headers: {
+            "X-Api-Key": options.apiKey,
+            Accept: "application/json",
+            ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+          },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+          signal: controller.signal,
+        });
+      } catch {
+        throw fail(timedOut ? "timeout" : "unavailable");
+      }
+
+      if (!response.ok) {
+        discardBody(response);
+        throw new UpstreamError(upstreamErrorKindForStatus(response.status), {
+          application,
+          operation: path,
+          status: response.status,
+          timeoutMs,
+        });
+      }
+
+      let payload: string;
+      try {
+        payload = await response.text();
+      } catch {
+        throw fail(timedOut ? "timeout" : "unavailable");
+      }
+
+      if (payload.trim() === "") {
+        // An accepted write that answers with no content is not a broken
+        // response, and a read that does is caught by the adapter schema that
+        // was expecting a payload.
+        return undefined;
+      }
+
+      try {
+        return JSON.parse(payload) as unknown;
+      } catch {
+        throw new UpstreamError("unexpected-response", {
+          application,
+          operation: path,
+          status: response.status,
+          timeoutMs,
+        });
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
   return {
     application,
     apiBaseUrl,
 
-    async get(path: string, query?: UpstreamQuery): Promise<unknown> {
-      const joined = joinUpstreamUrl(apiBaseUrl, path);
-      if (!joined.ok) {
-        throw new UpstreamError("invalid-request", { application, pathProblem: joined.problem });
-      }
+    get(path: string, query?: UpstreamQuery): Promise<unknown> {
+      return send("GET", path, query, undefined);
+    },
 
-      // Appended after the path is validated and joined, and deliberately kept
-      // out of `operation` below: the route names the failure, while a query
-      // value can be caller-derived and must never reach a diagnostic.
-      const url = `${joined.url}${query === undefined ? "" : buildQueryString(query)}`;
-      const controller = new AbortController();
-      let timedOut = false;
-      const timer = setTimeout(() => {
-        timedOut = true;
-        controller.abort();
-      }, timeoutMs);
-      timer.unref();
+    post(path: string, body: UpstreamBody, query?: UpstreamQuery): Promise<unknown> {
+      return send("POST", path, query, body);
+    },
 
-      const fail = (kind: UpstreamErrorKind): UpstreamError =>
-        new UpstreamError(kind, { application, operation: path, timeoutMs });
-
-      try {
-        let response: Response;
-        try {
-          response = await fetchImpl(url, {
-            method: "GET",
-            headers: { "X-Api-Key": options.apiKey, Accept: "application/json" },
-            signal: controller.signal,
-          });
-        } catch {
-          throw fail(timedOut ? "timeout" : "unavailable");
-        }
-
-        if (!response.ok) {
-          discardBody(response);
-          throw new UpstreamError(upstreamErrorKindForStatus(response.status), {
-            application,
-            operation: path,
-            status: response.status,
-            timeoutMs,
-          });
-        }
-
-        let body: string;
-        try {
-          body = await response.text();
-        } catch {
-          throw fail(timedOut ? "timeout" : "unavailable");
-        }
-
-        try {
-          return JSON.parse(body) as unknown;
-        } catch {
-          throw new UpstreamError("unexpected-response", {
-            application,
-            operation: path,
-            status: response.status,
-            timeoutMs,
-          });
-        }
-      } finally {
-        clearTimeout(timer);
-      }
+    put(path: string, body: UpstreamBody, query?: UpstreamQuery): Promise<unknown> {
+      return send("PUT", path, query, body);
     },
   };
 }

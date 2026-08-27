@@ -14,7 +14,7 @@ import {
   operationSideEffects,
   unsupportedOperationHandler,
 } from "../src/tools/operations.js";
-import { createTestToolContext, jsonResponse } from "./support/tool-context.js";
+import { createTestToolContext, jsonResponse, readOnlyClient } from "./support/tool-context.js";
 
 const registry = createOperationRegistry();
 
@@ -238,11 +238,7 @@ describe("internal operation registry", () => {
         application: "sonarr",
         apiVersion: "v3",
         minimumVersion: "4.0.19.2979",
-        client: {
-          application: "sonarr",
-          apiBaseUrl: "https://sonarr.example.invalid/api/v3",
-          get: async () => ({}),
-        },
+        client: readOnlyClient("sonarr", async () => ({})),
         probe: async () => available("sonarr", "4.0.19.2979"),
       },
       mode: "read",

@@ -14,6 +14,7 @@ import {
 import { parseEnvironment } from "../src/config/environment.js";
 import type { FetchLike } from "../src/http/client.js";
 import { loadFixture, type VersionedFixture } from "./support/fixtures.js";
+import { readOnlyClient } from "./support/tool-context.js";
 
 const fixtureRoot = fileURLToPath(new URL("./fixtures", import.meta.url));
 const apiKeys: Readonly<Record<ApplicationId, string>> = {
@@ -254,14 +255,17 @@ describe("createApplicationAdapter", () => {
 
   it("probes system/status through the injected client", async () => {
     const requested: string[] = [];
-    const adapter = createApplicationAdapter(descriptor, {
-      application: "sonarr",
-      apiBaseUrl: "https://sonarr.example.invalid/sonarr/api/v3",
-      get: async (path) => {
-        requested.push(path);
-        return fixtureFor("sonarr").body;
-      },
-    });
+    const adapter = createApplicationAdapter(
+      descriptor,
+      readOnlyClient(
+        "sonarr",
+        async (path) => {
+          requested.push(path);
+          return fixtureFor("sonarr").body;
+        },
+        "https://sonarr.example.invalid/sonarr/api/v3",
+      ),
+    );
 
     await expect(adapter.probe()).resolves.toEqual({
       application: "sonarr",
@@ -274,11 +278,14 @@ describe("createApplicationAdapter", () => {
   });
 
   it("normalizes a non-upstream failure without leaking its message", async () => {
-    const adapter = createApplicationAdapter(descriptor, {
-      application: "sonarr",
-      apiBaseUrl: "https://sonarr.example.invalid/sonarr/api/v3",
-      get: () => Promise.reject(new Error(`internal detail ${apiKeys.sonarr}`)),
-    });
+    const adapter = createApplicationAdapter(
+      descriptor,
+      readOnlyClient(
+        "sonarr",
+        () => Promise.reject(new Error(`internal detail ${apiKeys.sonarr}`)),
+        "https://sonarr.example.invalid/sonarr/api/v3",
+      ),
+    );
 
     const capability = await adapter.probe();
     expect(capability).toEqual({
