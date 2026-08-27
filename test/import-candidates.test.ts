@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  type CandidateScanResult,
   fileIdentity,
   fileNameOf,
-  type ImportScanContext,
-  readCandidates,
-  readLibraryScanContext,
-  readTrackedScanContext,
+  scanLibraryContext,
+  scanTrackedDownload,
 } from "../src/adapters/import/candidates.js";
 import type { ImportCandidate } from "../src/adapters/import/model.js";
 import type { MediaApplication } from "../src/adapters/library/model.js";
@@ -30,103 +29,132 @@ import { jsonResponse, libraryHarness, type UpstreamCall } from "./support/libra
  * back does.
  */
 
-async function scan(
-  application: MediaApplication,
-  context: ImportScanContext,
-): Promise<{ candidates: readonly ImportCandidate[]; calls: readonly UpstreamCall[] }> {
-  const body = await activityFixture<unknown[]>(application, "manualimport");
-  const harness = libraryHarness(application, () => jsonResponse(body));
-  const scanned = await readCandidates(harness.client, context);
-  return { candidates: scanned.candidates, calls: harness.calls };
+interface Scanned {
+  readonly result: CandidateScanResult;
+  readonly calls: readonly UpstreamCall[];
 }
 
-const sonarrScan: ImportScanContext = {
-  application: "sonarr",
-  sourceKind: "tracked_download",
-  folder: "/media/example/downloads/complete/example-series",
-  downloadId: "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1",
-  mediaId: 12,
-  queueItemId: 502,
-};
+/**
+ * One instance answering every route a scan touches.
+ *
+ * The scanners are reached only through their own entry points now, so a test
+ * drives the whole path — the queue row or library record first, then the
+ * manual-import endpoint — which is also the only way to observe that the
+ * folder and the download identity came from upstream rather than from an
+ * argument.
+ */
+async function instance(application: MediaApplication) {
+  const [candidates, queue, records] = await Promise.all([
+    activityFixture<unknown[]>(application, "manualimport"),
+    activityFixture<unknown[]>(application, "queue/details"),
+    activityFixture<Array<{ id: number }>>(
+      application,
+      application === "sonarr" ? "series" : "movie",
+    ),
+  ]);
 
-const radarrScan: ImportScanContext = {
-  application: "radarr",
-  sourceKind: "library_context",
-  folder: "/media/example/movies/Example Movie (2021)",
-  mediaId: 8,
-};
+  return (call: UpstreamCall): Response => {
+    const path = call.url.pathname;
+    if (path.endsWith("/manualimport")) {
+      return jsonResponse(candidates);
+    }
+    if (path.endsWith("/queue/details")) {
+      return jsonResponse(queue);
+    }
+    const single = /\/(?:series|movie)\/(\d+)$/u.exec(path);
+    if (single !== null) {
+      return jsonResponse(records.find((record) => record.id === Number(single[1])));
+    }
+    return jsonResponse({ message: "unexpected route" }, 404);
+  };
+}
+
+async function scanTracked(
+  application: MediaApplication,
+  request: { queueItemId: number; mediaId?: number },
+): Promise<Scanned> {
+  const harness = libraryHarness(application, await instance(application));
+  const result = await scanTrackedDownload(harness.client, application, request);
+  return { result, calls: harness.calls };
+}
+
+async function scanLibrary(
+  application: MediaApplication,
+  request: { mediaId: number; seasonNumber?: number },
+): Promise<Scanned> {
+  const harness = libraryHarness(application, await instance(application));
+  const result = await scanLibraryContext(harness.client, application, request);
+  return { result, calls: harness.calls };
+}
+
+function candidatesOf(scanned: Scanned): readonly ImportCandidate[] {
+  if (scanned.result.status !== "ok") {
+    throw new Error(`Expected a scan, got ${scanned.result.status}`);
+  }
+  return scanned.result.scan.candidates;
+}
+
+/** The recorded Sonarr download this suite scans, and its own identifiers. */
+const trackedRequest = { queueItemId: 502, mediaId: 12 } as const;
+const libraryRequest = { mediaId: 8 } as const;
+const recordedDownloadId = "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1";
+const recordedFolder = "/media/example/downloads/complete/example-series";
 
 describe("candidate scan context", () => {
-  it("reads a tracked download's location out of its queue row", async () => {
-    const rows = await activityFixture<unknown[]>("sonarr", "queue/details");
-    const harness = libraryHarness("sonarr", () => jsonResponse(rows));
-    const resolved = await readTrackedScanContext(harness.client, "sonarr", {
-      queueItemId: 502,
-      mediaId: 12,
-    });
+  it("takes a tracked download's location from its queue row, not from a caller", async () => {
+    const { result, calls } = await scanTracked("sonarr", trackedRequest);
+    expect(result.status).toBe("ok");
 
-    if (!resolved.ok) {
-      throw new Error(`Expected the queue row to resolve, got ${resolved.reason}`);
-    }
-    // The read is the focused one, scoped by the media association the queue
-    // reference retained.
-    expect(harness.calls[0]?.url.pathname).toBe("/api/v3/queue/details");
-    expect(harness.calls[0]?.url.searchParams.get("seriesId")).toBe("12");
-    // Both of these are exactly what a caller may never see, and exactly what
-    // the upstream endpoint has to be asked with.
-    expect(resolved.context.folder).toContain("/media/example");
-    expect(resolved.context.downloadId).toMatch(/^[0-9a-f]{16,}$/u);
-    expect(resolved.context.sourceKind).toBe("tracked_download");
+    // The queue row is read first, scoped by the media association the queue
+    // reference retained, and what it reported is what the scan was asked with.
+    expect(calls[0]?.url.pathname).toBe("/api/v3/queue/details");
+    expect(calls[0]?.url.searchParams.get("seriesId")).toBe("12");
+    expect(calls[1]?.url.pathname).toBe("/api/v3/manualimport");
+    expect(calls[1]?.url.searchParams.get("downloadId")).toBe(recordedDownloadId);
+    expect(calls[1]?.url.searchParams.get("folder")).toBe(recordedFolder);
   });
 
   it("reports a row that is gone and one that names no location differently", async () => {
-    const rows = await activityFixture<unknown[]>("sonarr", "queue/details");
-    const harness = libraryHarness("sonarr", () => jsonResponse(rows));
-    const absent = await readTrackedScanContext(harness.client, "sonarr", { queueItemId: 9999 });
-    expect(absent.ok === false && absent.reason).toBe("absent");
-
+    expect((await scanTracked("sonarr", { queueItemId: 9999 })).result.status).toBe("absent");
     // The pending release in the recorded queue reports neither an output path
     // nor a download identifier, because nothing has been downloaded for it.
-    const unmapped = await readTrackedScanContext(harness.client, "sonarr", { queueItemId: 503 });
-    expect(unmapped.ok === false && unmapped.reason).toBe("unmapped");
+    expect((await scanTracked("sonarr", { queueItemId: 503 })).result.status).toBe("unmapped");
   });
 
   it("takes a library context's folder from the record rather than the caller", async () => {
-    const records = await activityFixture<Array<{ id: number }>>("radarr", "movie");
-    const record = records.find((candidate) => candidate.id === 8);
-    const harness = libraryHarness("radarr", () => jsonResponse(record));
-    const resolved = await readLibraryScanContext(harness.client, "radarr", { mediaId: 8 });
+    const { result, calls } = await scanLibrary("radarr", libraryRequest);
+    expect(result.status).toBe("ok");
 
-    if (!resolved.ok) {
-      throw new Error(`Expected the movie to resolve, got ${resolved.reason}`);
-    }
-    expect(harness.calls[0]?.url.pathname).toBe("/api/v3/movie/8");
-    expect(resolved.context.folder).toBe("/media/example/movies/Example Movie (2021)");
-    expect(resolved.context.sourceKind).toBe("library_context");
+    expect(calls[0]?.url.pathname).toBe("/api/v3/movie/8");
+    expect(calls[1]?.url.searchParams.get("folder")).toBe(
+      "/media/example/movies/Example Movie (2021)",
+    );
+    expect(calls[1]?.url.searchParams.get("movieId")).toBe("8");
+    // A library scan is not a download scan, so it carries no download identity.
+    expect(calls[1]?.url.searchParams.get("downloadId")).toBeNull();
   });
 });
 
 describe("candidate mapping", () => {
-  it("asks the instance with the download identity and the folder", async () => {
-    const { calls } = await scan("sonarr", sonarrScan);
+  it("asks the instance for existing files as well as new ones", async () => {
+    const { calls } = await scanTracked("sonarr", trackedRequest);
+    const scan = calls[1];
 
-    expect(calls[0]?.url.pathname).toBe("/api/v3/manualimport");
-    expect(calls[0]?.url.searchParams.get("downloadId")).toBe(sonarrScan.downloadId);
-    expect(calls[0]?.url.searchParams.get("folder")).toBe(sonarrScan.folder);
+    expect(scan?.url.pathname).toBe("/api/v3/manualimport");
     // Existing library files have to come back, because the specification
     // requires them to be distinguishable rather than hidden.
-    expect(calls[0]?.url.searchParams.get("filterExistingFiles")).toBe("false");
+    expect(scan?.url.searchParams.get("filterExistingFiles")).toBe("false");
   });
 
   it("scopes a library scan to the record it was asked for", async () => {
-    const { calls } = await scan("radarr", radarrScan);
+    const { calls } = await scanLibrary("radarr", libraryRequest);
 
-    expect(calls[0]?.url.searchParams.get("movieId")).toBe("8");
-    expect(calls[0]?.url.searchParams.get("downloadId")).toBeNull();
+    expect(calls[1]?.url.searchParams.get("movieId")).toBe("8");
+    expect(calls[1]?.url.searchParams.get("downloadId")).toBeNull();
   });
 
   it("maps the mapping, the file identity, and the structured rejections", async () => {
-    const { candidates } = await scan("sonarr", sonarrScan);
+    const candidates = candidatesOf(await scanTracked("sonarr", trackedRequest));
 
     expect(candidates).toHaveLength(3);
     const [mapped, unmapped, existing] = candidates;
@@ -157,7 +185,7 @@ describe("candidate mapping", () => {
   });
 
   it("maps a Radarr scan, including a rejected sample with no media mapping", async () => {
-    const { candidates } = await scan("radarr", radarrScan);
+    const candidates = candidatesOf(await scanLibrary("radarr", libraryRequest));
 
     const [movie, sample] = candidates;
     expect(movie?.media).toEqual({ application: "radarr", kind: "movie", id: "8" });
@@ -173,13 +201,13 @@ describe("candidate mapping", () => {
   });
 
   it("gives the same file the same identity and different files different ones", async () => {
-    const first = await scan("sonarr", sonarrScan);
-    const second = await scan("sonarr", sonarrScan);
+    const first = candidatesOf(await scanTracked("sonarr", trackedRequest));
+    const second = candidatesOf(await scanTracked("sonarr", trackedRequest));
 
-    expect(first.candidates[0]?.fileIdentity).toBe(second.candidates[0]?.fileIdentity);
-    expect(first.candidates[0]?.fileIdentity).not.toBe(first.candidates[1]?.fileIdentity);
+    expect(first[0]?.fileIdentity).toBe(second[0]?.fileIdentity);
+    expect(first[0]?.fileIdentity).not.toBe(first[1]?.fileIdentity);
     // A digest, not a path: sixteen hexadecimal characters and nothing else.
-    expect(first.candidates[0]?.fileIdentity).toMatch(/^[0-9a-f]{16}$/u);
+    expect(first[0]?.fileIdentity).toMatch(/^[0-9a-f]{16}$/u);
   });
 
   it("keeps every directory above the file out of its name", () => {
@@ -196,9 +224,9 @@ describe("candidate mapping", () => {
 
 describe("candidate disclosure", () => {
   it("returns nothing a caller could locate the file with", async () => {
-    const sonarr = await scan("sonarr", sonarrScan);
-    const radarr = await scan("radarr", radarrScan);
-    const serialized = JSON.stringify([sonarr.candidates, radarr.candidates]);
+    const sonarr = candidatesOf(await scanTracked("sonarr", trackedRequest));
+    const radarr = candidatesOf(await scanLibrary("radarr", libraryRequest));
+    const serialized = JSON.stringify([sonarr, radarr]);
 
     // Read out of the recording rather than written here, so the assertion
     // cannot stop naming what the instance actually serves.
@@ -216,7 +244,7 @@ describe("candidate disclosure", () => {
     }
     expect(serialized).not.toContain("/media/example");
     expect(serialized).not.toContain("/downloads");
-    expect(serialized).not.toContain(sonarrScan.downloadId);
+    expect(serialized).not.toContain(recordedDownloadId);
     // The relative path carries the directory chain inside the download folder,
     // which is a location too.
     expect(serialized).not.toContain("Season 02/");
@@ -243,9 +271,15 @@ describe("candidate disclosure", () => {
           }
         : row,
     );
-    const harness = libraryHarness("sonarr", () => jsonResponse(laced));
-    const scanned = await readCandidates(harness.client, sonarrScan);
-    const serialized = JSON.stringify(scanned.candidates);
+    const queue = await activityFixture<unknown[]>("sonarr", "queue/details");
+    const harness = libraryHarness("sonarr", (call) =>
+      jsonResponse(call.url.pathname.endsWith("/manualimport") ? laced : queue),
+    );
+    const scanned = await scanTrackedDownload(harness.client, "sonarr", trackedRequest);
+    if (scanned.status !== "ok") {
+      throw new Error(`Expected a scan, got ${scanned.status}`);
+    }
+    const serialized = JSON.stringify(scanned.scan.candidates);
 
     // A control, so the assertions below cannot pass for the wrong reason.
     expect(JSON.stringify(laced)).toContain(canaryPath);
@@ -256,12 +290,12 @@ describe("candidate disclosure", () => {
     expect(serialized).not.toContain("/media/private");
     // What was not a path survives, so the scrubbing is not simply dropping the
     // fields.
-    expect(scanned.candidates[0]?.customFormats).toEqual(["Example Format"]);
-    expect(scanned.candidates[0]?.indexerFlags).toEqual(["freeleech"]);
+    expect(scanned.scan.candidates[0]?.customFormats).toEqual(["Example Format"]);
+    expect(scanned.scan.candidates[0]?.indexerFlags).toEqual(["freeleech"]);
   });
 
   it("scrubs a rejection that quotes the path it objected to", async () => {
-    const { candidates } = await scan("sonarr", sonarrScan);
+    const candidates = candidatesOf(await scanTracked("sonarr", trackedRequest));
     const reason = candidates[1]?.decision.rejections[0]?.reason ?? "";
 
     expect(reason).toContain("Unable to parse episode");
@@ -276,7 +310,7 @@ describe("candidate references", () => {
   }
 
   async function firstCandidate(): Promise<ImportCandidate> {
-    const { candidates } = await scan("sonarr", sonarrScan);
+    const candidates = candidatesOf(await scanTracked("sonarr", trackedRequest));
     const candidate = candidates[0];
     if (candidate === undefined) {
       throw new Error("The recorded scan produced no candidate");
@@ -295,7 +329,7 @@ describe("candidate references", () => {
     // and what it looks up must be as free of locations as what it answers.
     const entry = references.resolve(reference as string, "import_candidate");
     expect(JSON.stringify(entry)).not.toContain("/media/example");
-    expect(JSON.stringify(entry)).not.toContain(sonarrScan.downloadId);
+    expect(JSON.stringify(entry)).not.toContain(recordedDownloadId);
   });
 
   it("resolves back into the context a later step needs", async () => {
@@ -371,6 +405,23 @@ describe("candidate references", () => {
       [
         "existing file zero",
         { ...candidate, context: { ...candidate.context, existingFileId: 0 } },
+      ],
+      // The kind is recorded twice on a candidate and stored once on the
+      // reference, so the two have to agree: minting one as tracked while
+      // validating it as a library context is a reference that mints and then
+      // refuses to resolve.
+      [
+        "disagreeing scan kinds",
+        {
+          ...candidate,
+          sourceKind: "tracked_download",
+          context: {
+            ...candidate.context,
+            sourceKind: "library_context",
+            queueItemId: undefined,
+            mediaId: 12,
+          },
+        },
       ],
     ];
 

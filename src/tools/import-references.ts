@@ -95,6 +95,13 @@ export function isNameableCandidate(candidate: ImportCandidate): boolean {
   if (!(importSourceKinds as readonly string[]).includes(candidate.sourceKind)) {
     return false;
   }
+  // The kind is recorded in two places on a candidate, and only one of them is
+  // stored on the reference. They have to agree, or a candidate could be minted
+  // as one kind and validated as the other — which is a reference that mints
+  // and then refuses to resolve.
+  if (candidate.sourceKind !== candidate.context.sourceKind) {
+    return false;
+  }
   if (!fieldRules.identity(candidate.fileIdentity)) {
     return false;
   }
@@ -121,7 +128,7 @@ export function isNameableCandidate(candidate: ImportCandidate): boolean {
   // And whatever this kind of scan is re-read through has to be there at all: a
   // tracked candidate without its queue row, or a library candidate without its
   // media record, could not be revalidated against current state.
-  return context.sourceKind === "tracked_download"
+  return candidate.sourceKind === "tracked_download"
     ? fieldRules.recordId(context.queueItemId)
     : fieldRules.recordId(context.mediaId);
 }

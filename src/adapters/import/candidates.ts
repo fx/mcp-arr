@@ -153,12 +153,15 @@ const libraryRecordSchema = z.object({ id: upstreamId, path: upstreamText });
 /**
  * What one scan needs to reach the upstream endpoint, and nobody else needs.
  *
- * It exists for the length of a single call. The folder is a canonical path and
- * the download identifier is the download client's own, which is exactly why
- * this is an internal type rather than part of the model: nothing that holds
- * one is ever returned, serialized, or retained on a reference.
+ * It exists for the length of a single call, and it is deliberately **not
+ * exported**. The folder is a canonical path and the download identifier is the
+ * download client's own, so a type a caller could construct would be a way to
+ * point a scan at any directory on the server — which is exactly what the
+ * specification forbids this surface from accepting. The only things that build
+ * one are the two resolvers below, and both take their values from upstream
+ * state rather than from an argument.
  */
-export interface ImportScanContext {
+interface ImportScanContext {
   readonly application: MediaApplication;
   readonly sourceKind: ImportSourceKind;
   readonly folder?: string | undefined;
@@ -168,7 +171,7 @@ export interface ImportScanContext {
   readonly queueItemId?: number | undefined;
 }
 
-export type ScanResolution =
+type ScanResolution =
   | { readonly ok: true; readonly context: ImportScanContext }
   | { readonly ok: false; readonly reason: "absent" | "unmapped" };
 
@@ -187,7 +190,7 @@ export type ScanResolution =
  * neither an output path nor a download identifier cannot be scanned, and
  * saying so is more useful than reporting the row as gone.
  */
-export async function readTrackedScanContext(
+async function readTrackedScanContext(
   client: UpstreamClient,
   application: MediaApplication,
   request: { readonly queueItemId: number; readonly mediaId?: number | undefined },
@@ -235,7 +238,7 @@ export async function readTrackedScanContext(
  * manage. A record reporting no path is `unmapped` rather than absent — it
  * exists, and there is simply nothing under it to scan.
  */
-export async function readLibraryScanContext(
+async function readLibraryScanContext(
   client: UpstreamClient,
   application: MediaApplication,
   request: { readonly mediaId: number; readonly seasonNumber?: number | undefined },
@@ -467,7 +470,7 @@ export interface CandidateScan {
   readonly unmappable: number;
 }
 
-export async function readCandidates(
+async function readCandidates(
   client: UpstreamClient,
   context: ImportScanContext,
 ): Promise<CandidateScan> {
@@ -483,4 +486,47 @@ export async function readCandidates(
     (candidate): candidate is ImportCandidate => candidate !== undefined,
   );
   return { candidates, unmappable: mapped.length - candidates.length };
+}
+
+/** What a scan answers, whichever reference it started from. */
+export type CandidateScanResult =
+  | { readonly status: "ok"; readonly scan: CandidateScan }
+  /** The queue row or library record the scan was to start from is gone. */
+  | { readonly status: "absent" }
+  /** It exists but names no location, so there is nothing to scan. */
+  | { readonly status: "unmapped" };
+
+/**
+ * Scans the download a queue reference names.
+ *
+ * This and {@link scanLibraryContext} are the only ways into a candidate scan,
+ * and that is the design rather than a convenience. Both derive the folder and
+ * the download identity from upstream state — the queue row, the library record
+ * — so no caller-supplied value decides where the instance looks. A scan
+ * entry point that accepted a folder would be a filesystem browser wearing a
+ * manual-import name.
+ */
+export async function scanTrackedDownload(
+  client: UpstreamClient,
+  application: MediaApplication,
+  request: { readonly queueItemId: number; readonly mediaId?: number | undefined },
+): Promise<CandidateScanResult> {
+  const resolved = await readTrackedScanContext(client, application, request);
+  if (!resolved.ok) {
+    return { status: resolved.reason };
+  }
+  return { status: "ok", scan: await readCandidates(client, resolved.context) };
+}
+
+/** Scans the folder the application itself holds for a series or a movie. */
+export async function scanLibraryContext(
+  client: UpstreamClient,
+  application: MediaApplication,
+  request: { readonly mediaId: number; readonly seasonNumber?: number | undefined },
+): Promise<CandidateScanResult> {
+  const resolved = await readLibraryScanContext(client, application, request);
+  if (!resolved.ok) {
+    return { status: resolved.reason };
+  }
+  return { status: "ok", scan: await readCandidates(client, resolved.context) };
 }
