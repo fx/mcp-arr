@@ -11,6 +11,8 @@ import type { MediaApplication } from "../src/adapters/library/model.js";
 import { createManualClock } from "../src/state/clock.js";
 import { createReferenceStore } from "../src/state/references.js";
 import {
+  type CandidateDetail,
+  fingerprintFor,
   isNameableCandidate,
   mintCandidateReference,
   resolveCandidateReference,
@@ -413,12 +415,20 @@ describe("candidate references", () => {
     }
     expect(references.size()).toBe(before);
 
-    // A library-context candidate is nameable on its media record instead.
+    // A library-context candidate is nameable on the record its scan was
+    // scoped to instead, which is a different fact from the media its mapping
+    // proposes — an unmapped file under a movie's folder has the first and not
+    // the second.
     expect(
       isNameableCandidate({
         ...candidate,
         sourceKind: "library_context",
-        context: { ...candidate.context, sourceKind: "library_context", queueItemId: undefined },
+        context: {
+          ...candidate.context,
+          sourceKind: "library_context",
+          queueItemId: undefined,
+          scanMediaId: 12,
+        },
       }),
     ).toBe(true);
   });
@@ -434,13 +444,34 @@ describe("candidate references", () => {
     const invalidClasses: readonly [string, ImportCandidate][] = [
       ["queue item zero", { ...candidate, context: { ...candidate.context, queueItemId: 0 } }],
       ["candidate zero", { ...candidate, context: { ...candidate.context, candidateId: 0 } }],
-      ["media zero", { ...candidate, context: { ...candidate.context, mediaId: 0 } }],
-      ["negative season", { ...candidate, context: { ...candidate.context, seasonNumber: -1 } }],
-      ["episode zero", { ...candidate, context: { ...candidate.context, episodeIds: [0] } }],
+      // The mapping the caller was shown is what gets stored, so this is the
+      // field that has to be refused rather than the context's copy of it.
+      [
+        "mapped media zero",
+        {
+          ...candidate,
+          media: { application: "sonarr" as const, kind: "series" as const, id: "0" },
+        },
+      ],
+      ["scan media zero", { ...candidate, context: { ...candidate.context, scanMediaId: 0 } }],
+      // The season the caller was shown, for the same reason as the mapping:
+      // the context's copy is not what gets stored.
+      ["negative season", { ...candidate, seasonNumber: -1 }],
+      [
+        "episode zero",
+        {
+          ...candidate,
+          episodes: [{ application: "sonarr" as const, kind: "episode" as const, id: "0" }],
+        },
+      ],
       ["negative size", { ...candidate, sizeBytes: -1 }],
       [
         "existing file zero",
-        { ...candidate, context: { ...candidate.context, existingFileId: 0 } },
+        {
+          ...candidate,
+          existingLibraryFile: true,
+          context: { ...candidate.context, existingFileId: 0 },
+        },
       ],
       // The kind is recorded twice on a candidate and stored once on the
       // reference, so the two have to agree: minting one as tracked while
@@ -455,7 +486,7 @@ describe("candidate references", () => {
             ...candidate.context,
             sourceKind: "library_context",
             queueItemId: undefined,
-            mediaId: 12,
+            scanMediaId: 12,
           },
         },
       ],
@@ -467,6 +498,31 @@ describe("candidate references", () => {
     }
     expect(references.size()).toBe(before);
   });
+
+  /**
+   * Writes an otherwise-valid snapshot with one thing changed.
+   *
+   * The fingerprint is recomputed from the detail unless the test is about the
+   * fingerprint itself, which is what makes each of these prove the rule it
+   * names: leaving a stale digest in place would refuse every case for that one
+   * reason and prove nothing about the field under test.
+   */
+  function corrupt(
+    references: ReturnType<typeof store>,
+    reference: string,
+    detail: Record<string, unknown>,
+    overrides: Record<string, unknown> = {},
+  ): void {
+    references.update(reference, "import_candidate", {
+      kind: "domain",
+      snapshot: {
+        upstreamId: String((detail as { candidateId?: number }).candidateId ?? 0),
+        fingerprint: fingerprintFor(detail as unknown as CandidateDetail),
+        detail,
+        ...overrides,
+      },
+    });
+  }
 
   it("refuses a snapshot whose own identifier or fingerprint is corrupt", async () => {
     // The two fields the reference store owns are validated too, rather than
@@ -485,7 +541,13 @@ describe("candidate references", () => {
       importable: candidate.decision.importable,
     };
 
-    const corrupt: readonly [string, Record<string, unknown>][] = [
+    // Each case starts from a snapshot that would resolve — correct detail,
+    // correct identifier, recomputed fingerprint — and changes exactly one
+    // thing, so the refusal is attributable to that thing.
+    corrupt(references, reference, detail);
+    expect(resolveCandidateReference(references, reference, "sonarr").ok).toBe(true);
+
+    const cases: readonly [string, Record<string, unknown>][] = [
       ["a path where the identifier belongs", { upstreamId: "/media/example/file.mkv" }],
       ["an identifier naming another row", { upstreamId: "4242" }],
       ["a fingerprint that is not a digest", { fingerprint: "/media/example" }],
@@ -498,16 +560,8 @@ describe("candidate references", () => {
       ["an unknown field", { extra: "unexpected" }],
     ];
 
-    for (const [label, overrides] of corrupt) {
-      references.update(reference, "import_candidate", {
-        kind: "domain",
-        snapshot: {
-          upstreamId: "3001",
-          fingerprint: "0123456789abcdef",
-          detail,
-          ...overrides,
-        },
-      });
+    for (const [label, overrides] of cases) {
+      corrupt(references, reference, detail, overrides);
       expect(resolveCandidateReference(references, reference, "sonarr").ok, label).toBe(false);
     }
   });
@@ -517,18 +571,13 @@ describe("candidate references", () => {
     const candidate = await firstCandidate();
     const reference = mintCandidateReference(references, candidate) as string;
 
-    references.update(reference, "import_candidate", {
-      kind: "domain",
-      snapshot: {
-        upstreamId: "3001",
-        fingerprint: "x",
-        detail: {
-          kind: "import_candidate",
-          sourceKind: "tracked_download",
-          queueItemId: 502,
-          fileIdentity: "/media/example/downloads/complete/file.mkv",
-        },
-      },
+    corrupt(references, reference, {
+      kind: "import_candidate",
+      sourceKind: "tracked_download",
+      candidateId: 3001,
+      queueItemId: 502,
+      fileIdentity: "/media/example/downloads/complete/file.mkv",
+      importable: true,
     });
 
     expect(resolveCandidateReference(references, reference, "sonarr").ok).toBe(false);
@@ -539,17 +588,12 @@ describe("candidate references", () => {
     const candidate = await firstCandidate();
     const reference = mintCandidateReference(references, candidate) as string;
 
-    references.update(reference, "import_candidate", {
-      kind: "domain",
-      snapshot: {
-        upstreamId: "3001",
-        fingerprint: "x",
-        detail: {
-          kind: "import_candidate",
-          sourceKind: "tracked_download",
-          fileIdentity: candidate.fileIdentity,
-        },
-      },
+    corrupt(references, reference, {
+      kind: "import_candidate",
+      sourceKind: "tracked_download",
+      candidateId: 3001,
+      fileIdentity: candidate.fileIdentity,
+      importable: true,
     });
 
     expect(resolveCandidateReference(references, reference, "sonarr").ok).toBe(false);
@@ -585,20 +629,16 @@ describe("candidate references", () => {
     const candidate = await firstCandidate();
     const reference = mintCandidateReference(references, candidate) as string;
 
-    references.update(reference, "import_candidate", {
-      kind: "domain",
-      snapshot: {
-        upstreamId: "3001",
-        fingerprint: "x",
-        detail: {
-          kind: "import_candidate",
-          sourceKind: "tracked_download",
-          fileIdentity: candidate.fileIdentity,
-          // A malformed episode list is refused rather than coerced into an
-          // empty mapping, which a later import would have acted on.
-          episodeIds: ["not-an-id"],
-        },
-      },
+    corrupt(references, reference, {
+      kind: "import_candidate",
+      sourceKind: "tracked_download",
+      candidateId: 3001,
+      queueItemId: 502,
+      fileIdentity: candidate.fileIdentity,
+      importable: true,
+      // A malformed episode list is refused rather than coerced into an empty
+      // mapping, which a later import would have acted on.
+      episodeIds: ["not-an-id"],
     });
 
     expect(resolveCandidateReference(references, reference, "sonarr").ok).toBe(false);

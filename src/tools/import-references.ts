@@ -60,7 +60,10 @@ const candidateDetailSchema = z
     sourceKind: z.enum(importSourceKinds),
     candidateId: recordIdSchema.optional(),
     queueItemId: recordIdSchema.optional(),
+    /** The media the proposed mapping names, which an unmapped file lacks. */
     mediaId: recordIdSchema.optional(),
+    /** The record a library-context scan was scoped to. */
+    scanMediaId: recordIdSchema.optional(),
     seasonNumber: seasonNumberSchema.optional(),
     episodeIds: z.array(recordIdSchema).optional(),
     /**
@@ -87,7 +90,7 @@ const candidateDetailSchema = z
     (detail) =>
       detail.sourceKind === "tracked_download"
         ? detail.queueItemId !== undefined
-        : detail.mediaId !== undefined,
+        : detail.scanMediaId !== undefined,
     {
       // Whatever this kind of scan is re-read through has to be there at all: a
       // tracked candidate without its queue row, or a library candidate without
@@ -123,23 +126,52 @@ const candidateSnapshotSchema = z
     error: "the retained fingerprint does not describe the candidate beside it",
   });
 
-type CandidateDetail = z.infer<typeof candidateDetailSchema>;
+export type CandidateDetail = z.infer<typeof candidateDetailSchema>;
 
-/** The detail one candidate would be stored as, before anything stores it. */
+/**
+ * The detail one candidate would be stored as, before anything stores it.
+ *
+ * Every field a caller was shown is read from the field the caller was shown —
+ * the proposed media from `media`, the episodes from `episodes`, the decision
+ * from `decision` — rather than from the context's copy of the same fact. A
+ * candidate carries several of these twice, and only one copy is stored, so
+ * reading the stored one would let a reference be bound to a mapping other than
+ * the one presented. Deriving from what was presented makes the two agree by
+ * construction instead of by a check that has to remember every field.
+ */
 function detailFor(candidate: ImportCandidate): Record<string, unknown> {
+  const context = candidate.context;
   return {
     kind: detailKind,
     sourceKind: candidate.sourceKind,
-    candidateId: candidate.context.candidateId,
-    queueItemId: candidate.context.queueItemId,
-    mediaId: candidate.context.mediaId,
-    seasonNumber: candidate.context.seasonNumber,
-    episodeIds: candidate.context.episodeIds,
+    candidateId: context.candidateId,
+    queueItemId: context.queueItemId,
+    mediaId: numericId(candidate.media?.id),
+    scanMediaId: context.scanMediaId,
+    seasonNumber: candidate.seasonNumber,
+    episodeIds:
+      candidate.episodes === undefined
+        ? undefined
+        : candidate.episodes.map((episode) => numericId(episode.id)),
     fileIdentity: candidate.fileIdentity,
     sizeBytes: candidate.sizeBytes,
-    existingFileId: candidate.context.existingFileId,
+    // The boolean the caller saw decides whether the identifier is stored at
+    // all, so a candidate presented as a new import cannot be bound to a
+    // library file.
+    existingFileId: candidate.existingLibraryFile ? context.existingFileId : undefined,
     importable: candidate.decision.importable,
   };
+}
+
+/**
+ * A media reference's identifier as the number the detail retains.
+ *
+ * References carry it as a string because that is the published shape; a value
+ * that is not a plain identifier answers `undefined`, which the schema then
+ * refuses where one was required.
+ */
+function numericId(value: string | undefined): number | undefined {
+  return value !== undefined && /^\d+$/u.test(value) ? Number(value) : undefined;
 }
 
 /**
@@ -162,13 +194,14 @@ function detailFor(candidate: ImportCandidate): Record<string, unknown> {
  * carry: a reference is bound to exactly one application by the store, and that
  * binding is checked before this is.
  */
-function fingerprintFor(detail: CandidateDetail): string {
+export function fingerprintFor(detail: CandidateDetail): string {
   return queryDigest([
     detail.sourceKind,
     detail.candidateId,
     detail.fileIdentity,
     detail.sizeBytes,
     detail.mediaId,
+    detail.scanMediaId,
     detail.seasonNumber,
     ...[...(detail.episodeIds ?? [])].sort((left, right) => left - right),
     detail.existingFileId,
@@ -298,6 +331,7 @@ function contextFrom(
     candidateId: detail.candidateId,
     queueItemId: detail.queueItemId,
     mediaId: detail.mediaId,
+    scanMediaId: detail.scanMediaId,
     seasonNumber: detail.seasonNumber,
     episodeIds: detail.episodeIds,
     fileIdentity: detail.fileIdentity,

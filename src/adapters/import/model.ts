@@ -94,8 +94,17 @@ export interface ImportCandidateContext {
   readonly candidateId?: number | undefined;
   /** The queue row a tracked scan started from, so a later step re-reads it. */
   readonly queueItemId?: number | undefined;
-  /** The series or movie the scan was scoped to, or the mapping proposes. */
+  /**
+   * The series or movie the *proposed mapping* names, where it names one.
+   *
+   * Kept apart from {@link scanMediaId} deliberately: an unmapped file found
+   * under a movie's own folder has a scan record and no mapping, and one number
+   * standing for both would have said the file was mapped to the folder it
+   * happened to sit in.
+   */
   readonly mediaId?: number | undefined;
+  /** The library record a library-context scan was scoped to. */
+  readonly scanMediaId?: number | undefined;
   readonly seasonNumber?: number | undefined;
   /** The episodes the proposed mapping names, as upstream identifiers. */
   readonly episodeIds?: readonly number[] | undefined;
