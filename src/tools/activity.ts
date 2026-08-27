@@ -91,6 +91,17 @@ function createMediaMinter(references: ReferenceStore) {
   const minted = new Map<string, string>();
 
   return (ref: MediaRef) => {
+    // Checked before anything is minted, the way the library handler checks the
+    // kind a view may publish. Only a record can be named this way — a row is
+    // associated with a series, a movie, or an episode, never with a file — and
+    // an adapter that mapped one fails here, naming the kind, instead of
+    // surfacing a layer later as a result that merely did not conform. Checking
+    // first is what keeps the failure clean: a reference minted for a kind this
+    // call then refuses would outlive the failed call in the store.
+    if (!isMediaRecordKind(ref.kind)) {
+      throw new Error(`an activity view named a ${ref.kind} where only a record can appear`);
+    }
+
     const key = mediaRefKey(ref);
     let reference = minted.get(key);
     if (reference === undefined) {
@@ -107,14 +118,6 @@ function createMediaMinter(references: ReferenceStore) {
         }),
       }).reference;
       minted.set(key, reference);
-    }
-    // Checked rather than asserted, the way the library handler checks the kind
-    // a view may publish. Only a record can be named this way — a row is
-    // associated with a series, a movie, or an episode, never with a file — and
-    // an adapter that mapped one fails here, naming the kind, instead of
-    // surfacing a layer later as a result that merely did not conform.
-    if (!isMediaRecordKind(ref.kind)) {
-      throw new Error(`an activity view named a ${ref.kind} where only a record can appear`);
     }
     return { reference, application: ref.application, kind: ref.kind, id: ref.id };
   };
