@@ -508,12 +508,29 @@ async function applyItems(
  * state the mutation was compiled against is still in hand, so the row can be
  * compared to it rather than to a second, later reading of itself.
  *
- * The three verdicts settle three different ways, and none of them rounds
- * toward the convenient answer. A row that has left the queue settles the item
- * succeeded. A row still queued exactly as it was settles it failed, which is
- * the one state a later identical attempt may reuse — nothing moved, so nothing
- * arrived. Anything else keeps the item outcome-unknown and returns the failure
- * that keeps the whole call's receipt reconcilable.
+ * Only one of the ladder's three verdicts is acted on here, and the asymmetry
+ * is the point.
+ *
+ * A row that has **left the queue** settles the item succeeded: every one of
+ * these transitions asks for the row to go, so its absence establishes what a
+ * delivered response would have.
+ *
+ * A row **still queued exactly as it was** does *not* settle the item failed,
+ * even though {@link reconcileTarget} reports that verdict for it. This runs
+ * moments after the answer went missing, which is precisely when an instance
+ * that did process the request may not yet answer its queue any differently —
+ * so an unchanged row is weak evidence here, not proof that nothing arrived.
+ * And `failed` is the one settlement a later identical attempt may reuse, so
+ * acting on it would license re-sending a mutation that may already have
+ * applied. That is the direction this project never rounds in. The same verdict
+ * is safe for the store's own reconciliation later, once the race has passed.
+ *
+ * Everything else — an unreadable queue, a row that moved without an
+ * attributable event — is undecided by construction.
+ *
+ * So the two cases that are not a confirmed success both keep the item
+ * outcome-unknown and return the failure that keeps the whole call's receipt
+ * reconcilable.
  */
 async function reconcileLostItem(
   invocation: OperationInvocation,
@@ -556,15 +573,9 @@ async function reconcileLostItem(
     return { outcome, settlement: { status: "succeeded", items: [outcome] } };
   }
 
-  // A `failed` verdict is deliberately not acted on here, and this is the one
-  // place the ladder is read more conservatively than it is written. Reaching it
-  // means the row still looks untouched — but this runs moments after the answer
-  // was lost, which is exactly when an instance that did process the request may
-  // not yet answer its queue any differently. `failed` is the one settlement a
-  // later identical attempt may reuse, so acting on it here would license
-  // re-sending a mutation that may already have applied. The record stays
-  // outcome-unknown instead, and the same verdict is safe for the store's own
-  // reconciliation later, once that race has passed.
+  // Both remaining verdicts land here, including `failed`; the reason this
+  // function reads that one more conservatively than the ladder writes it is
+  // above, and is stated once so the two cannot drift apart.
   const outcome = itemOutcome(item.reference, lost, [
     "the answer to this request was lost and upstream state could not establish what it did",
   ]);
@@ -850,9 +861,11 @@ const corroborationPageSize = 50;
 /**
  * Reads the queue row a target names, or says the read itself failed.
  *
- * `absent` is the decisive answer. Every queue transition that sends anything
- * removes the row from the queue, so a row that is gone is the instance's own
- * confirmation that the request arrived.
+ * `absent` is the answer a verdict is decided from, because every queue
+ * transition that sends anything asks for the row to leave the queue. It is not
+ * by itself proof that *this* request removed it — {@link reconcileTarget}
+ * reasons about what absence does and does not establish, and this function
+ * only reports what it read.
  */
 async function readTargetRow(
   options: QueueReconciliationOptions,
@@ -1024,9 +1037,9 @@ async function reconcileTarget(
  * Supplied here because this is the change that knows where to look, which is
  * what {@link ApplyReconciliation} says such a reader is for. It is only ever
  * run against an outcome-unknown record: the store refuses to re-open a settled
- * one, and re-reads the record after the awaits below so a concurrent settlement
- * that observed the mutation itself is never overwritten by one that observed
- * only its aftermath.
+ * one, and re-reads the record after this reader returns, so a concurrent
+ * settlement that observed the mutation itself is never overwritten by one that
+ * observed only its aftermath.
  *
  * A bulk apply settles only when every row agrees. One row succeeding and
  * another failing is a partial outcome, and there is no honest single verdict
@@ -1087,6 +1100,10 @@ export function createQueueReconciliationReader(
  * Built from the precondition reader's own context, so what reconciliation
  * compares against is exactly what the mutation was compiled from rather than a
  * second, later reading of the same rows.
+ *
+ * Only rows whose transition sends something are targets. A routed manual
+ * import makes no upstream request, so there is no lost outcome to reconcile
+ * for it — the same reason it claims no apply record of its own.
  */
 export function reconciliationTargetsFor(validated: unknown): readonly QueueReconciliationTarget[] {
   if (!isQueueResolveContext(validated)) {
