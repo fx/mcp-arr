@@ -260,9 +260,27 @@ export const libraryChangeIntentSchema = z.discriminatedUnion("intent", [
     files: fileSelection,
   }),
   z.strictObject({
+    /**
+     * Renames the files of one series, season, or movie. It names a single
+     * record rather than a bulk selection because a rename is one upstream
+     * command per record, and the preview an apply acts on is read for that one
+     * record: every file the command is given comes from that preview, so a
+     * rename can never reach a file the plan did not disclose.
+     */
     intent: z.literal("rename"),
     ...mutationBaseShape,
-    items: mediaSelection,
+    media: mediaReferenceSchema,
+  }),
+  z.strictObject({
+    /**
+     * Moves one record's files to another root folder. Distinct from
+     * `edit_media`'s `rootFolder`, which re-points a record without touching
+     * the data on disk; this one asks the application to move it.
+     */
+    intent: z.literal("move_media"),
+    ...mutationBaseShape,
+    media: mediaReferenceSchema,
+    rootFolder: configurationReferenceSchema,
   }),
 ]);
 

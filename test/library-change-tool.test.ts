@@ -39,6 +39,8 @@ const servedRoutes: Readonly<Record<string, readonly string[]>> = {
     "series/lookup",
     "episode",
     "episodefile",
+    "rename",
+    "command",
     "rootfolder",
     "qualityprofile",
     "qualitydefinition",
@@ -51,6 +53,8 @@ const servedRoutes: Readonly<Record<string, readonly string[]>> = {
     "movie/lookup",
     "collection",
     "moviefile",
+    "rename",
+    "command",
     "rootfolder",
     "qualityprofile",
     "qualitydefinition",
@@ -212,6 +216,31 @@ async function createInstances(): Promise<Instances> {
       return new Response(null, { status: 200 });
     }
 
+    // A started command is answered the way an instance answers one: with the
+    // command record it queued, which is what a job projection is built from.
+    if (method === "POST" && route === "command" && isRecord(raw)) {
+      const created = { ...raw, id: 9001, status: "queued", trigger: "manual" };
+      collectionOf(application, "command").push(created);
+      return silent.has(application)
+        ? new Response(null, { status: 201 })
+        : jsonResponse(created, 201);
+    }
+
+    // The rename preview really is a query: it answers for the record, and the
+    // season, the caller asked about.
+    if (method === "GET" && route === "rename") {
+      const parentKey = application === "sonarr" ? "seriesId" : "movieId";
+      const parentId = Number(query[parentKey]);
+      const season = query.seasonNumber;
+      return jsonResponse(
+        collectionOf(application, "rename").filter(
+          (record) =>
+            record[parentKey] === parentId &&
+            (season === undefined || record.seasonNumber === Number(season)),
+        ),
+      );
+    }
+
     if (method === "POST" && isRecord(raw)) {
       const created = { ...raw, id: 999 };
       collectionOf(application, route).push(created);
@@ -370,6 +399,18 @@ function writes(application: ApplicationId): readonly RecordedRequest[] {
   return instances.requests.filter(
     (request) => request.application === application && request.method !== "GET",
   );
+}
+
+/** Every command this call asked the instance to start, by upstream name. */
+function startedCommands(application: ApplicationId): readonly string[] {
+  return instances.requests
+    .filter(
+      (request) =>
+        request.application === application &&
+        request.method === "POST" &&
+        request.route === "command",
+    )
+    .map((request) => String(request.body?.name));
 }
 
 function outcomeFor(result: ToolResult<unknown>, application: ApplicationId) {
@@ -1578,7 +1619,261 @@ describe("arr_library_change delete_file", () => {
   });
 });
 
-describe("arr_library_change file disclosure", () => {
+describe("arr_library_change rename", () => {
+  it("previews the proposed paths without starting a rename command", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+
+    const planned = await change({ intent: "rename", mode: "plan", media: series.reference });
+
+    expect(planned.status).toBe("ok");
+    expect(planned.mutation?.requestedEffects).toEqual([
+      {
+        application: "sonarr",
+        severity: "destructive",
+        summary: "rename 2 file(s) of “Example Series” on disk",
+      },
+    ]);
+    // The proposed old and new paths are what a preview exists to return.
+    expect(outcomeFor(planned, "sonarr").warnings).toEqual([
+      expect.stringContaining(
+        "rename Season 01/Example Series - S01E01 - Example Pilot Bluray-1080p.mkv to Season 01/",
+      ),
+      expect.stringContaining("rename Season 02/"),
+    ]);
+    expect(writes("sonarr")).toEqual([]);
+  });
+
+  it("renames exactly the files the preview named, as an allowlisted command", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+
+    const applied = await change({ intent: "rename", mode: "apply", media: series.reference });
+
+    expect(applied.status).toBe("ok");
+    expect(startedCommands("sonarr")).toEqual(["RenameFiles"]);
+    expect(writes("sonarr")[0]?.body).toEqual({
+      name: "RenameFiles",
+      seriesId: 12,
+      files: [2001, 2003],
+    });
+
+    // The command became a job the caller can follow, and the reference really
+    // resolves through the job tool rather than merely looking like one.
+    const job = applied.mutation?.job;
+    expect(job).toMatch(/^job_/u);
+    const projected = await run(findToolDefinition("arr_job_get") as ToolDefinition, { job });
+    // The published command name is the allowlisted one this server sent, so
+    // nothing an instance chose to answer with reaches a tool result.
+    expect(projected.applications[0]?.data).toMatchObject({
+      command: { name: "RenameFiles", upstreamId: "9001" },
+      status: "queued",
+    });
+  });
+
+  it("narrows the preview to the season the reference names", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+    const seasons = await view({
+      view: "seasons",
+      series: series.reference,
+      applications: ["sonarr"],
+    });
+    if (seasons.view !== "seasons") {
+      throw new Error("Expected the seasons view");
+    }
+    const second = seasons.items.find((item) => item.sonarr.seasonNumber === 2);
+
+    const applied = await change({
+      intent: "rename",
+      mode: "apply",
+      media: requireReference(second?.reference, "season"),
+    });
+
+    expect(applied.status).toBe("ok");
+    expect(writes("sonarr")[0]?.body).toEqual({
+      name: "RenameFiles",
+      seriesId: 12,
+      files: [2003],
+    });
+  });
+
+  it("refuses a selection it cannot disclose in full rather than previewing part of it", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+    // More files than one result can list. Truncating the preview and renaming
+    // all of them anyway would let an apply touch files the plan never showed.
+    instances.replace(
+      "sonarr",
+      "rename",
+      Array.from({ length: 60 }, (_unused, index) => ({
+        seriesId: 12,
+        seasonNumber: 1,
+        episodeFileId: 3000 + index,
+        existingPath: `Season 01/Example Series - S01E${index} - Example Bluray-1080p.mkv`,
+        newPath: `Season 01/Example Series - S01E${index} - Example [Bluray-1080p].mkv`,
+      })),
+    );
+
+    const planned = await change({ intent: "rename", mode: "plan", media: series.reference });
+
+    expect(errorCodes(planned)).toContain("invalid_input");
+    expect(outcomeFor(planned, "sonarr").error?.message).toContain("select a single season");
+    expect(startedCommands("sonarr")).toEqual([]);
+  });
+
+  it("keeps a rename plan applicable when the record itself moved", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+    const planned = await change({ intent: "rename", mode: "plan", media: series.reference });
+
+    // The proposals are relative to the record's own folder, and the command
+    // names file identifiers rather than paths, so a relocation renames the
+    // same files the same way and is no reason to expire the plan.
+    instances.patch("sonarr", "series", 12, {
+      path: "/media/example/archive/Example Series",
+      rootFolderPath: "/media/example/archive",
+    });
+    const applied = await change({ mode: "apply", plan: planReference(planned) });
+
+    expect(errorCodes(applied)).not.toContain("stale_plan");
+    expect(startedCommands("sonarr")).toEqual(["RenameFiles"]);
+  });
+
+  it("refuses a plan whose proposed paths have changed", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+    const planned = await change({ intent: "rename", mode: "plan", media: series.reference });
+
+    // The instance now proposes something else, so the paths this plan
+    // disclosed are no longer the paths an apply would produce.
+    const proposals = instances.body("sonarr", "rename") as Record<string, unknown>[];
+    instances.replace(
+      "sonarr",
+      "rename",
+      proposals.filter((proposal) => proposal.seasonNumber === 1),
+    );
+    const applied = await change({ mode: "apply", plan: planReference(planned) });
+
+    expect(errorCodes(applied)).toContain("stale_plan");
+    expect(startedCommands("sonarr")).toEqual([]);
+  });
+
+  it("starts nothing for a record the instance proposes no rename for", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Retired Series");
+
+    const applied = await change({ intent: "rename", mode: "apply", media: series.reference });
+
+    expect(applied.status).toBe("ok");
+    expect(applied.mutation?.requestedEffects).toEqual([]);
+    expect(outcomeFor(applied, "sonarr").items).toEqual([
+      expect.objectContaining({
+        warnings: [expect.stringContaining("proposes no rename")],
+      }),
+    ]);
+    expect(startedCommands("sonarr")).toEqual([]);
+  });
+
+  it("refuses a record kind no rename preview is defined for", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+    const episodes = await view({
+      view: "episodes",
+      series: series.reference,
+      applications: ["sonarr"],
+    });
+    if (episodes.view !== "episodes") {
+      throw new Error("Expected the episodes view");
+    }
+
+    const applied = await change({
+      intent: "rename",
+      mode: "apply",
+      media: requireReference(episodes.items[0]?.reference, "episode"),
+    });
+
+    expect(errorCodes(applied)).toContain("unsupported_capability");
+    expect(writes("sonarr")).toEqual([]);
+  });
+});
+
+describe("arr_library_change move_media", () => {
+  it("moves a record with paths the instance reported, not paths a caller wrote", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+    // The archive root is in the instance's root-folder list but no library
+    // record uses it, so configuration observation is what will publish a
+    // reference for it; until then it is minted in exactly that shape.
+    const archiveRoot = state.references.mint({
+      kind: "configuration",
+      applications: ["sonarr"],
+      payload: () => ({
+        kind: "domain",
+        snapshot: { upstreamId: "2", fingerprint: "test", detail: { kind: "root_folder" } },
+      }),
+    }).reference;
+
+    const planned = await change({
+      intent: "move_media",
+      mode: "plan",
+      media: series.reference,
+      rootFolder: archiveRoot,
+    });
+
+    expect(planned.mutation?.requestedEffects).toEqual([
+      {
+        application: "sonarr",
+        severity: "destructive",
+        summary: "move the files of “Example Series” to the selected root folder",
+      },
+    ]);
+    expect(writes("sonarr")).toEqual([]);
+
+    const applied = await change({ mode: "apply", plan: planReference(planned) });
+
+    expect(applied.status).toBe("ok");
+    expect(startedCommands("sonarr")).toEqual(["MoveSeries"]);
+    expect(writes("sonarr")[0]?.body).toEqual({
+      name: "MoveSeries",
+      seriesId: 12,
+      sourcePath: "/media/example/series/Example Series",
+      // The record's own folder under the selected root, which is exactly where
+      // a root-folder edit would have re-pointed it without moving anything.
+      destinationPath: "/media/example/archive/Example Series",
+    });
+    expect(applied.mutation?.job).toMatch(/^job_/u);
+  });
+
+  it("sends nothing for a record already under the selected root folder", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+
+    const applied = await change({
+      intent: "move_media",
+      mode: "apply",
+      media: series.reference,
+      rootFolder: requireReference(series.rootFolder?.reference, "root folder"),
+    });
+
+    expect(applied.status).toBe("ok");
+    expect(applied.mutation?.requestedEffects).toEqual([]);
+    expect(outcomeFor(applied, "sonarr").items).toEqual([
+      expect.objectContaining({
+        warnings: [expect.stringContaining("already under the selected root folder")],
+      }),
+    ]);
+    expect(startedCommands("sonarr")).toEqual([]);
+  });
+
+  it("refuses a root folder the instance no longer has", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+    const rootFolder = requireReference(series.rootFolder?.reference, "root folder");
+    instances.replace("sonarr", "rootfolder", []);
+
+    const applied = await change({
+      intent: "move_media",
+      mode: "apply",
+      media: series.reference,
+      rootFolder,
+    });
+
+    expect(errorCodes(applied)).toContain("stale_reference");
+    expect(startedCommands("sonarr")).toEqual([]);
+  });
+});
+
+describe("arr_library_change file and path disclosure", () => {
   it("keeps upstream payload content and credentials out of every published field", async () => {
     const canary = "CANARY-SECRET-DO-NOT-LEAK";
     instances.patch("sonarr", "episodefile", 2001, { sceneName: canary, originalFilePath: canary });
@@ -1599,8 +1894,6 @@ describe("arr_library_change file disclosure", () => {
       JSON.stringify(applied),
       summarizeToolResult("arr_library_change", planned),
       summarizeToolResult("arr_library_change", applied),
-      // The retained plan record is process-local, and must hold the caller's
-      // intent rather than the upstream payload the plan was validated against.
       JSON.stringify(state.plans.resolve(planReference(planned))),
     ].join("\n");
 
@@ -1610,5 +1903,29 @@ describe("arr_library_change file disclosure", () => {
     // The value is still carried back to the instance untouched, which is the
     // whole reason a file edit is a read-modify-write.
     expect(writes("sonarr")[0]?.body).toMatchObject({ sceneName: canary });
+  });
+
+  it("starts only the commands the allowlist names, whatever the intent", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+    const archiveRoot = state.references.mint({
+      kind: "configuration",
+      applications: ["sonarr"],
+      payload: () => ({
+        kind: "domain",
+        snapshot: { upstreamId: "2", fingerprint: "test", detail: { kind: "root_folder" } },
+      }),
+    }).reference;
+
+    await change({ intent: "rename", mode: "apply", media: series.reference });
+    await change({
+      intent: "move_media",
+      mode: "apply",
+      media: series.reference,
+      rootFolder: archiveRoot,
+    });
+
+    // The command endpoint can start anything an instance knows how to do, so
+    // what this server ever names there is the whole of the guarantee.
+    expect(new Set(startedCommands("sonarr"))).toEqual(new Set(["RenameFiles", "MoveSeries"]));
   });
 });

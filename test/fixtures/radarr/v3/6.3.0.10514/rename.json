@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "application": "radarr",
+    "apiVersion": "v3",
+    "version": "6.3.0.10514",
+    "endpoint": "/api/v3/rename"
+  },
+  "body": [
+    {
+      "movieId": 8,
+      "movieFileId": 501,
+      "existingPath": "Example Movie (2021) Bluray-1080p.mkv",
+      "newPath": "Example Movie (2021) [Bluray-1080p]-EXAMPLEGRP.mkv"
+    }
+  ]
+}

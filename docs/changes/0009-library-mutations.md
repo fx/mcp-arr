@@ -63,9 +63,9 @@ The [Library Management spec](../specs/library-management/#lookup-and-add) owns 
   - [x] Add lookup-reference-based Sonarr series and Radarr movie creation
   - [x] Add typed monitoring, profile, root, tag, and application-specific edits
   - [x] Add duplicate detection, explicit search-on-add, dependency validation, and fixtures
-- [ ] Implement file and path mutations
+- [x] Implement file and path mutations
   - [x] Add file metadata update/delete and safe bulk grouping
-  - [ ] Add rename preview and allowlisted rename/move command workflows
+  - [x] Add rename preview and allowlisted rename/move command workflows
   - [x] Add explicit physical-data effects and current-state fingerprints
 - [ ] Register and verify `arr_library_change`
   - [ ] Add direct apply and plan/apply variants with per-item outcomes

@@ -358,8 +358,13 @@ function folderName(path: string): string | undefined {
  * the server does. Neither half is caller-authored: the root comes from the
  * instance's own root-folder list and the folder name from the record's current
  * path, so no supplied string can steer where a record points.
+ *
+ * Exported because a move has to arrive at the same answer this does. Re-pointing
+ * a record without touching the disk and asking the application to move it are
+ * two requests about one destination, and computing that destination twice is
+ * how they would come to disagree about where the record ends up.
  */
-function relocatePath(currentPath: string, rootFolderPath: string): string | undefined {
+export function relocatePath(currentPath: string, rootFolderPath: string): string | undefined {
   const name = folderName(currentPath);
   if (name === undefined) {
     return undefined;

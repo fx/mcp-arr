@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { UpstreamClient, UpstreamQuery } from "../../http/client.js";
+import type { UpstreamBody, UpstreamClient, UpstreamQuery } from "../../http/client.js";
 import type { ResourceRewrite, UpstreamResource } from "./changes.js";
 import type { MediaApplication, MediaFileKind, MediaRecordKind } from "./model.js";
 import {
@@ -12,19 +12,24 @@ import {
 } from "./parse.js";
 
 /**
- * The Sonarr and Radarr media-file and deletion write adapters.
+ * The Sonarr and Radarr file and path write adapters.
  *
  * These are the operations that touch the filesystem rather than the database,
- * so two rules hold on top of the ones the record adapters already keep.
+ * so three rules hold on top of the ones the record adapters already keep.
  *
  * Nothing here decides whether a mutation may run: the tool layer resolves
  * references, groups a selection into what upstream can process safely, and
  * reads current state, and this module is reached only once it has.
  *
- * And a file edit is a read-modify-write over the resource the instance
- * returned, for the same reason a record edit is — these APIs replace a whole
- * resource, and a payload assembled here would erase the fields this project
- * does not model.
+ * A file edit is a read-modify-write over the resource the instance returned,
+ * for the same reason a record edit is — these APIs replace a whole resource,
+ * and a payload assembled here would erase the fields this project does not
+ * model.
+ *
+ * And a rename or a move runs as a *named* command from the allowlist below,
+ * never as a name a caller or a payload supplied. The allowlist is what keeps
+ * the command endpoint — which can start anything an instance knows how to do —
+ * reachable for exactly two workflows and nothing else.
  */
 
 const fileRoutes: Readonly<Record<MediaFileKind, string>> = {
@@ -362,5 +367,234 @@ export function recordDeletionState(
     hasFile: resource.hasFile,
     fileCount: statistics?.episodeFileCount ?? statistics?.movieFileCount,
     sizeOnDisk: statistics?.sizeOnDisk,
+  };
+}
+
+/** What a path mutation depends on, and so what its read set observes. */
+export type PathDependency =
+  /**
+   * A rename: which record it is, and nothing about where that record sits. The
+   * proposals are fingerprinted beside this and are relative to the record's own
+   * folder, so a record that moved still renames the same files the same way.
+   */
+  | "record"
+  /** A move: that, and where the record is now, which is the path it sends. */
+  | "location";
+
+/**
+ * The state a rename or a move depends on, and discloses.
+ *
+ * Deliberately narrower than the state a metadata edit depends on. Monitoring,
+ * tags, a profile, and the root folder a record is filed under are all absent:
+ * neither workflow sends any of them and neither plan discloses one, so
+ * observing them would only make a valid plan expire because something
+ * unrelated moved, and a caller would learn to re-plan rather than to read why.
+ *
+ * The title is here even though neither request sends it, because both plans
+ * quote it — "rename 3 file(s) of “X”", "move the files of “X”" — and a plan
+ * must not be applied to a record that has since become a different one than
+ * the plan described. That is the same rule the add intent keeps for the
+ * candidate title it discloses: a read set observes what its plan disclosed,
+ * not only what its payload carries.
+ */
+export function recordPathState(
+  resource: UpstreamResource,
+  depends: PathDependency,
+): Readonly<Record<string, unknown>> {
+  const disclosed = { id: resource.id, title: resource.title };
+  return depends === "record" ? disclosed : { ...disclosed, path: resource.path };
+}
+
+/** The record a rename preview is read for. A season narrows it to one season. */
+export interface RenameTarget {
+  readonly kind: MediaRecordKind;
+  readonly id: number;
+  readonly seasonNumber?: number | undefined;
+}
+
+/** One file the instance proposes to rename, and where it proposes to put it. */
+export interface RenameProposal {
+  readonly fileId: number;
+  readonly existingPath?: string | undefined;
+  readonly newPath?: string | undefined;
+}
+
+const renameProposalSchema = z.looseObject({
+  episodeFileId: optionalUpstreamId,
+  movieFileId: optionalUpstreamId,
+  existingPath: upstreamText,
+  newPath: upstreamText,
+});
+
+/**
+ * Reads what the instance would rename, without renaming anything.
+ *
+ * This is the preview, and it is also the whole of what an apply then acts on:
+ * the file identifiers the command is given come from here, so a rename can
+ * never reach a file the preview did not name. Only proposals carrying a real
+ * file identifier are kept — one without it names nothing that could be
+ * renamed.
+ */
+export async function readRenameProposals(
+  client: UpstreamClient,
+  application: MediaApplication,
+  target: RenameTarget,
+): Promise<readonly RenameProposal[]> {
+  const route = "rename";
+  const query: UpstreamQuery =
+    application === "sonarr"
+      ? { seriesId: target.id, seasonNumber: target.seasonNumber }
+      : { movieId: target.id };
+  const proposals = parseUpstream(
+    z.array(renameProposalSchema),
+    await client.get(route, query),
+    application,
+    route,
+  );
+
+  return proposals.flatMap((proposal) => {
+    const fileId = count(application === "sonarr" ? proposal.episodeFileId : proposal.movieFileId);
+    return fileId === undefined || fileId <= 0
+      ? []
+      : [
+          {
+            fileId,
+            existingPath: text(proposal.existingPath),
+            newPath: text(proposal.newPath),
+          },
+        ];
+  });
+}
+
+/** The two normalized workflows this module may start a command for. */
+export const commandWorkflows = ["rename_files", "move_record"] as const;
+
+export type CommandWorkflow = (typeof commandWorkflows)[number];
+
+/**
+ * The upstream commands this server is allowed to start, by workflow.
+ *
+ * The command endpoint accepts any command an instance knows, so nothing but
+ * this table decides which ones are reachable. A workflow names a normalized
+ * intent and the table names the one command it may become — there is no
+ * passthrough, no caller-supplied name, and no default, so a command this
+ * project has not deliberately allowed cannot be started through it.
+ */
+const allowedCommands: Readonly<
+  Record<MediaApplication, Readonly<Record<CommandWorkflow, string>>>
+> = {
+  sonarr: { rename_files: "RenameFiles", move_record: "MoveSeries" },
+  radarr: { rename_files: "RenameFiles", move_record: "MoveMovie" },
+};
+
+export function upstreamCommandName(
+  application: MediaApplication,
+  workflow: CommandWorkflow,
+): string {
+  return allowedCommands[application][workflow];
+}
+
+/** Names every command this server can start, so a test can hold it to the set. */
+export function allowedCommandNames(application: MediaApplication): readonly string[] {
+  return commandWorkflows.map((workflow) => allowedCommands[application][workflow]);
+}
+
+/** The rename command's payload: one parent record and the files to rename. */
+export function renameCommandPayload(
+  application: MediaApplication,
+  parentId: number,
+  fileIds: readonly number[],
+): UpstreamBody {
+  return application === "sonarr"
+    ? { seriesId: parentId, files: [...fileIds] }
+    : { movieId: parentId, files: [...fileIds] };
+}
+
+export interface MoveRequest {
+  readonly recordId: number;
+  /** Where the record's files are now, as the instance itself reports it. */
+  readonly sourcePath: string;
+  /**
+   * Where they are to end up: the record's own folder under a root folder from
+   * the instance's own list. Composed by `relocatePath`, which is also what a
+   * root-folder edit re-points a record with, so the two agree by construction.
+   */
+  readonly destinationPath: string;
+}
+
+/**
+ * The move command's payload. Neither path is composed from caller input.
+ *
+ * One record moves per command, so the identifier is the singular one and the
+ * destination is the record's own resulting path rather than a root folder for
+ * the application to distribute several records under. That is the form this
+ * server can state exactly: it already knows the one folder that moves and
+ * where it lands, so nothing is left for the instance to derive.
+ */
+export function moveCommandPayload(
+  application: MediaApplication,
+  request: MoveRequest,
+): UpstreamBody {
+  const shared = {
+    sourcePath: request.sourcePath,
+    destinationPath: request.destinationPath,
+  };
+  return application === "sonarr"
+    ? { ...shared, seriesId: request.recordId }
+    : { ...shared, movieId: request.recordId };
+}
+
+/**
+ * One accepted command, as the instance echoed it back.
+ *
+ * The echoed `name` is deliberately not modelled. It is unvalidated upstream
+ * text, and the job projection built from this is published — so retaining it
+ * would carry whatever an instance chose to answer with into a tool result,
+ * through a boundary that otherwise lets nothing but this project's own
+ * allowlisted vocabulary out. The name this server sent is already known here
+ * and is the one that is kept.
+ */
+const commandSchema = z.looseObject({
+  id: upstreamId,
+  status: upstreamText,
+  state: upstreamText,
+});
+
+/** One accepted command, as the instance acknowledged it. */
+export interface CommandAcceptance {
+  readonly upstreamId: number;
+  /** The allowlisted name this server sent, never the one upstream echoed. */
+  readonly name: string;
+  readonly state?: string | undefined;
+}
+
+/**
+ * Starts one allowlisted command and confirms what came back.
+ *
+ * The command name is written over the payload rather than under it, so the
+ * allowlisted name is the one that is sent whatever the payload happens to
+ * carry. As with a create, an empty answer is reported as unconfirmed rather
+ * than as a failure: the request was sent and may well have been accepted.
+ */
+export async function startCommand(
+  client: UpstreamClient,
+  application: MediaApplication,
+  workflow: CommandWorkflow,
+  payload: UpstreamBody,
+): Promise<CommandAcceptance | undefined> {
+  const route = "command";
+  const name = upstreamCommandName(application, workflow);
+  const body = await client.post(route, { ...payload, name });
+  if (body === undefined) {
+    return undefined;
+  }
+  const accepted = parseUpstream(commandSchema, body, application, route);
+  if (accepted.id <= 0) {
+    return undefined;
+  }
+  return {
+    upstreamId: accepted.id,
+    name,
+    state: text(accepted.status) ?? text(accepted.state),
   };
 }
