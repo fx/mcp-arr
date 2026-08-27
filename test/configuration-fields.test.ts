@@ -56,6 +56,49 @@ describe("provider field classification", () => {
       expect(isSecretFieldName(name)).toBe(false);
     }
   });
+
+  /**
+   * A fragment has to begin a word. Both directions are pinned here because
+   * both directions cost something: a name this stops matching would be a
+   * credential the classifier no longer recognizes, and a name it matches by
+   * accident is a legitimate setting silently dropped from the observation,
+   * which looks exactly like one that was withheld on purpose.
+   */
+  it("matches a credential word, not a word that merely contains one", () => {
+    for (const name of [
+      "apiKey",
+      "APIKey",
+      "api_key",
+      "api-key",
+      "passphrase",
+      "passKey",
+      "myPassword",
+      "twoFactorAuth",
+      "oauthUrl",
+      "recaptchaResponse",
+      "cfCookie",
+      "userName",
+      "pinCode",
+    ]) {
+      expect(isSecretFieldName(name)).toBe(true);
+    }
+
+    for (const name of [
+      "bypassIfHighestQuality",
+      "bypassIfAboveCustomFormatScore",
+      "compassDirection",
+      "spinUpDelay",
+    ]) {
+      expect(isSecretFieldName(name)).toBe(false);
+    }
+
+    // Where the rule cannot tell — a word that opens with a credential word but
+    // does not mean it — it still matches, and the field is withheld. That is
+    // the direction to be wrong in: withholding a setting costs a caller a
+    // value it can live without, and the allowlist has to name a field before
+    // its value goes anywhere regardless.
+    expect(isSecretFieldName("passthroughMode")).toBe(true);
+  });
 });
 
 describe("safe field values", () => {

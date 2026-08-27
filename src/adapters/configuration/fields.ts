@@ -32,11 +32,18 @@ import type { ConfiguredSecret, SafeField, SafeFieldValue } from "./model.js";
 /**
  * Name fragments that make a field a credential or an identity.
  *
- * Matched against the name with case and separators removed, so `API_Key`,
- * `apiKey`, and `api-key` are one fragment. Identity fragments are here beside
- * the credential ones on purpose: a username, a login, or an account address
- * identifies the operator to anyone reading the result, and withholding its
- * value costs a caller nothing it needs in order to describe configuration.
+ * Each one is matched where a word in the name begins — see
+ * {@link isSecretFieldName} — so `API_Key`, `apiKey`, and `api-key` are one
+ * fragment, and `bypassIfHighestQuality` is not one. Identity fragments are
+ * here beside the credential ones on purpose: a username, a login, or an
+ * account address identifies the operator to anyone reading the result, and
+ * withholding its value costs a caller nothing it needs in order to describe
+ * configuration.
+ *
+ * `oauth` and `recaptcha` are listed although `auth` and `captcha` already are.
+ * They are the two credential words in common field-name use that carry a
+ * fragment in their middle rather than at a word boundary, so listing them is
+ * what keeps boundary matching from losing a name it used to catch.
  */
 const secretNameFragments = [
   "apikey",
@@ -46,8 +53,10 @@ const secretNameFragments = [
   "credential",
   "email",
   "login",
+  "oauth",
   "pass",
   "pin",
+  "recaptcha",
   "rsskey",
   "secret",
   "session",
@@ -168,6 +177,20 @@ function normalizeName(name: string): string {
   return name.toLowerCase().replaceAll(/[^a-z0-9]/gu, "");
 }
 
+/**
+ * The words a field name is made of.
+ *
+ * Upstream names arrive in every convention at once — `API_Key`, `apiKey`,
+ * `api-key`, `APIKEY` — so a word begins at a separator, at a lower-to-upper
+ * transition, at the last capital of an acronym run, or at a digit. `APIKey`
+ * is therefore `api` + `key` rather than `apik` + `ey`.
+ */
+const nameWordPattern = /[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+/gu;
+
+function nameWords(name: string): readonly string[] {
+  return (name.match(nameWordPattern) ?? []).map((word) => word.toLowerCase());
+}
+
 export type FieldClassification = "secret" | "safe" | "withheld";
 
 export interface FieldClassificationInput {
@@ -176,9 +199,51 @@ export interface FieldClassificationInput {
   readonly privacy?: string | null | undefined;
 }
 
+/**
+ * Whether a field name reads as a credential or an identity.
+ *
+ * A fragment has to begin a word in the name, not merely appear somewhere in
+ * it. Raw substring matching cannot tell `passKey` from `bypassIfHighestQuality`
+ * or `pin` from `spinUp`, and every one of those misfires silently drops a
+ * legitimate setting from the observation, where a wrongly withheld field is
+ * indistinguishable from a rightly withheld one.
+ *
+ * The words are joined back together before searching so a fragment may still
+ * span several of them — `apiKey` and `rss_key` are `apikey` and `rsskey` — and
+ * an occurrence counts only where a word starts. The asymmetry is deliberate:
+ * matching a fragment that starts a word admits `password`, `passkey`, and
+ * `passphrase`, while refusing one that merely ends a word rejects `bypass` and
+ * `compass`, whose meaning is not the fragment's.
+ *
+ * It errs toward matching. A name this misses is not thereby published — rule 2
+ * still has to name it in the allowlist, and no allowlisted name contains a
+ * fragment at all, which a test pins — while a name this matches is withheld
+ * whatever else is true of it. The residual gap is a run-together lowercase
+ * compound that hides a fragment mid-word, `apipass` and `twofactorauth` being
+ * the shapes; the two that occur in practice are named in the fragment list.
+ */
 export function isSecretFieldName(name: string): boolean {
-  const normalized = normalizeName(name);
-  return secretNameFragments.some((fragment) => normalized.includes(fragment));
+  const words = nameWords(name);
+  const joined = words.join("");
+  const wordStarts = new Set<number>();
+  let offset = 0;
+  for (const word of words) {
+    wordStarts.add(offset);
+    offset += word.length;
+  }
+
+  return secretNameFragments.some((fragment) => {
+    for (
+      let index = joined.indexOf(fragment);
+      index !== -1;
+      index = joined.indexOf(fragment, index + 1)
+    ) {
+      if (wordStarts.has(index)) {
+        return true;
+      }
+    }
+    return false;
+  });
 }
 
 export function classifyProviderField(input: FieldClassificationInput): FieldClassification {

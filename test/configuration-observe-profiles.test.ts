@@ -193,19 +193,16 @@ describe("observing profiles", () => {
         { name: "preferredProtocol", value: "usenet" },
         { name: "usenetDelay", value: 0 },
         { name: "torrentDelay", value: 30 },
+        // Both bypass switches are ordinary settings. They read as credentials
+        // to a matcher that looks for `pass` anywhere in a name rather than
+        // where a word begins, which is what made them secrets until the
+        // classifier learned word boundaries.
+        { name: "bypassIfHighestQuality", value: true },
+        { name: "bypassIfAboveCustomFormatScore", value: false },
         { name: "minimumCustomFormatScore", value: 0 },
         { name: "order", value: 1 },
       ]);
-      // Both bypass switches are named out of the allowlist by the credential
-      // fragment `pass` in "bypass", and acknowledged as configured secrets
-      // instead. Nothing leaks — no value is published either way — but a
-      // boolean is not a credential, and the dynamic-field classifier already
-      // withholds a boolean rather than calling it configured. This asserts
-      // what the flat-record path does today, not what it should do.
-      expect(profile.secrets).toEqual([
-        { name: "bypassIfHighestQuality", state: "configured", masked: false },
-        { name: "bypassIfAboveCustomFormatScore", state: "configured", masked: false },
-      ]);
+      expect(profile.secrets).toEqual([]);
       expect(profile.withheld).toEqual({ count: 1 });
     }
   });
