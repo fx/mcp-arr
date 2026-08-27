@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { toolResultSchema } from "../results.js";
+import { activityViewResultSchema } from "./activity-results.js";
 import {
   blocklistReferenceSchema,
   bulkReferences,
@@ -152,6 +153,8 @@ export const activityChangeInputSchema = variantUnion(
   z.union([activityChangeIntentSchema, planApplySchema]),
 );
 
-export const activityQueryOutputSchema = toolResultSchema();
+export type ActivityQueryInput = z.infer<typeof activityQueryInputSchema>;
+
+export const activityQueryOutputSchema = toolResultSchema({ data: activityViewResultSchema });
 export const queueResolveOutputSchema = toolResultSchema({ mutation: true });
 export const activityChangeOutputSchema = toolResultSchema({ mutation: true });

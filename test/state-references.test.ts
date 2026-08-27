@@ -33,6 +33,9 @@ function storeAt(
   return { store, advance: (ms) => clock.advance(ms) };
 }
 
+/** The exact shape {@link mintRelease} produces: lifetime segment, then tail. */
+const releaseTokenShape = /^rel_([A-Za-z0-9_-]{8})([A-Za-z0-9_-]{22})$/u;
+
 function mintRelease(store: ReferenceStore) {
   return store.mint({
     kind: "release",
@@ -59,15 +62,37 @@ describe("opaque reference store", () => {
     const first = mintRelease(store);
     const second = mintRelease(store);
 
+    // A token is the kind prefix, this store's lifetime segment, and a random
+    // tail — and nothing else, so there is nowhere in it for the object to be.
+    // Searching a token for a piece of the object would show neither: a short
+    // piece appears in a random tail by coincidence, and its absence would not
+    // have established that the object is not encoded some other way.
+    const tails = new Set<string>();
     for (const entry of [first, second]) {
-      expect(entry.reference).not.toContain(upstreamId);
+      const [, lifetime, tail] = releaseTokenShape.exec(entry.reference) ?? [];
+      if (lifetime === undefined || tail === undefined) {
+        throw new Error(`Not a token this store mints: ${entry.reference}`);
+      }
+      expect(lifetime).toBe(store.lifetimeId);
+      expect(entry.reference).toBe(`rel_${lifetime}${tail}`);
+      tails.add(tail);
+      // A long, distinctive planted value could only appear here by leaking.
       expect(entry.reference).not.toContain(secretDetail.apiKey);
-      expect(entry.reference).not.toContain("mnt");
-      expect(entry.reference).not.toContain("Series");
+      expect(entry.reference).not.toContain(secretDetail.path);
     }
     // Two references to identical state are different tokens, so a token
     // cannot be reconstructed from the object it names.
     expect(first.reference).not.toBe(second.reference);
+    expect(tails.size).toBe(2);
+    // And the object is reachable only through the store that holds it: another
+    // store of the same lifetime accepts the token as well formed and current,
+    // and still has nothing it can say about what it names.
+    const sibling = storeAt(1_000, store.lifetimeId);
+    expect(sibling.store.resolve(first.reference, "release")).toEqual({
+      ok: false,
+      reason: "unknown",
+      kind: "release",
+    });
   });
 
   it("publishes a distinct prefix for every reference kind", () => {

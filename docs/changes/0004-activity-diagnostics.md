@@ -5,7 +5,7 @@
 Implement bounded queue, history, blocklist, health, indexer-status, and command diagnostics through `arr_activity_query` as defined by the [Activity Management spec](../specs/activity-management/).
 
 **Spec:** [Activity Management](../specs/activity-management/)
-**Status:** draft
+**Status:** complete
 **Depends On:** 0001, 0002
 
 ## Motivation
@@ -68,10 +68,10 @@ The [Activity Management spec](../specs/activity-management/#activity-queries) o
   - [x] Create typed queue references for tracked and pending items
   - [x] Correlate safe queue, history, blocklist, health, disk, and media evidence
   - [x] Represent partial failures and suggested typed actions
-- [ ] Register and verify `arr_activity_query`
-  - [ ] Add closed view schemas, filters, pagination, and details
-  - [ ] Add fixture and stdio tests for every status/item kind and unavailable application
-  - [ ] Add canary-secret and untrusted-status-message tests
+- [x] Register and verify `arr_activity_query`
+  - [x] Add closed view schemas, filters, pagination, and details
+  - [x] Add fixture and stdio tests for every status/item kind and unavailable application
+  - [x] Add canary-secret and untrusted-status-message tests
 
 ## Open Questions
 

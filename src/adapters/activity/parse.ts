@@ -187,7 +187,14 @@ export function safeLabel(value: string | null | undefined): string | undefined 
  */
 const identitySalt = randomBytes(32);
 
-const identityLength = 16;
+/**
+ * How many hexadecimal characters of the digest are kept.
+ *
+ * Exported because the published schema bounds the field to exactly this shape,
+ * and a contract that stated a length of its own could drift from the one this
+ * function actually mints.
+ */
+export const downloadIdentityLength = 16;
 
 /**
  * A non-reversible stand-in for the download-client identifier.
@@ -205,7 +212,7 @@ export function downloadIdentity(value: string | null | undefined): string | und
     .update(identitySalt)
     .update(raw)
     .digest("hex")
-    .slice(0, identityLength);
+    .slice(0, downloadIdentityLength);
 }
 
 /**
