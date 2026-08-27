@@ -53,6 +53,18 @@ export interface ReleaseGrabRequest {
   /** The opaque release reference, echoed so an outcome names what the caller sent. */
   readonly reference: string;
   readonly identity: ReleaseCacheIdentity;
+  /**
+   * Re-checked immediately before this release's own request, and returning a
+   * {@link ToolError} cancels it.
+   *
+   * A bulk grab resolves every reference up front but sends the requests in
+   * bounded batches, so a later batch runs some time after that check — long
+   * enough for a reference to expire while the earlier batches were in flight.
+   * The spec requires expiry to be rechecked immediately before the grab, and
+   * "immediately" has to mean before *this* request rather than before the
+   * first one, so the check travels with the request it guards.
+   */
+  readonly recheck?: (() => ToolError | undefined) | undefined;
 }
 
 export const releaseGrabStates = ["accepted", "failed"] as const;
@@ -125,6 +137,11 @@ async function grabOne(
   client: UpstreamClient,
   request: ReleaseGrabRequest,
 ): Promise<ReleaseGrabOutcome> {
+  const stale = request.recheck?.();
+  if (stale !== undefined) {
+    return { reference: request.reference, state: "failed", error: stale };
+  }
+
   try {
     await client.post(releaseGrabRoutes[application], grabBody(request.identity));
   } catch (error) {

@@ -3,17 +3,19 @@ import {
   runReleaseGrab,
   upstreamSearchCacheMs,
 } from "../adapters/acquisition/grab.js";
-import type {
-  ReleaseCacheIdentity,
-  ReleaseCandidate,
-  ReleaseIndexer,
-  ReleaseProtocol,
-  ReleaseSearchItem,
+import {
+  type ReleaseCacheIdentity,
+  type ReleaseCandidate,
+  type ReleaseIndexer,
+  type ReleaseProtocol,
+  type ReleaseSearchItem,
+  releaseProtocols,
 } from "../adapters/acquisition/model.js";
 import {
   digestPartsFor,
   type ReleaseSearchRequest,
   type ReleaseSearchTarget,
+  releaseSearchTargets,
 } from "../adapters/acquisition/requests.js";
 import { type ReleaseSearchData, runReleaseSearch } from "../adapters/acquisition/service.js";
 import { mediaRef, mediaRefKey, seasonRef } from "../adapters/library/model.js";
@@ -106,6 +108,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** The member of a closed set a value equals, or `undefined` for none of them. */
+function memberOf<TValue extends string>(
+  values: readonly TValue[],
+  candidate: unknown,
+): TValue | undefined {
+  return values.find((value) => value === candidate);
+}
+
 /**
  * Reads a stored release snapshot back out of the reference store.
  *
@@ -119,24 +129,34 @@ function readReleaseDetail(entry: ReferenceEntry): ReleaseSnapshotDetail | undef
     return undefined;
   }
   const detail = entry.payload.snapshot.detail;
+  if (!isRecord(detail) || detail.kind !== "release") {
+    return undefined;
+  }
+
+  // Every closed field is matched against its own declared set rather than
+  // asserted. The values were written by this server, so a mismatch is a bug
+  // here rather than caller input — but a snapshot that has drifted must fail
+  // as an unusable reference, not as a payload the published output schema
+  // quietly rejects one layer later.
+  const target = memberOf(releaseSearchTargets, detail.target);
+  const protocol = memberOf(releaseProtocols, detail.protocol);
   if (
-    !isRecord(detail) ||
-    detail.kind !== "release" ||
-    typeof detail.target !== "string" ||
+    target === undefined ||
+    protocol === undefined ||
     typeof detail.search !== "string" ||
     typeof detail.media !== "string" ||
-    typeof detail.title !== "string" ||
-    typeof detail.protocol !== "string"
+    typeof detail.title !== "string"
   ) {
     return undefined;
   }
+
   return {
     kind: "release",
-    target: detail.target as ReleaseSearchTarget,
+    target,
     search: detail.search,
     media: detail.media,
     title: detail.title,
-    protocol: detail.protocol as ReleaseProtocol,
+    protocol,
     indexerId: typeof detail.indexerId === "number" ? detail.indexerId : undefined,
     indexerName: typeof detail.indexerName === "string" ? detail.indexerName : undefined,
   };
@@ -495,14 +515,34 @@ function readGrabInput(invocation: OperationInvocation): Resolved<readonly Selec
 }
 
 /**
- * The read set a grab plan depends on: which releases were selected, and the
- * snapshot each reference was minted from.
+ * Everything one reference is bound to, as one comparable string.
+ *
+ * The search digest and the media context are in here rather than merely
+ * recorded, which is what makes the binding load-bearing: a plan's read set is
+ * a digest of these, so applying it re-checks that each reference still stands
+ * for the same result of the same search in the same media context, not just
+ * that a token of the right kind still resolves. Nothing here reaches a caller
+ * in the clear — the published read set carries only the hash.
+ */
+function releaseBinding(release: SelectedRelease): string {
+  const detail = release.detail;
+  return [release.reference, release.fingerprint, detail.target, detail.search, detail.media].join(
+    "|",
+  );
+}
+
+/**
+ * The read set a grab plan depends on: which releases were selected, and what
+ * each reference was minted to stand for.
  *
  * Re-running it immediately before apply is what rechecks reference expiry at
  * the moment of the grab — an expired reference no longer resolves, so the read
  * is blocked with the same `stale_reference` a caller recovers from by
- * repeating the search. The upstream cache itself is only observable by trying
- * the grab, which the adapter does next and reports as its own typed failure.
+ * repeating the search. It is the first of two expiry checks, not the only one:
+ * a bulk grab sends its requests in batches, so each request re-checks its own
+ * reference again just before it goes out. The upstream cache itself is only
+ * observable by trying the grab, which the adapter does next and reports as its
+ * own typed failure.
  */
 export const releaseGrabPreconditions: PreconditionReader = (invocation) => {
   const selected = readGrabInput(invocation);
@@ -517,9 +557,7 @@ export const releaseGrabPreconditions: PreconditionReader = (invocation) => {
         key: "grab-releases",
         // Sorted so naming the same releases in another order is the same read
         // set, matching how the apply receipt already identifies a mutation.
-        value: selected.value
-          .map((release) => `${release.reference}:${release.fingerprint}`)
-          .sort(),
+        value: selected.value.map(releaseBinding).sort(),
       },
     ],
   });
@@ -593,6 +631,19 @@ export const releaseGrabHandler: OperationHandler = async (invocation) => {
   const requests: readonly ReleaseGrabRequest[] = releases.map((release) => ({
     reference: release.reference,
     identity: release.identity,
+    // Checked again just before this release's own request goes out. The
+    // batching below means a later request runs some time after the
+    // preconditions were read, and a reference that ran out in between must be
+    // refused rather than acted on.
+    recheck: () => {
+      const current = resolveRelease(invocation, release.reference);
+      if (current.ok && releaseBinding(current.value) === releaseBinding(release)) {
+        return undefined;
+      }
+      return current.ok
+        ? invalid(invocation, "a release no longer stands for the result it was selected from")
+        : current.error;
+    },
   }));
   const result = await runReleaseGrab(application, invocation.adapter.client, requests);
 

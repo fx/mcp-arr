@@ -447,6 +447,39 @@ describe("arr_release_grab", () => {
     expect(instance.requests.some((request) => request.method === "POST")).toBe(false);
   });
 
+  it("stops grabbing the moment a selected reference runs out mid-call", async () => {
+    const clock = createManualClock(Date.now());
+    const state = createWorkflowState({ clock });
+    // The first grab to reach the instance takes the whole window with it, so
+    // every release still queued behind it is out of time by the time its own
+    // request would go out. Resolving the references once up front would send
+    // them anyway; each one is re-checked against the clock instead.
+    const { context, instance, releases } = await searched({
+      state,
+      grab: () => {
+        clock.advance(referenceLifetimes.release + 1);
+        return jsonResponse({});
+      },
+    });
+    expect(releases.length).toBeGreaterThan(2);
+
+    const before = instance.requests.filter((request) => request.method === "POST").length;
+    const result = await call(grabTool, context, {
+      mode: "apply",
+      releases: releases.map((release) => release.reference),
+    });
+
+    const posted = instance.requests.filter((request) => request.method === "POST").length - before;
+    expect(posted).toBe(1);
+    expect(result.status).toBe("partial");
+    const items = outcomeFor(result, "sonarr").items ?? [];
+    expect(items[0]?.status).toBe("ok");
+    for (const item of items.slice(1)) {
+      expect(item.status).toBe("error");
+      expect(item.error?.code).toBe("stale_reference");
+    }
+  });
+
   it("returns the existing receipt when the same grab is repeated", async () => {
     const { context, instance, releases } = await searched();
     const args = { mode: "apply", releases: [releases[0]?.reference] };

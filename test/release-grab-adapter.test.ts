@@ -10,6 +10,7 @@ import type { ReleaseCacheIdentity } from "../src/adapters/acquisition/model.js"
 import { cacheIdentity, releaseSchema } from "../src/adapters/acquisition/parse.js";
 import type { ApplicationId } from "../src/applications.js";
 import { referenceLifetimes } from "../src/state/references.js";
+import { createToolError } from "../src/tools/errors.js";
 import { jsonResponse, searchHarness, type UpstreamCall } from "./support/acquisition.js";
 import { fixtureBody } from "./support/library.js";
 
@@ -168,6 +169,42 @@ describe("release grab outcomes", () => {
     const error = result.outcomes[0]?.error;
     expect(error?.code).toBe("unavailable_application");
     expect(error?.message).not.toContain("203.0.113.7");
+  });
+
+  it("re-checks each release immediately before its own request, not once up front", async () => {
+    const requests = requestsFor(
+      Array.from({ length: grabConcurrency + 2 }, (_, index) => ({
+        application: "sonarr" as const,
+        guid: `example-${index}`,
+        indexerId: 1,
+      })),
+    );
+
+    // Everything after the first batch runs some time after the references
+    // were resolved, which is exactly the window a reference can expire in.
+    let sent = 0;
+    const expired = createToolError({
+      code: "stale_reference",
+      message: "sonarr: that release reference has expired",
+      application: "sonarr",
+    });
+    const guarded = requests.map((request) => ({
+      ...request,
+      recheck: () => (sent >= grabConcurrency ? expired : undefined),
+    }));
+
+    const harness = searchHarness("sonarr", () => {
+      sent += 1;
+      return jsonResponse({});
+    });
+    const result = await runReleaseGrab("sonarr", harness.client, guarded);
+
+    expect(harness.calls).toHaveLength(grabConcurrency);
+    expect(result.accepted).toBe(grabConcurrency);
+    for (const outcome of result.outcomes.slice(grabConcurrency)) {
+      expect(outcome.state).toBe("failed");
+      expect(outcome.error?.code).toBe("stale_reference");
+    }
   });
 
   it("keeps one call within the declared concurrency bound", async () => {
