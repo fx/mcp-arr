@@ -15,11 +15,30 @@ type Schema = Record<string, unknown>;
 
 /**
  * Keywords that carry no constraint here. `$schema` names the dialect, and
- * `default` and `format` are annotations in draft-7 rather than assertions.
+ * `default`, `description`, and `format` are annotations in draft-7 rather
+ * than assertions.
+ *
+ * `description` is here rather than absent because the throw-on-unknown guard
+ * below exists to catch a *constraint* this validator has not implemented, and
+ * an annotation asserts nothing there is to implement. Every published input
+ * root now carries the generated variant documentation, and one nested
+ * property already carried a description that no sample happened to reach.
  */
-const annotationKeywords = new Set(["$schema", "default", "format"]);
+const annotationKeywords = new Set(["$schema", "default", "description", "format"]);
 
-const supportedKeywords = new Set([
+/**
+ * The keywords this module actually enforces.
+ *
+ * Adding a name here is a claim that {@link matchesType}, {@link checkObject},
+ * {@link checkArray}, or {@link checkScalar} implements it, and the guard below
+ * has no way to check that claim — it reads membership as proof. So a keyword
+ * dropped in here to get a new schema past {@link assertWellFormed}, without
+ * the matching check, does not merely go unenforced: every {@link
+ * schemaFailures} assertion over it silently starts passing. That is why the
+ * two halves are separate sets rather than one list where an annotation and a
+ * constraint are indistinguishable.
+ */
+const implementedKeywords = new Set([
   "additionalProperties",
   "anyOf",
   "const",
@@ -36,8 +55,23 @@ const supportedKeywords = new Set([
   "properties",
   "required",
   "type",
-  ...annotationKeywords,
 ]);
+
+/** The closed vocabulary: what is enforced, plus what asserts nothing. */
+const supportedKeywords = new Set([...implementedKeywords, ...annotationKeywords]);
+
+/**
+ * The one enforcement point for the closed vocabulary, shared by the value
+ * check and the meta-schema check so a keyword can never be unknown to one and
+ * accepted by the other.
+ */
+function assertSupportedKeywords(schema: Schema, path: string): void {
+  for (const keyword of Object.keys(schema)) {
+    if (!supportedKeywords.has(keyword)) {
+      throw new Error(`Unsupported JSON Schema keyword at ${describe(path)}: ${keyword}`);
+    }
+  }
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -152,11 +186,7 @@ function checkScalar(schema: Schema, value: unknown, path: string): string[] {
 }
 
 function collectFailures(schema: Schema, value: unknown, path: string): string[] {
-  for (const keyword of Object.keys(schema)) {
-    if (!supportedKeywords.has(keyword)) {
-      throw new Error(`Unsupported JSON Schema keyword at ${describe(path)}: ${keyword}`);
-    }
-  }
+  assertSupportedKeywords(schema, path);
 
   const failures: string[] = [];
   const type = schema.type as string | undefined;
@@ -207,6 +237,128 @@ function collectFailures(schema: Schema, value: unknown, path: string): string[]
  */
 export function schemaFailures(schema: Schema, value: unknown): readonly string[] {
   return collectFailures(schema, value, "");
+}
+
+/** The `type` values this dialect defines. Anything else is not a schema. */
+const schemaTypes = new Set(["object", "array", "string", "boolean", "integer", "number", "null"]);
+
+/** Keywords whose value must be a number wherever they appear. */
+const numericKeywords = ["maxItems", "maxLength", "maximum", "minItems", "minLength", "minimum"];
+
+function fail(path: string, reason: string): never {
+  throw new Error(`${describe(path)} ${reason}`);
+}
+
+/**
+ * Checks that a published schema is a well-formed schema at every depth.
+ *
+ * This is the meta-schema check, reduced to the closed vocabulary these
+ * schemas actually use. The vocabulary half is already here — {@link
+ * assertSupportedKeywords} throws on any keyword this module has not
+ * implemented — and what this adds is the other half: that every keyword
+ * present carries a value of the JSON type the dialect defines for it. Over a
+ * fixed keyword set
+ * that reduction is exact, so a validator dependency would add a package
+ * without adding coverage.
+ */
+export function assertWellFormed(schema: Schema, path = ""): void {
+  assertSupportedKeywords(schema, path);
+
+  if ("type" in schema && !(typeof schema.type === "string" && schemaTypes.has(schema.type))) {
+    fail(path, `declares an unknown type ${JSON.stringify(schema.type)}`);
+  }
+  if ("required" in schema) {
+    const required = schema.required;
+    if (!Array.isArray(required) || required.some((name) => typeof name !== "string")) {
+      fail(path, "declares a required list that is not an array of names");
+    }
+  }
+  if ("enum" in schema && !(Array.isArray(schema.enum) && schema.enum.length > 0)) {
+    fail(path, "declares an enum that is not a non-empty array");
+  }
+  if ("description" in schema && typeof schema.description !== "string") {
+    fail(path, "declares a description that is not a string");
+  }
+  for (const keyword of numericKeywords) {
+    if (keyword in schema && typeof schema[keyword] !== "number") {
+      fail(path, `declares a ${keyword} that is not a number`);
+    }
+  }
+  if ("pattern" in schema) {
+    if (typeof schema.pattern !== "string") {
+      fail(path, "declares a pattern that is not a string");
+    }
+    try {
+      new RegExp(schema.pattern, "u");
+    } catch {
+      fail(path, `declares a pattern that does not compile: ${schema.pattern}`);
+    }
+  }
+
+  if ("properties" in schema) {
+    if (!isRecord(schema.properties)) {
+      fail(path, "declares properties that are not an object");
+    }
+    for (const [name, declared] of Object.entries(schema.properties)) {
+      if (!isRecord(declared)) {
+        fail(child(path, name), "is not a schema");
+      }
+      assertWellFormed(declared, child(path, name));
+    }
+  }
+  if ("additionalProperties" in schema) {
+    const additional = schema.additionalProperties;
+    if (typeof additional !== "boolean" && !isRecord(additional)) {
+      fail(path, "declares additionalProperties that is neither a boolean nor a schema");
+    }
+    if (isRecord(additional)) {
+      assertWellFormed(additional, child(path, "*"));
+    }
+  }
+  if ("items" in schema) {
+    if (!isRecord(schema.items)) {
+      fail(child(path, "[]"), "is not a schema");
+    }
+    assertWellFormed(schema.items, child(path, "[]"));
+  }
+  for (const keyword of ["anyOf", "oneOf"] as const) {
+    if (!(keyword in schema)) {
+      continue;
+    }
+    const alternatives = schema[keyword];
+    if (!Array.isArray(alternatives) || alternatives.length === 0) {
+      fail(path, `declares a ${keyword} that is not a non-empty array`);
+    }
+    for (const [index, alternative] of alternatives.entries()) {
+      if (!isRecord(alternative)) {
+        fail(child(path, `${keyword}[${index}]`), "is not a schema");
+      }
+      assertWellFormed(alternative, child(path, `${keyword}[${index}]`));
+    }
+  }
+}
+
+/**
+ * The values a published schema fixes one of its own properties to, in the
+ * order it lists them, or none where it fixes no set.
+ *
+ * A flat published root states a discriminator's whole accepted set on the
+ * property itself, so this is a lookup rather than a search — and one lookup,
+ * shared, so the set the documentation is checked against and the set a
+ * rejection message is expected to name are read the same way.
+ */
+export function declaredPropertyValues(schema: Schema, name: string): readonly string[] {
+  const properties = isRecord(schema.properties) ? schema.properties : {};
+  const node = properties[name];
+  if (!isRecord(node)) {
+    return [];
+  }
+  if (typeof node.const === "string") {
+    return [node.const];
+  }
+  return Array.isArray(node.enum)
+    ? node.enum.filter((value): value is string => typeof value === "string")
+    : [];
 }
 
 /**

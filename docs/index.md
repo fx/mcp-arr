@@ -31,3 +31,4 @@ Changes 0011 through 0014 were scheduled ahead of the lower-numbered domain chan
 | 0012 | [Published Tool Schemas](changes/0012-published-tool-schemas.md) | [Tool Contracts](specs/tool-contracts/) | complete | — |
 | 0013 | [Result Summary Fidelity](changes/0013-result-summary-fidelity.md) | [Tool Contracts](specs/tool-contracts/) | complete | — |
 | 0014 | [Calendar Anchoring](changes/0014-calendar-anchoring.md) | [Library Management](specs/library-management/) | complete | — |
+| 0015 | [Flat Tool Input Schemas](changes/0015-flat-tool-input-schemas.md) | [Tool Contracts](specs/tool-contracts/) | complete | 0012 |

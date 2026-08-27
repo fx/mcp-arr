@@ -11,9 +11,9 @@ import {
   planApplySchema,
   queryBaseShape,
   searchTermSchema,
-  variantUnion,
 } from "./common.js";
 import { libraryViewResultSchema } from "./library-results.js";
+import { variantUnion } from "./publish.js";
 
 const monitoredFilter = z.boolean().optional();
 

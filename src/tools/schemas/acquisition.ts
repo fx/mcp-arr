@@ -16,9 +16,9 @@ import {
   queueReferenceSchema,
   releaseReferenceSchema,
   searchTermSchema,
-  variantUnion,
 } from "./common.js";
 import { jobProjectionSchema } from "./jobs.js";
+import { variantUnion } from "./publish.js";
 
 const seasonNumberSchema = z.int().min(0).max(1000);
 

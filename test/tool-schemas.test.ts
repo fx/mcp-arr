@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import * as z4mini from "zod/v4-mini";
 import { findToolDefinition, toolDefinitions } from "../src/tools/definitions.js";
 import { toolNames } from "../src/tools/names.js";
@@ -8,10 +9,12 @@ import {
   isReferenceProperty,
   maxBulkItems,
   maxPageSize,
-  referencePrefixes,
+  referenceKinds,
+  referencePattern,
   referenceProperties,
 } from "../src/tools/schemas/common.js";
-import { publishedPropertyNames } from "./support/json-schema.js";
+import { variantUnion } from "../src/tools/schemas/publish.js";
+import { declaredPropertyValues, publishedPropertyNames } from "./support/json-schema.js";
 import { sampleReferences, sampleToolInputs } from "./support/tool-context.js";
 
 function inputJsonSchema(name: (typeof toolNames)[number]): Record<string, unknown> {
@@ -56,9 +59,7 @@ const forbiddenPropertyNames = [
   "method",
 ];
 
-const referencePatterns = new Set(
-  Object.values(referencePrefixes).map((prefix) => `^${prefix}_[A-Za-z0-9_-]{8,64}$`),
-);
+const referencePatterns = new Set(referenceKinds.map(referencePattern));
 
 function isReferenceNode(node: unknown): boolean {
   if (typeof node !== "object" || node === null) {
@@ -372,5 +373,282 @@ describe("published tool surface", () => {
         false,
       );
     }
+  });
+});
+
+/**
+ * Every issue message a rejected input produces, sorted.
+ *
+ * The whole list rather than a distinct set, so an issue that appears twice or
+ * an extra one nobody asked for fails rather than collapsing into the expected
+ * value; sorted rather than in Zod's own order, because what is pinned here is
+ * the wording each mechanism produces and not the sequence it collects them in.
+ */
+function rejectionMessages(name: (typeof toolNames)[number], value: unknown): readonly string[] {
+  const parsed = parseInput(name, value);
+  if (parsed.success) {
+    throw new Error(`${name} accepted an input this test requires it to reject`);
+  }
+  return parsed.error.issues.map((issue) => issue.message).sort();
+}
+
+/** A `strictObject` refusing a key it does not declare. */
+const unrecognizedKey = 'Unrecognized key: "unexpectedProperty"';
+
+/**
+ * A plain `z.union` reporting that no member matched. It is the same string
+ * whatever went wrong inside the members, which is exactly why the eight
+ * mutation tools — whose intents are a discriminated union nested inside a
+ * union with the plan-reference form — say this where the five read variant
+ * tools name the property or the discriminator.
+ */
+const noAlternativeMatched = "Invalid input";
+
+/** A `strictObject` reporting a required string that was not supplied. */
+const missingRequiredString = "Invalid input: expected string, received undefined";
+
+/** `z.discriminatedUnion` reporting a value outside its declared set. */
+function discriminatorMismatch(variants: readonly string[]): string {
+  return `Invalid discriminator value. Expected ${variants.map((variant) => `'${variant}'`).join(" | ")}`;
+}
+
+/**
+ * The discriminator values a tool's published schema declares, in the order it
+ * declares them.
+ *
+ * Harvested from the schema rather than written out so that adding a variant
+ * extends this test instead of breaking it: the discriminator wording
+ * enumerates the accepted set, and the set is not what these assertions are
+ * about.
+ */
+function declaredVariantValues(name: (typeof toolNames)[number]): readonly string[] {
+  const discriminator = findToolDefinition(name)?.discriminator;
+  return discriminator === undefined
+    ? []
+    : declaredPropertyValues(inputJsonSchema(name), discriminator);
+}
+
+/**
+ * A tool whose input is a union of a direct intent and the plan-reference form.
+ * Those are the eight mutation tools, and the outer plain union is what decides
+ * their rejection wording.
+ */
+function isPlanReferenceTool(name: (typeof toolNames)[number]): boolean {
+  return "mode" in sampleToolInputs[name];
+}
+
+/**
+ * The exact wording of every class of refused input.
+ *
+ * These are the messages a caller reads when a call is refused, and they are
+ * pinned as literals because the promise attached to any change in how the
+ * schemas are *published* is that nothing about what is *accepted* — including
+ * how a rejection reads — changes with it. The cases are chosen by the
+ * mechanism that produces the message rather than by tool, so each one covers a
+ * distinct code path rather than restating a neighbour.
+ */
+describe("input rejection messages", () => {
+  it("words an unknown property the way the form that refused it does", () => {
+    for (const name of toolNames) {
+      const withExtra = { ...sampleFor(name), unexpectedProperty: "value" };
+      expect(rejectionMessages(name, withExtra), name).toEqual(
+        isPlanReferenceTool(name) ? [noAlternativeMatched] : [unrecognizedKey],
+      );
+    }
+  });
+
+  it("words an undeclared discriminator value by naming the accepted set", () => {
+    for (const definition of toolDefinitions) {
+      const discriminator = definition.discriminator;
+      if (discriminator === undefined) {
+        continue;
+      }
+      const name = definition.name;
+      const withBadVariant = { ...sampleFor(name), [discriminator]: "not_a_variant" };
+      expect(rejectionMessages(name, withBadVariant), name).toEqual(
+        isPlanReferenceTool(name)
+          ? [noAlternativeMatched]
+          : [discriminatorMismatch(declaredVariantValues(name))],
+      );
+    }
+  });
+
+  it("words a variant-required property that was not supplied", () => {
+    // One case per variant tool that has a required argument beyond its own
+    // discriminator. `arr_config_observe` is absent because none of its sixteen
+    // domains requires anything else, so it has no such case to word.
+    const cases: ReadonlyArray<
+      readonly [(typeof toolNames)[number], Record<string, unknown>, readonly string[]]
+    > = [
+      ["arr_library_query", { view: "seasons" }, [missingRequiredString]],
+      ["arr_activity_query", { view: "queue_details" }, [missingRequiredString]],
+      ["arr_release_search", { target: "radarr_movie" }, [missingRequiredString]],
+      ["arr_import_inspect", { source: "queue_item" }, [missingRequiredString]],
+      ["arr_search_start", { target: "sonarr_series", mode: "plan" }, [noAlternativeMatched]],
+      ["arr_release_grab", { mode: "apply" }, [noAlternativeMatched]],
+      ["arr_queue_resolve", { intent: "ignore_tracking", mode: "plan" }, [noAlternativeMatched]],
+      [
+        "arr_activity_change",
+        { intent: "mark_history_failed", mode: "plan" },
+        [noAlternativeMatched],
+      ],
+      [
+        "arr_import_execute",
+        { mode: "plan", candidates: [sampleReferences.importCandidate] },
+        [noAlternativeMatched],
+      ],
+      [
+        "arr_library_change",
+        { intent: "set_monitoring", mode: "plan", items: [sampleReferences.media] },
+        [noAlternativeMatched],
+      ],
+      [
+        "arr_config_reconcile",
+        { intent: "reconcile_provider", mode: "plan", application: "sonarr", domain: "indexers" },
+        [noAlternativeMatched],
+      ],
+      ["arr_job_cancel", { mode: "apply" }, [noAlternativeMatched]],
+    ];
+
+    for (const [name, input, expected] of cases) {
+      expect(rejectionMessages(name, input), name).toEqual(expected);
+    }
+  });
+
+  it("words a reference of the wrong kind by naming the kind it wanted", () => {
+    expect(rejectionMessages("arr_job_get", { job: sampleReferences.release })).toEqual([
+      "must be a job reference",
+    ]);
+    expect(
+      rejectionMessages("arr_job_cancel", { mode: "apply", job: sampleReferences.release }),
+    ).toEqual(["must be a job reference"]);
+  });
+
+  it("words a plan reference restated alongside its intent", () => {
+    const mutationTools = toolNames.filter(isPlanReferenceTool);
+    expect(mutationTools).toHaveLength(8);
+
+    for (const name of mutationTools) {
+      const both = { ...sampleFor(name), mode: "apply", plan: sampleReferences.plan };
+      expect(rejectionMessages(name, both), name).toEqual([noAlternativeMatched]);
+    }
+  });
+
+  it("carries a refinement's own message out of the variant it belongs to", () => {
+    expect(
+      rejectionMessages("arr_library_query", {
+        view: "calendar",
+        start: "2026-08-31",
+        end: "2026-08-01",
+      }),
+    ).toEqual([
+      "start and end must be real dates, in order, and cover at most 366 days including both bounds",
+    ]);
+    expect(
+      rejectionMessages("arr_library_change", {
+        intent: "update_file_metadata",
+        mode: "plan",
+        files: [sampleReferences.mediaFile],
+        changes: {},
+      }),
+    ).toEqual(["at least one file metadata field must be supplied"]);
+  });
+});
+
+/**
+ * The merge itself, over a union written here rather than over a shipped tool.
+ *
+ * The flattening's whole purpose is that the accepted set of every property
+ * reaches the root, where a host will read it. Whether that survives a property
+ * being *documented* is not a question any shipped tool can answer today —
+ * none of them describes a variant's discriminator — so it is asked of a union
+ * built for the purpose, which is also the form the regression would first take.
+ * The same goes for a union the merge must refuse: every shipped one conforms,
+ * so the wording of that refusal can only be pinned against one written here.
+ */
+describe("published variant merge", () => {
+  it("collapses a described choice into one root enum rather than a nested anyOf", () => {
+    const union = variantUnion(
+      z.union([
+        z.strictObject({
+          mode: z.enum(["plan"]).describe("Validates without changing anything."),
+          items: z.string(),
+        }),
+        z.strictObject({
+          mode: z.enum(["apply"]),
+          items: z.string(),
+        }),
+      ]),
+    );
+
+    const published = z4mini.toJSONSchema(union as never, {
+      target: "draft-7",
+      io: "input",
+    }) as unknown as Record<string, unknown>;
+    const properties = published.properties as Record<string, unknown>;
+
+    // A description asserts nothing about the value, so it cannot be the reason
+    // a property stops advertising what it accepts. Publishing the alternatives
+    // instead would put the accepted set under the one combinator a host never
+    // inspects — the same failure the flat root exists to prevent, reintroduced
+    // one property at a time.
+    //
+    // And the collapse has to carry the description with it. The collapsed node
+    // is built by hand, so text a variant wrote survives only by being copied
+    // across; nothing else republishes it, and losing it here would delete it
+    // from the published schema outright rather than merely relocate it.
+    expect(properties.mode).toEqual({
+      type: "string",
+      enum: ["plan", "apply"],
+      description: "Validates without changing anything.",
+    });
+  });
+
+  it("keeps each alternative's own description where the shapes cannot collapse", () => {
+    const union = variantUnion(
+      z.union([
+        z.strictObject({
+          target: z.string().describe("The single item to act on."),
+          items: z.string(),
+        }),
+        z.strictObject({
+          target: z.array(z.string()).describe("Every item to act on."),
+          items: z.string(),
+        }),
+      ]),
+    );
+
+    const published = z4mini.toJSONSchema(union as never, {
+      target: "draft-7",
+      io: "input",
+    }) as unknown as Record<string, unknown>;
+    const properties = published.properties as Record<string, unknown>;
+
+    // Distinct shapes are published verbatim as alternatives, so there is
+    // nothing to carry: each keeps the description it was declared with.
+    expect(properties.target).toEqual({
+      anyOf: [
+        { type: "string", description: "The single item to act on." },
+        { type: "array", items: { type: "string" }, description: "Every item to act on." },
+      ],
+    });
+  });
+
+  it("names the offending variant when one is not a closed object", () => {
+    // A module-load throw aborts the whole server, not one tool, so the message
+    // is the only thing a reader has to go on. It has to say which variant of
+    // which union it means, and what identifies a converted variant is what it
+    // declares — its property names, and the values fixing its discriminator.
+    expect(() =>
+      variantUnion(
+        z.union([
+          z.strictObject({ mode: z.literal("plan"), items: z.string() }),
+          z.object({ mode: z.literal("apply"), plan: z.string() }),
+        ]),
+      ),
+    ).toThrow(
+      'Every variant of a published union must be a closed object; found "object" with ' +
+        "additionalProperties null, on the variant declaring mode=apply, plan",
+    );
   });
 });

@@ -12,8 +12,8 @@ import {
   jobReferenceSchema,
   mutationBaseShape,
   planApplySchema,
-  variantUnion,
 } from "./common.js";
+import { variantUnion } from "./publish.js";
 
 /**
  * Reads a normalized job projection. The reference is process-local, so a

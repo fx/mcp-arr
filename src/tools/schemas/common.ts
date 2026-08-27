@@ -120,11 +120,23 @@ export const referencePrefixes: Readonly<Record<ReferenceKind, string>> = {
   job: "job",
 };
 
+/**
+ * The exact pattern a reference of this kind is published under.
+ *
+ * One definition, because the published pattern is read in both directions: the
+ * schema below builds a reference from it, and the tool-documentation generator
+ * reverses a pattern back to the kind it names in order to annotate a
+ * reference-typed argument. A second copy of the string would let the two drift
+ * apart silently — the reverse lookup would simply stop matching, and the
+ * annotation it produces would vanish from the generated prose rather than
+ * fail.
+ */
+export function referencePattern(kind: ReferenceKind): string {
+  return `^${referencePrefixes[kind]}_[A-Za-z0-9_-]{8,64}$`;
+}
+
 export function referenceSchema(kind: ReferenceKind): z.ZodString {
-  const prefix = referencePrefixes[kind];
-  return z
-    .string()
-    .regex(new RegExp(`^${prefix}_[A-Za-z0-9_-]{8,64}$`, "u"), `must be a ${kind} reference`);
+  return z.string().regex(new RegExp(referencePattern(kind), "u"), `must be a ${kind} reference`);
 }
 
 export const mediaReferenceSchema = referenceSchema("media");
@@ -206,54 +218,6 @@ export const queryBaseShape = {
   detail: detailLevelSchema.default("summary"),
   ...pageShape,
 } as const;
-
-/**
- * Publishes a variant union under the object root the protocol requires.
- *
- * MCP requires a published tool input schema to carry `type: "object"` at its
- * root, and the server SDK enforces that by refusing to convert a registered
- * schema that is not a Zod object at all: a union reaches `tools/list` as an
- * empty object, so a caller can discover no variant and no argument. Root
- * metadata cannot rescue that, because the union never reaches the conversion.
- *
- * So the union is wrapped in an object that parses by delegating to it. The
- * wrapper accepts exactly what the union accepts, returns exactly what the
- * union returns, and reports the union's own issues verbatim, while the
- * union's alternatives ride to `tools/list` as the wrapper's root metadata.
- * The wrapper is deliberately loose: it must hand the union the caller's
- * object unchanged, and it is the union's members that refuse an unknown
- * property.
- */
-export function variantUnion<TSchema extends z.ZodType>(union: TSchema): TSchema {
-  // The document keyword belongs to the published root, which the server SDK
-  // emits for the wrapper itself; carrying a second one in the metadata would
-  // only restate it.
-  const { $schema: _target, ...alternatives } = z.toJSONSchema(union, {
-    target: "draft-7",
-    io: "input",
-  });
-
-  const published = z
-    .looseObject({})
-    .check((context) => {
-      const parsed = union.safeParse(context.value);
-      if (parsed.success) {
-        context.value = parsed.data as Record<string, unknown>;
-        return;
-      }
-      // Each issue is already finalized, message included, so re-raising it
-      // reproduces the union's own wording; only the raw-issue input field has
-      // to be restored.
-      for (const issue of parsed.error.issues) {
-        context.issues.push({ input: context.value, ...issue } as z.core.$ZodRawIssue);
-      }
-    })
-    .meta(alternatives);
-
-  // The wrapper parses to whatever the union parses to, so it stands in for the
-  // union at the type level as well as at runtime.
-  return published as unknown as TSchema;
-}
 
 /** Fields every direct mutation intent shares. */
 export const mutationBaseShape = {

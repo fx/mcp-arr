@@ -1,10 +1,15 @@
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
-import { toolDefinitions } from "../src/tools/definitions.js";
-import { toolNames } from "../src/tools/names.js";
-import { publishedPropertyNames, schemaFailures } from "./support/json-schema.js";
+import { findToolDefinition } from "../src/tools/definitions.js";
+import { type ToolName, toolNames } from "../src/tools/names.js";
+import {
+  assertWellFormed,
+  declaredPropertyValues,
+  publishedPropertyNames,
+  schemaFailures,
+} from "./support/json-schema.js";
 import { assertCleanProtocolStdout, spawnBuiltServer } from "./support/spawned-stdio.js";
-import { sampleToolInputs } from "./support/tool-context.js";
+import { sampleBranchInputs } from "./support/tool-context.js";
 
 const sonarrApiKey = "sonarr-secret-key";
 
@@ -22,43 +27,117 @@ function spawnServer(deadlineMs = 5_000) {
   return spawnBuiltServer(configuredInstance, deadlineMs);
 }
 
-/** The variant property each tool names, or `undefined` where it has none. */
-const discriminators = new Map<string, string | undefined>(
-  toolDefinitions.map((definition) => [definition.name as string, definition.discriminator]),
-);
-
-interface ToolListResult {
-  result?: {
-    tools?: Array<{
-      name: string;
-      description?: string;
-      inputSchema?: Record<string, unknown>;
-      outputSchema?: { type?: string };
-      annotations?: Record<string, unknown>;
-    }>;
-  };
+interface PublishedTool {
+  name: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+  outputSchema?: { type?: string };
+  annotations?: Record<string, unknown>;
 }
 
-/**
- * The published input schemas, keyed by tool name, exactly as a host receives
- * them: read back off the wire from a spawned server rather than converted in
- * process, because an in-process conversion is what hid an empty published
- * schema behind a passing suite.
- */
-async function listPublishedInputSchemas(): Promise<ReadonlyMap<string, Record<string, unknown>>> {
+interface ToolListResult {
+  result?: { tools?: PublishedTool[] };
+}
+
+interface PublishedListing {
+  readonly tools: readonly PublishedTool[];
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+async function readPublishedTools(): Promise<PublishedListing> {
   const child = spawnServer();
   try {
     await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
     const listed = (await child.request(2, "tools/list")) as ToolListResult;
-    const published = new Map<string, Record<string, unknown>>();
-    for (const tool of listed.result?.tools ?? []) {
-      published.set(tool.name, tool.inputSchema ?? {});
-    }
     await child.terminateGracefully();
-    return published;
+    return { tools: listed.result?.tools ?? [], stdout: child.stdout, stderr: child.stderr };
   } finally {
     await child.forceCleanup().catch(() => undefined);
   }
+}
+
+let listing: Promise<PublishedListing> | undefined;
+
+/**
+ * The published tool definitions, exactly as a host receives them: read back
+ * off the wire from a spawned server rather than converted in process, because
+ * an in-process conversion is what hid an empty published schema behind a
+ * passing suite.
+ *
+ * Read once and shared by every assertion in this file that is about the
+ * listing. They all ask the same server the same question, so spawning it once
+ * per assertion would only spend seconds proving the answer is stable.
+ */
+function publishedTools(): Promise<PublishedListing> {
+  listing ??= readPublishedTools();
+  return listing;
+}
+
+async function publishedInputSchemas(): Promise<ReadonlyMap<string, Record<string, unknown>>> {
+  const { tools } = await publishedTools();
+  return new Map(tools.map((tool) => [tool.name, tool.inputSchema ?? {}]));
+}
+
+/**
+ * The combinators a host drops a tool for carrying at the root of its input
+ * schema. All three, and the root only: the same host never inspects a
+ * combinator nested under a property.
+ */
+const rootCombinators = ["anyOf", "oneOf", "allOf"] as const;
+
+/** The property-key shape a host requires of a published schema, at any depth. */
+const propertyKeyPattern = /^[a-zA-Z0-9_.-]{1,64}$/u;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+interface VariantLine {
+  /** The discriminator values this form's label lists, empty when it has none. */
+  readonly values: readonly string[];
+  /** The arguments the form requires, its own discriminator value included. */
+  readonly required: ReadonlySet<string>;
+  /** Every argument the form names, required or optional. */
+  readonly names: ReadonlySet<string>;
+}
+
+/** The argument names one comma-separated part names, annotations stripped. */
+function argumentNames(part: string): string[] {
+  return part
+    .split(",")
+    .map((argument) => argument.trim().split("=")[0]?.trim() ?? "")
+    .filter((name) => name !== "");
+}
+
+/**
+ * Reads one generated variant line back into the form it describes.
+ *
+ * The grammar is fixed: an optional `<discriminator>=<value>|<value>` label,
+ * the required arguments after `: `, the optional ones after `; optional `, and
+ * any argument may carry an `=<narrowing>` annotation. Parsing it is what keeps
+ * the expectations below derived from what the server published — matching
+ * literal text would restate the variant list this whole mechanism exists to
+ * stop maintaining by hand.
+ */
+function parseVariantLine(line: string, discriminator: string | undefined): VariantLine {
+  const [head = "", optional = ""] = line.slice(2).split("; optional ");
+  let label = "";
+  let requiredPart = head;
+  if (discriminator !== undefined && head.startsWith(`${discriminator}=`)) {
+    const separator = head.indexOf(": ");
+    label = separator === -1 ? head : head.slice(0, separator);
+    requiredPart = separator === -1 ? "" : head.slice(separator + 2);
+  }
+  const required = new Set(argumentNames(requiredPart));
+  if (label !== "" && discriminator !== undefined) {
+    required.add(discriminator);
+  }
+  return {
+    values: label === "" ? [] : label.slice(label.indexOf("=") + 1).split("|"),
+    required,
+    names: new Set([...required, ...argumentNames(optional)]),
+  };
 }
 
 interface ToolCallResult {
@@ -80,42 +159,54 @@ interface ToolCallResult {
 
 describe("built stdio tool surface", () => {
   it("publishes the fifteen tools with their schemas and keeps stdout clean", async () => {
-    const child = spawnServer();
+    const { tools, stdout, stderr } = await publishedTools();
 
-    try {
-      await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
-      const listed = (await child.request(2, "tools/list")) as ToolListResult;
-      const tools = listed.result?.tools ?? [];
-
-      expect(tools.map((tool) => tool.name)).toEqual([...toolNames]);
-      for (const tool of tools) {
-        expect(tool.inputSchema?.type, tool.name).toBe("object");
-        // An object root satisfied on its own is what let every variant tool
-        // publish `{"type":"object","properties":{}}`, so the arguments have to
-        // be asserted here rather than beside this: a tool that publishes no
-        // argument name tells a caller nothing it can send.
-        const published = [...publishedPropertyNames(tool.inputSchema)];
-        expect(published, `${tool.name} publishes no argument`).not.toHaveLength(0);
-        const discriminator = discriminators.get(tool.name);
-        if (discriminator !== undefined) {
-          expect(published, tool.name).toContain(discriminator);
-        }
-
-        expect(tool.outputSchema?.type, tool.name).toBe("object");
-        expect(tool.description, tool.name).toBeTruthy();
-        expect(tool.annotations, tool.name).toBeDefined();
+    expect(tools.map((tool) => tool.name)).toEqual([...toolNames]);
+    for (const tool of tools) {
+      expect(tool.inputSchema?.type, tool.name).toBe("object");
+      // A root combinator is not a style question. A host that filters tool
+      // definitions drops the tool outright when it finds one, so publishing
+      // alternatives at the root costs a caller the whole tool rather than
+      // some of its detail — and the object root the protocol asks for is
+      // satisfied at the same time as the combinator is present, which is how
+      // thirteen tools passed the assertion above while being unusable.
+      for (const combinator of rootCombinators) {
+        expect(
+          tool.inputSchema?.[combinator],
+          `${tool.name} publishes a root ${combinator}`,
+        ).toBeUndefined();
+      }
+      // Closed at the root as well: a caller reading the schema has to be
+      // able to tell that a property it does not find there is one the tool
+      // does not accept.
+      expect(tool.inputSchema?.additionalProperties, tool.name).toBe(false);
+      assertWellFormed(tool.inputSchema ?? {}, tool.name);
+      // An object root satisfied on its own is what let every variant tool
+      // publish `{"type":"object","properties":{}}`, so the arguments have to
+      // be asserted here rather than beside this: a tool that publishes no
+      // argument name tells a caller nothing it can send.
+      const published = [...publishedPropertyNames(tool.inputSchema)];
+      expect(published, `${tool.name} publishes no argument`).not.toHaveLength(0);
+      expect(
+        published.filter((key) => !propertyKeyPattern.test(key)),
+        `${tool.name} property key shape`,
+      ).toEqual([]);
+      const discriminator = findToolDefinition(tool.name as ToolName)?.discriminator;
+      if (discriminator !== undefined) {
+        expect(published, tool.name).toContain(discriminator);
       }
 
-      await child.terminateGracefully();
-      assertCleanProtocolStdout(child.stdout);
-      expect(child.stderr).toBe("");
-    } finally {
-      await child.forceCleanup().catch(() => undefined);
+      expect(tool.outputSchema?.type, tool.name).toBe("object");
+      expect(tool.description, tool.name).toBeTruthy();
+      expect(tool.annotations, tool.name).toBeDefined();
     }
+
+    assertCleanProtocolStdout(stdout);
+    expect(stderr).toBe("");
   });
 
-  it("publishes a schema that admits what each tool accepts and refuses what it rejects", async () => {
-    const published = await listPublishedInputSchemas();
+  it("publishes a schema that admits every variant each tool accepts and refuses what it rejects", async () => {
+    const published = await publishedInputSchemas();
 
     for (const name of toolNames) {
       const schema = published.get(name);
@@ -123,26 +214,196 @@ describe("built stdio tool surface", () => {
       if (schema === undefined) {
         continue;
       }
+      const definition = findToolDefinition(name);
+      expect(definition, name).toBeDefined();
 
-      const accepted = structuredClone(sampleToolInputs[name]) as Record<string, unknown>;
-      expect(schemaFailures(schema, accepted), `${name} accepted arguments`).toEqual([]);
-
-      // The same object with one property the tool does not declare. The tool
-      // refuses it at runtime, so a published schema that admits it would tell
-      // a host something untrue about the call.
-      const rejected = { ...accepted, unexpectedProperty: "value" };
-      expect(schemaFailures(schema, rejected), `${name} rejected arguments`).not.toEqual([]);
-
-      const discriminator = discriminators.get(name);
+      const discriminator = definition?.discriminator;
       if (discriminator !== undefined) {
         // The variant is the half that never reached the wire. A published
-        // schema carrying no alternative admits any value here.
-        const undeclaredVariant = { ...accepted, [discriminator]: "not_a_variant" };
+        // schema carrying no alternative admits any value here. Asserted once
+        // per tool rather than once per branch: the claim is about the value
+        // set the root publishes for one property, which is the same set
+        // whichever form the rest of the object came from.
+        const undeclaredVariant = {
+          ...sampleBranchInputs[name][0],
+          [discriminator]: "not_a_variant",
+        };
         expect(schemaFailures(schema, undeclaredVariant), `${name} undeclared variant`).not.toEqual(
           [],
         );
       }
+
+      for (const branch of sampleBranchInputs[name]) {
+        // One variant per entry, rather than one sample per tool: a flat
+        // published root no longer names the variants, so whether it admits
+        // what the tool accepts is a question about each of them separately.
+        const accepted = structuredClone(branch) as Record<string, unknown>;
+        const where = `${name} ${JSON.stringify(accepted)}`;
+        expect(schemaFailures(schema, accepted), `${where} published`).toEqual([]);
+        // Both directions of the same claim. The published schema being looser
+        // than validation is the accepted trade-off; being looser in a way that
+        // admits something validation refuses would make it a false contract.
+        expect(definition?.inputSchema.safeParse(accepted).success, `${where} validated`).toBe(
+          true,
+        );
+
+        // The same object with one property the tool does not declare. The tool
+        // refuses it at runtime, so a published schema that admits it would tell
+        // a host something untrue about the call.
+        const rejected = { ...accepted, unexpectedProperty: "value" };
+        expect(schemaFailures(schema, rejected), `${where} unknown property`).not.toEqual([]);
+      }
     }
+  });
+
+  it("carries a sample for every variant the published schema declares", async () => {
+    const published = await publishedInputSchemas();
+
+    for (const name of toolNames) {
+      const schema = published.get(name);
+      const properties = isRecord(schema?.properties) ? schema.properties : {};
+      const branches = sampleBranchInputs[name];
+      const discriminator = findToolDefinition(name)?.discriminator;
+
+      if (discriminator !== undefined) {
+        // The set the samples exercise against the set the schema advertises.
+        // Without this the table above is a list somebody has to remember to
+        // extend, and the variant nobody extends it for is the one that goes
+        // unchecked.
+        const sampled = branches
+          .map((branch) => branch[discriminator])
+          .filter((value) => value !== undefined);
+        expect([...new Set(sampled)].sort(), `${name} sampled variants`).toEqual(
+          [...declaredPropertyValues(schema ?? {}, discriminator)].sort(),
+        );
+      }
+
+      // A tool that publishes `plan` accepts the apply-from-plan form, which
+      // carries no discriminator value and so is invisible to the check above.
+      // Exactly one, because two would mean a form was counted twice; at least
+      // one direct form beside it, because a tool whose only sample is the plan
+      // reference exercises none of its intents.
+      if ("plan" in properties) {
+        expect(
+          branches.filter((branch) => "plan" in branch),
+          `${name} plan-reference samples`,
+        ).toHaveLength(1);
+        expect(
+          branches.filter((branch) => !("plan" in branch)).length,
+          `${name} direct-form samples`,
+        ).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("documents every variant it merged away in the published description", async () => {
+    const published = await publishedInputSchemas();
+
+    for (const name of toolNames) {
+      const schema = published.get(name);
+      const properties = isRecord(schema?.properties) ? schema.properties : {};
+      const branches = sampleBranchInputs[name];
+      const discriminator = findToolDefinition(name)?.discriminator;
+
+      // A tool with one form merged nothing away and has nothing to recover.
+      if (branches.length < 2) {
+        expect(schema?.description, `${name} documents a variant it does not have`).toBeUndefined();
+        continue;
+      }
+
+      const description = schema?.description;
+      expect(typeof description, `${name} description`).toBe("string");
+      if (typeof description !== "string") {
+        continue;
+      }
+      // The one thing a flat root cannot say for itself, and the reason the
+      // rest of the description is not merely helpful: the published properties
+      // are the union of the forms, so a caller has to be told not to combine
+      // two of them.
+      expect(description, name).toContain(
+        "Supply exactly one of these forms in full; do not combine properties from two forms.",
+      );
+
+      const lines = description
+        .split("\n")
+        .filter((line) => line.startsWith("- "))
+        .map((line) => parseVariantLine(line, discriminator));
+      expect(lines.length, `${name} documented forms`).toBeGreaterThan(0);
+
+      if (discriminator !== undefined) {
+        // Every advertised value is reachable from the prose, so a caller
+        // reading the enum can always find the form that goes with it.
+        const documented = new Set(lines.flatMap((line) => line.values));
+        expect([...documented].sort(), `${name} documented variants`).toEqual(
+          [...declaredPropertyValues(schema ?? {}, discriminator)].sort(),
+        );
+      }
+
+      // Every published property is attributed to at least one form, and every
+      // name the prose uses is a property the root really publishes. The root
+      // properties are the union of the forms', so these two sets are the same
+      // set — which makes this the check that a form's optional arguments are
+      // documented too, something minimal per-branch samples cannot show.
+      expect([...new Set(lines.flatMap((line) => [...line.names]))].sort(), name).toEqual(
+        Object.keys(properties).sort(),
+      );
+
+      for (const branch of branches) {
+        const argumentNames = Object.keys(branch);
+        const value = discriminator === undefined ? undefined : branch[discriminator];
+        const line =
+          value === undefined
+            ? lines.find((candidate) => argumentNames.every((key) => candidate.names.has(key)))
+            : lines.find((candidate) => candidate.values.includes(value as string));
+        expect(line, `${name} ${JSON.stringify(branch)} has no documented form`).toBeDefined();
+        // Every argument this variant is accepted with is named on its own
+        // line, so what a form needs is readable without sending a call and
+        // reading the rejection.
+        expect([...(line?.names ?? [])], `${name} ${JSON.stringify(branch)}`).toEqual(
+          expect.arrayContaining(argumentNames),
+        );
+      }
+
+      if ("plan" in properties) {
+        // The replacement for the published-schema assertion that used to live
+        // in the arr_library_change stdio suite: a plan reference replaces the
+        // intent rather than accompanying it, and a flat root publishes both as
+        // independent optional properties, so the prose is now the only place
+        // that says so.
+        const planLines = lines.filter((line) => line.required.has("plan"));
+        expect(planLines, `${name} plan-reference form`).toHaveLength(1);
+        if (discriminator !== undefined) {
+          expect(planLines[0]?.names.has(discriminator), `${name} plan-reference form`).toBe(false);
+        }
+      }
+    }
+
+    // Pinned by name, and the only expectations here that are: `intent`
+    // scoping `domain` is the largest correlation the merge discards, and a
+    // derived check cannot tell a description that recovers the scoping from
+    // one that lists all sixteen domains on every line. Provider intents reach
+    // the seven provider domains and no profile domain.
+    const reconcile = published.get("arr_config_reconcile");
+    const providerLine = String(reconcile?.description ?? "")
+      .split("\n")
+      .find((line) => line.startsWith("- intent=reconcile_provider"));
+    expect(providerLine).toContain("indexers");
+    expect(providerLine).not.toContain("quality_profiles");
+
+    // The narrowest form of the same claim, and the one no derived check above
+    // can make. `arr_activity_change`'s two intents name the same arguments and
+    // differ only in the kind of reference `records` takes, so the reference
+    // annotation is the whole of what tells them apart. Lose it — by the
+    // published pattern drifting out from under the reverse lookup that
+    // produces it, say — and the two signatures become identical, the forms
+    // collapse onto one line, and the distinction disappears from the published
+    // documentation rather than failing anywhere.
+    const recordAnnotations = String(published.get("arr_activity_change")?.description ?? "")
+      .split("\n")
+      .filter((line) => line.startsWith("- "))
+      .map((line) => /\brecords=([^,;]+)/u.exec(line)?.[1])
+      .filter((annotation): annotation is string => annotation !== undefined);
+    expect(new Set(recordAnnotations).size, "arr_activity_change records annotations").toBe(2);
   });
 
   it("returns the unsupported_capability error without contacting an instance", async () => {
