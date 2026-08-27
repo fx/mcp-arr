@@ -612,6 +612,7 @@ describe("queue resolution reconciliation", () => {
    */
   async function lostApply(intent = "ignore_tracking") {
     const reference = await referenceFor(blockedImport);
+    const selected = reference;
     let validated: unknown;
     const watched: readonly OperationDefinition[] = operations.map((operation) =>
       operation.tool === "arr_queue_resolve"
@@ -637,7 +638,7 @@ describe("queue resolution reconciliation", () => {
 
     const receipt = result.mutation?.receipt;
     expect(receipt?.state).toBe("outcome_unknown");
-    return { receipt: receipt?.reference as string, validated, intent };
+    return { receipt: receipt?.reference as string, validated, intent, reference: selected };
   }
 
   it("settles as succeeded when the row has left the queue", async () => {
@@ -761,6 +762,37 @@ describe("queue resolution reconciliation", () => {
 
     expect(reconciled.status).toBe("reconciled");
     expect(reconciled.status === "reconciled" && reconciled.record.state).toBe("succeeded");
+  });
+
+  it("answers a repeat of a reconciled receipt as the success it established", async () => {
+    // The store keeps a record's retained outcomes across reconciliation, so a
+    // receipt that moved to succeeded while its items still said the outcome
+    // was unknown would contradict itself — and a repeat is answered from both.
+    const lost = await lostApply();
+    instance.rows = instance.rows.filter((row) => row.id !== blockedImport);
+
+    const reconciled = await state.applies.reconcile(
+      lost.receipt,
+      createQueueReconciliationReader({
+        client: context.registry.adapter("sonarr")?.client as never,
+        application: "sonarr",
+        intent: "ignore_tracking",
+        targets: reconciliationTargetsFor(lost.validated),
+      }),
+    );
+    expect(reconciled.status === "reconciled" && reconciled.record.state).toBe("succeeded");
+
+    const repeated = await run(resolveTool, {
+      intent: "ignore_tracking",
+      mode: "apply",
+      items: [lost.reference],
+    });
+
+    expect(outcomeOf(repeated).status).toBe("ok");
+    const item = outcomeOf(repeated).items?.[0];
+    expect(item?.status).toBe("ok");
+    expect(item?.error).toBeUndefined();
+    expect(item?.warnings.join(" ")).toContain("upstream state has since confirmed it was applied");
   });
 
   it("refuses to re-open a record that already settled", async () => {

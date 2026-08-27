@@ -516,6 +516,7 @@ async function reconcileLostItem(
         : { replacementSearch: context.replacementSearch }),
     },
     {
+      reference: item.reference,
       queueItemId: item.observed.queueItemId,
       mediaId: item.observed.mediaId,
       observedStatus: item.observed.status,
@@ -777,6 +778,8 @@ export const queueResolveHandler: OperationHandler = async (invocation) => {
  * timestamp.
  */
 export interface QueueReconciliationTarget {
+  /** The opaque queue reference this row was selected by. */
+  readonly reference: string;
   readonly queueItemId: number;
   readonly mediaId?: number | undefined;
   readonly observedStatus: QueueStatus;
@@ -1003,7 +1006,7 @@ async function reconcileTarget(
 export function createQueueReconciliationReader(
   options: QueueReconciliationOptions,
 ): (record: ApplyRecord) => Promise<ApplyReconciliation> {
-  return async (_record: ApplyRecord): Promise<ApplyReconciliation> => {
+  return async (record: ApplyRecord): Promise<ApplyReconciliation> => {
     if (options.targets.length === 0) {
       return { status: "indeterminate" };
     }
@@ -1014,7 +1017,25 @@ export function createQueueReconciliationReader(
     }
 
     if (verdicts.every((verdict) => verdict === "succeeded")) {
-      return { status: "succeeded" };
+      // The outcomes the record retained were written by the attempt whose
+      // answer was lost, so they say so. Reconciliation has since established
+      // what each of these items actually did, and returning that keeps the
+      // record from reporting a success beside outcomes that contradict it.
+      // Only the reconciled items are rewritten: a record can also hold
+      // outcomes for selections that never reached an upstream request, and
+      // those are still true.
+      const reconciled = new Map(
+        options.targets.map((target) => [
+          target.reference,
+          itemOutcome(target.reference, undefined, [
+            "the outcome of this request was lost and upstream state has since confirmed it was applied",
+          ]),
+        ]),
+      );
+      const items = (record.items ?? [...reconciled.values()]).map(
+        (outcome) => reconciled.get(outcome.reference) ?? outcome,
+      );
+      return { status: "succeeded", items };
     }
     if (verdicts.every((verdict) => verdict === "failed")) {
       return {
@@ -1045,6 +1066,7 @@ export function reconciliationTargetsFor(validated: unknown): readonly QueueReco
     .filter((item): item is { status: "ok" } & ValidatedItem => item.status === "ok")
     .filter((item) => item.transition.action.kind === "upstream")
     .map((item) => ({
+      reference: item.reference,
       queueItemId: item.observed.queueItemId,
       mediaId: item.observed.mediaId,
       observedStatus: item.observed.status,
