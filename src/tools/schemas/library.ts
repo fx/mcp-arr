@@ -181,11 +181,27 @@ const mediaChangesSchema = z.strictObject({
     .optional(),
 });
 
-const fileChangesSchema = z.strictObject({
-  quality: z.string().min(1).max(120).optional(),
-  languages: z.array(z.string().min(1).max(60)).max(20).optional(),
-  releaseGroup: z.string().min(1).max(120).optional(),
-});
+/**
+ * Typed file-metadata edits. Each field names the value in the instance's own
+ * vocabulary — a quality it defines, languages it knows — and a name it does
+ * not offer is refused rather than resolved to something adjacent. Supplying
+ * none of them asks for no change at all, so at least one is required.
+ */
+const fileChangesSchema = z
+  .strictObject({
+    quality: z.string().min(1).max(120).optional(),
+    languages: z.array(z.string().min(1).max(60)).min(1).max(20).optional(),
+    releaseGroup: z.string().min(1).max(120).optional(),
+  })
+  .refine(
+    (value) =>
+      value.quality !== undefined ||
+      value.languages !== undefined ||
+      value.releaseGroup !== undefined,
+    { error: "at least one file metadata field must be supplied" },
+  );
+
+const fileSelection = z.array(mediaFileReferenceSchema).min(1).max(maxBulkItems);
 
 /**
  * The typed library mutations.
@@ -234,13 +250,14 @@ export const libraryChangeIntentSchema = z.discriminatedUnion("intent", [
   z.strictObject({
     intent: z.literal("update_file_metadata"),
     ...mutationBaseShape,
-    files: z.array(mediaFileReferenceSchema).min(1).max(maxBulkItems),
+    /** Every file must belong to the same series or movie; see `rename`. */
+    files: fileSelection,
     changes: fileChangesSchema,
   }),
   z.strictObject({
     intent: z.literal("delete_file"),
     ...mutationBaseShape,
-    files: z.array(mediaFileReferenceSchema).min(1).max(maxBulkItems),
+    files: fileSelection,
   }),
   z.strictObject({
     intent: z.literal("rename"),

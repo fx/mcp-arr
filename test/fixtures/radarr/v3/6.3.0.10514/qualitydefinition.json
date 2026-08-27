@@ -1,0 +1,40 @@
+{
+  "metadata": {
+    "application": "radarr",
+    "apiVersion": "v3",
+    "version": "6.3.0.10514",
+    "endpoint": "/api/v3/qualitydefinition"
+  },
+  "body": [
+    {
+      "id": 1,
+      "quality": {
+        "id": 4,
+        "name": "WEBDL-720p",
+        "source": "web",
+        "resolution": 720,
+        "modifier": "none"
+      },
+      "title": "WEBDL-720p",
+      "weight": 4,
+      "minSize": 12.5,
+      "maxSize": 100,
+      "preferredSize": 95
+    },
+    {
+      "id": 2,
+      "quality": {
+        "id": 7,
+        "name": "Bluray-1080p",
+        "source": "bluray",
+        "resolution": 1080,
+        "modifier": "none"
+      },
+      "title": "Bluray-1080p",
+      "weight": 7,
+      "minSize": 17.1,
+      "maxSize": 227,
+      "preferredSize": 195
+    }
+  ]
+}

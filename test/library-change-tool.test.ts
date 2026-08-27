@@ -38,8 +38,11 @@ const servedRoutes: Readonly<Record<string, readonly string[]>> = {
     "series",
     "series/lookup",
     "episode",
+    "episodefile",
     "rootfolder",
     "qualityprofile",
+    "qualitydefinition",
+    "language",
     "tag",
   ],
   radarr: [
@@ -47,8 +50,11 @@ const servedRoutes: Readonly<Record<string, readonly string[]>> = {
     "movie",
     "movie/lookup",
     "collection",
+    "moviefile",
     "rootfolder",
     "qualityprofile",
+    "qualitydefinition",
+    "language",
     "tag",
   ],
   prowlarr: ["system/status"],
@@ -58,7 +64,9 @@ const servedRoutes: Readonly<Record<string, readonly string[]>> = {
 const singleRecordRoutes: Readonly<Record<string, string>> = {
   series: "series",
   episode: "episode",
+  episodefile: "episodefile",
   movie: "movie",
+  moviefile: "moviefile",
   collection: "collection",
 };
 
@@ -66,6 +74,7 @@ interface RecordedRequest {
   readonly application: ApplicationId;
   readonly method: string;
   readonly route: string;
+  readonly query: Readonly<Record<string, string>>;
   readonly body?: Record<string, unknown> | undefined;
 }
 
@@ -156,11 +165,13 @@ async function createInstances(): Promise<Instances> {
 
     const route = routeOf(url);
     const method = init.method ?? "GET";
+    const query = Object.fromEntries(url.searchParams);
     const raw = typeof init.body === "string" ? (JSON.parse(init.body) as unknown) : undefined;
     requests.push({
       application,
       method,
       route,
+      query,
       ...(isRecord(raw) ? { body: raw } : {}),
     });
 
@@ -187,6 +198,18 @@ async function createInstances(): Promise<Instances> {
       }
       stored[index] = raw;
       return jsonResponse(raw);
+    }
+
+    if (method === "DELETE" && collection !== undefined && id !== undefined) {
+      const stored = collectionOf(application, collection);
+      const index = stored.findIndex((record) => record.id === id);
+      if (index < 0) {
+        return jsonResponse({ message: "not found" }, 404);
+      }
+      stored.splice(index, 1);
+      // A real instance answers a delete with no content at all, which is
+      // exactly the answer a write has to accept without calling it broken.
+      return new Response(null, { status: 200 });
     }
 
     if (method === "POST" && isRecord(raw)) {
@@ -305,6 +328,27 @@ async function lookupCandidate(application: "sonarr" | "radarr", title: string) 
     throw new Error(`No lookup candidate named ${title}`);
   }
   return { ...found, reference: found.reference };
+}
+
+async function episodeFileRecords(series: string) {
+  const data = await view({
+    view: "episode_files",
+    series,
+    detail: "full",
+    applications: ["sonarr"],
+  });
+  if (data.view !== "episode_files") {
+    throw new Error("Expected the episode files view");
+  }
+  return data.items;
+}
+
+async function movieFileRecords(movie: string) {
+  const data = await view({ view: "movie_files", movie, detail: "full", applications: ["radarr"] });
+  if (data.view !== "movie_files") {
+    throw new Error("Expected the movie files view");
+  }
+  return data.items;
 }
 
 function seriesByTitle(records: Awaited<ReturnType<typeof seriesRecords>>, title: string) {
@@ -1141,5 +1185,400 @@ describe("arr_library_change disclosure", () => {
 
     expect(errorCodes(applied)).toContain("stale_reference");
     expect(instances.requests).toEqual([]);
+  });
+});
+
+describe("arr_library_change delete_media", () => {
+  it("plans a deletion, discloses what goes with it, and sends nothing", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Retired Series");
+
+    const planned = await change({
+      intent: "delete_media",
+      mode: "plan",
+      items: [series.reference],
+      deleteFiles: false,
+      addImportListExclusion: false,
+    });
+
+    expect(planned.status).toBe("ok");
+    expect(planned.mutation?.requestedEffects).toEqual([
+      {
+        application: "sonarr",
+        severity: "destructive",
+        summary: "remove 1 record(s) from the library",
+      },
+    ]);
+    // The choice not to take the files with the record is disclosed rather
+    // than left to be inferred from the absence of an effect.
+    expect(outcomeFor(planned, "sonarr").warnings).toEqual([
+      expect.stringContaining("files are left on disk"),
+    ]);
+    expect(writes("sonarr")).toEqual([]);
+
+    const applied = await change({ mode: "apply", plan: planReference(planned) });
+
+    expect(applied.status).toBe("ok");
+    expect(applied.mutation?.receipt).toMatchObject({ state: "succeeded" });
+    // Both choices travel explicitly, including the false one: leaving it out
+    // would let the instance's own default decide it.
+    expect(writes("sonarr")).toEqual([
+      expect.objectContaining({
+        method: "DELETE",
+        route: "series/14",
+        query: { deleteFiles: "false", addImportListExclusion: "false" },
+      }),
+    ]);
+    expect(
+      (instances.body("sonarr", "series") as Record<string, unknown>[]).map((record) => record.id),
+    ).not.toContain(14);
+  });
+
+  it("requests physical deletion only when the caller asked for it", async () => {
+    const movie = (await movieRecords())[0];
+
+    const applied = await change({
+      intent: "delete_media",
+      mode: "apply",
+      items: [requireReference(movie?.reference, "movie")],
+      deleteFiles: true,
+      addImportListExclusion: true,
+    });
+
+    expect(applied.status).toBe("ok");
+    expect(applied.mutation?.requestedEffects).toEqual([
+      expect.objectContaining({
+        severity: "destructive",
+        summary: "remove 1 record(s) from the library",
+      }),
+      expect.objectContaining({
+        severity: "destructive",
+        summary: "delete the files of 1 record(s) from disk",
+      }),
+      expect.objectContaining({
+        severity: "consequential",
+        summary: "exclude 1 record(s) from future import-list additions",
+      }),
+    ]);
+    // Radarr spells the exclusion differently from Sonarr, and the difference
+    // is the adapter's business rather than the caller's.
+    expect(writes("radarr")).toEqual([
+      expect.objectContaining({
+        method: "DELETE",
+        route: "movie/8",
+        query: { deleteFiles: "true", addImportExclusion: "true" },
+      }),
+    ]);
+  });
+
+  it("refuses a plan whose record no longer holds what the plan disclosed", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Retired Series");
+    const planned = await change({
+      intent: "delete_media",
+      mode: "plan",
+      items: [series.reference],
+      deleteFiles: true,
+      addImportListExclusion: false,
+    });
+
+    // Files arrived after the plan reported how much data was under the
+    // record, and this plan asked for those files to be deleted.
+    instances.patch("sonarr", "series", 14, {
+      statistics: { episodeFileCount: 9, sizeOnDisk: 9_000_000_000 },
+    });
+    const applied = await change({ mode: "apply", plan: planReference(planned) });
+
+    expect(errorCodes(applied)).toContain("stale_plan");
+    expect(writes("sonarr")).toEqual([]);
+  });
+
+  it("returns the removed record and the stale one together", async () => {
+    const records = await seriesRecords();
+    const kept = seriesByTitle(records, "Example Retired Series");
+    const gone = seriesByTitle(records, "Example Anime");
+    instances.replace(
+      "sonarr",
+      "series",
+      (instances.body("sonarr", "series") as Record<string, unknown>[]).filter(
+        (record) => record.id !== 13,
+      ),
+    );
+
+    const applied = await change({
+      intent: "delete_media",
+      mode: "apply",
+      items: [kept.reference, gone.reference],
+      deleteFiles: false,
+      addImportListExclusion: false,
+    });
+
+    expect(applied.status).toBe("partial");
+    expect(outcomeFor(applied, "sonarr").items).toEqual([
+      expect.objectContaining({ reference: kept.reference, status: "ok" }),
+      expect.objectContaining({ reference: gone.reference, status: "error" }),
+    ]);
+    expect(writes("sonarr")).toEqual([
+      expect.objectContaining({ method: "DELETE", route: "series/14" }),
+    ]);
+  });
+
+  it("refuses a record kind that is not its own thing on disk", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+    const seasons = await view({
+      view: "seasons",
+      series: series.reference,
+      applications: ["sonarr"],
+    });
+    if (seasons.view !== "seasons") {
+      throw new Error("Expected the seasons view");
+    }
+
+    const applied = await change({
+      intent: "delete_media",
+      mode: "apply",
+      items: [requireReference(seasons.items[0]?.reference, "season")],
+      deleteFiles: false,
+      addImportListExclusion: false,
+    });
+
+    expect(errorCodes(applied)).toContain("unsupported_capability");
+    expect(writes("sonarr")).toEqual([]);
+  });
+
+  it("reports an unreachable instance without sending the deletion", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Retired Series");
+    instances.stop("sonarr");
+
+    const applied = await change({
+      intent: "delete_media",
+      mode: "apply",
+      items: [series.reference],
+      deleteFiles: true,
+      addImportListExclusion: false,
+    });
+
+    expect(errorCodes(applied)).toContain("unavailable_application");
+    expect(writes("sonarr")).toEqual([]);
+  });
+});
+
+describe("arr_library_change update_file_metadata", () => {
+  it("writes the instance's own quality over the file and keeps the rest", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+    const files = await episodeFileRecords(series.reference);
+    const target = files.find((file) => file.id === "2001");
+
+    const applied = await change({
+      intent: "update_file_metadata",
+      mode: "apply",
+      files: [requireReference(target?.reference, "episode file")],
+      // Named in the caller's own words; the instance's spelling is what gets
+      // written.
+      changes: { quality: "webdl-720p", releaseGroup: "EXAMPLEALT" },
+    });
+
+    expect(applied.status).toBe("ok");
+    expect(applied.mutation?.requestedEffects).toEqual([
+      expect.objectContaining({ summary: "set the recorded quality of 1 file(s) to webdl-720p" }),
+      expect.objectContaining({ summary: "set the recorded release group of 1 file(s)" }),
+    ]);
+    expect(writes("sonarr")).toEqual([
+      expect.objectContaining({ method: "PUT", route: "episodefile/2001" }),
+    ]);
+    expect(writes("sonarr")[0]?.body).toMatchObject({
+      id: 2001,
+      releaseGroup: "EXAMPLEALT",
+      quality: {
+        quality: { id: 4, name: "WEBDL-720p" },
+        // The revision describes the release the file came from and is not
+        // what a metadata correction changes, so it survives untouched.
+        revision: { version: 1, real: 0, isRepack: false },
+      },
+      // A field this project does not model survives the round trip.
+      qualityCutoffNotMet: false,
+    });
+  });
+
+  it("refuses a quality this instance does not define, before writing anything", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+    const files = await episodeFileRecords(series.reference);
+
+    const applied = await change({
+      intent: "update_file_metadata",
+      mode: "apply",
+      files: [requireReference(files[0]?.reference, "episode file")],
+      changes: { quality: "Remux-2160p" },
+    });
+
+    expect(errorCodes(applied)).toContain("invalid_input");
+    expect(writes("sonarr")).toEqual([]);
+  });
+
+  it("refuses a language this instance does not know", async () => {
+    const movie = (await movieRecords())[0];
+    const files = await movieFileRecords(requireReference(movie?.reference, "movie"));
+
+    const applied = await change({
+      intent: "update_file_metadata",
+      mode: "apply",
+      files: [requireReference(files[0]?.reference, "movie file")],
+      changes: { languages: ["Klingon"] },
+    });
+
+    expect(errorCodes(applied)).toContain("invalid_input");
+    expect(writes("radarr")).toEqual([]);
+  });
+
+  it("refuses a selection that spans two parent records rather than splitting it", async () => {
+    // One of the two files now belongs to another series, which is what a bulk
+    // request finds when a file was moved after the query that listed it.
+    instances.patch("sonarr", "episodefile", 2003, { seriesId: 13 });
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+    const files = await episodeFileRecords(series.reference);
+
+    const applied = await change({
+      intent: "update_file_metadata",
+      mode: "apply",
+      files: files.map((file) => file.reference),
+      changes: { releaseGroup: "EXAMPLEALT" },
+    });
+
+    expect(errorCodes(applied)).toContain("invalid_input");
+    expect(outcomeFor(applied, "sonarr").error?.message).toContain("same series");
+    // Not even the file that would have been fine on its own is written.
+    expect(writes("sonarr")).toEqual([]);
+  });
+
+  it("sends nothing for a file that already carries the requested metadata", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+    const files = await episodeFileRecords(series.reference);
+
+    const planned = await change({
+      intent: "update_file_metadata",
+      mode: "plan",
+      files: [requireReference(files[0]?.reference, "episode file")],
+      changes: { releaseGroup: "EXAMPLEGRP" },
+    });
+
+    expect(planned.mutation?.requestedEffects).toHaveLength(1);
+    expect(planned.mutation?.predictedEffects).toEqual([]);
+    expect(outcomeFor(planned, "sonarr").warnings).toEqual([
+      expect.stringContaining("nothing in this selection needs to be sent"),
+    ]);
+
+    const applied = await change({ mode: "apply", plan: planReference(planned) });
+
+    expect(applied.status).toBe("ok");
+    expect(writes("sonarr")).toEqual([]);
+    expect(outcomeFor(applied, "sonarr").items).toEqual([
+      expect.objectContaining({
+        status: "ok",
+        warnings: [expect.stringContaining("already matched the requested metadata")],
+      }),
+    ]);
+  });
+});
+
+describe("arr_library_change delete_file", () => {
+  it("deletes each selected file and says so as a destructive effect", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+    const files = await episodeFileRecords(series.reference);
+
+    const applied = await change({
+      intent: "delete_file",
+      mode: "apply",
+      files: files.map((file) => file.reference),
+    });
+
+    expect(applied.status).toBe("ok");
+    expect(applied.mutation?.requestedEffects).toEqual([
+      { application: "sonarr", severity: "destructive", summary: "delete 2 file(s) from disk" },
+    ]);
+    expect(writes("sonarr")).toEqual([
+      expect.objectContaining({ method: "DELETE", route: "episodefile/2001" }),
+      expect.objectContaining({ method: "DELETE", route: "episodefile/2003" }),
+    ]);
+    expect(instances.body("sonarr", "episodefile")).toEqual([]);
+  });
+
+  it("leaves a deletion that reached nothing retryable with the same input", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+    const files = await episodeFileRecords(series.reference);
+    instances.failRoute("sonarr", "episodefile/2001", 500);
+    const intent = {
+      intent: "delete_file",
+      mode: "apply",
+      files: [requireReference(files[0]?.reference, "episode file")],
+    };
+
+    const first = await change(intent);
+
+    expect(first.status).toBe("error");
+    expect(writes("sonarr")).toEqual([]);
+    // Nothing was sent, and this server can show it, so the receipt records a
+    // failure — the one state a later identical attempt may reuse.
+    expect(first.mutation?.receipt).toMatchObject({ state: "failed" });
+
+    const attempts = instances.requests.filter(
+      (request) => request.route === "episodefile/2001",
+    ).length;
+    await change(intent);
+
+    expect(
+      instances.requests.filter((request) => request.route === "episodefile/2001").length,
+    ).toBeGreaterThan(attempts);
+  });
+
+  it("keeps a deletion whose answer was lost reconcilable rather than calling it failed", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+    const files = await episodeFileRecords(series.reference);
+    instances.dropWrites("sonarr");
+
+    const applied = await change({
+      intent: "delete_file",
+      mode: "apply",
+      files: [requireReference(files[0]?.reference, "episode file")],
+    });
+
+    // The request was sent and the answer never arrived. Every item reports an
+    // error, and settling on that resemblance would record a deletion that may
+    // have happened as one that certainly did not.
+    expect(writes("sonarr")).toHaveLength(1);
+    expect(applied.mutation?.receipt).toMatchObject({ state: "outcome_unknown" });
+    expect(errorCodes(applied)).toContain("unavailable_application");
+  });
+});
+
+describe("arr_library_change file disclosure", () => {
+  it("keeps upstream payload content and credentials out of every published field", async () => {
+    const canary = "CANARY-SECRET-DO-NOT-LEAK";
+    instances.patch("sonarr", "episodefile", 2001, { sceneName: canary, originalFilePath: canary });
+
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+    const files = await episodeFileRecords(series.reference);
+    const reference = requireReference(files[0]?.reference, "episode file");
+    const planned = await change({
+      intent: "update_file_metadata",
+      mode: "plan",
+      files: [reference],
+      changes: { quality: "WEBDL-720p" },
+    });
+    const applied = await change({ mode: "apply", plan: planReference(planned) });
+
+    const published = [
+      JSON.stringify(planned),
+      JSON.stringify(applied),
+      summarizeToolResult("arr_library_change", planned),
+      summarizeToolResult("arr_library_change", applied),
+      // The retained plan record is process-local, and must hold the caller's
+      // intent rather than the upstream payload the plan was validated against.
+      JSON.stringify(state.plans.resolve(planReference(planned))),
+    ].join("\n");
+
+    expect(published).not.toContain(canary);
+    expect(published).not.toContain(testApiKeys.sonarr);
+    expect(published).not.toContain("example.invalid");
+    // The value is still carried back to the instance untouched, which is the
+    // whole reason a file edit is a read-modify-write.
+    expect(writes("sonarr")[0]?.body).toMatchObject({ sceneName: canary });
   });
 });

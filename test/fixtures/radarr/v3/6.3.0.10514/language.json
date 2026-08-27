@@ -1,0 +1,20 @@
+{
+  "metadata": {
+    "application": "radarr",
+    "apiVersion": "v3",
+    "version": "6.3.0.10514",
+    "endpoint": "/api/v3/language"
+  },
+  "body": [
+    {
+      "id": 1,
+      "name": "English",
+      "nameLower": "english"
+    },
+    {
+      "id": 2,
+      "name": "French",
+      "nameLower": "french"
+    }
+  ]
+}

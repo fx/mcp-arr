@@ -664,15 +664,30 @@ const definitions = [
     "mutate",
     libraryChange,
   ),
-  define("library.change.delete_media", "arr_library_change", "delete_media", media, "destructive"),
+  define(
+    "library.change.delete_media",
+    "arr_library_change",
+    "delete_media",
+    media,
+    "destructive",
+    libraryChange,
+  ),
   define(
     "library.change.update_file_metadata",
     "arr_library_change",
     "update_file_metadata",
     media,
     "mutate",
+    libraryChange,
   ),
-  define("library.change.delete_file", "arr_library_change", "delete_file", media, "destructive"),
+  define(
+    "library.change.delete_file",
+    "arr_library_change",
+    "delete_file",
+    media,
+    "destructive",
+    libraryChange,
+  ),
   define("library.change.rename", "arr_library_change", "rename", media, "destructive"),
 
   // arr_config_reconcile
