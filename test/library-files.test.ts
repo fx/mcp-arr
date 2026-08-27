@@ -268,9 +268,11 @@ describe("rename and move commands", () => {
     expect(allowedCommandNames("radarr")).toEqual(["RenameFiles", "MoveMovie"]);
   });
 
-  it("sends the allowlisted name whatever the payload carries", async () => {
-    const harness = libraryHarness("sonarr", (call) =>
-      jsonResponse({ id: 4242, name: JSON.parse(String(call.init.body)).name, status: "queued" }),
+  it("sends and keeps the allowlisted name whatever anything else says", async () => {
+    // The instance echoes a name of its own, which is unvalidated upstream text
+    // and is published by the job projection this acceptance becomes.
+    const harness = libraryHarness("sonarr", () =>
+      jsonResponse({ id: 4242, name: "SomethingElse", status: "queued" }),
     );
 
     const accepted = await startCommand(harness.client, "sonarr", "rename_files", {

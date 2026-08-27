@@ -1661,6 +1661,8 @@ describe("arr_library_change rename", () => {
     const job = applied.mutation?.job;
     expect(job).toMatch(/^job_/u);
     const projected = await run(findToolDefinition("arr_job_get") as ToolDefinition, { job });
+    // The published command name is the allowlisted one this server sent, so
+    // nothing an instance chose to answer with reaches a tool result.
     expect(projected.applications[0]?.data).toMatchObject({
       command: { name: "RenameFiles", upstreamId: "9001" },
       status: "queued",
@@ -1691,6 +1693,29 @@ describe("arr_library_change rename", () => {
       seriesId: 12,
       files: [2003],
     });
+  });
+
+  it("refuses a selection it cannot disclose in full rather than previewing part of it", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+    // More files than one result can list. Truncating the preview and renaming
+    // all of them anyway would let an apply touch files the plan never showed.
+    instances.replace(
+      "sonarr",
+      "rename",
+      Array.from({ length: 60 }, (_unused, index) => ({
+        seriesId: 12,
+        seasonNumber: 1,
+        episodeFileId: 3000 + index,
+        existingPath: `Season 01/Example Series - S01E${index} - Example Bluray-1080p.mkv`,
+        newPath: `Season 01/Example Series - S01E${index} - Example [Bluray-1080p].mkv`,
+      })),
+    );
+
+    const planned = await change({ intent: "rename", mode: "plan", media: series.reference });
+
+    expect(errorCodes(planned)).toContain("invalid_input");
+    expect(outcomeFor(planned, "sonarr").error?.message).toContain("select a single season");
+    expect(startedCommands("sonarr")).toEqual([]);
   });
 
   it("refuses a plan whose proposed paths have changed", async () => {

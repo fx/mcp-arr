@@ -515,9 +515,18 @@ export function moveCommandPayload(
     : { ...shared, movieId: request.recordId, movieIds: [request.recordId] };
 }
 
+/**
+ * One accepted command, as the instance echoed it back.
+ *
+ * The echoed `name` is deliberately not modelled. It is unvalidated upstream
+ * text, and the job projection built from this is published — so retaining it
+ * would carry whatever an instance chose to answer with into a tool result,
+ * through a boundary that otherwise lets nothing but this project's own
+ * allowlisted vocabulary out. The name this server sent is already known here
+ * and is the one that is kept.
+ */
 const commandSchema = z.looseObject({
   id: upstreamId,
-  name: upstreamText,
   status: upstreamText,
   state: upstreamText,
 });
@@ -525,6 +534,7 @@ const commandSchema = z.looseObject({
 /** One accepted command, as the instance acknowledged it. */
 export interface CommandAcceptance {
   readonly upstreamId: number;
+  /** The allowlisted name this server sent, never the one upstream echoed. */
   readonly name: string;
   readonly state?: string | undefined;
 }
@@ -555,7 +565,7 @@ export async function startCommand(
   }
   return {
     upstreamId: accepted.id,
-    name: text(accepted.name) ?? name,
+    name,
     state: text(accepted.status) ?? text(accepted.state),
   };
 }

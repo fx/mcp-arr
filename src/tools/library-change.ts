@@ -71,6 +71,7 @@ import type {
   PreconditionReader,
 } from "./operations.js";
 import type { Effect, EffectSeverity, ItemOutcome } from "./results.js";
+import { maxBulkItems } from "./schemas/common.js";
 import { type LibraryChangeIntent, libraryChangeIntentSchema } from "./schemas/library.js";
 
 /**
@@ -1526,29 +1527,34 @@ const renamableKinds: readonly MediaRecordKind[] = ["series", "season", "movie"]
 /** The records that own a folder of their own, and so can be moved. */
 const movableKinds: readonly MediaRecordKind[] = ["series", "movie"];
 
-/** How many proposed renames one result discloses before it summarizes the rest. */
-const maxDisclosedProposals = 20;
+/**
+ * The most files one rename may cover.
+ *
+ * Two constraints meet here and only one ceiling satisfies both. An apply may
+ * touch only files its plan disclosed, so the disclosure cannot be truncated —
+ * a preview that listed twenty of two hundred paths and then renamed all two
+ * hundred would be a preview in name only. And a result has to stay bounded, so
+ * the disclosure cannot be unlimited either. So a record with more files than
+ * this is refused, with the narrower selection that will fit, rather than
+ * previewed in part. The ceiling is the one every other bulk mutation is bounded
+ * by, because it answers the same question about the same kind of result.
+ */
+const maxRenameProposals = maxBulkItems;
 
 /**
- * Names the renames a preview proposes, bounded.
+ * Names every rename a preview proposes.
  *
  * The paths come from the instance rather than from a caller, and disclosing
- * them is the whole point of a preview — but a series with a thousand files
- * would otherwise put a thousand lines in one result, so the list is bounded and
- * says how much it left out.
+ * them is the whole point of a preview. The list is complete because
+ * {@link maxRenameProposals} already refused anything that would not fit: what
+ * an apply sends is exactly what this listed.
  */
 function describeProposals(proposals: readonly RenameProposal[]): readonly string[] {
-  const shown = proposals.slice(0, maxDisclosedProposals).map((proposal) => {
+  return proposals.map((proposal) => {
     const from = proposal.existingPath ?? "a path this instance did not report";
     const to = proposal.newPath ?? "a path this instance did not report";
     return `rename ${from} to ${to}`;
   });
-  return proposals.length <= maxDisclosedProposals
-    ? shown
-    : [
-        ...shown,
-        `${proposals.length - maxDisclosedProposals} further proposed rename(s) not listed`,
-      ];
 }
 
 /**
@@ -1585,6 +1591,18 @@ async function readRenamePreconditions(
     id: identity.value.id,
     seasonNumber: identity.value.seasonNumber,
   });
+  if (proposals.length > maxRenameProposals) {
+    return blocked(
+      invalid(
+        invocation,
+        `this instance proposes ${proposals.length} renames for that selection and one call may disclose at most ${maxRenameProposals}${
+          application === "sonarr" && identity.value.seasonNumber === undefined
+            ? "; select a single season instead"
+            : ""
+        }`,
+      ),
+    );
+  }
 
   const title = typeof resource.title === "string" ? resource.title : "the selected record";
   const scope = `${proposals.length} file(s)`;
