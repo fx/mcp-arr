@@ -32,6 +32,12 @@ The configuration adapter draws the line at values, not at names of credentials.
 
 What is deliberately withheld is different and is enforced elsewhere: a secret's **value** never leaves, and the names of **withheld** fields are reported only as `WithheldFields.count`. Asking for a secret field's name to be redacted, counted, or restricted to a static list is a false positive — it would make the diff disagree with an observation of the same record, and it closes nothing, since any caller that can plan a reconciliation can already call `arr_config_observe`.
 
+## Planning Builds the Same Request an Apply Sends
+
+`runConfigurationReconciliation` runs one sequence for both modes: it compiles the desired state, reads the record, builds the complete upstream resource, and then either returns the plan or sends it. Planning a credential change therefore requires the credential, and the writer assigns it into a payload the plan mode discards.
+
+That is deliberate. A plan is worth reading only if it describes the request the apply will send, and a plan mode that built a different payload — one with the credential left out — would describe something else. The value is used inside one call and is gone when it returns: the bundle is erased in an outer `finally` on every path, the payload is a local that is never returned, and neither the plan, the receipt, the diff, nor the read set has a field a credential could travel in. Asking for the planning path to skip the write, or to build a payload without the secret, is a false positive — it trades the one guarantee that makes a plan meaningful for the removal of a short-lived local object.
+
 ## Zod 4 Schema Conventions
 
 This repository pins zod 4 (see `zod` in `package.json`). In zod 4 the custom-message key for `.refine`, `.check`, and the schema factories is `error`; `message` is the legacy zod 3 alias. Both produce the custom message — verified against the pinned version — so `{ error: ... }` is correct and the message is not lost or ignored. Reporting `error` as a mistake, or asking for it to be changed to `message`, is a false positive.
