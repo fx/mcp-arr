@@ -16,13 +16,16 @@ import {
   upstreamId,
   upstreamText,
 } from "../library/parse.js";
-import type {
-  ImportCandidate,
-  ImportDecision,
-  ImportQuality,
-  ImportRejection,
-  ImportRejectionType,
-  ImportSourceKind,
+import {
+  type ImportCandidate,
+  type ImportDecision,
+  type ImportQuality,
+  type ImportRejection,
+  type ImportRejectionType,
+  type ImportSourceKind,
+  isFileSize,
+  isRecordIdentifier,
+  isSeasonNumber,
 } from "./model.js";
 
 /**
@@ -252,7 +255,11 @@ async function readLibraryScanContext(
   const record = parseUpstream(libraryRecordSchema, await client.get(route), application, route);
 
   const folder = text(record.path);
-  if (folder === undefined) {
+  // A record reporting no path has nothing under it to scan, and one whose
+  // identifier is not a real identifier cannot scope a scan at all — saying so
+  // here is clearer than returning candidates that would each be refused a
+  // reference for the same reason.
+  if (folder === undefined || !isRecordIdentifier(record.id)) {
     return { ok: false, reason: "unmapped" };
   }
 
@@ -335,9 +342,25 @@ function folderNameOf(folder: string): string | undefined {
   return name === "" ? undefined : name;
 }
 
+/**
+ * An upstream number reduced to what this project will retain.
+ *
+ * Upstream's own schemas are looser than the values this project stores: a size
+ * is any number, and an identifier or season is any safe integer including zero
+ * and negatives. Normalizing here rather than passing them through is what stops
+ * the adapter producing a candidate the reference boundary would then refuse —
+ * which would be a candidate that looks fine and can never be named.
+ */
+function retained(
+  value: number | undefined,
+  accepts: (candidate: number) => boolean,
+): number | undefined {
+  return value !== undefined && accepts(value) ? value : undefined;
+}
+
 /** An upstream record identifier, where zero means the instance named none. */
 function recordId(value: number | undefined): number | undefined {
-  return value !== undefined && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+  return retained(value, isRecordIdentifier);
 }
 
 function proper(version: number | undefined): boolean | undefined {
@@ -476,12 +499,12 @@ export function mapCandidate(
       fileNameOf(record.path, known) ??
       scrubLabel(record.name, known),
     fileIdentity: fileIdentity(path),
-    sizeBytes: count(record.size),
+    sizeBytes: retained(count(record.size), isFileSize),
     media:
       mediaId === undefined
         ? undefined
         : mediaRef(application, application === "sonarr" ? "series" : "movie", mediaId),
-    seasonNumber: count(record.seasonNumber),
+    seasonNumber: retained(count(record.seasonNumber), isSeasonNumber),
     episodes:
       episodeIds.length === 0
         ? undefined
@@ -512,7 +535,9 @@ export function mapCandidate(
       queueItemId: context.queueItemId,
       mediaId,
       scanMediaId: context.sourceKind === "library_context" ? context.mediaId : undefined,
-      seasonNumber: count(record.seasonNumber) ?? context.seasonNumber,
+      seasonNumber:
+        retained(count(record.seasonNumber), isSeasonNumber) ??
+        retained(context.seasonNumber, isSeasonNumber),
       episodeIds: episodeIds.length === 0 ? undefined : episodeIds,
       fileIdentity: fileIdentity(path),
       sizeBytes: count(record.size),

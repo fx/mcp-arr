@@ -614,6 +614,23 @@ describe("candidate references", () => {
     const invalidClasses: readonly [string, ImportCandidate][] = [
       ["queue item zero", { ...candidate, context: { ...candidate.context, queueItemId: 0 } }],
       ["candidate zero", { ...candidate, context: { ...candidate.context, candidateId: 0 } }],
+      // An identifier past the safe-integer range is refused at mint rather
+      // than stored and discovered later. Zod 4's `.int()` already means safe
+      // integer, and the shared predicate says so explicitly, so both the
+      // adapter and the schema refuse the same value.
+      [
+        "identifier past the safe-integer range",
+        {
+          ...candidate,
+          media: {
+            application: "sonarr" as const,
+            kind: "series" as const,
+            id: String(2 ** 53),
+          },
+        },
+      ],
+      ["size past the safe-integer range", { ...candidate, sizeBytes: 2 ** 53 }],
+      ["a fractional size", { ...candidate, sizeBytes: 1.5 }],
       // A reference from the wrong application, or of the wrong kind, is not
       // this candidate's mapping — identity is not a number on its own, and
       // storing the number alone would resolve later onto whatever record has
@@ -837,6 +854,36 @@ describe("candidate references", () => {
     });
 
     expect(resolveCandidateReference(references, reference, "sonarr").ok).toBe(false);
+  });
+
+  it("normalizes upstream numbers the reference boundary would refuse", async () => {
+    // Upstream's own schemas are looser than what this project retains: a size
+    // is any number, a season any safe integer. A candidate carrying one of
+    // those would look fine and could never be named, so the adapter reduces
+    // them to absence instead — the same predicates the schema validates with.
+    const queue = await activityFixture<unknown[]>("sonarr", "queue/details");
+    const rows = await activityFixture<Array<Record<string, unknown>>>("sonarr", "manualimport");
+    const laced = rows.map((row, index) =>
+      index === 0 ? { ...row, size: 1.5, seasonNumber: -3 } : row,
+    );
+    const harness = libraryHarness("sonarr", (call) =>
+      jsonResponse(call.url.pathname.endsWith("/manualimport") ? laced : queue),
+    );
+    const scanned = await scanTrackedDownload(harness.client, "sonarr", trackedRequest, {
+      offset: 0,
+      pageSize: 25,
+    });
+    if (scanned.status !== "ok") {
+      throw new Error("Expected a scan");
+    }
+
+    const candidate = scanned.scan.items[0] as ImportCandidate;
+    expect(candidate.sizeBytes).toBeUndefined();
+    expect(candidate.seasonNumber).toBeUndefined();
+    // And it is still nameable, which is the point: the adapter reduced the
+    // values rather than producing a candidate nothing could name.
+    const references = store();
+    expect(mintCandidateReference(references, candidate)).toMatch(/^imp_/u);
   });
 
   it("keeps season zero, which is a real season", async () => {

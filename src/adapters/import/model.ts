@@ -19,6 +19,34 @@ import type { MediaApplication, MediaRef } from "../library/model.js";
  */
 
 /**
+ * What each retained value is allowed to be.
+ *
+ * These live here, beside the model, because two layers depend on them and
+ * neither owns them: the adapter normalizes what upstream reported so it cannot
+ * produce a candidate the reference boundary would refuse, and the reference
+ * schema validates what is stored. Stating them once is what keeps the two from
+ * drifting — an adapter laxer than the schema silently produces candidates that
+ * can never be named, and a schema laxer than the adapter admits values nothing
+ * downstream expects.
+ *
+ * The distinctions are real rather than stylistic. A record identifier is
+ * positive because zero is how both applications report "none". A season may be
+ * zero because specials are season 0. A size may be zero because an empty file
+ * has one.
+ */
+export function isRecordIdentifier(value: number): boolean {
+  return Number.isSafeInteger(value) && value > 0;
+}
+
+export function isSeasonNumber(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+export function isFileSize(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+/**
  * Where a scan started.
  *
  * The two sources reach the same upstream endpoint by different routes — a

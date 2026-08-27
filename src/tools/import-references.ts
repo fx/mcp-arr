@@ -1,7 +1,12 @@
 import { z } from "zod";
 import { fileIdentityLength } from "../adapters/import/candidates.js";
 import type { ImportCandidate, ImportCandidateContext } from "../adapters/import/model.js";
-import { importSourceKinds } from "../adapters/import/model.js";
+import {
+  importSourceKinds,
+  isFileSize,
+  isRecordIdentifier,
+  isSeasonNumber,
+} from "../adapters/import/model.js";
 import type { MediaApplication, MediaRef } from "../adapters/library/model.js";
 import { queryDigest } from "../adapters/library/paging.js";
 import type { ReferenceStore } from "../state/references.js";
@@ -50,9 +55,13 @@ const detailKind = "import_candidate";
  * "none", while a season may be zero because specials are season 0 and a size
  * may be zero because an empty file has one.
  */
-const recordIdSchema = z.number().int().positive();
-const seasonNumberSchema = z.number().int().nonnegative();
-const sizeSchema = z.number().int().nonnegative();
+// Built on the same predicates the adapter normalizes with, so the two cannot
+// disagree about what a retained value may be. Zod 4's `.int()` already means
+// safe integer — verified against the pinned version — and the predicates say
+// so explicitly anyway, because that is the property being relied on.
+const recordIdSchema = z.number().refine(isRecordIdentifier);
+const seasonNumberSchema = z.number().refine(isSeasonNumber);
+const sizeSchema = z.number().refine(isFileSize);
 
 const candidateDetailSchema = z
   .strictObject({
