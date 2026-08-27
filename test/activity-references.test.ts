@@ -269,6 +269,68 @@ describe("activity references retain what a transition needs", () => {
     expect(resolveBlocklistReference(store, history, "radarr").ok).toBe(false);
   });
 
+  it("refuses a stored payload whose retained state is corrupt rather than coercing it", () => {
+    const { store } = storeAt();
+    const plant = (detail: Readonly<Record<string, unknown>>) =>
+      store.mint({
+        kind: "queue",
+        applications: ["sonarr"],
+        payload: () => ({
+          kind: "domain",
+          snapshot: { upstreamId: "502", fingerprint: "abc", detail },
+        }),
+      }).reference;
+
+    const good = {
+      kind: "queue_item",
+      itemKind: "tracked_download",
+      status: "completed",
+      trackedState: "import_blocked",
+      mediaId: 12,
+    };
+    // The control: the same shape this module writes still resolves, so the
+    // rejections below are about the corruption and not about the shape.
+    expect(resolveQueueReference(store, plant(good), "sonarr").ok).toBe(true);
+
+    // A field holding something this module would never have written is
+    // refused. Defaulting a malformed status to `unknown` would hand a later
+    // transition a plausible state that nothing vouches for.
+    for (const corrupt of [
+      { ...good, status: "not-a-status" },
+      { ...good, status: undefined },
+      { ...good, itemKind: undefined },
+      { ...good, trackedState: "not-a-state" },
+      { ...good, mediaId: -1 },
+      { ...good, mediaId: 1.5 },
+      { ...good, mediaId: "12" },
+    ]) {
+      const resolved = resolveQueueReference(store, plant(corrupt), "sonarr");
+      expect(resolved.ok).toBe(false);
+      if (!resolved.ok) {
+        expect(resolved.error.code).toBe("invalid_input");
+      }
+    }
+
+    // Absence is not corruption where absence is legitimate: a pending release
+    // has no tracked state, and upstream does not always associate a row.
+    const sparse = plant({
+      kind: "queue_item",
+      itemKind: "pending_release",
+      status: "delay",
+    });
+    expect(resolveQueueReference(store, sparse, "sonarr")).toEqual({
+      ok: true,
+      value: {
+        application: "sonarr",
+        queueItemId: 502,
+        itemKind: "pending_release",
+        status: "delay",
+        trackedState: undefined,
+        mediaId: undefined,
+      },
+    });
+  });
+
   it("refuses a reference of the right kind whose payload is not an activity record", () => {
     const { store } = storeAt();
     // A queue-prefixed token minted by something other than this module — the

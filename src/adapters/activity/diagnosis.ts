@@ -439,20 +439,22 @@ function grabFor(item: QueueItem, history: readonly HistoryRecord[]): HistoryRec
 /**
  * The blocklist records that already block a row's own release.
  *
- * Both the title and the media association have to agree. A title alone repeats
- * across series, and a media association alone would suggest re-allowing every
- * blocked release for a show because one of its episodes failed.
+ * Both the title and the media association have to agree, and both have to be
+ * present. A title alone repeats across series; a media association alone would
+ * suggest re-allowing every blocked release for a show because one episode
+ * failed; and comparing two absent associations would make a row upstream could
+ * not associate match a blocklist record that names nothing either — a pair
+ * with no evidence of being related at all.
  */
 function blocksFor(
   item: QueueItem,
   blocklist: readonly BlocklistRecord[],
 ): readonly BlocklistRecord[] {
-  return blocklist.filter(
-    (record) =>
-      record.title !== undefined &&
-      record.title === item.title &&
-      record.media?.id === item.media?.id,
-  );
+  const media = item.media;
+  if (media === undefined || item.title === "") {
+    return [];
+  }
+  return blocklist.filter((record) => record.title === item.title && record.media?.id === media.id);
 }
 
 /**

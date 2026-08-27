@@ -262,18 +262,41 @@ function resolveRecord(
   return { ok: true, value: { id, detail: payload.snapshot.detail } };
 }
 
-/** Reads back a value this module wrote, refusing anything it does not know. */
+/**
+ * A field read back out of a stored snapshot.
+ *
+ * The three answers are kept apart because collapsing them is how corruption
+ * becomes silence. A field this module never wrote is legitimately `absent`; a
+ * field it wrote is `present`; and a field holding something it would never
+ * have written is `invalid` — and that last one has to be refused rather than
+ * coerced, or a later transition would be handed a plausible-looking state that
+ * nothing vouches for. Defaulting a malformed status to `unknown` would do
+ * exactly that.
+ */
+type StoredField<TValue> =
+  | { readonly state: "present"; readonly value: TValue }
+  | { readonly state: "absent" }
+  | { readonly state: "invalid" };
+
 function storedWord<TWord extends string>(
   value: unknown,
   allowed: readonly TWord[],
-): TWord | undefined {
+): StoredField<TWord> {
+  if (value === undefined || value === null) {
+    return { state: "absent" };
+  }
   return typeof value === "string" && (allowed as readonly string[]).includes(value)
-    ? (value as TWord)
-    : undefined;
+    ? { state: "present", value: value as TWord }
+    : { state: "invalid" };
 }
 
-function storedId(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+function storedId(value: unknown): StoredField<number> {
+  if (value === undefined || value === null) {
+    return { state: "absent" };
+  }
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+    ? { state: "present", value }
+    : { state: "invalid" };
 }
 
 export interface QueueResolveOptions {
@@ -315,15 +338,29 @@ export function resolveQueueReference(
 
   const detail = record.value.detail;
   const itemKind = storedWord(detail.itemKind, queueItemKinds);
-  if (itemKind === undefined) {
+  const status = storedWord(detail.status, queueStatuses);
+  const trackedState = storedWord(detail.trackedState, trackedDownloadStates);
+  const mediaId = storedId(detail.mediaId);
+
+  // The item kind and the status are always written, so absent is as wrong as
+  // malformed for those two. A tracked state and a media association are not: a
+  // pending release has no tracked state, and upstream does not always
+  // associate a row with a media record.
+  const corrupt =
+    itemKind.state !== "present" ||
+    status.state !== "present" ||
+    trackedState.state === "invalid" ||
+    mediaId.state === "invalid";
+  if (corrupt) {
     return { ok: false, error: invalid(application, `${property} does not name a queue item`) };
   }
-  if (options.requireKind !== undefined && itemKind !== options.requireKind) {
+
+  if (options.requireKind !== undefined && itemKind.value !== options.requireKind) {
     return {
       ok: false,
       error: invalid(
         application,
-        `${property} names a ${describeKind(itemKind)}, and that is only valid for a ${describeKind(options.requireKind)}`,
+        `${property} names a ${describeKind(itemKind.value)}, and that is only valid for a ${describeKind(options.requireKind)}`,
       ),
     };
   }
@@ -333,10 +370,10 @@ export function resolveQueueReference(
     value: {
       application,
       queueItemId: record.value.id,
-      itemKind,
-      status: storedWord(detail.status, queueStatuses) ?? "unknown",
-      trackedState: storedWord(detail.trackedState, trackedDownloadStates),
-      mediaId: storedId(detail.mediaId),
+      itemKind: itemKind.value,
+      status: status.value,
+      trackedState: trackedState.state === "present" ? trackedState.value : undefined,
+      mediaId: mediaId.state === "present" ? mediaId.value : undefined,
     },
   };
 }

@@ -385,6 +385,23 @@ describe("activity diagnosis separates evidence from suggestions", () => {
     );
   });
 
+  it("does not match a blocklist record to a row that has no media association", async () => {
+    const sonarr = target("sonarr", {
+      ...sonarrBodies,
+      // Upstream reports zero for a row it could not associate, and the
+      // blocklist record here names nothing either. Two absent associations are
+      // not evidence that the pair is related.
+      queue: paged([{ ...failedQueueRecord, seriesId: 0, episodeId: 0 }]),
+      blocklist: paged([{ ...blocklistBlockingRecord, seriesId: 0, episodeIds: [] }]),
+      history: paged([]),
+    });
+    const report = await runActivityDiagnosis([sonarr.target], { detail: "full", pageSize: 25 });
+
+    expect(report.candidates.filter((candidate) => candidate.target.kind === "blocklist")).toEqual(
+      [],
+    );
+  });
+
   it("writes its own reasons and never repeats upstream text as advice", async () => {
     const sonarr = target("sonarr", {
       ...sonarrBodies,
