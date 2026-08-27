@@ -688,7 +688,22 @@ const definitions = [
     "destructive",
     libraryChange,
   ),
-  define("library.change.rename", "arr_library_change", "rename", media, "destructive"),
+  define(
+    "library.change.rename",
+    "arr_library_change",
+    "rename",
+    media,
+    "destructive",
+    libraryChange,
+  ),
+  define(
+    "library.change.move_media",
+    "arr_library_change",
+    "move_media",
+    media,
+    "destructive",
+    libraryChange,
+  ),
 
   // arr_config_reconcile
   define(

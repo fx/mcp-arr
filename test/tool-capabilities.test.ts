@@ -318,6 +318,8 @@ describe("arr_capabilities", () => {
       "arr_library_change/delete_media",
       "arr_library_change/update_file_metadata",
       "arr_library_change/delete_file",
+      "arr_library_change/rename",
+      "arr_library_change/move_media",
       "arr_job_cancel/-",
     ]);
     expect(reportFor(result, "radarr").supportedOperations.map(operationKey)).toEqual([
@@ -348,6 +350,8 @@ describe("arr_capabilities", () => {
       "arr_library_change/delete_media",
       "arr_library_change/update_file_metadata",
       "arr_library_change/delete_file",
+      "arr_library_change/rename",
+      "arr_library_change/move_media",
       "arr_job_cancel/-",
     ]);
     expect(reportFor(result, "prowlarr").supportedOperations.map(operationKey)).toEqual([

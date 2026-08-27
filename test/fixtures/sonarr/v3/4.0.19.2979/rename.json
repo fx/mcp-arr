@@ -1,0 +1,26 @@
+{
+  "metadata": {
+    "application": "sonarr",
+    "apiVersion": "v3",
+    "version": "4.0.19.2979",
+    "endpoint": "/api/v3/rename"
+  },
+  "body": [
+    {
+      "seriesId": 12,
+      "seasonNumber": 1,
+      "episodeNumbers": [1],
+      "episodeFileId": 2001,
+      "existingPath": "Season 01/Example Series - S01E01 - Example Pilot Bluray-1080p.mkv",
+      "newPath": "Season 01/Example Series - S01E01 - Example Pilot [Bluray-1080p]-EXAMPLEGRP.mkv"
+    },
+    {
+      "seriesId": 12,
+      "seasonNumber": 2,
+      "episodeNumbers": [2],
+      "episodeFileId": 2003,
+      "existingPath": "Season 02/Example Series - S02E02 - Example Follow Up WEBDL-720p.mkv",
+      "newPath": "Season 02/Example Series - S02E02 - Example Follow Up [WEBDL-720p]-EXAMPLEGRP.mkv"
+    }
+  ]
+}

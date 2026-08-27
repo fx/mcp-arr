@@ -19,6 +19,8 @@ import {
   writeResource,
 } from "../adapters/library/changes.js";
 import {
+  type CommandAcceptance,
+  type CommandWorkflow,
   type DeletionChoices,
   deleteFileResource,
   deleteRecordResource,
@@ -31,13 +33,19 @@ import {
   fileResourcePath,
   fileState,
   matchOption,
+  moveCommandPayload,
   type NamedOption,
+  type RenameProposal,
   readFileResource,
   readLanguageOptions,
   readQualityOptions,
+  readRenameProposals,
   recordDeletionQuery,
   recordDeletionState,
+  recordPathState,
+  renameCommandPayload,
   rewriteFileResource,
+  startCommand,
 } from "../adapters/library/files.js";
 import type {
   ConfigurationPointerKind,
@@ -47,7 +55,7 @@ import type {
   MediaRecordKind,
 } from "../adapters/library/model.js";
 import { isMediaApplication, mediaRecordKinds } from "../adapters/library/model.js";
-import type { UpstreamClient } from "../http/client.js";
+import type { UpstreamBody, UpstreamClient } from "../http/client.js";
 import type { PreconditionRead, ReadSetObservation } from "../state/plans.js";
 import {
   createToolError,
@@ -56,7 +64,12 @@ import {
   toolErrorForThrown,
   toolErrorProvesNoEffect,
 } from "./errors.js";
-import type { OperationHandler, OperationInvocation, PreconditionReader } from "./operations.js";
+import type {
+  OperationHandler,
+  OperationInvocation,
+  OperationOutcome,
+  PreconditionReader,
+} from "./operations.js";
 import type { Effect, EffectSeverity, ItemOutcome } from "./results.js";
 import { type LibraryChangeIntent, libraryChangeIntentSchema } from "./schemas/library.js";
 
@@ -186,16 +199,35 @@ interface RequestsContext {
 }
 
 /**
+ * A mutation that runs as one allowlisted upstream command: a rename or a move.
+ *
+ * The payload is built by the precondition reader from what it read, so the
+ * handler sends exactly what was validated and disclosed. A payload of
+ * `undefined` means the reader found nothing to do, which an apply reports as
+ * such rather than sending an empty command.
+ */
+interface CommandContext {
+  readonly kind: typeof contextKind;
+  readonly form: "command";
+  readonly intent: "rename" | "move_media";
+  readonly reference: string;
+  readonly workflow: CommandWorkflow;
+  readonly payload?: UpstreamBody | undefined;
+  readonly warnings: readonly string[];
+  readonly effects: readonly Effect[];
+}
+
+/**
  * What the precondition reader validated, handed to the handler unchanged.
  *
  * Each member carries a `form` as well as the intent it came from, and the
  * handler selects on the form rather than on the intent. That is deliberate:
  * the form says how a mutation is *sent* — one rewritten resource, one request
- * per selected thing — and several intents share each of those. A handler keyed
- * on the intent would repeat the same dispatch code per variant and would let a
- * variant added later fall through to the wrong one.
+ * per selected thing, one allowlisted command — and several intents share each
+ * of those. A handler keyed on the intent would repeat the same dispatch code
+ * per variant and would let a variant added later fall through to the wrong one.
  */
-type LibraryChangeContext = AddContext | ItemsContext | RequestsContext;
+type LibraryChangeContext = AddContext | ItemsContext | RequestsContext | CommandContext;
 
 function isLibraryChangeContext(value: unknown): value is LibraryChangeContext {
   return (
@@ -483,8 +515,8 @@ function parseIntent(invocation: OperationInvocation): Resolved<LibraryChangeInt
  * The severity is a parameter rather than a constant because this tool now
  * spans both kinds of consequence: changing what an application believes, and
  * changing what is on the disk underneath it. A plan never softens the second
- * into the first — the deletions declare themselves destructive even though it
- * makes the plan read worse.
+ * into the first — the deletions, the renames, and the moves declare themselves
+ * destructive even though it makes the plan read worse.
  */
 function effect(
   application: MediaApplication,
@@ -1485,6 +1517,221 @@ function fileChangeEffects(
 }
 
 /* -------------------------------------------------------------------------- */
+/* rename and move_media                                                       */
+/* -------------------------------------------------------------------------- */
+
+/** The records whose files an instance will propose a rename for. */
+const renamableKinds: readonly MediaRecordKind[] = ["series", "season", "movie"];
+
+/** The records that own a folder of their own, and so can be moved. */
+const movableKinds: readonly MediaRecordKind[] = ["series", "movie"];
+
+/** How many proposed renames one result discloses before it summarizes the rest. */
+const maxDisclosedProposals = 20;
+
+/**
+ * Names the renames a preview proposes, bounded.
+ *
+ * The paths come from the instance rather than from a caller, and disclosing
+ * them is the whole point of a preview — but a series with a thousand files
+ * would otherwise put a thousand lines in one result, so the list is bounded and
+ * says how much it left out.
+ */
+function describeProposals(proposals: readonly RenameProposal[]): readonly string[] {
+  const shown = proposals.slice(0, maxDisclosedProposals).map((proposal) => {
+    const from = proposal.existingPath ?? "a path this instance did not report";
+    const to = proposal.newPath ?? "a path this instance did not report";
+    return `rename ${from} to ${to}`;
+  });
+  return proposals.length <= maxDisclosedProposals
+    ? shown
+    : [
+        ...shown,
+        `${proposals.length - maxDisclosedProposals} further proposed rename(s) not listed`,
+      ];
+}
+
+/**
+ * Reads what a rename would do, without renaming anything.
+ *
+ * This reader *is* the preview: it asks the instance for the paths it proposes
+ * and fingerprints exactly those, and the apply then sends the file identifiers
+ * that came back here. A rename therefore cannot reach a file the plan did not
+ * disclose, and a file that changed underneath the plan makes it stale.
+ */
+async function readRenamePreconditions(
+  invocation: OperationInvocation,
+  application: MediaApplication,
+  intent: Extract<LibraryChangeIntent, { intent: "rename" }>,
+): Promise<PreconditionRead> {
+  const identity = resolveMediaIdentity(invocation, intent.media, "media");
+  if (!identity.ok) {
+    return blocked(identity.error);
+  }
+  const checked = checkItemKind(invocation, application, renamableKinds, identity.value.kind);
+  if (!checked.ok) {
+    return blocked(checked.error);
+  }
+
+  const parentKind = checked.value === "season" ? "series" : checked.value;
+  const resource = await readRecordResource(
+    invocation.adapter.client,
+    application,
+    parentKind,
+    identity.value.id,
+  );
+  const proposals = await readRenameProposals(invocation.adapter.client, application, {
+    kind: parentKind,
+    id: identity.value.id,
+    seasonNumber: identity.value.seasonNumber,
+  });
+
+  const title = typeof resource.title === "string" ? resource.title : "the selected record";
+  const scope = `${proposals.length} file(s)`;
+  const context: CommandContext = {
+    kind: contextKind,
+    form: "command",
+    intent: "rename",
+    reference: intent.media,
+    workflow: "rename_files",
+    ...(proposals.length === 0
+      ? {}
+      : {
+          payload: renameCommandPayload(
+            application,
+            identity.value.id,
+            proposals.map((proposal) => proposal.fileId),
+          ),
+        }),
+    warnings: [
+      ...(proposals.length === 0
+        ? ["this instance proposes no rename for the selected record"]
+        : describeProposals(proposals)),
+    ],
+    effects:
+      proposals.length === 0
+        ? []
+        : [effect(application, `rename ${scope} of “${title}” on disk`, "destructive")],
+  };
+
+  return {
+    status: "ok",
+    validated: context,
+    observations: [
+      { key: `media:${intent.media}`, value: recordPathState(resource) },
+      {
+        key: `rename:${intent.media}`,
+        // Every proposal is fingerprinted, in the order the instance returned
+        // them, because the plan disclosed exactly these paths and the apply
+        // sends exactly these file identifiers.
+        value: proposals.map((proposal) => [
+          proposal.fileId,
+          proposal.existingPath,
+          proposal.newPath,
+        ]),
+      },
+    ],
+  };
+}
+
+/** The folder one path sits in, which is the root a record's own folder is under. */
+function parentFolder(path: string): string | undefined {
+  const trimmed = path.replace(/[\\/]+$/u, "");
+  const separator = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  return separator <= 0 ? undefined : trimmed.slice(0, separator);
+}
+
+/**
+ * Validates a move before anything is moved.
+ *
+ * Neither path in the command is caller-authored: the source is where the
+ * instance says the record is now, and the destination is a root folder from
+ * the instance's own list. A record already under that root asks for nothing,
+ * which is reported rather than sent — a move command for a record that is
+ * already there is work an instance does not need to be given.
+ */
+async function readMovePreconditions(
+  invocation: OperationInvocation,
+  application: MediaApplication,
+  intent: Extract<LibraryChangeIntent, { intent: "move_media" }>,
+): Promise<PreconditionRead> {
+  const identity = resolveMediaIdentity(invocation, intent.media, "media");
+  if (!identity.ok) {
+    return blocked(identity.error);
+  }
+  const checked = checkItemKind(invocation, application, movableKinds, identity.value.kind);
+  if (!checked.ok) {
+    return blocked(checked.error);
+  }
+
+  const dependencies = await readDependencies(invocation, application, [
+    { token: intent.rootFolder, kind: "root_folder", property: "rootFolder" },
+  ]);
+  if (!dependencies.ok) {
+    return blocked(dependencies.error);
+  }
+  const destination = dependencies.value[0]?.record.name;
+  if (destination === undefined) {
+    return blocked(conflict(invocation, "this instance reported no usable root folder"));
+  }
+
+  const resource = await readRecordResource(
+    invocation.adapter.client,
+    application,
+    checked.value,
+    identity.value.id,
+  );
+  const sourcePath = typeof resource.path === "string" ? resource.path.trim() : "";
+  if (sourcePath === "") {
+    return blocked(
+      conflict(invocation, "this record reports no current path, so it cannot be moved"),
+    );
+  }
+
+  const settled = parentFolder(sourcePath) === destination.replace(/[\\/]+$/u, "");
+  const title = typeof resource.title === "string" ? resource.title : "the selected record";
+  const context: CommandContext = {
+    kind: contextKind,
+    form: "command",
+    intent: "move_media",
+    reference: intent.media,
+    workflow: "move_record",
+    ...(settled
+      ? {}
+      : {
+          payload: moveCommandPayload(application, {
+            recordId: identity.value.id,
+            sourcePath,
+            destinationRootFolder: destination,
+          }),
+        }),
+    warnings: settled
+      ? ["this record is already under the selected root folder; nothing was sent for it"]
+      : [
+          "the application moves this record's files on disk; the move runs as a background command and the returned job reports its progress",
+        ],
+    effects: settled
+      ? []
+      : [
+          effect(
+            application,
+            `move the files of “${title}” to the selected root folder`,
+            "destructive",
+          ),
+        ],
+  };
+
+  return {
+    status: "ok",
+    validated: context,
+    observations: [
+      ...dependencyObservations(dependencies.value),
+      { key: `media:${intent.media}`, value: recordPathState(resource) },
+    ],
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Preconditions and handler                                                   */
 /* -------------------------------------------------------------------------- */
 
@@ -1516,10 +1763,10 @@ export const libraryChangePreconditions: PreconditionReader = async (invocation)
     case "update_file_metadata":
     case "delete_file":
       return readFilePreconditions(invocation, application.value, intent.value);
-    default:
-      // The rename intent belongs to the next task of change 0009, and the
-      // registry still routes it to the not-implemented handler.
-      return blocked(unsupported(invocation, "this intent is declared but not implemented yet"));
+    case "rename":
+      return readRenamePreconditions(invocation, application.value, intent.value);
+    case "move_media":
+      return readMovePreconditions(invocation, application.value, intent.value);
   }
 };
 
@@ -1670,6 +1917,57 @@ function unattemptedFailure(applied: AppliedItems): ToolError | undefined {
     : undefined;
 }
 
+/**
+ * Runs one allowlisted command, or reports that there was nothing to run.
+ *
+ * The payload was built by the precondition reader from what it read, so what
+ * is sent here is exactly what the plan disclosed. An accepted command becomes a
+ * job the caller can follow; one the instance acknowledged with nothing leaves
+ * the receipt reconcilable rather than reporting a command nothing confirmed.
+ */
+async function applyCommand(
+  invocation: OperationInvocation,
+  application: MediaApplication,
+  context: CommandContext,
+): Promise<OperationOutcome> {
+  if (context.payload === undefined) {
+    return { status: "ok", items: [itemOutcome(context.reference, undefined, context.warnings)] };
+  }
+
+  const accepted: CommandAcceptance | undefined = await startCommand(
+    invocation.adapter.client,
+    application,
+    context.workflow,
+    context.payload,
+  );
+  if (accepted === undefined) {
+    return {
+      status: "ok",
+      effects: context.effects,
+      warnings: context.warnings,
+      outcomeUnknown: conflict(
+        invocation,
+        "the command was sent but the instance returned nothing to confirm it",
+      ),
+    };
+  }
+
+  const job = invocation.state.jobs.project({
+    application,
+    command: { name: accepted.name, upstreamId: String(accepted.upstreamId) },
+    observation: { state: accepted.state },
+    cancellation: { supported: false },
+  });
+
+  return {
+    status: "ok",
+    effects: context.effects,
+    warnings: context.warnings,
+    items: [itemOutcome(context.reference, undefined, [])],
+    job: job.reference,
+  };
+}
+
 function planForItems(context: ItemsContext): {
   requestedEffects: readonly Effect[];
   predictedEffects: readonly Effect[];
@@ -1774,6 +2072,23 @@ export const libraryChangeHandler: OperationHandler = async (invocation) => {
           }
         : {}),
     };
+  }
+
+  if (context.form === "command") {
+    if (invocation.mode === "plan") {
+      return {
+        status: "ok",
+        plan: {
+          requestedEffects: context.effects,
+          // The preview is the read this plan rests on, so what it found is
+          // what an apply will do; nothing further has to be conditioned.
+          predictedEffects: context.effects,
+          warnings: context.warnings,
+        },
+        items: [itemOutcome(context.reference, undefined, [])],
+      };
+    }
+    return applyCommand(invocation, application.value, context);
   }
 
   if (context.form === "requests") {

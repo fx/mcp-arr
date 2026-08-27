@@ -1,6 +1,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import type { UpstreamResource } from "../src/adapters/library/changes.js";
 import {
+  allowedCommandNames,
+  commandWorkflows,
   deleteFileResource,
   deleteRecordResource,
   type FileResource,
@@ -8,32 +10,36 @@ import {
   fileResourcePath,
   fileState,
   matchOption,
+  moveCommandPayload,
   readFileResource,
   readLanguageOptions,
   readQualityOptions,
+  readRenameProposals,
   recordDeletionQuery,
   recordDeletionState,
+  renameCommandPayload,
   rewriteFileResource,
+  startCommand,
+  upstreamCommandName,
 } from "../src/adapters/library/files.js";
-import { fixtureBody, jsonResponse, libraryHarness } from "./support/library.js";
+import { fixtureBody, jsonResponse, libraryHarness, type UpstreamCall } from "./support/library.js";
 
 /**
- * The media-file and deletion adapters, exercised against the recorded
- * fixtures.
+ * The file and path mutation adapters, exercised against the recorded fixtures.
  *
- * The rewriting functions are pure and are called directly; everything that
- * reaches an instance goes through the real upstream client with an injected
- * fetch, so the assertions cover the method, route, and query a real instance
- * would receive.
+ * The rewriting and payload functions are pure and are called directly;
+ * everything that reaches an instance goes through the real upstream client
+ * with an injected fetch, so the assertions cover the method, route, query, and
+ * body a real instance would receive.
  */
 
 const fixtures: Record<string, unknown> = {};
 
 beforeAll(async () => {
-  for (const route of ["episodefile", "qualitydefinition", "language"]) {
+  for (const route of ["episodefile", "rename", "qualitydefinition", "language"]) {
     fixtures[`sonarr/${route}`] = await fixtureBody("sonarr", route);
   }
-  for (const route of ["moviefile", "qualitydefinition", "language"]) {
+  for (const route of ["moviefile", "rename", "qualitydefinition", "language"]) {
     fixtures[`radarr/${route}`] = await fixtureBody("radarr", route);
   }
 });
@@ -52,6 +58,14 @@ function firstFile(application: "sonarr" | "radarr", route: string): FileResourc
     throw new Error(`The recorded ${application} ${route} fixture is empty`);
   }
   return file;
+}
+
+async function readBody(call: UpstreamCall): Promise<Record<string, unknown>> {
+  const raw = call.init.body;
+  if (typeof raw !== "string") {
+    throw new Error("Expected a serialized JSON request body");
+  }
+  return JSON.parse(raw) as Record<string, unknown>;
 }
 
 describe("media file reads and rewrites", () => {
@@ -204,5 +218,109 @@ describe("deletion", () => {
       fileCount: 2,
       sizeOnDisk: 1024,
     });
+  });
+});
+
+describe("rename and move commands", () => {
+  it("asks each application for its own rename preview", async () => {
+    const sonarr = libraryHarness("sonarr", () => jsonResponse(body("sonarr", "rename")));
+    const proposals = await readRenameProposals(sonarr.client, "sonarr", {
+      kind: "series",
+      id: 12,
+      seasonNumber: 2,
+    });
+
+    expect(sonarr.calls[0]?.url.pathname).toBe("/api/v3/rename");
+    expect(sonarr.calls[0]?.url.searchParams.get("seriesId")).toBe("12");
+    expect(sonarr.calls[0]?.url.searchParams.get("seasonNumber")).toBe("2");
+    expect(sonarr.calls[0]?.init.method).toBe("GET");
+    expect(proposals.map((proposal) => proposal.fileId)).toEqual([2001, 2003]);
+
+    const radarr = libraryHarness("radarr", () => jsonResponse(body("radarr", "rename")));
+    await readRenameProposals(radarr.client, "radarr", { kind: "movie", id: 8 });
+
+    expect(radarr.calls[0]?.url.searchParams.get("movieId")).toBe("8");
+    expect(radarr.calls[0]?.url.searchParams.get("seasonNumber")).toBeNull();
+  });
+
+  it("keeps only the proposals that name a file to rename", async () => {
+    const harness = libraryHarness("sonarr", () =>
+      jsonResponse([
+        { seriesId: 12, existingPath: "a.mkv", newPath: "b.mkv" },
+        { seriesId: 12, episodeFileId: 0, existingPath: "c.mkv", newPath: "d.mkv" },
+        { seriesId: 12, episodeFileId: 2001, existingPath: "e.mkv", newPath: "f.mkv" },
+      ]),
+    );
+
+    const proposals = await readRenameProposals(harness.client, "sonarr", {
+      kind: "series",
+      id: 12,
+    });
+
+    expect(proposals).toEqual([{ fileId: 2001, existingPath: "e.mkv", newPath: "f.mkv" }]);
+  });
+
+  it("names one upstream command per workflow and nothing else", () => {
+    expect(commandWorkflows).toEqual(["rename_files", "move_record"]);
+    expect(upstreamCommandName("sonarr", "move_record")).toBe("MoveSeries");
+    expect(upstreamCommandName("radarr", "move_record")).toBe("MoveMovie");
+    expect(allowedCommandNames("sonarr")).toEqual(["RenameFiles", "MoveSeries"]);
+    expect(allowedCommandNames("radarr")).toEqual(["RenameFiles", "MoveMovie"]);
+  });
+
+  it("sends the allowlisted name whatever the payload carries", async () => {
+    const harness = libraryHarness("sonarr", (call) =>
+      jsonResponse({ id: 4242, name: JSON.parse(String(call.init.body)).name, status: "queued" }),
+    );
+
+    const accepted = await startCommand(harness.client, "sonarr", "rename_files", {
+      // A payload that tried to name its own command would be a bug here rather
+      // than caller input, and it still cannot reach the instance.
+      name: "ResetApiKey",
+      ...renameCommandPayload("sonarr", 12, [2001]),
+    });
+
+    expect(harness.calls[0]?.url.pathname).toBe("/api/v3/command");
+    expect(harness.calls[0]?.init.method).toBe("POST");
+    expect(await readBody(harness.calls[0] as UpstreamCall)).toEqual({
+      name: "RenameFiles",
+      seriesId: 12,
+      files: [2001],
+    });
+    expect(accepted).toEqual({ upstreamId: 4242, name: "RenameFiles", state: "queued" });
+  });
+
+  it("reports a command the instance acknowledged with nothing as unconfirmed", async () => {
+    const harness = libraryHarness("radarr", () => new Response(null, { status: 201 }));
+
+    const accepted = await startCommand(
+      harness.client,
+      "radarr",
+      "move_record",
+      moveCommandPayload("radarr", {
+        recordId: 8,
+        sourcePath: "/media/example/movies/Example Movie (2021)",
+        destinationRootFolder: "/media/example/archive",
+      }),
+    );
+
+    expect(harness.calls).toHaveLength(1);
+    expect(accepted).toBeUndefined();
+  });
+
+  it("builds each application's own move payload from instance-reported paths", () => {
+    expect(
+      moveCommandPayload("sonarr", {
+        recordId: 12,
+        sourcePath: "/media/example/series/Example Series",
+        destinationRootFolder: "/media/example/archive",
+      }),
+    ).toEqual({
+      seriesId: 12,
+      seriesIds: [12],
+      sourcePath: "/media/example/series/Example Series",
+      destinationRootFolder: "/media/example/archive",
+    });
+    expect(renameCommandPayload("radarr", 8, [501])).toEqual({ movieId: 8, files: [501] });
   });
 });
