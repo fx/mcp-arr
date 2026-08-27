@@ -50,7 +50,16 @@ export type UpstreamBody = Readonly<Record<string, unknown>>;
 export interface UpstreamValidation {
   readonly accepted: boolean;
   readonly status: number;
-  /** Parsed where the instance sent JSON, `undefined` where it sent nothing. */
+  /**
+   * The body, parsed, where the instance sent JSON.
+   *
+   * `undefined` covers three different things and cannot tell them apart: the
+   * instance sent no body, it sent one that is not JSON — which a `4xx`
+   * refusal often is — or it sent one whose text could not be read as JSON at
+   * all. A caller must therefore treat an absent body as "nothing usable came
+   * back" rather than as "the instance objected to nothing", and every reader
+   * in this project does.
+   */
   readonly body: unknown;
 }
 
@@ -78,11 +87,26 @@ export interface UpstreamClient {
    * one case where the body of a rejection is the payload rather than a
    * diagnostic, so this hands it back as data instead of discarding it.
    *
-   * It is deliberately not the general write path. Only a transport failure
-   * throws here; a status the instance chose is returned, which means the
-   * caller takes on the job of deciding what the answer means — and the job of
-   * keeping the returned body out of anything published, since it is upstream
-   * content like any other.
+   * It is deliberately not the general write path, and what it does and does
+   * not throw is the whole of its usefulness — a caller distinguishes "the
+   * instance considered this and objected" from "something went wrong", and a
+   * method whose failures were not exactly enumerable could not support that.
+   *
+   * It returns, rather than throws, for any status below 500: those are
+   * decisions the instance made about this request, including a redirect, which
+   * is returned as itself and is not acceptance.
+   *
+   * It throws, as {@link UpstreamError}, for everything else: a status of 500
+   * or above, where the instance is reporting that *it* failed rather than that
+   * the request did; a request that never went out, because the path could not
+   * be joined or the body could not be serialized, both of which are raised as
+   * `invalid-request` before anything is dispatched; a connection that failed
+   * or timed out; and a rejection whose body never arrived, since that body is
+   * the answer and losing it means nothing was learned.
+   *
+   * The caller takes on the job of deciding what a returned answer means — and
+   * the job of keeping the returned body out of anything published, since it is
+   * upstream content like any other.
    */
   validate(path: string, body: UpstreamBody, query?: UpstreamQuery): Promise<UpstreamValidation>;
   /**
@@ -135,7 +159,10 @@ function discardBody(response: Response): void {
 /**
  * The single upstream boundary every adapter calls through. It injects the
  * configured API key, keeps the base path prefix intact, enforces a finite
- * timeout, and converts every failure into a redacted {@link UpstreamError}.
+ * timeout, and converts every failure into a redacted {@link UpstreamError} —
+ * with one deliberate exception, {@link UpstreamClient.validate}, which returns
+ * a status the instance chose below 500 as data because for that endpoint the
+ * refusal is the answer rather than a diagnostic.
  */
 export function createUpstreamClient(options: UpstreamClientOptions): UpstreamClient {
   const timeoutMs = options.timeoutMs ?? defaultUpstreamTimeoutMs;
@@ -151,16 +178,6 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
   const apiBaseUrl = apiBase.url;
   const fetchImpl: FetchLike = options.fetch ?? ((input, init) => fetch(input, init));
 
-  /**
-   * Sends one request and returns its parsed body.
-   *
-   * Every method shares this path, so a write is redacted, timed out, and
-   * normalized exactly like a read. A write differs only in carrying a body:
-   * the payload is serialized here rather than by the caller, so no adapter can
-   * send something that is not JSON, and a successful response with no body —
-   * which several upstream writes answer with — resolves as `undefined` rather
-   * than as a parse failure.
-   */
   /**
    * The answer `send` gives instead of a bare body, and only when asked.
    *
@@ -179,6 +196,22 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
   const isRetainedAnswer = (value: unknown): value is RetainedAnswer =>
     typeof value === "object" && value !== null && "retainedStatus" in value;
 
+  /**
+   * Sends one request and returns what came back.
+   *
+   * Every method shares this path, so a write is redacted, timed out, and
+   * normalized exactly like a read. A write differs only in carrying a body:
+   * the payload is serialized here rather than by the caller, so no adapter can
+   * send something that is not JSON.
+   *
+   * What it returns depends on the last parameter, and only two shapes exist. A
+   * caller that did not ask to retain the status gets the parsed body, with a
+   * successful empty response — which several upstream writes answer with —
+   * resolving as `undefined` rather than as a parse failure. A caller that did
+   * gets a {@link RetainedAnswer} carrying the status and the body together,
+   * for every answer the instance chose rather than only the successful ones;
+   * that caller is `validate` and nothing else.
+   */
   const send = async (
     method: "GET" | "POST" | "PUT" | "DELETE",
     path: string,
@@ -292,11 +325,14 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
         throw fail(timedOut ? "timeout" : "unavailable");
       }
 
-      // Only a write may answer with no content. Several upstream writes do,
-      // and treating that as a broken response would fail a request the
-      // instance accepted. A read is held to its payload exactly as it always
-      // was: an empty body falls through to the parse below and is reported as
-      // an unexpected response carrying the status, because a read that
+      // Only a write may answer with no content, and only one that is not
+      // retaining its status. Several upstream writes answer that way, and
+      // treating it as a broken response would fail a request the instance
+      // accepted; a retaining caller is answered below instead, because it
+      // promised to report the status and an early `undefined` would lose it. A
+      // read is held to its payload exactly as it always was: an empty body
+      // falls through to the parse below and is reported as an unexpected
+      // response carrying the status, because a read that
       // returned nothing has not answered the question it was asked, and
       // losing that status would leave the caller with less than it had.
       if (method !== "GET" && answered.trim() === "" && !retainStatus) {
