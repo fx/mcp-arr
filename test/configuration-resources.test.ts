@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ConfigurationResourceSet,
   captureUpstreamResource,
+  type UpstreamResource,
   type UpstreamValue,
 } from "../src/adapters/configuration/resources.js";
 import { fixtureBody } from "./support/library.js";
@@ -109,5 +110,61 @@ describe("the internal resource set", () => {
     expect(set.list()).toHaveLength(1);
     expect(set.find(7)?.payload()).toEqual(upstreamRecord);
     expect(set.find(8)).toBeUndefined();
+  });
+
+  /**
+   * `readonly` is a compile-time claim, and this container's whole purpose is
+   * that it cannot be corrupted. These pin the runtime half: an identifier a
+   * stray assignment could change would silently break `find`, and a `payload`
+   * that could be replaced would substitute what a later write sends upstream.
+   */
+  it("refuses an attempt to overwrite a captured resource's identity or payload", () => {
+    const resource = captureUpstreamResource("prowlarr", "indexers", upstreamRecord);
+    const mutable = resource as unknown as Record<string, unknown>;
+
+    expect(Object.isFrozen(resource)).toBe(true);
+    expect(() => {
+      mutable.id = 99;
+    }).toThrow(TypeError);
+    expect(() => {
+      mutable.payload = () => ({ substituted: true });
+    }).toThrow(TypeError);
+    expect(() => {
+      mutable.application = "sonarr";
+    }).toThrow(TypeError);
+
+    expect(resource.id).toBe(7);
+    expect(resource.payload()).toEqual(upstreamRecord);
+  });
+
+  it("keeps find() resolving after an overwrite attempt on the set and its array", () => {
+    const mutableSet = set as unknown as Record<string, unknown>;
+
+    expect(Object.isFrozen(set)).toBe(true);
+    expect(() => {
+      mutableSet.application = "sonarr";
+    }).toThrow(TypeError);
+    // The array it hands out is frozen too, so no consumer can reorder or
+    // shorten the set behind a later reconciliation's back.
+    expect(Object.isFrozen(set.list())).toBe(true);
+    expect(() => {
+      (set.list() as UpstreamResource[]).push(
+        captureUpstreamResource("prowlarr", "indexers", { id: 8 }),
+      );
+    }).toThrow(TypeError);
+
+    expect(set.application).toBe("prowlarr");
+    expect(set.size).toBe(1);
+    expect(set.find(7)?.payload()).toEqual(upstreamRecord);
+    expect(set.find(8)).toBeUndefined();
+  });
+
+  it("copies the array it was given, so the caller's own handle cannot change it", () => {
+    const resources = [captureUpstreamResource("prowlarr", "indexers", upstreamRecord)];
+    const copied = new ConfigurationResourceSet("prowlarr", "indexers", resources);
+    resources.push(captureUpstreamResource("prowlarr", "indexers", { id: 8 }));
+
+    expect(copied.size).toBe(1);
+    expect(copied.find(8)).toBeUndefined();
   });
 });

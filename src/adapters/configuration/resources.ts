@@ -68,6 +68,12 @@ function identifierOf(value: UpstreamValue): number | undefined {
  * The payload is cloned on the way in as well as on the way out, so nothing the
  * HTTP boundary still holds a handle to can change what a later write will
  * send.
+ *
+ * The wrapper is frozen along with the payload it wraps. `readonly` is a
+ * compile-time claim only, and this is the one type in the adapter whose whole
+ * justification is that it cannot be corrupted: a stray assignment to `id`
+ * would silently break {@link ConfigurationResourceSet.find}, and replacing
+ * `payload` would substitute what a later full-resource write sends upstream.
  */
 export function captureUpstreamResource(
   application: ApplicationId,
@@ -75,12 +81,12 @@ export function captureUpstreamResource(
   value: UpstreamValue,
 ): UpstreamResource {
   const stored = deepFreeze(structuredClone(value) as UpstreamValue);
-  return {
+  return Object.freeze({
     application,
     domain,
     id: identifierOf(stored),
     payload: () => structuredClone(stored) as UpstreamValue,
-  };
+  });
 }
 
 /** What {@link ConfigurationResourceSet} serializes to, in place of its contents. */
@@ -99,6 +105,13 @@ export interface ResourceSetCensus {
  * the payloads. Reaching a payload takes a deliberate {@link list} or
  * {@link find} call, which is exactly the boundary a later write crosses on
  * purpose and a result serializer never does.
+ *
+ * Integrity is enforced at runtime rather than claimed in the type. The set
+ * copies and freezes the array it is given, so a caller that keeps its own
+ * handle and mutates it afterwards cannot change what this set holds, and
+ * {@link list} therefore hands out something no consumer can reorder or
+ * shorten. The instance itself is frozen too, so neither the application nor
+ * the domain it reports can be reassigned after construction.
  */
 export class ConfigurationResourceSet {
   readonly #resources: readonly UpstreamResource[];
@@ -112,7 +125,8 @@ export class ConfigurationResourceSet {
   ) {
     this.application = application;
     this.domain = domain;
-    this.#resources = resources;
+    this.#resources = Object.freeze([...resources]);
+    Object.freeze(this);
   }
 
   get size(): number {
