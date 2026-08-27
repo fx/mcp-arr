@@ -106,9 +106,9 @@
     },
     {
       "id": 3003,
-      "path": "/media/example/series/Example Series/Season 01/Example Series - S01E02 - Example Existing Bluray-1080p.mkv",
-      "relativePath": "Season 01/Example Series - S01E02 - Example Existing Bluray-1080p.mkv",
-      "folderName": "Example Series",
+      "path": "/media/example/downloads/complete/example-series/Example Series - S01E02 - Example Existing Bluray-1080p.mkv",
+      "relativePath": "Example Series - S01E02 - Example Existing Bluray-1080p.mkv",
+      "folderName": "example-series",
       "name": "Example Series - S01E02 - Example Existing Bluray-1080p",
       "size": 3006477107,
       "series": {

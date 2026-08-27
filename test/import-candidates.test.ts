@@ -242,12 +242,26 @@ describe("candidate disclosure", () => {
     for (const path of paths) {
       expect(serialized).not.toContain(path);
     }
+    for (const folder of folders) {
+      expect(serialized).not.toContain(folder);
+    }
     expect(serialized).not.toContain("/media/example");
     expect(serialized).not.toContain("/downloads");
     expect(serialized).not.toContain(recordedDownloadId);
     // The relative path carries the directory chain inside the download folder,
     // which is a location too.
     expect(serialized).not.toContain("Season 02/");
+
+    // A structural assertion beside the textual ones, because some of these
+    // words legitimately occur in a title or a file name: no mapped candidate
+    // may carry a field that could hold a location at all, whatever it says.
+    const forbidden = ["path", "relativePath", "folderName", "outputPath", "downloadId"];
+    for (const candidate of [...sonarr, ...radarr]) {
+      for (const field of forbidden) {
+        expect(Object.hasOwn(candidate, field), field).toBe(false);
+        expect(Object.hasOwn(candidate.context, field), `context.${field}`).toBe(false);
+      }
+    }
   });
 
   it("scrubs every upstream label, not only the free-text ones", async () => {

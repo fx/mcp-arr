@@ -8,9 +8,9 @@
   "body": [
     {
       "id": 4001,
-      "path": "/media/example/downloads/complete/example-movie/Example Movie (2021) Bluray-1080p.mkv",
+      "path": "/media/example/movies/Example Movie (2021)/Example Movie (2021) Bluray-1080p.mkv",
       "relativePath": "Example Movie (2021) Bluray-1080p.mkv",
-      "folderName": "example-movie",
+      "folderName": "Example Movie (2021)",
       "name": "Example Movie (2021) Bluray-1080p",
       "size": 21474836480,
       "movie": {
@@ -51,9 +51,9 @@
     },
     {
       "id": 4002,
-      "path": "/media/example/downloads/complete/example-movie/sample.mkv",
+      "path": "/media/example/movies/Example Movie (2021)/sample.mkv",
       "relativePath": "sample.mkv",
-      "folderName": "example-movie",
+      "folderName": "Example Movie (2021)",
       "name": "sample",
       "size": 52428800,
       "movie": null,
