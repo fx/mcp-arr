@@ -154,6 +154,15 @@ function fieldPath(name: string): string {
   return `${fieldsProperty}.${name}`;
 }
 
+/**
+ * An upstream identifier, in the one casing everything here compares it in.
+ * Anything that is not a string is passed through, so a payload that reports
+ * something else still fingerprints as itself rather than as absent.
+ */
+function identifierOf(value: unknown): unknown {
+  return typeof value === "string" ? value.trim().toLowerCase() : value;
+}
+
 function sameValue(left: unknown, right: unknown): boolean {
   if (Array.isArray(left) && Array.isArray(right)) {
     return left.length === right.length && left.every((item, index) => item === right[index]);
@@ -665,8 +674,13 @@ export function configurationObservations(
     observations.push({
       key: "resource-shape",
       value: fingerprint({
-        implementation: payload.implementation,
-        configContract: payload.configContract,
+        // Folded exactly as the schema side folds them, because they are the
+        // same two identifiers matched the same case-insensitive way. A record
+        // whose instance re-cased its own implementation still selects the same
+        // template and still produces the same write, so neither half of the
+        // shape fingerprint may move for it.
+        implementation: identifierOf(payload.implementation),
+        configContract: identifierOf(payload.configContract),
         fields: [...entries.keys()].sort(),
       }),
     });

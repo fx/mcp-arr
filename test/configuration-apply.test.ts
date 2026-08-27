@@ -404,8 +404,9 @@ describe("schema and resource fingerprints", () => {
     const { outcome } = await reconcile("sonarr", instance, request);
     const planned = expectPlanned(outcome);
 
-    // Same fields, same types, same classifications, different display text and
-    // a different order. Nothing a write depends on has moved.
+    // Same fields, same types, same classifications, different display text, a
+    // different order, and the instance re-casing its own implementation on
+    // both sides. Nothing a write depends on has moved.
     const schema = (await fixtureBody<readonly UpstreamRecord[]>("sonarr", "indexer/schema")).map(
       (template) => ({
         ...template,
@@ -419,9 +420,16 @@ describe("schema and resource fingerprints", () => {
           .map((field) => ({ ...field, label: `${String(field.label)} (renamed)` })),
       }),
     );
+    const record = await first("sonarr", "indexer");
     const { outcome: applied } = await reconcile(
       "sonarr",
-      { routes: { ...instance.routes, "indexer/schema": schema } },
+      {
+        routes: {
+          ...instance.routes,
+          "indexer/1": { ...record, implementation: "newznab" },
+          "indexer/schema": schema,
+        },
+      },
       { ...request, mode: "apply", planned: { readSet: fingerprintReadSet(planned.observations) } },
     );
 
