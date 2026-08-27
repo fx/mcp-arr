@@ -1,8 +1,13 @@
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
-import { findToolDefinition, toolDefinitions } from "../src/tools/definitions.js";
-import { toolNames } from "../src/tools/names.js";
-import { assertWellFormed, publishedPropertyNames, schemaFailures } from "./support/json-schema.js";
+import { findToolDefinition } from "../src/tools/definitions.js";
+import { type ToolName, toolNames } from "../src/tools/names.js";
+import {
+  assertWellFormed,
+  declaredPropertyValues,
+  publishedPropertyNames,
+  schemaFailures,
+} from "./support/json-schema.js";
 import { assertCleanProtocolStdout, spawnBuiltServer } from "./support/spawned-stdio.js";
 import { sampleBranchInputs } from "./support/tool-context.js";
 
@@ -21,11 +26,6 @@ const configuredInstance = {
 function spawnServer(deadlineMs = 5_000) {
   return spawnBuiltServer(configuredInstance, deadlineMs);
 }
-
-/** The variant property each tool names, or `undefined` where it has none. */
-const discriminators = new Map<string, string | undefined>(
-  toolDefinitions.map((definition) => [definition.name as string, definition.discriminator]),
-);
 
 interface PublishedTool {
   name: string;
@@ -93,29 +93,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function offendingPropertyKeys(node: unknown, found: string[] = []): string[] {
-  if (Array.isArray(node)) {
-    for (const entry of node) {
-      offendingPropertyKeys(entry, found);
-    }
-    return found;
-  }
-  if (!isRecord(node)) {
-    return found;
-  }
-  if (isRecord(node.properties)) {
-    for (const key of Object.keys(node.properties)) {
-      if (!propertyKeyPattern.test(key)) {
-        found.push(key);
-      }
-    }
-  }
-  for (const value of Object.values(node)) {
-    offendingPropertyKeys(value, found);
-  }
-  return found;
-}
-
 interface VariantLine {
   /** The discriminator values this form's label lists, empty when it has none. */
   readonly values: readonly string[];
@@ -163,12 +140,6 @@ function parseVariantLine(line: string, discriminator: string | undefined): Vari
   };
 }
 
-/** The values a published property advertises, or none where it advertises no set. */
-function declaredValues(properties: Record<string, unknown>, name: string): readonly unknown[] {
-  const node = properties[name];
-  return isRecord(node) && Array.isArray(node.enum) ? node.enum : [];
-}
-
 interface ToolCallResult {
   result?: {
     isError?: boolean;
@@ -209,7 +180,6 @@ describe("built stdio tool surface", () => {
       // able to tell that a property it does not find there is one the tool
       // does not accept.
       expect(tool.inputSchema?.additionalProperties, tool.name).toBe(false);
-      expect(offendingPropertyKeys(tool.inputSchema), tool.name).toEqual([]);
       assertWellFormed(tool.inputSchema ?? {}, tool.name);
       // An object root satisfied on its own is what let every variant tool
       // publish `{"type":"object","properties":{}}`, so the arguments have to
@@ -217,7 +187,11 @@ describe("built stdio tool surface", () => {
       // argument name tells a caller nothing it can send.
       const published = [...publishedPropertyNames(tool.inputSchema)];
       expect(published, `${tool.name} publishes no argument`).not.toHaveLength(0);
-      const discriminator = discriminators.get(tool.name);
+      expect(
+        published.filter((key) => !propertyKeyPattern.test(key)),
+        `${tool.name} property key shape`,
+      ).toEqual([]);
+      const discriminator = findToolDefinition(tool.name as ToolName)?.discriminator;
       if (discriminator !== undefined) {
         expect(published, tool.name).toContain(discriminator);
       }
@@ -243,6 +217,22 @@ describe("built stdio tool surface", () => {
       const definition = findToolDefinition(name);
       expect(definition, name).toBeDefined();
 
+      const discriminator = definition?.discriminator;
+      if (discriminator !== undefined) {
+        // The variant is the half that never reached the wire. A published
+        // schema carrying no alternative admits any value here. Asserted once
+        // per tool rather than once per branch: the claim is about the value
+        // set the root publishes for one property, which is the same set
+        // whichever form the rest of the object came from.
+        const undeclaredVariant = {
+          ...sampleBranchInputs[name][0],
+          [discriminator]: "not_a_variant",
+        };
+        expect(schemaFailures(schema, undeclaredVariant), `${name} undeclared variant`).not.toEqual(
+          [],
+        );
+      }
+
       for (const branch of sampleBranchInputs[name]) {
         // One variant per entry, rather than one sample per tool: a flat
         // published root no longer names the variants, so whether it admits
@@ -262,17 +252,6 @@ describe("built stdio tool surface", () => {
         // a host something untrue about the call.
         const rejected = { ...accepted, unexpectedProperty: "value" };
         expect(schemaFailures(schema, rejected), `${where} unknown property`).not.toEqual([]);
-
-        const discriminator = discriminators.get(name);
-        if (discriminator !== undefined) {
-          // The variant is the half that never reached the wire. A published
-          // schema carrying no alternative admits any value here.
-          const undeclaredVariant = { ...accepted, [discriminator]: "not_a_variant" };
-          expect(
-            schemaFailures(schema, undeclaredVariant),
-            `${where} undeclared variant`,
-          ).not.toEqual([]);
-        }
       }
     }
   });
@@ -284,7 +263,7 @@ describe("built stdio tool surface", () => {
       const schema = published.get(name);
       const properties = isRecord(schema?.properties) ? schema.properties : {};
       const branches = sampleBranchInputs[name];
-      const discriminator = discriminators.get(name);
+      const discriminator = findToolDefinition(name)?.discriminator;
 
       if (discriminator !== undefined) {
         // The set the samples exercise against the set the schema advertises.
@@ -295,7 +274,7 @@ describe("built stdio tool surface", () => {
           .map((branch) => branch[discriminator])
           .filter((value) => value !== undefined);
         expect([...new Set(sampled)].sort(), `${name} sampled variants`).toEqual(
-          [...declaredValues(properties, discriminator)].sort(),
+          [...declaredPropertyValues(schema ?? {}, discriminator)].sort(),
         );
       }
 
@@ -324,7 +303,7 @@ describe("built stdio tool surface", () => {
       const schema = published.get(name);
       const properties = isRecord(schema?.properties) ? schema.properties : {};
       const branches = sampleBranchInputs[name];
-      const discriminator = discriminators.get(name);
+      const discriminator = findToolDefinition(name)?.discriminator;
 
       // A tool with one form merged nothing away and has nothing to recover.
       if (branches.length < 2) {
@@ -356,7 +335,7 @@ describe("built stdio tool surface", () => {
         // reading the enum can always find the form that goes with it.
         const documented = new Set(lines.flatMap((line) => line.values));
         expect([...documented].sort(), `${name} documented variants`).toEqual(
-          [...declaredValues(properties, discriminator)].sort(),
+          [...declaredPropertyValues(schema ?? {}, discriminator)].sort(),
         );
       }
 
@@ -399,17 +378,32 @@ describe("built stdio tool surface", () => {
       }
     }
 
-    // Pinned by name, and the only expectation here that is: `intent` scoping
-    // `domain` is the largest correlation the merge discards, and a derived
-    // check cannot tell a description that recovers the scoping from one that
-    // lists all sixteen domains on every line. Provider intents reach the seven
-    // provider domains and no profile domain.
-    const reconcile = (await publishedInputSchemas()).get("arr_config_reconcile");
+    // Pinned by name, and the only expectations here that are: `intent`
+    // scoping `domain` is the largest correlation the merge discards, and a
+    // derived check cannot tell a description that recovers the scoping from
+    // one that lists all sixteen domains on every line. Provider intents reach
+    // the seven provider domains and no profile domain.
+    const reconcile = published.get("arr_config_reconcile");
     const providerLine = String(reconcile?.description ?? "")
       .split("\n")
       .find((line) => line.startsWith("- intent=reconcile_provider"));
     expect(providerLine).toContain("indexers");
     expect(providerLine).not.toContain("quality_profiles");
+
+    // The narrowest form of the same claim, and the one no derived check above
+    // can make. `arr_activity_change`'s two intents name the same arguments and
+    // differ only in the kind of reference `records` takes, so the reference
+    // annotation is the whole of what tells them apart. Lose it — by the
+    // published pattern drifting out from under the reverse lookup that
+    // produces it, say — and the two signatures become identical, the forms
+    // collapse onto one line, and the distinction disappears from the published
+    // documentation rather than failing anywhere.
+    const recordAnnotations = String(published.get("arr_activity_change")?.description ?? "")
+      .split("\n")
+      .filter((line) => line.startsWith("- "))
+      .map((line) => /\brecords=([^,;]+)/u.exec(line)?.[1])
+      .filter((annotation): annotation is string => annotation !== undefined);
+    expect(new Set(recordAnnotations).size, "arr_activity_change records annotations").toBe(2);
   });
 
   it("returns the unsupported_capability error without contacting an instance", async () => {

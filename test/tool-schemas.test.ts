@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import * as z4mini from "zod/v4-mini";
 import { findToolDefinition, toolDefinitions } from "../src/tools/definitions.js";
 import { toolNames } from "../src/tools/names.js";
@@ -8,10 +9,12 @@ import {
   isReferenceProperty,
   maxBulkItems,
   maxPageSize,
-  referencePrefixes,
+  referenceKinds,
+  referencePattern,
   referenceProperties,
 } from "../src/tools/schemas/common.js";
-import { publishedPropertyNames } from "./support/json-schema.js";
+import { variantUnion } from "../src/tools/schemas/publish.js";
+import { declaredPropertyValues, publishedPropertyNames } from "./support/json-schema.js";
 import { sampleReferences, sampleToolInputs } from "./support/tool-context.js";
 
 function inputJsonSchema(name: (typeof toolNames)[number]): Record<string, unknown> {
@@ -56,9 +59,7 @@ const forbiddenPropertyNames = [
   "method",
 ];
 
-const referencePatterns = new Set(
-  Object.values(referencePrefixes).map((prefix) => `^${prefix}_[A-Za-z0-9_-]{8,64}$`),
-);
+const referencePatterns = new Set(referenceKinds.map(referencePattern));
 
 function isReferenceNode(node: unknown): boolean {
   if (typeof node !== "object" || node === null) {
@@ -421,41 +422,10 @@ function discriminatorMismatch(variants: readonly string[]): string {
  * about.
  */
 function declaredVariantValues(name: (typeof toolNames)[number]): readonly string[] {
-  const discriminator = toolDefinitions.find((candidate) => candidate.name === name)?.discriminator;
-  const found = new Set<string>();
-  if (discriminator === undefined) {
-    return [];
-  }
-
-  const visit = (node: unknown): void => {
-    if (Array.isArray(node)) {
-      for (const child of node) {
-        visit(child);
-      }
-      return;
-    }
-    if (typeof node !== "object" || node === null) {
-      return;
-    }
-    const record = node as Record<string, unknown>;
-    const property = (record.properties as Record<string, unknown> | undefined)?.[discriminator] as
-      | Record<string, unknown>
-      | undefined;
-    if (typeof property?.const === "string") {
-      found.add(property.const);
-    }
-    for (const value of Array.isArray(property?.enum) ? property.enum : []) {
-      if (typeof value === "string") {
-        found.add(value);
-      }
-    }
-    for (const value of Object.values(record)) {
-      visit(value);
-    }
-  };
-
-  visit(inputJsonSchema(name));
-  return [...found];
+  const discriminator = findToolDefinition(name)?.discriminator;
+  return discriminator === undefined
+    ? []
+    : declaredPropertyValues(inputJsonSchema(name), discriminator);
 }
 
 /**
@@ -582,5 +552,44 @@ describe("input rejection messages", () => {
         changes: {},
       }),
     ).toEqual(["at least one file metadata field must be supplied"]);
+  });
+});
+
+/**
+ * The merge itself, over a union written here rather than over a shipped tool.
+ *
+ * The flattening's whole purpose is that the accepted set of every property
+ * reaches the root, where a host will read it. Whether that survives a property
+ * being *documented* is not a question any shipped tool can answer today —
+ * none of them describes a variant's discriminator — so it is asked of a union
+ * built for the purpose, which is also the form the regression would first take.
+ */
+describe("published variant merge", () => {
+  it("collapses a described choice into one root enum rather than a nested anyOf", () => {
+    const union = variantUnion(
+      z.union([
+        z.strictObject({
+          mode: z.enum(["plan"]).describe("Validates without changing anything."),
+          items: z.string(),
+        }),
+        z.strictObject({
+          mode: z.enum(["apply"]),
+          items: z.string(),
+        }),
+      ]),
+    );
+
+    const published = z4mini.toJSONSchema(union as never, {
+      target: "draft-7",
+      io: "input",
+    }) as unknown as Record<string, unknown>;
+    const properties = published.properties as Record<string, unknown>;
+
+    // A description asserts nothing about the value, so it cannot be the reason
+    // a property stops advertising what it accepts. Publishing the alternatives
+    // instead would put the accepted set under the one combinator a host never
+    // inspects — the same failure the flat root exists to prevent, reintroduced
+    // one property at a time.
+    expect(properties.mode).toEqual({ type: "string", enum: ["plan", "apply"] });
   });
 });

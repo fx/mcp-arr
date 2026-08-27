@@ -26,7 +26,19 @@ type Schema = Record<string, unknown>;
  */
 const annotationKeywords = new Set(["$schema", "default", "description", "format"]);
 
-const supportedKeywords = new Set([
+/**
+ * The keywords this module actually enforces.
+ *
+ * Adding a name here is a claim that {@link matchesType}, {@link checkObject},
+ * {@link checkArray}, or {@link checkScalar} implements it, and the guard below
+ * has no way to check that claim — it reads membership as proof. So a keyword
+ * dropped in here to get a new schema past {@link assertWellFormed}, without
+ * the matching check, does not merely go unenforced: every {@link
+ * schemaFailures} assertion over it silently starts passing. That is why the
+ * two halves are separate sets rather than one list where an annotation and a
+ * constraint are indistinguishable.
+ */
+const implementedKeywords = new Set([
   "additionalProperties",
   "anyOf",
   "const",
@@ -43,8 +55,23 @@ const supportedKeywords = new Set([
   "properties",
   "required",
   "type",
-  ...annotationKeywords,
 ]);
+
+/** The closed vocabulary: what is enforced, plus what asserts nothing. */
+const supportedKeywords = new Set([...implementedKeywords, ...annotationKeywords]);
+
+/**
+ * The one enforcement point for the closed vocabulary, shared by the value
+ * check and the meta-schema check so a keyword can never be unknown to one and
+ * accepted by the other.
+ */
+function assertSupportedKeywords(schema: Schema, path: string): void {
+  for (const keyword of Object.keys(schema)) {
+    if (!supportedKeywords.has(keyword)) {
+      throw new Error(`Unsupported JSON Schema keyword at ${describe(path)}: ${keyword}`);
+    }
+  }
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -159,11 +186,7 @@ function checkScalar(schema: Schema, value: unknown, path: string): string[] {
 }
 
 function collectFailures(schema: Schema, value: unknown, path: string): string[] {
-  for (const keyword of Object.keys(schema)) {
-    if (!supportedKeywords.has(keyword)) {
-      throw new Error(`Unsupported JSON Schema keyword at ${describe(path)}: ${keyword}`);
-    }
-  }
+  assertSupportedKeywords(schema, path);
 
   const failures: string[] = [];
   const type = schema.type as string | undefined;
@@ -231,18 +254,15 @@ function fail(path: string, reason: string): never {
  *
  * This is the meta-schema check, reduced to the closed vocabulary these
  * schemas actually use. The vocabulary half is already here — {@link
- * supportedKeywords} throws on any keyword this module has not implemented —
- * and what this adds is the other half: that every keyword present carries a
- * value of the JSON type the dialect defines for it. Over a fixed keyword set
+ * assertSupportedKeywords} throws on any keyword this module has not
+ * implemented — and what this adds is the other half: that every keyword
+ * present carries a value of the JSON type the dialect defines for it. Over a
+ * fixed keyword set
  * that reduction is exact, so a validator dependency would add a package
  * without adding coverage.
  */
 export function assertWellFormed(schema: Schema, path = ""): void {
-  for (const keyword of Object.keys(schema)) {
-    if (!supportedKeywords.has(keyword)) {
-      throw new Error(`Unsupported JSON Schema keyword at ${describe(path)}: ${keyword}`);
-    }
-  }
+  assertSupportedKeywords(schema, path);
 
   if ("type" in schema && !(typeof schema.type === "string" && schemaTypes.has(schema.type))) {
     fail(path, `declares an unknown type ${JSON.stringify(schema.type)}`);
@@ -316,6 +336,29 @@ export function assertWellFormed(schema: Schema, path = ""): void {
       assertWellFormed(alternative, child(path, `${keyword}[${index}]`));
     }
   }
+}
+
+/**
+ * The values a published schema fixes one of its own properties to, in the
+ * order it lists them, or none where it fixes no set.
+ *
+ * A flat published root states a discriminator's whole accepted set on the
+ * property itself, so this is a lookup rather than a search — and one lookup,
+ * shared, so the set the documentation is checked against and the set a
+ * rejection message is expected to name are read the same way.
+ */
+export function declaredPropertyValues(schema: Schema, name: string): readonly string[] {
+  const properties = isRecord(schema.properties) ? schema.properties : {};
+  const node = properties[name];
+  if (!isRecord(node)) {
+    return [];
+  }
+  if (typeof node.const === "string") {
+    return [node.const];
+  }
+  return Array.isArray(node.enum)
+    ? node.enum.filter((value): value is string => typeof value === "string")
+    : [];
 }
 
 /**
