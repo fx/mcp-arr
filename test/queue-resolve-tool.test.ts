@@ -369,6 +369,68 @@ describe("queue resolution apply mode", () => {
     expect(deletes()).toHaveLength(2);
   });
 
+  it("records the sending item of a mixed selection too", async () => {
+    // One valid row beside one that has gone stale. The valid row still sends,
+    // so it still needs a record of its own — deciding by how many items will
+    // send rather than by how many were named would leave it without one.
+    const references = await queueReferences();
+    const first = await referenceFor(blockedImport);
+    const stale = references.find((candidate) => candidate !== first) as string;
+    const staleId = instance.rows.find(
+      (row) => row.id !== blockedImport && row.status !== "delay",
+    )?.id;
+    instance.rows = instance.rows.filter((row) => row.id !== staleId);
+
+    const mixed = await run(resolveTool, {
+      intent: "ignore_tracking",
+      mode: "apply",
+      items: [first, stale],
+    });
+    expect(outcomeOf(mixed).items?.filter((item) => item.status === "error")).toHaveLength(1);
+    expect(deletes()).toHaveLength(1);
+
+    const alone = await run(resolveTool, {
+      intent: "ignore_tracking",
+      mode: "apply",
+      items: [first],
+    });
+
+    expect(alone.applications[0]?.warnings.join(" ")).toContain("already applied");
+    expect(deletes()).toHaveLength(1);
+  });
+
+  it("keeps a call open when a replayed item's outcome was never established", async () => {
+    const references = await queueReferences();
+    const first = await referenceFor(blockedImport);
+    const second = references.find(
+      (candidate) => candidate !== first && candidate !== references[2],
+    ) as string;
+
+    // The first row is applied alone and its answer is lost.
+    instance.deleteBehavior = "lose";
+    const lost = await run(resolveTool, {
+      intent: "ignore_tracking",
+      mode: "apply",
+      items: [first],
+    });
+    expect(lost.mutation?.receipt?.state).toBe("outcome_unknown");
+    instance.deleteBehavior = "accept";
+
+    // A later bulk call names it again beside a healthy row. The healthy row is
+    // resolved; the unresolved one is repeated as an error and must keep this
+    // call's own receipt reconcilable rather than closing it as a success.
+    const bulk = await run(resolveTool, {
+      intent: "ignore_tracking",
+      mode: "apply",
+      items: [first, second],
+    });
+
+    const items = outcomeOf(bulk).items ?? [];
+    expect(items.find((item) => item.reference === first)?.status).toBe("error");
+    expect(items.find((item) => item.reference === second)?.status).toBe("ok");
+    expect(bulk.mutation?.receipt?.state).toBe("outcome_unknown");
+  });
+
   it("answers a repeated apply from its receipt instead of sending again", async () => {
     const reference = await referenceFor(blockedImport);
     const args = { intent: "ignore_tracking", mode: "apply", items: [reference] };

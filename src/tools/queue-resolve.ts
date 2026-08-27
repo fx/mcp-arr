@@ -435,16 +435,14 @@ async function applyItems(
       const attempt = invocation.state.applies.begin(claim);
       if (attempt.status === "replayed") {
         // This exact single-item mutation already has a receipt, so nothing is
-        // sent for it a second time and its recorded outcome is repeated.
-        outcomes.push(
-          itemOutcome(
-            item.reference,
-            attempt.record.state === "succeeded" ? undefined : attempt.record.error,
-            [
-              "this item was already applied by this server; its existing receipt is repeated and nothing was sent again",
-            ],
-          ),
-        );
+        // sent for it again and its recorded outcome is repeated. Which outcome
+        // that is decides the whole call: a receipt that is not terminal is not
+        // a success, and a selection carrying one must not close.
+        const replayed = replayedItemOutcome(item.reference, attempt.record);
+        if (replayed.unresolved !== undefined && unresolved === undefined) {
+          unresolved = replayed.unresolved;
+        }
+        outcomes.push(replayed.outcome);
         continue;
       }
       record = attempt.record.reference;
@@ -493,10 +491,12 @@ function perItemClaim(
   context: QueueResolveContext,
   reference: string,
 ): BeginApplyInput | undefined {
-  const sending = context.items.filter(
-    (item) => item.status === "ok" && item.transition.action.kind === "upstream",
-  );
-  if (sending.length < 2) {
+  // Decided by how many items the *selection* names, not by how many of them
+  // will send. Those are different questions, and using the second one left a
+  // selection of one valid row beside one stale row with no record for the row
+  // that did send — so a later direct apply of it, whose key differs from this
+  // call's, would have sent it a second time.
+  if (context.items.length < 2) {
     return undefined;
   }
   const input = invocation.input;
@@ -508,6 +508,51 @@ function perItemClaim(
       typeof input === "object" && input !== null
         ? { ...(input as Record<string, unknown>), items: [reference] }
         : { items: [reference] },
+  };
+}
+
+const replayedNote =
+  "this item was already applied by this server; its existing receipt is repeated and nothing was sent again";
+
+/**
+ * How a replayed per-item receipt is reported, and whether it holds the call
+ * open.
+ *
+ * Only a terminal success is reported as one. The two non-terminal states are
+ * the reason this is a function rather than a ternary:
+ *
+ * - `outcome_unknown` means an earlier attempt at this exact item may have
+ *   applied and nobody established what it did. Reporting it as this call's
+ *   success would close a selection containing an unresolved mutation, so it is
+ *   reported as an error *and* returned as the failure that keeps the call's own
+ *   receipt outcome-unknown. That precedence is the project's rule, not a local
+ *   choice: an unknown outcome outranks every other settlement.
+ * - `applying` means another attempt is in flight right now. Nothing about it is
+ *   established either, so it is treated exactly the same way. It carries no
+ *   stored error of its own, which is precisely why reading `record.error` and
+ *   calling an absent one a success would have been wrong.
+ */
+function replayedItemOutcome(
+  reference: string,
+  record: ApplyRecord,
+): { outcome: ItemOutcome; unresolved?: ToolError | undefined } {
+  if (record.state === "succeeded") {
+    return { outcome: itemOutcome(reference, undefined, [replayedNote]) };
+  }
+
+  const error =
+    record.error ??
+    createToolError({
+      code: "conflict",
+      message: `${record.application}: another apply of this exact queue item is still in flight, so its outcome is not established`,
+      application: record.application,
+    });
+  return {
+    outcome: itemOutcome(reference, error, [replayedNote]),
+    // A `failed` receipt is the one terminal refusal, and `begin` would have
+    // let this attempt proceed rather than replaying it — so anything reaching
+    // here is unresolved by definition.
+    unresolved: error,
   };
 }
 
