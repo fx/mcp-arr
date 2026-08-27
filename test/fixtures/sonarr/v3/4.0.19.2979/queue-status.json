@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "application": "sonarr",
+    "apiVersion": "v3",
+    "version": "4.0.19.2979",
+    "endpoint": "/api/v3/queue/status"
+  },
+  "body": {
+    "totalCount": 4,
+    "count": 4,
+    "unknownCount": 1,
+    "errors": false,
+    "warnings": true,
+    "unknownErrors": false,
+    "unknownWarnings": true
+  }
+}

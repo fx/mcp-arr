@@ -1,0 +1,15 @@
+{
+  "metadata": {
+    "application": "prowlarr",
+    "apiVersion": "v1",
+    "version": "2.5.2.5491",
+    "endpoint": "/api/v1/health"
+  },
+  "body": [
+    {
+      "source": "IndexerStatusCheck",
+      "type": "warning",
+      "message": "Indexers unavailable due to failures: Example Usenet Indexer"
+    }
+  ]
+}

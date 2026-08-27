@@ -61,8 +61,8 @@ The [Activity Management spec](../specs/activity-management/#activity-queries) o
 ## Tasks
 
 - [ ] Implement queue and activity readers
-  - [ ] Map queue status, records, details, tracked states, status messages, and media associations
-  - [ ] Implement bounded history/blocklist/health/command views
+  - [x] Map queue status, records, details, tracked states, status messages, and media associations
+  - [x] Implement bounded history/blocklist/health/command views
   - [ ] Add Prowlarr status/statistics views with allowlist sanitization
 - [ ] Implement references and diagnosis
   - [ ] Create typed queue references for tracked and pending items

@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "application": "radarr",
+    "apiVersion": "v3",
+    "version": "6.3.0.10514",
+    "endpoint": "/api/v3/diskspace"
+  },
+  "body": [
+    {
+      "path": "/media/example",
+      "label": "Media",
+      "freeSpace": 322122547200,
+      "totalSpace": 2199023255552
+    }
+  ]
+}

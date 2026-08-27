@@ -1,0 +1,21 @@
+{
+  "metadata": {
+    "application": "radarr",
+    "apiVersion": "v3",
+    "version": "6.3.0.10514",
+    "endpoint": "/api/v3/command"
+  },
+  "body": [
+    {
+      "id": 3101,
+      "name": "RefreshMovie",
+      "commandName": "Refresh Movie",
+      "status": "queued",
+      "queued": "2026-08-27T09:05:00Z",
+      "started": null,
+      "ended": null,
+      "trigger": "manual",
+      "message": null
+    }
+  ]
+}

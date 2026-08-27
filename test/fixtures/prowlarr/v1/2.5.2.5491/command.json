@@ -1,0 +1,21 @@
+{
+  "metadata": {
+    "application": "prowlarr",
+    "apiVersion": "v1",
+    "version": "2.5.2.5491",
+    "endpoint": "/api/v1/command"
+  },
+  "body": [
+    {
+      "id": 3201,
+      "name": "ApplicationIndexerSync",
+      "commandName": "Application Indexer Sync",
+      "status": "completed",
+      "queued": "2026-08-27T08:00:00Z",
+      "started": "2026-08-27T08:00:01Z",
+      "ended": "2026-08-27T08:00:09Z",
+      "trigger": "scheduled",
+      "message": "Completed"
+    }
+  ]
+}
