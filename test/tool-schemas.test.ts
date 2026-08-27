@@ -563,6 +563,8 @@ describe("input rejection messages", () => {
  * being *documented* is not a question any shipped tool can answer today —
  * none of them describes a variant's discriminator — so it is asked of a union
  * built for the purpose, which is also the form the regression would first take.
+ * The same goes for a union the merge must refuse: every shipped one conforms,
+ * so the wording of that refusal can only be pinned against one written here.
  */
 describe("published variant merge", () => {
   it("collapses a described choice into one root enum rather than a nested anyOf", () => {
@@ -630,5 +632,23 @@ describe("published variant merge", () => {
         { type: "array", items: { type: "string" }, description: "Every item to act on." },
       ],
     });
+  });
+
+  it("names the offending variant when one is not a closed object", () => {
+    // A module-load throw aborts the whole server, not one tool, so the message
+    // is the only thing a reader has to go on. It has to say which variant of
+    // which union it means, and what identifies a converted variant is what it
+    // declares — its property names, and the values fixing its discriminator.
+    expect(() =>
+      variantUnion(
+        z.union([
+          z.strictObject({ mode: z.literal("plan"), items: z.string() }),
+          z.object({ mode: z.literal("apply"), plan: z.string() }),
+        ]),
+      ),
+    ).toThrow(
+      'Every variant of a published union must be a closed object; found "object" with ' +
+        "additionalProperties null, on the variant declaring mode=apply, plan",
+    );
   });
 });

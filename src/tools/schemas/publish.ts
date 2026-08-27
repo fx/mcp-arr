@@ -44,7 +44,10 @@ function collectBranches(node: JsonSchema, into: JsonSchema[]): JsonSchema[] {
   if (Array.isArray(alternatives)) {
     for (const alternative of alternatives) {
       if (!isRecord(alternative)) {
-        throw new Error("A published variant union must offer object alternatives");
+        throw new Error(
+          "A published variant union must offer object alternatives; found " +
+            `${JSON.stringify(alternative ?? null)}`,
+        );
       }
       collectBranches(alternative, into);
     }
@@ -54,7 +57,8 @@ function collectBranches(node: JsonSchema, into: JsonSchema[]): JsonSchema[] {
     throw new Error(
       "Every variant of a published union must be a closed object; found " +
         `${JSON.stringify(node.type ?? null)} with additionalProperties ` +
-        `${JSON.stringify(node.additionalProperties ?? null)}`,
+        `${JSON.stringify(node.additionalProperties ?? null)}, ` +
+        `on the variant declaring ${describeBranch(node)}`,
     );
   }
   into.push(node);
@@ -97,6 +101,27 @@ function choiceValues(node: JsonSchema): readonly string[] {
     return [node.const];
   }
   return Array.isArray(node.enum) ? node.enum.filter((value) => typeof value === "string") : [];
+}
+
+/**
+ * How one branch of a union reads, for a message that has to name which branch
+ * went wrong.
+ *
+ * A converted branch carries no name of its own, so what identifies it to a
+ * reader is what it declares: its property names, and — for a property it fixes
+ * to string values — the values that fix it, which is what a discriminator is.
+ * That is enough to find the branch in the source union without bisecting the
+ * thirteen this server publishes.
+ */
+function describeBranch(node: JsonSchema): string {
+  const declared = Object.entries(propertiesOf(node)).map(([name, shape]) => {
+    if (!isRecord(shape)) {
+      return name;
+    }
+    const values = choiceValues(shape);
+    return values.length === 0 ? name : `${name}=${values.join("|")}`;
+  });
+  return declared.length === 0 ? "no properties" : declared.join(", ");
 }
 
 /**
