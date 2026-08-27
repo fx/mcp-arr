@@ -272,6 +272,10 @@ export interface SyncEffect {
  * the target level may not carry out is not dropped — it becomes stale, which
  * is the disclosure that the remote keeps something Prowlarr is no longer
  * maintaining.
+ *
+ * One indexer may draw two effects. Whether a selected indexer is added or
+ * merely re-sent depends on what the remote already has, and this server does
+ * not read that, so both are stated rather than one being guessed at.
  */
 export function planSyncEffects(
   mapping: ApplicationMapping,
@@ -287,30 +291,38 @@ export function planSyncEffects(
     const selected = selects(mapping, indexer);
     const base = { indexer: indexer.ref, name: indexer.name };
 
+    // A selected indexer has two possible fates and this server cannot see which
+    // applies, because it does not read the remote's list. Both are disclosed
+    // rather than one being chosen: the addition is what happens if the remote
+    // does not have it, and the update or the staleness is what happens if it
+    // does. Collapsing them would hide an addition behind an update, and hide
+    // it entirely on a mapping whose level is not changing.
     if (selected) {
-      if (after.adds && !before.adds) {
+      if (after.adds) {
         effects.push({
           ...base,
           effect: "add",
-          reason: "this level begins synchronizing the indexer, which the current level does not",
+          reason: before.adds
+            ? "this level puts the indexer on the remote if it is not there yet"
+            : "this level begins synchronizing the indexer, which the current level does not, and puts it on the remote if it is not there yet",
         });
-        continue;
       }
       if (after.updates) {
         effects.push({
           ...base,
           effect: "update",
-          reason: "this level re-sends the indexer whenever its definition here changes",
+          reason:
+            "if the remote already has it, this level re-sends it whenever its definition here changes",
         });
-        continue;
+      } else {
+        effects.push({
+          ...base,
+          effect: "stale",
+          reason: after.adds
+            ? "if the remote already has it, this level never re-sends it, so a later change here does not reach the remote"
+            : "this level synchronizes nothing, so whatever the remote already holds for this indexer stays as it is",
+        });
       }
-      effects.push({
-        ...base,
-        effect: "stale",
-        reason: after.adds
-          ? "this level adds the indexer but never re-sends it, so a later change here does not reach the remote"
-          : "this level synchronizes nothing, so whatever the remote already holds for this indexer stays as it is",
-      });
       continue;
     }
 

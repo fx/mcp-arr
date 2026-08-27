@@ -251,7 +251,14 @@ describe("planned effects", () => {
       "Example Indexer B",
       "Example Indexer C",
     ]);
-    expect(effectsOf(outcome, "update")).toEqual([]);
+    // Each selected indexer draws both effects, because whether it is added or
+    // re-sent depends on what the remote already has and this server does not
+    // read that. Stating one would hide the other.
+    expect(effectsOf(outcome, "update")).toEqual([
+      "Example Indexer A",
+      "Example Indexer B",
+      "Example Indexer C",
+    ]);
     // The disabled indexer is excluded, and full sync deletes an excluded one.
     expect(effectsOf(outcome, "remove")).toEqual(["Example Indexer D"]);
   });
@@ -288,8 +295,14 @@ describe("planned effects", () => {
       "Example Indexer C",
       "Example Indexer D",
     ]);
-    const first = outcome.items[0]?.effects[0];
-    expect(first?.reason).toContain("never re-sends it");
+    // Add-only still adds whatever the remote lacks, so that stays disclosed.
+    expect(effectsOf(outcome, "add")).toEqual([
+      "Example Indexer A",
+      "Example Indexer B",
+      "Example Indexer C",
+    ]);
+    const resent = outcome.items[0]?.effects.find((effect) => effect.effect === "stale");
+    expect(resent?.reason).toContain("never re-sends it");
   });
 
   it("reports an excluded indexer a level cannot delete rather than omitting it", async () => {
@@ -353,9 +366,12 @@ describe("planned effects", () => {
 
     expect(
       planSyncEffects(mapping as never, indexers, "full_sync").map((effect) => effect.effect),
-    ).toEqual(["update"]);
+    ).toEqual(["add", "update"]);
     expect(
       planSyncEffects(mapping as never, indexers, "add_only").map((one) => one.effect),
+    ).toEqual(["add", "stale"]);
+    expect(
+      planSyncEffects(mapping as never, indexers, "disabled").map((one) => one.effect),
     ).toEqual(["stale"]);
   });
 });
