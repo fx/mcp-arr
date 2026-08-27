@@ -5,7 +5,7 @@
 Implement typed history-failure and single-record blocklist mutation workflows through `arr_activity_change` as defined by the [Activity Management spec](../specs/activity-management/).
 
 **Spec:** [Activity Management](../specs/activity-management/)
-**Status:** draft
+**Status:** complete
 **Depends On:** 0002, 0004
 
 ## Motivation
@@ -64,10 +64,10 @@ The [Activity Management spec](../specs/activity-management/#history-and-blockli
   - [x] Add safe history and blocklist references to activity results
   - [x] Implement Sonarr/Radarr mark-history-failed behavior and follow-on effect mapping
   - [x] Implement Sonarr/Radarr single-record blocklist removal
-- [ ] Register and verify `arr_activity_change`
-  - [ ] Add typed plan/direct-apply variants and structured receipts
-  - [ ] Add stale-state and unknown-outcome reconciliation
-  - [ ] Add fixtures and stdio tests for replacement-search effects, record removal, stale references, retry, and non-effects on media/client data
+- [x] Register and verify `arr_activity_change`
+  - [x] Add typed plan/direct-apply variants and structured receipts
+  - [x] Add stale-state and unknown-outcome reconciliation
+  - [x] Add fixtures and stdio tests for replacement-search effects, record removal, stale references, retry, and non-effects on media/client data
 
 ## Open Questions
 

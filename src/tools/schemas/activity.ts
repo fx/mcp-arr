@@ -136,7 +136,7 @@ export const queueResolveInputSchema = variantUnion(
  * blocklist record only re-allows a release — it never deletes media. Clearing
  * every blocklist record is deliberately absent.
  */
-const activityChangeIntentSchema = z.discriminatedUnion("intent", [
+export const activityChangeIntentSchema = z.discriminatedUnion("intent", [
   z.strictObject({
     intent: z.literal("mark_history_failed"),
     ...mutationBaseShape,
@@ -152,6 +152,16 @@ const activityChangeIntentSchema = z.discriminatedUnion("intent", [
 export const activityChangeInputSchema = variantUnion(
   z.union([activityChangeIntentSchema, planApplySchema]),
 );
+
+/**
+ * The direct-intent half, as the handler's type authority.
+ *
+ * The published union also admits a plan reference, which the dispatcher has
+ * already resolved back into a recorded intent before a handler runs — so what
+ * reaches `arr_activity_change` is always one of these two variants, and the
+ * handler narrows against this rather than re-deriving a shape of its own.
+ */
+export type ActivityChangeIntent = z.infer<typeof activityChangeIntentSchema>;
 
 export type ActivityQueryInput = z.infer<typeof activityQueryInputSchema>;
 

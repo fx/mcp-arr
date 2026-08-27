@@ -13,6 +13,7 @@ import {
   readBlocklistRecord,
   readFailureHandlingPolicy,
   readHistoryRecord,
+  reconcileHistoryFailure,
   removeBlocklistRecord,
 } from "../src/adapters/activity/changes.js";
 import { profileFor } from "../src/adapters/activity/media.js";
@@ -220,6 +221,90 @@ describe("history record reads", () => {
   });
 });
 
+describe("history failure reconciliation", () => {
+  const grabbed = {
+    id: 9001,
+    seriesId: 12,
+    eventType: "grabbed",
+    date: "2026-08-27T09:39:00Z",
+    sourceTitle: "Example Series S01E01 Bluray-1080p",
+    downloadId: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+  };
+  const failedFor = (id: number) => ({
+    ...grabbed,
+    id,
+    eventType: "downloadFailed",
+    date: "2026-08-27T10:00:00Z",
+  });
+
+  it("refuses to confirm from a failure that predates the mutation", async () => {
+    // The instance already holds a download-failed event for this download when
+    // the mutation is validated, and holds exactly the same one afterwards.
+    const existing = [grabbed, failedFor(9500)];
+    const harness = harnessFor("sonarr", () => jsonResponse(existing));
+    const profile = profileFor("sonarr");
+
+    const lookup = await readHistoryRecord(harness.client, profile, {
+      historyRecordId: 9001,
+      mediaId: 12,
+    });
+    if (lookup.status !== "found") {
+      throw new Error("Expected the recorded grab");
+    }
+    expect(lookup.priorFailureIds).toEqual([9500]);
+
+    // Nothing new appeared, so nothing is established — reporting `confirmed`
+    // here would settle a receipt as succeeded on evidence that was already
+    // there before the write.
+    await expect(
+      reconcileHistoryFailure(harness.client, profile, lookup.record, lookup.priorFailureIds),
+    ).resolves.toEqual({ status: "unconfirmed" });
+  });
+
+  it("confirms from a failure that appeared after the mutation was validated", async () => {
+    const before = [grabbed];
+    const after = [grabbed, failedFor(9600)];
+    let reads = 0;
+    const harness = harnessFor("sonarr", () => {
+      reads += 1;
+      return jsonResponse(reads === 1 ? before : after);
+    });
+    const profile = profileFor("sonarr");
+
+    const lookup = await readHistoryRecord(harness.client, profile, {
+      historyRecordId: 9001,
+      mediaId: 12,
+    });
+    if (lookup.status !== "found") {
+      throw new Error("Expected the recorded grab");
+    }
+    expect(lookup.priorFailureIds).toEqual([]);
+
+    await expect(
+      reconcileHistoryFailure(harness.client, profile, lookup.record, lookup.priorFailureIds),
+    ).resolves.toEqual({ status: "confirmed" });
+  });
+
+  it("establishes nothing for a grab the instance recorded no download identity for", async () => {
+    const { downloadId: _dropped, ...anonymous } = grabbed;
+    const harness = harnessFor("sonarr", () => jsonResponse([anonymous, failedFor(9700)]));
+    const profile = profileFor("sonarr");
+
+    const lookup = await readHistoryRecord(harness.client, profile, {
+      historyRecordId: 9001,
+      mediaId: 12,
+    });
+    if (lookup.status !== "found") {
+      throw new Error("Expected the recorded grab");
+    }
+
+    // With nothing to match on, there is no evidence either way.
+    await expect(
+      reconcileHistoryFailure(harness.client, profile, lookup.record, lookup.priorFailureIds),
+    ).resolves.toEqual({ status: "unconfirmed" });
+  });
+});
+
 describe("blocklist record reads", () => {
   it("re-reads one blocked release and everything re-allowing it would bring back", async () => {
     const harness = harnessFor("sonarr", servePagedRecords(records("sonarr", "blocklist")));
@@ -341,21 +426,25 @@ describe("effect mapping", () => {
   };
 
   it("discloses the blocklist effect as certain and the search as the setting decides", () => {
-    const enabled = historyFailureEffects(record, policy(true));
+    const enabled = historyFailureEffects([record], policy(true));
+    // Every effect is requested as well as predicted, because a direct apply
+    // never reads a plan's predictions and the search is exactly what such a
+    // caller most needs to be told about.
     expect(summaries(enabled.requested)).toEqual([
       "mark the grab of “Example Series S01E01 Bluray-1080p” failed",
       "blocklist “Example Series S01E01 Bluray-1080p” so this instance does not grab it again",
+      expect.stringContaining("start a replacement search"),
     ]);
-    expect(summaries(enabled.predicted).at(-1)).toContain("start a replacement search");
+    expect(summaries(enabled.predicted)).toEqual(summaries(enabled.requested));
     expect(enabled.warnings).toEqual([]);
 
-    const disabled = historyFailureEffects(record, policy(false));
+    const disabled = historyFailureEffects([record], policy(false));
     expect(summaries(disabled.predicted).at(-1)).toContain("no replacement search follows");
     expect(disabled.predicted.at(-1)?.severity).toBe("informational");
   });
 
   it("says a search may follow when the instance did not report its handling", () => {
-    const unknown = historyFailureEffects(record, policy(undefined));
+    const unknown = historyFailureEffects([record], policy(undefined));
 
     expect(summaries(unknown.predicted).at(-1)).toContain("may follow");
     expect(unknown.predicted.at(-1)?.severity).toBe("consequential");
@@ -365,7 +454,7 @@ describe("effect mapping", () => {
   });
 
   it("withdraws the certainty when the instance excludes interactive grabs", () => {
-    const excluded = historyFailureEffects(record, policy(true, false));
+    const excluded = historyFailureEffects([record], policy(true, false));
 
     // The instance redownloads failed grabs but not the interactively grabbed
     // ones, and nothing in a history record says which kind this was — so the
@@ -381,7 +470,7 @@ describe("effect mapping", () => {
     // nothing read.
     // Built literally rather than through the helper, whose default would fill
     // the omitted setting in and hide exactly the case under test.
-    const unreported = historyFailureEffects(record, {
+    const unreported = historyFailureEffects([record], {
       application: "sonarr",
       replacementSearch: true,
       replacementSearchFromInteractiveSearch: undefined,
@@ -393,12 +482,28 @@ describe("effect mapping", () => {
 
     // The exclusion is moot where nothing is redownloaded at all.
     expect(
-      summaries(historyFailureEffects(record, policy(false, false)).predicted).at(-1),
+      summaries(historyFailureEffects([record], policy(false, false)).predicted).at(-1),
     ).toContain("no replacement search follows");
   });
 
+  it("counts a multi-record selection rather than naming one of them", () => {
+    const second: HistoryRecord = {
+      ...record,
+      context: { application: "sonarr", historyRecordId: 9005, mediaId: 13 },
+      title: "Example Anime S01E02 WEBDL-720p",
+    };
+    const many = historyFailureEffects([record, second], policy(true));
+
+    // Naming the first of two would say the mutation affects that release while
+    // it silently acts on the other, which is false about the very thing a plan
+    // exists to state.
+    expect(summaries(many.requested)[0]).toBe("mark the grab of 2 grabbed releases failed");
+    expect(summaries(many.requested).join(" ")).not.toContain("Example Series S01E01");
+    expect(summaries(many.requested)[1]).toContain("does not grab them again");
+  });
+
   it("names the release even when the instance recorded no title", () => {
-    const untitled = historyFailureEffects({ ...record, title: undefined }, policy(true));
+    const untitled = historyFailureEffects([{ ...record, title: undefined }], policy(true));
 
     expect(summaries(untitled.requested)[0]).toBe("mark the grab of the grabbed release failed");
   });
@@ -409,7 +514,7 @@ describe("effect mapping", () => {
       context: { application: "radarr", blocklistRecordId: 7101 },
       title: "Example Fallback 2019 WEBDL-1080p",
     };
-    const effects = blocklistRemovalEffects(blocked);
+    const effects = blocklistRemovalEffects("radarr", [blocked]);
 
     expect(summaries(effects.predicted)).toContain(
       "no media file, download-client payload, or queue item is removed by this change",
@@ -521,7 +626,7 @@ describe("mutation reads and untrusted payloads", () => {
 
     expect(JSON.stringify(record)).not.toContain(canary);
     expect(JSON.stringify(historyRecordState(record))).not.toContain(canary);
-    expect(JSON.stringify(historyFailureEffects(record, policy(true)))).not.toContain(canary);
+    expect(JSON.stringify(historyFailureEffects([record], policy(true)))).not.toContain(canary);
   });
 
   it("keeps a planted secret out of a blocked release and its effects", async () => {
@@ -550,6 +655,8 @@ describe("mutation reads and untrusted payloads", () => {
 
     expect(record.message).not.toContain(canary);
     expect(JSON.stringify(record)).not.toContain(canary);
-    expect(JSON.stringify(blocklistRemovalEffects(record))).not.toContain(canary);
+    expect(JSON.stringify(blocklistRemovalEffects(record.application, [record]))).not.toContain(
+      canary,
+    );
   });
 });
