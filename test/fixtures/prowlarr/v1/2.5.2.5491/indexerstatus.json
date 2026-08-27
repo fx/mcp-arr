@@ -1,0 +1,26 @@
+{
+  "metadata": {
+    "application": "prowlarr",
+    "apiVersion": "v1",
+    "version": "2.5.2.5491",
+    "endpoint": "/api/v1/indexerstatus"
+  },
+  "body": [
+    {
+      "id": 11,
+      "indexerId": 2,
+      "initialFailure": "2026-06-01T00:00:00Z",
+      "mostRecentFailure": "2026-06-01T04:00:00Z",
+      "escalationLevel": 1,
+      "disabledTill": "2026-06-01T05:00:00Z"
+    },
+    {
+      "id": 12,
+      "indexerId": 3,
+      "initialFailure": "2026-08-26T18:00:00Z",
+      "mostRecentFailure": "2026-08-27T06:00:00Z",
+      "escalationLevel": 9,
+      "disabledTill": "2099-01-01T00:00:00Z"
+    }
+  ]
+}

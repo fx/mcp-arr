@@ -42,6 +42,7 @@ const approvedRoutes: Readonly<Record<FixtureApplication, readonly string[]>> = 
     "wanted/missing",
     "wanted/cutoff",
     "calendar",
+    "release",
   ],
   radarr: [
     "system/status",
@@ -52,8 +53,9 @@ const approvedRoutes: Readonly<Record<FixtureApplication, readonly string[]>> = 
     "wanted/missing",
     "wanted/cutoff",
     "calendar",
+    "release",
   ],
-  prowlarr: ["system/status"],
+  prowlarr: ["system/status", "indexer", "indexerstatus", "search"],
 };
 
 /** The file that records one route's response. */

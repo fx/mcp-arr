@@ -67,6 +67,7 @@ describe("versioned fixture contract", () => {
       "sonarr/v3/4.0.19.2979/wanted-missing.json",
       "sonarr/v3/4.0.19.2979/wanted-cutoff.json",
       "sonarr/v3/4.0.19.2979/calendar.json",
+      "sonarr/v3/4.0.19.2979/release.json",
       "radarr/v3/6.3.0.10514/system-status.json",
       "radarr/v3/6.3.0.10514/movie.json",
       "radarr/v3/6.3.0.10514/movie-lookup.json",
@@ -75,7 +76,11 @@ describe("versioned fixture contract", () => {
       "radarr/v3/6.3.0.10514/wanted-missing.json",
       "radarr/v3/6.3.0.10514/wanted-cutoff.json",
       "radarr/v3/6.3.0.10514/calendar.json",
+      "radarr/v3/6.3.0.10514/release.json",
       "prowlarr/v1/2.5.2.5491/system-status.json",
+      "prowlarr/v1/2.5.2.5491/indexer.json",
+      "prowlarr/v1/2.5.2.5491/indexerstatus.json",
+      "prowlarr/v1/2.5.2.5491/search.json",
     ]);
     await expect(listFiles(fixtureRoot)).resolves.toEqual([...approvedFixtureInventory].sort());
 

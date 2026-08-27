@@ -1,0 +1,109 @@
+{
+  "metadata": {
+    "application": "sonarr",
+    "apiVersion": "v3",
+    "version": "4.0.19.2979",
+    "endpoint": "/api/v3/release"
+  },
+  "body": [
+    {
+      "guid": "example-indexer-a-1001",
+      "title": "Example Series S01E01 1080p WEB-DL x264-EXAMPLEGRP",
+      "indexer": "Example Indexer A",
+      "indexerId": 1,
+      "protocol": "torrent",
+      "size": 1503238553,
+      "age": 3,
+      "ageHours": 74.5,
+      "ageMinutes": 4470,
+      "publishDate": "2026-08-20T11:15:00Z",
+      "seeders": 42,
+      "leechers": 3,
+      "releaseGroup": "EXAMPLEGRP",
+      "approved": true,
+      "rejected": false,
+      "temporarilyRejected": false,
+      "rejections": [],
+      "quality": {
+        "quality": { "id": 3, "name": "WEBDL-1080p", "source": "web", "resolution": 1080 },
+        "revision": { "version": 1, "real": 0, "isRepack": false }
+      },
+      "languages": [{ "id": 1, "name": "English" }],
+      "customFormats": [{ "id": 4, "name": "Example Custom Format" }],
+      "customFormatScore": 25,
+      "indexerFlags": ["G_Freeleech"],
+      "seriesTitle": "Example Series",
+      "seasonNumber": 1,
+      "episodeNumbers": [1],
+      "absoluteEpisodeNumbers": [1],
+      "fullSeason": false
+    },
+    {
+      "guid": "example-indexer-b-2002",
+      "title": "Example Series S01E01 720p HDTV x264-OTHERGRP",
+      "indexer": "Example Indexer B",
+      "indexerId": 2,
+      "protocol": "usenet",
+      "size": 734003200,
+      "age": 0,
+      "ageHours": 2,
+      "ageMinutes": 120,
+      "publishDate": "2026-08-26T09:00:00Z",
+      "seeders": null,
+      "leechers": null,
+      "releaseGroup": "OTHERGRP",
+      "approved": false,
+      "rejected": true,
+      "temporarilyRejected": true,
+      "rejections": [
+        { "reason": "Quality HDTV-720p is not wanted in profile", "type": "permanent" },
+        { "reason": "Indexer request limit reached", "type": "temporary" }
+      ],
+      "quality": {
+        "quality": { "id": 4, "name": "HDTV-720p", "source": "television", "resolution": 720 },
+        "revision": { "version": 2, "real": 0, "isRepack": true }
+      },
+      "languages": [{ "id": 1, "name": "English" }],
+      "customFormats": [],
+      "customFormatScore": 0,
+      "indexerFlags": [],
+      "seriesTitle": "Example Series",
+      "seasonNumber": 1,
+      "episodeNumbers": [1],
+      "absoluteEpisodeNumbers": [],
+      "fullSeason": false
+    },
+    {
+      "guid": "example-indexer-a-3003",
+      "title": "Example Series S01 COMPLETE 1080p WEB-DL x264-EXAMPLEGRP",
+      "indexer": "Example Indexer A",
+      "indexerId": 1,
+      "protocol": "torrent",
+      "size": 12884901888,
+      "age": 30,
+      "ageHours": 720,
+      "ageMinutes": 43200,
+      "publishDate": "2026-07-28T18:40:00Z",
+      "seeders": 9,
+      "leechers": 0,
+      "releaseGroup": "EXAMPLEGRP",
+      "approved": false,
+      "rejected": true,
+      "temporarilyRejected": false,
+      "rejections": ["Full season release is not wanted for a single episode"],
+      "quality": {
+        "quality": { "id": 3, "name": "WEBDL-1080p", "source": "web", "resolution": 1080 },
+        "revision": { "version": 1, "real": 0, "isRepack": false }
+      },
+      "languages": [{ "id": 1, "name": "English" }],
+      "customFormats": [],
+      "customFormatScore": 0,
+      "indexerFlags": ["G_Freeleech", "G_Halfleech"],
+      "seriesTitle": "Example Series",
+      "seasonNumber": 1,
+      "episodeNumbers": [],
+      "absoluteEpisodeNumbers": [],
+      "fullSeason": true
+    }
+  ]
+}
