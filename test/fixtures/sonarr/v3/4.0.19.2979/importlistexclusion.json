@@ -1,0 +1,12 @@
+{
+  "metadata": {
+    "application": "sonarr",
+    "apiVersion": "v3",
+    "version": "4.0.19.2979",
+    "endpoint": "/api/v3/importlistexclusion"
+  },
+  "body": [
+    { "id": 1, "tvdbId": 100001, "title": "Example Series" },
+    { "id": 2, "tvdbId": 100002, "title": "Example Other Series" }
+  ]
+}

@@ -84,6 +84,7 @@ describe("versioned fixture contract", () => {
       "sonarr/v3/4.0.19.2979/indexer-schema.json",
       "sonarr/v3/4.0.19.2979/importlist.json",
       "sonarr/v3/4.0.19.2979/config-downloadclient.json",
+      "sonarr/v3/4.0.19.2979/importlistexclusion.json",
       "radarr/v3/6.3.0.10514/system-status.json",
       "radarr/v3/6.3.0.10514/movie.json",
       "radarr/v3/6.3.0.10514/movie-lookup.json",

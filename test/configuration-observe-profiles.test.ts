@@ -8,13 +8,20 @@ import {
 import { fixtureBody, jsonResponse } from "./support/library.js";
 
 /**
- * Observation of the fixed-shape families: quality and custom-format profiles,
- * app profiles, tags, root folders, path mappings, and list exclusions.
+ * Observation of the fixed-shape families: quality, custom-format, release,
+ * delay, and app profiles, plus tags, root folders, path mappings, and list
+ * exclusions.
  *
  * These carry no dynamic `fields` array, so they are mapped property by
  * property against a per-domain allowlist rather than through the provider
  * classifier. The provider families, and the four leakage classes, are covered
  * in `configuration-observe.test.ts`.
+ *
+ * Every domain is read on every application that models it. Several of them
+ * are the same concept under different property names — a Sonarr exclusion
+ * names a series, a Radarr one names a film — and one allowlist serves both,
+ * so a domain read on only one application leaves half of its mapping
+ * unexercised.
  */
 
 function serving(body: unknown, status = 200) {
@@ -115,6 +122,122 @@ describe("observing profiles", () => {
     ]);
     expect(profile.withheld).toEqual({ count: 0 });
   });
+
+  /**
+   * The remaining profile domains, whose per-domain allowlists nothing else
+   * reads.
+   *
+   * These payloads are inline rather than recorded. A fixture is a sanitized
+   * recording of an instance's answer, and this project has none for these
+   * routes; writing one would put an invented body under `fixtures/` claiming
+   * to be a recording. What is under test here is the mapping — which
+   * properties the allowlist surfaces, in which order, and what it leaves to
+   * the withheld count — and a constructed payload says exactly that without
+   * claiming to be evidence about any instance.
+   */
+  it("reads a Sonarr release profile's terms, which only Sonarr models", async () => {
+    const { outcome } = await observe(
+      "sonarr",
+      observationRequest("release_profiles"),
+      serving([
+        {
+          id: 1,
+          name: "Example Release Profile",
+          enabled: true,
+          indexerId: 0,
+          required: ["example-term"],
+          ignored: ["example-blocked-term"],
+          tags: [],
+        },
+      ]),
+    );
+    const profile = firstRecord(observedRecords(outcome));
+
+    expect(profile.name).toBe("Example Release Profile");
+    expect(profile.fields).toEqual([
+      { name: "enabled", value: true },
+      { name: "indexerId", value: 0 },
+      { name: "required", value: ["example-term"] },
+      { name: "ignored", value: ["example-blocked-term"] },
+    ]);
+    expect(profile.withheld).toEqual({ count: 1 });
+  });
+
+  it("reads a delay profile's protocol policy from both applications that model one", async () => {
+    for (const application of ["sonarr", "radarr"] as const) {
+      const { outcome } = await observe(
+        application,
+        observationRequest("delay_profiles"),
+        serving([
+          {
+            id: 1,
+            enableUsenet: true,
+            enableTorrent: false,
+            preferredProtocol: "usenet",
+            usenetDelay: 0,
+            torrentDelay: 30,
+            bypassIfHighestQuality: true,
+            bypassIfAboveCustomFormatScore: false,
+            minimumCustomFormatScore: 0,
+            order: 1,
+            tags: [],
+          },
+        ]),
+      );
+      const profile = firstRecord(observedRecords(outcome));
+
+      expect(profile.ref.application).toBe(application);
+      expect(profile.fields).toEqual([
+        { name: "enableUsenet", value: true },
+        { name: "enableTorrent", value: false },
+        { name: "preferredProtocol", value: "usenet" },
+        { name: "usenetDelay", value: 0 },
+        { name: "torrentDelay", value: 30 },
+        { name: "minimumCustomFormatScore", value: 0 },
+        { name: "order", value: 1 },
+      ]);
+      // Both bypass switches are named out of the allowlist by the credential
+      // fragment `pass` in "bypass", and acknowledged as configured secrets
+      // instead. Nothing leaks — no value is published either way — but a
+      // boolean is not a credential, and the dynamic-field classifier already
+      // withholds a boolean rather than calling it configured. This asserts
+      // what the flat-record path does today, not what it should do.
+      expect(profile.secrets).toEqual([
+        { name: "bypassIfHighestQuality", state: "configured", masked: false },
+        { name: "bypassIfAboveCustomFormatScore", state: "configured", masked: false },
+      ]);
+      expect(profile.withheld).toEqual({ count: 1 });
+    }
+  });
+
+  it("reads a Sonarr custom format's specifications in order", async () => {
+    const { outcome } = await observe(
+      "sonarr",
+      observationRequest("custom_formats"),
+      serving([
+        {
+          id: 3,
+          name: "Example Format",
+          includeCustomFormatWhenRenaming: false,
+          specifications: [
+            { name: "Example Release Title Specification" },
+            { name: "Example Source Specification" },
+          ],
+        },
+      ]),
+    );
+    const format = firstRecord(observedRecords(outcome));
+
+    if (format.family !== "profile") {
+      throw new Error("Expected a profile record");
+    }
+    expect(format.entries).toEqual([
+      { name: "Example Release Title Specification" },
+      { name: "Example Source Specification" },
+    ]);
+    expect(format.fields).toEqual([{ name: "includeCustomFormatWhenRenaming", value: false }]);
+    expect(format.withheld).toEqual({ count: 0 });
+  });
 });
 
 describe("observing resources", () => {
@@ -181,25 +304,69 @@ describe("observing resources", () => {
     ]);
   });
 
-  it("withholds the machine a remote path mapping names", async () => {
+  /**
+   * The same domain, and a different set of properties: Sonarr excludes a
+   * series by `tvdbId` and `title` where Radarr excludes a film by `tmdbId`,
+   * `movieTitle`, and `movieYear`. One allowlist names all of them, so reading
+   * only one application would leave the other half of it unexercised — and a
+   * property dropped from it would still look correct.
+   */
+  it("reads a Sonarr import-list exclusion, whose properties are its own", async () => {
+    const body = await fixtureBody("sonarr", "importlistexclusion");
     const { outcome } = await observe(
-      "radarr",
-      observationRequest("remote_path_mappings"),
-      serving([
-        {
-          id: 1,
-          host: "example-download-client",
-          remotePath: "/media/example/downloads",
-          localPath: "/media/example/downloads",
-        },
-      ]),
+      "sonarr",
+      observationRequest("import_list_exclusions"),
+      serving(body),
     );
-    const mapping = firstRecord(observedRecords(outcome));
+    const records = observedRecords(outcome);
+    const exclusion = firstRecord(records);
 
-    expect(mapping.fields).toEqual([
-      { name: "remotePath", value: "/media/example/downloads" },
-      { name: "localPath", value: "/media/example/downloads" },
+    expect(records.map((record) => record.ref.id)).toEqual(["1", "2"]);
+    expect(exclusion.family).toBe("resource");
+    expect(exclusion.fields).toEqual([
+      { name: "tvdbId", value: 100001 },
+      { name: "title", value: "Example Series" },
     ]);
-    expect(mapping.withheld).toEqual({ count: 1 });
+    // An exclusion carries neither `name` nor `label`, on either application:
+    // what it is named by is the allowlisted title property itself.
+    expect(exclusion.name).toBeUndefined();
+    expect(exclusion.withheld).toEqual({ count: 0 });
+  });
+
+  it("withholds the machine a remote path mapping names, on either application", async () => {
+    for (const application of ["sonarr", "radarr"] as const) {
+      const { outcome } = await observe(
+        application,
+        observationRequest("remote_path_mappings"),
+        serving([
+          {
+            id: 1,
+            host: "example-download-client",
+            remotePath: "/media/example/downloads",
+            localPath: "/media/example/downloads",
+          },
+        ]),
+      );
+      const mapping = firstRecord(observedRecords(outcome));
+
+      expect(mapping.fields).toEqual([
+        { name: "remotePath", value: "/media/example/downloads" },
+        { name: "localPath", value: "/media/example/downloads" },
+      ]);
+      expect(mapping.withheld).toEqual({ count: 1 });
+    }
+  });
+
+  it("reads tags from Prowlarr as well as from the two library applications", async () => {
+    const { outcome } = await observe(
+      "prowlarr",
+      observationRequest("tags"),
+      serving([{ id: 2, label: "example-tag" }]),
+    );
+    const tag = firstRecord(observedRecords(outcome));
+
+    expect(tag.ref).toEqual({ application: "prowlarr", domain: "tags", id: "2" });
+    expect(tag.name).toBe("example-tag");
+    expect(tag.withheld).toEqual({ count: 0 });
   });
 });

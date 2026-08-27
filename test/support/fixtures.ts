@@ -59,6 +59,7 @@ const approvedRoutes: Readonly<Record<FixtureApplication, readonly string[]>> = 
     "indexer/schema",
     "importlist",
     "config/downloadclient",
+    "importlistexclusion",
   ],
   radarr: [
     "system/status",
