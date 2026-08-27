@@ -64,9 +64,9 @@ The [Configuration Reconciliation spec](../specs/configuration-reconciliation/) 
 
 ## Tasks
 
-- [ ] Implement safe configuration observation
-  - [ ] Add provider/profile/format/tag/root/path/list/application schema readers
-  - [ ] Build explicit safe serializers and configured-secret indicators
+- [x] Implement safe configuration observation
+  - [x] Add provider/profile/format/tag/root/path/list/application schema readers
+  - [x] Build explicit safe serializers and configured-secret indicators
   - [x] Add unknown-field, Cardigann, canary-secret, and raw-error leakage tests
 - [ ] Implement lossless reconciliation runtime
   - [ ] Add typed desired-state patches, diff/plan output, explicit removal, and dependency validation
