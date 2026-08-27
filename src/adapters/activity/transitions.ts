@@ -429,12 +429,111 @@ const unestablishedStatuses: readonly QueueStatus[] = [
   "paused",
 ];
 
-/** Why the payload cannot be acted on yet, or `undefined` when it can. */
-function unestablishedReason(status: QueueStatus): string | undefined {
-  if (status === "unknown") {
-    return "this download's status could not be established, so it cannot be treated as finished";
+/**
+ * What a transition's effect actually needs in order to happen.
+ *
+ * `application` is the instance itself, which every transition needs and which
+ * nothing in a queue row can contradict — a row this server is reasoning about
+ * came from an instance that answered. The other two can be contradicted by the
+ * row's own status, and that is what {@link blockedRequirement} checks.
+ */
+const transitionSubsystems = ["application", "download_client", "downloaded_payload"] as const;
+
+type TransitionSubsystem = (typeof transitionSubsystems)[number];
+
+/**
+ * Which subsystem each intent's effect depends on.
+ *
+ * The table is the enumeration, and stating it per intent is what stops the
+ * next intent being added without anyone asking the question. Reading it:
+ *
+ * - Everything that sets `removeFromClient` — the plain removal and the
+ *   blocklisting removal — needs the **download client**, because that flag is
+ *   what asks the client to drop the download and its payload.
+ * - `change_category_mark_imported` needs it too, and this is the one that is
+ *   easy to miss: no removal is requested, but moving a download into the
+ *   post-import category is an operation *inside* the client. It needs the
+ *   **downloaded payload** as well, because the other half of what it does is
+ *   assert the download was imported.
+ * - `route_to_manual_import` needs both for the same pair of reasons: there is
+ *   nothing to inspect for import until the payload exists, and an unreachable
+ *   client is how the application says it cannot see the download at all.
+ * - `force_pending_grab` hands a held release to the download client, so it
+ *   names that requirement honestly even though no pending-release status can
+ *   currently contradict it — a pending row is `delay` or `fallback`, and the
+ *   kind check refuses this intent on anything else.
+ * - `ignore_tracking`, `remove_pending`, and `blocklist_pending` change only
+ *   the application's own records. `ignore_tracking` in particular must stay
+ *   ungated on the client: it is the one intent that still works when the
+ *   client is unreachable, and the bounded diagnosis suggests exactly it for
+ *   that case.
+ */
+export const intentRequirements: Readonly<
+  Record<QueueResolveIntent, readonly TransitionSubsystem[]>
+> = {
+  ignore_tracking: ["application"],
+  remove_from_client_and_delete_data: ["application", "download_client"],
+  blocklist_and_remove: ["application", "download_client"],
+  change_category_mark_imported: ["application", "download_client", "downloaded_payload"],
+  route_to_manual_import: ["application", "download_client", "downloaded_payload"],
+  force_pending_grab: ["application", "download_client"],
+  remove_pending: ["application"],
+  blocklist_pending: ["application"],
+};
+
+/**
+ * The observed condition that contradicts one requirement, if any does.
+ *
+ * The two subsystems are checked on deliberately different evidence, and the
+ * difference is the whole reason they are separate entries rather than one
+ * "preconditions" bag.
+ *
+ * A **download client** is refused only on `download_client_unavailable`, which
+ * is a contradiction the application positively observed and reported. Absence
+ * of that observation is not evidence the client is down, so `unknown` does not
+ * block here — gating on it would refuse most of the surface for a status word
+ * this server merely failed to recognize.
+ *
+ * A **downloaded payload** is the opposite case: its presence is a precondition
+ * that has to be positively established, so `unknown` does block, exactly as an
+ * unreadable version blocks {@link checkVersion}. "We could not tell" is not a
+ * yes when the answer has to be yes.
+ */
+function blockedRequirement(
+  subsystem: TransitionSubsystem,
+  status: QueueStatus,
+): string | undefined {
+  if (subsystem === "download_client") {
+    return status === "download_client_unavailable"
+      ? "the download client is unreachable, so this transition cannot act on the download inside it"
+      : undefined;
   }
-  return unestablishedStatuses.includes(status) ? "this download has not finished" : undefined;
+  if (subsystem === "downloaded_payload") {
+    if (status === "unknown") {
+      return "this download's status could not be established, so it cannot be treated as finished";
+    }
+    return unestablishedStatuses.includes(status)
+      ? "this download has not finished, so its files are not there to act on yet"
+      : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Why this intent cannot be compiled against this row, or `undefined` to go on.
+ *
+ * Driven by the requirement table rather than by a branch per intent, so a row
+ * added to that table is gated by having been added and an intent that names a
+ * subsystem it does not need is a mistake visible in one place.
+ */
+function unmetRequirement(intent: QueueResolveIntent, status: QueueStatus): string | undefined {
+  for (const subsystem of intentRequirements[intent]) {
+    const blocked = blockedRequirement(subsystem, status);
+    if (blocked !== undefined) {
+      return blocked;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -731,6 +830,17 @@ export function compileQueueTransition(
     );
   }
 
+  // Every intent, from one table, before any of them compiles. Refusing here is
+  // what keeps this server from rendering "I have observed that this cannot
+  // work" as "proceeding": the row's own status says a subsystem the effect
+  // depends on is unavailable, and a compiled transition would promise
+  // something against a system the application has just reported it cannot
+  // reach.
+  const unmet = unmetRequirement(intent, observed.status);
+  if (unmet !== undefined) {
+    return conflict(application, unmet);
+  }
+
   const transition = (action: QueueTransitionAction): QueueTransitionCompilation => ({
     status: "compiled",
     transition: {
@@ -744,16 +854,6 @@ export function compileQueueTransition(
   });
 
   if (intent === "route_to_manual_import") {
-    const unestablished = unestablishedReason(observed.status);
-    if (unestablished !== undefined) {
-      return conflict(application, `${unestablished}, so there is nothing to import from it yet`);
-    }
-    if (observed.status === "download_client_unavailable") {
-      return conflict(
-        application,
-        "the download client is unreachable, so nothing can be imported from it yet",
-      );
-    }
     return transition({
       kind: "inspect",
       tool: "arr_import_inspect",
@@ -770,16 +870,6 @@ export function compileQueueTransition(
       path: grabPath(observed.queueItemId),
       query: {},
     });
-  }
-
-  if (intent === "change_category_mark_imported") {
-    const unestablished = unestablishedReason(observed.status);
-    if (unestablished !== undefined) {
-      return conflict(
-        application,
-        `${unestablished}, so it cannot be handed to the post-import category`,
-      );
-    }
   }
 
   const flags = flagsFor(intent, request.replacementSearch);

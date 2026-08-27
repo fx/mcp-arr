@@ -6,6 +6,7 @@ import {
   compileQueueTransitions,
   describeVersionRefusal,
   flagMinimumVersions,
+  intentRequirements,
   type ObservedQueueItem,
   pendingQueueIntents,
   type QueueResolveIntent,
@@ -494,6 +495,69 @@ describe("impossible intent combinations", () => {
     expect(expectCompiled(compile("sonarr", "ignore_tracking", observed)).intent).toBe(
       "ignore_tracking",
     );
+  });
+
+  it("refuses every intent that acts inside the download client while it is unreachable", () => {
+    // The application has positively observed that the client cannot be
+    // reached. Compiling any of these would promise an action against exactly
+    // that system — a removal, a payload deletion, or a category move — so the
+    // refusal names the observed condition rather than failing later upstream.
+    const observed = tracked("sonarr", {
+      status: "download_client_unavailable",
+      trackedState: "unknown",
+    });
+
+    for (const intent of [
+      "remove_from_client_and_delete_data",
+      "blocklist_and_remove",
+      "change_category_mark_imported",
+      "route_to_manual_import",
+    ] as const) {
+      const error = expectRejected(
+        compile("sonarr", intent, observed, {
+          ...(intent === "blocklist_and_remove" ? { replacementSearch: "suppress" as const } : {}),
+        }),
+      );
+      expect(error.code).toBe("conflict");
+      expect(error.message).toContain("download client is unreachable");
+    }
+  });
+
+  it("still compiles the one intent that works with the download client down", () => {
+    // `ignore_tracking` changes only the application's own records, and it is
+    // what the bounded diagnosis suggests for exactly this state. Gating it on
+    // the client would refuse the only thing a caller can still do.
+    const observed = tracked("radarr", {
+      status: "download_client_unavailable",
+      trackedState: "unknown",
+    });
+
+    expect(expectCompiled(compile("radarr", "ignore_tracking", observed)).intent).toBe(
+      "ignore_tracking",
+    );
+  });
+
+  it("names a subsystem requirement for every declared intent", () => {
+    // The gate is driven by this table, so an intent missing from it would be
+    // ungated rather than loudly broken.
+    for (const intent of queueResolveIntents) {
+      const requirements = intentRequirements[intent];
+      expect(requirements.length).toBeGreaterThan(0);
+      expect(requirements).toContain("application");
+    }
+
+    // The three that reach into the download client are exactly the ones whose
+    // compiled request acts on it.
+    const needsClient = queueResolveIntents.filter((intent) =>
+      intentRequirements[intent].includes("download_client"),
+    );
+    expect([...needsClient].sort()).toEqual([
+      "blocklist_and_remove",
+      "change_category_mark_imported",
+      "force_pending_grab",
+      "remove_from_client_and_delete_data",
+      "route_to_manual_import",
+    ]);
   });
 
   it("refuses a manual import while the download client is unreachable", () => {
