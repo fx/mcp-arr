@@ -381,6 +381,106 @@ describe("applying a credential change", () => {
   });
 });
 
+describe("a change whose effects reach past the record", () => {
+  async function application(index: number): Promise<UpstreamRecord> {
+    const applications = await fixtureBody<readonly UpstreamRecord[]>("prowlarr", "applications");
+    const record = applications[index];
+    if (record === undefined) {
+      throw new Error("The recorded Prowlarr application list is shorter than expected");
+    }
+    return record;
+  }
+
+  function instanceFor(record: UpstreamRecord, id: number): Instance {
+    return { routes: { [`applications/${id}`]: record, "applications/schema": [] } };
+  }
+
+  const retagging = (id: number) =>
+    planning("applications", id, { fields: [{ name: "tags", value: [1] }] });
+
+  it("discloses what a full-sync application will do to the remote instance", async () => {
+    // The diff shows one field moving. What actually happens is on another
+    // instance entirely, so the plan says so before the write rather than after.
+    const record = await application(0);
+    expect(record.syncLevel).toBe("fullSync");
+    const { outcome } = await reconcile(
+      "prowlarr",
+      { routes: { ...instanceFor(record, 1).routes, tag: [{ id: 1, label: "example-tag" }] } },
+      retagging(1),
+    );
+
+    expect(expectPlanned(outcome).warnings).toContain(
+      "changing this application's tags changes which indexers it synchronizes: at its current level it will push newly selected indexers, re-push the ones it still selects, delete the ones it no longer selects on the remote instance",
+    );
+  });
+
+  it("says only what an add-only application actually does", async () => {
+    const record = await application(1);
+    expect(record.syncLevel).toBe("addOnly");
+    const { outcome } = await reconcile(
+      "prowlarr",
+      { routes: { ...instanceFor(record, 2).routes, tag: [{ id: 1, label: "example-tag" }] } },
+      retagging(2),
+    );
+
+    expect(expectPlanned(outcome).warnings).toContain(
+      "changing this application's tags changes which indexers it synchronizes: at its current level it will push newly selected indexers on the remote instance",
+    );
+  });
+
+  it("says nothing for a disabled mapping and admits an unreadable level", async () => {
+    const record = await application(0);
+    const tags = { tag: [{ id: 1, label: "example-tag" }] };
+    const disabled = await reconcile(
+      "prowlarr",
+      { routes: { ...instanceFor({ ...record, syncLevel: "disabled" }, 1).routes, ...tags } },
+      retagging(1),
+    );
+    expect(
+      expectPlanned(disabled.outcome).warnings.filter((warning) => warning.includes("synchroniz")),
+    ).toEqual([]);
+
+    const unknown = await reconcile(
+      "prowlarr",
+      { routes: { ...instanceFor({ ...record, syncLevel: "someNewLevel" }, 1).routes, ...tags } },
+      retagging(1),
+    );
+    expect(expectPlanned(unknown.outcome).warnings).toContain(
+      "this application reports a synchronization level this server does not recognize, so what a change to its tag selection propagates cannot be established",
+    );
+  });
+
+  it("expires a plan whose disclosure the level has moved out from under", async () => {
+    // The tag change is identical and the record is otherwise untouched. What
+    // it propagates is not, so the plan's warning no longer describes what the
+    // apply would do, and the plan is stale rather than merely out of date.
+    const record = await application(0);
+    const tags = { tag: [{ id: 1, label: "example-tag" }] };
+    const { outcome } = await reconcile(
+      "prowlarr",
+      { routes: { ...instanceFor({ ...record, syncLevel: "addOnly" }, 1).routes, ...tags } },
+      retagging(1),
+    );
+    const planned = expectPlanned(outcome);
+
+    const { outcome: stale, dispatched } = await reconcile(
+      "prowlarr",
+      { routes: { ...instanceFor(record, 1).routes, ...tags } },
+      {
+        ...retagging(1),
+        mode: "apply",
+        planned: { readSet: fingerprintReadSet(planned.observations) },
+      },
+    );
+
+    expect(expectRefused(stale).error).toMatchObject({
+      code: "stale_plan",
+      message: expect.stringContaining("syncLevel"),
+    });
+    expect(writes(dispatched)).toEqual([]);
+  });
+});
+
 describe("schema and resource fingerprints", () => {
   it("makes a plan stale when the schema moved and the record did not", async () => {
     const instance = await newznab();

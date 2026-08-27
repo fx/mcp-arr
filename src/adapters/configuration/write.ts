@@ -17,6 +17,7 @@ import type { CompiledPatch, PatchAssignment } from "./patches.js";
 import type { UpstreamResource } from "./resources.js";
 import type { TransientSecrets } from "./secrets.js";
 import { isDynamicallyDefined } from "./serialize.js";
+import { readSyncLevel, syncCapabilities } from "./sync.js";
 
 /**
  * The lossless full-resource write.
@@ -607,6 +608,45 @@ function secretDispositions(
 }
 
 /**
+ * What changing a Prowlarr application's tag selection does beyond this record.
+ *
+ * A synchronized application's tags decide which indexers it pushes to the
+ * instance on the other side, so a write whose diff shows one field moving can
+ * add, re-push, or delete indexers on a system this reconciliation never named.
+ * That is wider than the record, so it is disclosed before the write rather
+ * than discovered afterwards — the level's own capability table decides what to
+ * say, so this cannot describe a level as doing something the sync code would
+ * not do.
+ *
+ * A level this server cannot read is disclosed as exactly that. An unreadable
+ * level is not a quiet "probably nothing": it is the case where what this write
+ * propagates has not been established.
+ */
+function syncPropagation(payload: Record<string, unknown>): readonly string[] {
+  const reported = payload.syncLevel;
+  const level = readSyncLevel(typeof reported === "string" ? reported : undefined);
+  if (level === undefined) {
+    return reported === undefined
+      ? []
+      : [
+          "this application reports a synchronization level this server does not recognize, so what a change to its tag selection propagates cannot be established",
+        ];
+  }
+  const capability = syncCapabilities[level];
+  if (!capability.adds && !capability.updates && !capability.removes) {
+    return [];
+  }
+  const effects = [
+    ...(capability.adds ? ["push newly selected indexers"] : []),
+    ...(capability.updates ? ["re-push the ones it still selects"] : []),
+    ...(capability.removes ? ["delete the ones it no longer selects"] : []),
+  ];
+  return [
+    `changing this application's tags changes which indexers it synchronizes: at its current level it will ${effects.join(", ")} on the remote instance`,
+  ];
+}
+
+/**
  * Builds the complete resource one patch produces, and the diff describing it.
  *
  * The resource is never partially written: an assignment that cannot be made
@@ -656,6 +696,10 @@ export function writeConfigurationPatch(request: WriteRequest): WriteOutcome {
     if (removal.target === "field") {
       cleared.add(removal.name);
     }
+  }
+
+  if (state.writtenProperties.has("tags") && patch.domain === "applications") {
+    state.warnings.push(...syncPropagation(payload));
   }
 
   const fields = payload[fieldsProperty];
@@ -749,6 +793,22 @@ export function configurationObservations(
   const observeProperty = (property: string): void => {
     observations.push({ key: property, value: fingerprint(payload[property]) });
   };
+  /**
+   * The synchronization level, where the record has one and this patch touches
+   * the selection it governs.
+   *
+   * Observed because the plan's *disclosure* depends on it, not because the
+   * write does: the same tag change is inert at one level and deletes remote
+   * indexers at another, so a level that moved between the plan and its apply
+   * would make the plan's warning describe effects that are no longer the ones
+   * about to happen.
+   */
+  const observeSyncLevel = (): void => {
+    if (patch.domain === "applications") {
+      observeProperty("syncLevel");
+    }
+  };
+
   const observeField = (name: string): void => {
     const found = entries.get(name) ?? [];
     const [entry] = found;
@@ -792,6 +852,7 @@ export function configurationObservations(
         break;
       case "tags":
         observeProperty("tags");
+        observeSyncLevel();
         break;
       case "field":
       case "secret":
@@ -803,6 +864,7 @@ export function configurationObservations(
   for (const removal of patch.removals) {
     if (removal.target === "tags") {
       observeProperty("tags");
+      observeSyncLevel();
     } else {
       observeField(removal.name);
     }
