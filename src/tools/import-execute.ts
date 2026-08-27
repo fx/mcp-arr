@@ -240,7 +240,15 @@ export const importExecutePreconditions: PreconditionReader = async (invocation)
 
   const files: ValidatedFile[] = [];
   const warnings: string[] = [];
-  for (const token of input.candidates) {
+  // One token names one file, so naming it twice does not ask for two imports.
+  // Left un-normalized it would validate the file twice, count its size twice
+  // against the destination, and send the instance two entries for one path —
+  // a bulk grab collapses repeats for the same reason.
+  const selected = [...new Set(input.candidates)];
+  if (selected.length !== input.candidates.length) {
+    warnings.push("a candidate was named more than once and is imported once");
+  }
+  for (const token of selected) {
     const resolved = resolveCandidateReference(invocation.state.references, token, application);
     if (!resolved.ok) {
       return blocked(resolved.error);

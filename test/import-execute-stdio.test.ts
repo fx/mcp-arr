@@ -172,6 +172,49 @@ describe("arr_import_execute over stdio", () => {
     }
   });
 
+  it("imports a candidate named twice exactly once", async () => {
+    const sonarr = await instance();
+    const child = spawnBuiltServer(instanceEnvironment([sonarr]), 10_000);
+
+    try {
+      await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
+      const inspected = await inspect(child, 2, {
+        source: "queue_item",
+        queue: await queueReference(child, 90),
+        applications: ["sonarr"],
+      });
+      const importable = candidatesOf(inspected.structured).find(
+        (candidate) => candidate.decision?.importable === true,
+      );
+      if (importable === undefined) {
+        throw new Error("Expected an importable candidate in the recorded scan");
+      }
+
+      const applied = await execute(child, 3, {
+        mode: "apply",
+        candidates: [importable.reference, importable.reference],
+        importMode: "copy",
+      });
+
+      expect(applied.isError).toBe(false);
+      // One file in the command, and its size counted once against the
+      // destination rather than twice.
+      const files = (sonarr.commands[0]?.body as { files?: readonly unknown[] }).files ?? [];
+      expect(files).toHaveLength(1);
+      expect(applied.envelope.applications[0]?.data?.files).toEqual([
+        { reference: importable.reference },
+      ]);
+      expect(JSON.stringify(applied.envelope.applications[0]?.warnings)).toContain(
+        "named more than once",
+      );
+
+      await child.terminateGracefully();
+      assertCleanProtocolStdout(child.stdout);
+    } finally {
+      await child.forceCleanup().catch(() => undefined);
+    }
+  });
+
   it("refuses a candidate the library already holds and imports nothing", async () => {
     const sonarr = await instance();
     const child = spawnBuiltServer(instanceEnvironment([sonarr]), 10_000);
