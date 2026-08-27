@@ -13,10 +13,45 @@ import type { ConfigurationDomain } from "./domains.js";
  * no dropped unknowns, no re-ordering.
  *
  * That makes this the one place in the configuration adapter that holds secret
- * values, so it is deliberately hard to leak. The payload is frozen, it is
- * reachable only through a method call, and the set that holds it serializes to
- * a census rather than to its contents — an internal record that ever reached
- * `JSON.stringify` on the way to a caller produces a count, not a password.
+ * values, so it is deliberately hard to leak or corrupt.
+ *
+ * Because a docstring that promises more than the code delivers is worse than
+ * no docstring, every guarantee this module states is listed here with how it
+ * is enforced. `readonly` is a compile-time claim only and stops nothing at
+ * runtime, so each guarantee that matters is backed by a runtime mechanism and
+ * pinned by a test.
+ *
+ * 1. **The stored payload is nobody else's to change.** It is deep-cloned on
+ *    the way in and deep-frozen, so neither the HTTP boundary's handle nor the
+ *    caller's own object can alter it afterwards. *Runtime: `structuredClone`
+ *    plus a recursive `Object.freeze`.*
+ * 2. **Reading it yields a mutable copy.** A full-resource write is a
+ *    read-modify-write, so `payload()` clones again and one write's edits never
+ *    become the next read's current state. *Runtime: `structuredClone`.*
+ * 3. **A captured resource cannot be re-pointed.** Its `id` decides what
+ *    {@link ConfigurationResourceSet.find} matches, and its `payload` decides
+ *    what a write sends, so neither may be reassigned. *Runtime:
+ *    `Object.freeze` on the wrapper, and again on every resource a set admits.*
+ * 4. **A set holds only its own application and domain.** A mismatched entry is
+ *    rejected at construction rather than filtered, because a census reporting
+ *    one domain while `find` searches another is a programming error worth
+ *    failing on. *Runtime: a constructor check that throws.*
+ * 5. **A set cannot be reshaped after construction.** It copies and freezes the
+ *    array it is handed and freezes itself, so neither the caller's retained
+ *    reference nor a consumer of `list()` can reorder, extend, or shorten it,
+ *    and its reported application and domain cannot be reassigned. *Runtime:
+ *    `Object.freeze` on the copied array and on the instance.*
+ * 6. **Serializing a set yields a census, never its contents.** `JSON.stringify`
+ *    produces `{application, domain, size}`. Enumeration — spreading it, or
+ *    `Object.entries` — reaches only those two labels, because the resources
+ *    live in a private field with nothing to enumerate. Neither route reaches a
+ *    payload. *Runtime: a private `#resources` field and an explicit
+ *    {@link ConfigurationResourceSet.toJSON}.*
+ *
+ * Reaching a payload at all therefore takes a deliberate {@link
+ * ConfigurationResourceSet.list} or {@link ConfigurationResourceSet.find} call,
+ * which is the boundary a later write crosses on purpose and a result
+ * serializer never does.
  */
 
 /** Everything an upstream configuration payload can be. */
@@ -99,19 +134,13 @@ export interface ResourceSetCensus {
 /**
  * The internal resources one observation captured.
  *
- * The records are held in a private field rather than a property, so the class
- * has nothing to enumerate: spreading it, `Object.entries`, and a plain
- * `JSON.stringify` all yield the census that {@link toJSON} defines instead of
- * the payloads. Reaching a payload takes a deliberate {@link list} or
- * {@link find} call, which is exactly the boundary a later write crosses on
- * purpose and a result serializer never does.
- *
- * Integrity is enforced at runtime rather than claimed in the type. The set
- * copies and freezes the array it is given, so a caller that keeps its own
- * handle and mutates it afterwards cannot change what this set holds, and
- * {@link list} therefore hands out something no consumer can reorder or
- * shorten. The instance itself is frozen too, so neither the application nor
- * the domain it reports can be reassigned after construction.
+ * This class carries guarantees 3 through 6 of the module contract above; each
+ * is enforced in the constructor or by the shape of the class, and each has a
+ * test of its own. The resources live in a private field rather than a
+ * property, which is what leaves nothing for enumeration to reach: spreading
+ * the instance or calling `Object.entries` on it yields only the application
+ * and domain labels, and `JSON.stringify` yields the census {@link toJSON}
+ * defines. No route reaches a payload without asking for one.
  */
 export class ConfigurationResourceSet {
   readonly #resources: readonly UpstreamResource[];
@@ -125,12 +154,25 @@ export class ConfigurationResourceSet {
   ) {
     this.application = application;
     this.domain = domain;
-    // Each element is frozen too, not just the array. The constructor's
-    // parameter is structural, so a caller can hand in a resource it built
-    // itself rather than one `captureUpstreamResource` returned, keep its own
-    // reference, and later swap the `id` that `find` matches on or the
-    // `payload` a full-resource write would send.
-    this.#resources = Object.freeze(resources.map((resource) => Object.freeze(resource)));
+    this.#resources = Object.freeze(
+      resources.map((resource) => {
+        // Rejected rather than filtered. A set that quietly dropped a foreign
+        // resource would report a size its caller did not expect; one that
+        // quietly kept it would answer `find` from a different application's
+        // rows while the census named this one. Both are programming errors,
+        // and neither should be discovered later through a wrong answer.
+        if (resource.application !== application || resource.domain !== domain) {
+          throw new RangeError(
+            `A ${application}/${domain} resource set cannot hold a ${resource.application}/${resource.domain} resource`,
+          );
+        }
+        // Frozen on admission, not only when this module captured it: the
+        // parameter is structural, so a caller can hand in a resource it built
+        // itself, keep its own reference, and later swap the `id` that `find`
+        // matches on or the `payload` a full-resource write would send.
+        return Object.freeze(resource);
+      }),
+    );
     Object.freeze(this);
   }
 

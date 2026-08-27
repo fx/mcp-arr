@@ -26,7 +26,7 @@ const upstreamRecord: UpstreamValue = {
 };
 
 describe("lossless upstream capture", () => {
-  it("round-trips a payload including the fields nothing here understands", () => {
+  it("guarantee 1: stores the payload losslessly, unknown fields included", () => {
     const resource = captureUpstreamResource("prowlarr", "indexers", upstreamRecord);
 
     expect(resource.payload()).toEqual(upstreamRecord);
@@ -42,7 +42,7 @@ describe("lossless upstream capture", () => {
    * the leakage suite, which checks each planted marker reaches the internal
    * side and none reaches the model-facing one.
    */
-  it("round-trips a recorded upstream payload unchanged", async () => {
+  it("guarantee 1: round-trips a recorded upstream payload unchanged", async () => {
     const body = await fixtureBody<readonly UpstreamValue[]>("prowlarr", "indexer");
     const captured = body.map((record) =>
       captureUpstreamResource("prowlarr", "indexers", record).payload(),
@@ -52,7 +52,7 @@ describe("lossless upstream capture", () => {
     expect(body.length).toBeGreaterThan(1);
   });
 
-  it("hands out a copy, so one write's edits never become the next read's state", () => {
+  it("guarantee 2: hands out a copy, so one write's edits are not the next read's state", () => {
     const resource = captureUpstreamResource("sonarr", "indexers", upstreamRecord);
     const first = resource.payload() as Record<string, unknown>;
     first.name = "edited";
@@ -61,7 +61,7 @@ describe("lossless upstream capture", () => {
     expect(resource.payload()).toEqual(upstreamRecord);
   });
 
-  it("stores a frozen copy, so the payload it holds is nobody else's to change", () => {
+  it("guarantee 1: stores a frozen copy the source object can no longer change", () => {
     const source: Record<string, unknown> = {
       id: 7,
       fields: [{ name: "apiKey", value: "CANARY-ROUNDTRIP-0101" }],
@@ -91,7 +91,7 @@ describe("the internal resource set", () => {
     captureUpstreamResource("prowlarr", "indexers", upstreamRecord),
   ]);
 
-  it("serializes to a census rather than to the payloads it holds", () => {
+  it("guarantee 6: serializes to a census, and enumeration reaches no payload", () => {
     const serialized = JSON.stringify(set);
 
     expect(serialized).not.toContain("CANARY-ROUNDTRIP-0101");
@@ -118,7 +118,7 @@ describe("the internal resource set", () => {
    * stray assignment could change would silently break `find`, and a `payload`
    * that could be replaced would substitute what a later write sends upstream.
    */
-  it("refuses an attempt to overwrite a captured resource's identity or payload", () => {
+  it("guarantee 3: refuses to let a captured resource be re-pointed", () => {
     const resource = captureUpstreamResource("prowlarr", "indexers", upstreamRecord);
     const mutable = resource as unknown as Record<string, unknown>;
 
@@ -137,7 +137,7 @@ describe("the internal resource set", () => {
     expect(resource.payload()).toEqual(upstreamRecord);
   });
 
-  it("keeps find() resolving after an overwrite attempt on the set and its array", () => {
+  it("guarantee 5: cannot be reshaped, and find() still resolves afterwards", () => {
     const mutableSet = set as unknown as Record<string, unknown>;
 
     expect(Object.isFrozen(set)).toBe(true);
@@ -159,7 +159,7 @@ describe("the internal resource set", () => {
     expect(set.find(8)).toBeUndefined();
   });
 
-  it("freezes a resource it was handed, not only the ones it captured itself", () => {
+  it("guarantee 3: freezes a resource it was handed, not only ones it captured", () => {
     // The constructor parameter is structural, so a caller can build its own
     // resource rather than using captureUpstreamResource, keep the reference,
     // and try to swap what find() matches on afterwards.
@@ -184,7 +184,29 @@ describe("the internal resource set", () => {
     expect(held.find(99)).toBeUndefined();
   });
 
-  it("copies the array it was given, so the caller's own handle cannot change it", () => {
+  it("guarantee 4: rejects a resource belonging to another application or domain", () => {
+    const foreignApplication = captureUpstreamResource("sonarr", "indexers", { id: 1 });
+    const foreignDomain = captureUpstreamResource("prowlarr", "tags", { id: 1 });
+
+    expect(
+      () => new ConfigurationResourceSet("prowlarr", "indexers", [foreignApplication]),
+    ).toThrow(RangeError);
+    expect(() => new ConfigurationResourceSet("prowlarr", "indexers", [foreignDomain])).toThrow(
+      /prowlarr\/indexers resource set cannot hold a prowlarr\/tags resource/u,
+    );
+    // Rejected outright rather than filtered: a set that silently dropped it
+    // would report a size nobody asked for, and one that silently kept it would
+    // answer find() from rows the census does not describe.
+    expect(
+      () =>
+        new ConfigurationResourceSet("prowlarr", "indexers", [
+          captureUpstreamResource("prowlarr", "indexers", { id: 1 }),
+          foreignDomain,
+        ]),
+    ).toThrow(RangeError);
+  });
+
+  it("guarantee 5: copies the array, so the caller's own handle cannot change it", () => {
     const resources = [captureUpstreamResource("prowlarr", "indexers", upstreamRecord)];
     const copied = new ConfigurationResourceSet("prowlarr", "indexers", resources);
     resources.push(captureUpstreamResource("prowlarr", "indexers", { id: 8 }));
