@@ -13,6 +13,11 @@ import type {
 } from "./model.js";
 import type { ActivityQueryRequest, ActivityView } from "./requests.js";
 import { type ActivityViewData, runActivityQuery } from "./service.js";
+// The intent vocabulary is owned by the transition compiler, which is what
+// turns one of these names into an upstream request. A candidate here is that
+// same name suggested rather than performed, and a second list would let the
+// two drift into suggesting an intent nothing can compile.
+import type { QueueResolveIntent } from "./transitions.js";
 
 /**
  * The bounded activity diagnosis.
@@ -84,27 +89,6 @@ export interface DiagnosisFailure {
   readonly view: ActivityView;
   readonly error: ToolError;
 }
-
-/**
- * A queue-resolution intent, as `arr_queue_resolve` declares it.
- *
- * The list is closed and mirrors that tool's published input schema; a test
- * feeds every member of it to the real schema, so a name that drifted apart
- * from the tool would fail rather than reaching a caller as advice for an
- * intent nothing accepts.
- */
-export const queueResolveIntents = [
-  "ignore_tracking",
-  "remove_from_client_and_delete_data",
-  "blocklist_and_remove",
-  "change_category_mark_imported",
-  "route_to_manual_import",
-  "force_pending_grab",
-  "remove_pending",
-  "blocklist_pending",
-] as const;
-
-export type QueueResolveIntent = (typeof queueResolveIntents)[number];
 
 export const activityChangeIntents = ["mark_history_failed", "remove_blocklist_record"] as const;
 

@@ -37,6 +37,7 @@ const allowedFiles = [
   "dist/adapters/activity/requests.js",
   "dist/adapters/activity/service.js",
   "dist/adapters/activity/shared.js",
+  "dist/adapters/activity/transitions.js",
   "dist/adapters/configuration/domains.js",
   "dist/adapters/configuration/fields.js",
   "dist/adapters/configuration/model.js",

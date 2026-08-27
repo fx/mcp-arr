@@ -5,9 +5,9 @@ import {
   type DiagnosisReport,
   type DiagnosisTarget,
   maxCandidates,
-  queueResolveIntents,
   runActivityDiagnosis,
 } from "../src/adapters/activity/diagnosis.js";
+import { queueResolveIntents } from "../src/adapters/activity/transitions.js";
 import type { ApplicationId } from "../src/applications.js";
 import {
   activityChangeInputSchema,
