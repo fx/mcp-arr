@@ -1,0 +1,37 @@
+{
+  "metadata": {
+    "application": "radarr",
+    "apiVersion": "v3",
+    "version": "6.3.0.10514",
+    "endpoint": "/api/v3/downloadclient"
+  },
+  "body": [
+    {
+      "id": 1,
+      "name": "Example Torrent Client",
+      "implementation": "QBittorrent",
+      "implementationName": "qBittorrent",
+      "configContract": "QBittorrentSettings",
+      "protocol": "torrent",
+      "priority": 1,
+      "enable": true,
+      "removeCompletedDownloads": true,
+      "removeFailedDownloads": true,
+      "tags": [],
+      "fields": [
+        { "order": 0, "name": "host", "value": "example-download-client", "privacy": "normal" },
+        { "order": 1, "name": "port", "value": 8080, "privacy": "normal" },
+        { "order": 2, "name": "useSsl", "value": false, "privacy": "normal" },
+        { "order": 3, "name": "username", "value": "example-operator", "privacy": "userName" },
+        {
+          "order": 4,
+          "name": "password",
+          "value": "CANARY-RADARR-DOWNLOADCLIENT-PASSWORD-0004",
+          "privacy": "password"
+        },
+        { "order": 5, "name": "movieCategory", "value": "radarr", "privacy": "normal" },
+        { "order": 6, "name": "initialState", "value": 0, "privacy": "normal" }
+      ]
+    }
+  ]
+}

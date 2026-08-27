@@ -1,0 +1,75 @@
+{
+  "metadata": {
+    "application": "sonarr",
+    "apiVersion": "v3",
+    "version": "4.0.19.2979",
+    "endpoint": "/api/v3/indexer/schema"
+  },
+  "body": [
+    {
+      "id": 0,
+      "name": "",
+      "implementation": "Newznab",
+      "implementationName": "Newznab",
+      "configContract": "NewznabSettings",
+      "protocol": "usenet",
+      "supportsRss": true,
+      "supportsSearch": true,
+      "fields": [
+        {
+          "order": 0,
+          "name": "baseUrl",
+          "label": "URL",
+          "type": "textbox",
+          "advanced": false,
+          "privacy": "normal"
+        },
+        {
+          "order": 1,
+          "name": "apiPath",
+          "label": "API Path",
+          "type": "textbox",
+          "advanced": true,
+          "privacy": "normal"
+        },
+        {
+          "order": 2,
+          "name": "apiKey",
+          "label": "API Key",
+          "type": "textbox",
+          "advanced": false,
+          "privacy": "apiKey",
+          "value": "CANARY-SONARR-SCHEMA-DEFAULT-0002"
+        },
+        {
+          "order": 3,
+          "name": "categories",
+          "label": "Categories",
+          "type": "select",
+          "advanced": false,
+          "privacy": "normal"
+        }
+      ]
+    },
+    {
+      "id": 0,
+      "name": "",
+      "implementation": "Torznab",
+      "implementationName": "Torznab",
+      "configContract": "TorznabSettings",
+      "protocol": "torrent",
+      "supportsRss": true,
+      "supportsSearch": true,
+      "fields": [
+        {
+          "order": 0,
+          "name": "minimumSeeders",
+          "label": "Minimum Seeders",
+          "type": "number",
+          "advanced": true,
+          "privacy": "normal"
+        }
+      ]
+    }
+  ]
+}

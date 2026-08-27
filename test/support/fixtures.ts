@@ -54,6 +54,9 @@ const approvedRoutes: Readonly<Record<FixtureApplication, readonly string[]>> = 
     "rootfolder",
     "qualityprofile",
     "tag",
+    "indexer",
+    "indexer/schema",
+    "importlist",
   ],
   radarr: [
     "system/status",
@@ -76,6 +79,7 @@ const approvedRoutes: Readonly<Record<FixtureApplication, readonly string[]>> = 
     "rootfolder",
     "qualityprofile",
     "tag",
+    "downloadclient",
   ],
   prowlarr: [
     "system/status",
@@ -86,6 +90,8 @@ const approvedRoutes: Readonly<Record<FixtureApplication, readonly string[]>> = 
     "health",
     "command",
     "indexerstats",
+    "applications",
+    "notification",
   ],
 };
 

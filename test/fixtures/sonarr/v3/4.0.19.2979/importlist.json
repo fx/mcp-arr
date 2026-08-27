@@ -1,0 +1,37 @@
+{
+  "metadata": {
+    "application": "sonarr",
+    "apiVersion": "v3",
+    "version": "4.0.19.2979",
+    "endpoint": "/api/v3/importlist"
+  },
+  "body": [
+    {
+      "id": 1,
+      "name": "Example Import List",
+      "implementation": "SonarrImport",
+      "implementationName": "Sonarr",
+      "configContract": "SonarrSettings",
+      "enableAutomaticAdd": true,
+      "shouldMonitor": "all",
+      "rootFolderPath": "/media/example/series",
+      "qualityProfileId": 1,
+      "seriesType": "standard",
+      "seasonFolder": true,
+      "listType": "program",
+      "listOrder": 1,
+      "tags": [],
+      "fields": [
+        { "order": 0, "name": "baseUrl", "value": "example-source" },
+        {
+          "order": 1,
+          "name": "apiKey",
+          "value": "CANARY-SONARR-IMPORTLIST-APIKEY-0003",
+          "privacy": "apiKey"
+        },
+        { "order": 2, "name": "profileIds", "value": [1] },
+        { "order": 3, "name": "tagIds", "value": [] }
+      ]
+    }
+  ]
+}

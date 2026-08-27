@@ -13,7 +13,25 @@
       "protocol": "torrent",
       "priority": 25,
       "appProfileId": 1,
-      "tags": []
+      "tags": [],
+      "implementation": "Cardigann",
+      "implementationName": "Cardigann",
+      "configContract": "CardigannSettings",
+      "definitionName": "exampletracker",
+      "indexerUrls": ["example-tracker"],
+      "privacy": "private",
+      "fields": [
+        { "order": 0, "name": "definitionFile", "value": "exampletracker" },
+        { "order": 1, "name": "baseUrl", "value": "example-tracker" },
+        { "order": 2, "name": "username", "value": "example-operator" },
+        { "order": 3, "name": "password", "value": "CANARY-CARDIGANN-PASSWORD-0005" },
+        { "order": 4, "name": "passkey", "value": "CANARY-CARDIGANN-PASSKEY-0006" },
+        { "order": 5, "name": "cardigannCaptcha", "value": "" },
+        { "order": 6, "name": "info_tpp", "value": "CANARY-CARDIGANN-INFO-0007" },
+        { "order": 7, "name": "sort", "value": "created" },
+        { "order": 8, "name": "minimumSeeders", "value": 1 },
+        { "order": 9, "name": "appMinimumSeeders", "value": 1 }
+      ]
     },
     {
       "id": 2,
@@ -22,7 +40,20 @@
       "protocol": "usenet",
       "priority": 25,
       "appProfileId": 1,
-      "tags": []
+      "tags": [],
+      "implementation": "Newznab",
+      "implementationName": "Newznab",
+      "configContract": "NewznabSettings",
+      "fields": [
+        { "order": 0, "name": "baseUrl", "value": "example-usenet-indexer" },
+        {
+          "order": 1,
+          "name": "apiKey",
+          "value": "CANARY-PROWLARR-INDEXER-APIKEY-0010",
+          "privacy": "apiKey"
+        },
+        { "order": 2, "name": "categories", "value": [5030, 5040] }
+      ]
     },
     {
       "id": 3,
