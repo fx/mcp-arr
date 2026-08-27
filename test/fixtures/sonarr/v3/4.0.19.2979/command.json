@@ -1,0 +1,32 @@
+{
+  "metadata": {
+    "application": "sonarr",
+    "apiVersion": "v3",
+    "version": "4.0.19.2979",
+    "endpoint": "/api/v3/command"
+  },
+  "body": [
+    {
+      "id": 3001,
+      "name": "RefreshSeries",
+      "commandName": "Refresh Series",
+      "status": "started",
+      "queued": "2026-08-27T09:00:00Z",
+      "started": "2026-08-27T09:00:01Z",
+      "ended": null,
+      "trigger": "manual",
+      "message": "Refreshing series"
+    },
+    {
+      "id": 3002,
+      "name": "RssSync",
+      "commandName": "Rss Sync",
+      "status": "completed",
+      "queued": "2026-08-27T08:45:00Z",
+      "started": "2026-08-27T08:45:00Z",
+      "ended": "2026-08-27T08:45:12Z",
+      "trigger": "scheduled",
+      "message": "Completed"
+    }
+  ]
+}

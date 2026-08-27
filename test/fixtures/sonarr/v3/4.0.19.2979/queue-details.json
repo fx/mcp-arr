@@ -1,0 +1,103 @@
+{
+  "metadata": {
+    "application": "sonarr",
+    "apiVersion": "v3",
+    "version": "4.0.19.2979",
+    "endpoint": "/api/v3/queue/details"
+  },
+  "body": [
+    {
+      "id": 502,
+      "seriesId": 12,
+      "episodeId": 1003,
+      "seasonNumber": 2,
+      "title": "Example Series S02E01 Bluray-1080p",
+      "status": "completed",
+      "trackedDownloadStatus": "warning",
+      "trackedDownloadState": "importBlocked",
+      "statusMessages": [
+        {
+          "title": "Example Series S02E01 Bluray-1080p",
+          "messages": [
+            "One or more episodes expected in this release were not imported or missing",
+            "Found matching series via grab history, but release was matched to series by ID"
+          ]
+        }
+      ],
+      "errorMessage": null,
+      "size": 2147483648,
+      "sizeleft": 0,
+      "timeleft": null,
+      "estimatedCompletionTime": null,
+      "added": "2026-08-26T21:05:00Z",
+      "protocol": "usenet",
+      "indexer": "Example Usenet Indexer",
+      "downloadClient": "Example Usenet Client",
+      "downloadId": "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1",
+      "outputPath": "/media/example/downloads/complete/example-series",
+      "quality": {
+        "quality": {
+          "id": 4,
+          "name": "Bluray-1080p",
+          "source": "bluray",
+          "resolution": 1080
+        },
+        "revision": {
+          "version": 1,
+          "real": 0,
+          "isRepack": false
+        }
+      },
+      "languages": [
+        {
+          "id": 1,
+          "name": "English"
+        }
+      ]
+    },
+    {
+      "id": 501,
+      "seriesId": 12,
+      "episodeId": 1001,
+      "seasonNumber": 1,
+      "title": "Example Series S01E01 Bluray-1080p",
+      "status": "downloading",
+      "trackedDownloadStatus": "ok",
+      "trackedDownloadState": "downloading",
+      "statusMessages": [],
+      "errorMessage": null,
+      "size": 3221225472,
+      "sizeleft": 1073741824,
+      "timeleft": "00:12:30",
+      "estimatedCompletionTime": "2026-08-27T10:12:30Z",
+      "added": "2026-08-27T09:40:00Z",
+      "protocol": "torrent",
+      "indexer": "Example Indexer",
+      "downloadClient": "Example Client",
+      "downloadClientHasPostImportCategory": false,
+      "downloadId": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+      "outputPath": "/media/example/downloads/complete",
+      "quality": {
+        "quality": {
+          "id": 4,
+          "name": "Bluray-1080p",
+          "source": "bluray",
+          "resolution": 1080
+        },
+        "revision": {
+          "version": 1,
+          "real": 0,
+          "isRepack": false
+        }
+      },
+      "languages": [
+        {
+          "id": 1,
+          "name": "English"
+        }
+      ],
+      "customFormats": [],
+      "customFormatScore": 0
+    }
+  ]
+}

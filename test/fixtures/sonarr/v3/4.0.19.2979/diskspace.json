@@ -1,0 +1,22 @@
+{
+  "metadata": {
+    "application": "sonarr",
+    "apiVersion": "v3",
+    "version": "4.0.19.2979",
+    "endpoint": "/api/v3/diskspace"
+  },
+  "body": [
+    {
+      "path": "/media/example",
+      "label": "Media",
+      "freeSpace": 214748364800,
+      "totalSpace": 1099511627776
+    },
+    {
+      "path": "/media/example/downloads",
+      "label": "",
+      "freeSpace": 53687091200,
+      "totalSpace": 107374182400
+    }
+  ]
+}
