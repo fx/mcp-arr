@@ -123,23 +123,59 @@ function flagNames(values: readonly unknown[] | null | undefined): readonly stri
  * so the boundary is drawn here deliberately rather than extended one phrase at
  * a time.
  *
- * The path pattern requires a separator that starts a run and a real first
- * segment after it, so it takes `/mnt/media/example.mkv` and
- * `C:\\Media\\Example Series\\file.mkv` out of a sentence — an inner segment may
- * contain spaces, because a server path routinely does, but never the quotes,
- * brackets, or sentence punctuation that end one, so a run cannot leap across
- * prose to a later separator and redact the sentence with it. A run may begin
- * anywhere a word does not, rather than after a listed set of delimiters, so a
- * path an application wrapped in brackets or quotes is redacted like any other;
- * that is also what leaves ordinary prose such as `1080p`, `24/7`, and
- * `Series/Season` untouched, since each of those follows a word character.
- * Only the final segment stops at whitespace, which is what keeps a redaction
- * from swallowing the rest of the sentence.
+ * A path run begins where a word does not, so a path an application wrapped in
+ * quotes or brackets is redacted like any other, while ordinary prose such as
+ * `1080p`, `24/7`, and `Series/Season` is left alone because each of those
+ * follows a word character. It ends at {@link pathBoundary} — whitespace, or a
+ * delimiter a sentence wraps a path in — and every segment ends there, the last
+ * one included, so `("C:\\Media\\file.mkv")` gives up the path and keeps its
+ * quote and parenthesis. The one relaxation is that an inner segment may
+ * contain spaces, because a server path routinely does; it still stops at a
+ * boundary character, so a run cannot leap across prose to a later separator
+ * and take the sentence with it.
+ *
+ * The link and credential patterns deliberately do not share that boundary:
+ * both run to whitespace, because a URL query and a cookie value legitimately
+ * contain commas and brackets, and stopping early there would leave the tail of
+ * a credential in the sentence. So they over-consume a closing bracket rather
+ * than under-consume a secret — the safe direction for those two, and the
+ * reason a rejection wrapping a link in parentheses keeps only its opening one.
+ *
+ * The credential pattern goes one step further and follows a `;`-separated run
+ * of further `key=value` pairs, because a cookie or authorization header is
+ * written that way and its value ends at the space *inside* it; without that a
+ * `cookie=a=b; c=secret` reason would publish everything after the first space.
+ * The continuation has to look like a pair, so ordinary prose after a semicolon
+ * is left alone.
  */
+
+/**
+ * Where a path run ends, besides whitespace and a separator.
+ *
+ * Shared by all three segment rules so the first, inner, and final segments
+ * cannot drift apart — the asymmetry that let a final segment swallow the
+ * punctuation closing the sentence around it.
+ *
+ * A path segment that itself contains one of these is redacted only up to it,
+ * so a bracketed library tag such as `/media/Show [2020]/file.mkv` leaves
+ * `[2020]` behind between two redactions. That is the accepted cost of keeping
+ * prose balanced: the root and the file name, which are what the spec keeps off
+ * the contract, are both removed.
+ */
+const pathBoundary = `"'()\\[\\],;`;
+
+const protectedPathPattern = new RegExp(
+  `(?<!\\w)(?:~|[a-z]:)?[\\\\/]{1,2}` +
+    `[^\\s\\\\/${pathBoundary}]+` +
+    `(?:[\\\\/][^\\s\\\\/${pathBoundary}][^\\\\/${pathBoundary}]*?(?=[\\\\/]))*` +
+    `(?:[\\\\/][^\\s\\\\/${pathBoundary}]*)?`,
+  "giu",
+);
+
 const protectedPatterns: readonly RegExp[] = [
   /(?:\b[a-z][a-z0-9+.-]*:\/\/|\bmagnet:\?)\S+/giu,
-  /(?<![\w-])(?:api[\s_-]?key|rss[\s_-]?key|passkey|auth(?:orization)?|token|secret|password|passwd|session|cookie)\s*[=:]\s*\S+/giu,
-  /(?<!\w)(?:~|[a-z]:)?[\\/]{1,2}[^\s\\/]+(?:[\\/][^\s\\/"'()[\],;][^\\/"'()[\],;]*?(?=[\\/]))*(?:[\\/][^\s\\/]*)?/giu,
+  /(?<![\w-])(?:api[\s_-]?key|rss[\s_-]?key|passkey|auth(?:orization)?|token|secret|password|passwd|session|cookie)\s*[=:]\s*[^\s;]+(?:\s*;\s*[^\s;=]+\s*=\s*[^\s;]+)*/giu,
+  protectedPathPattern,
 ];
 
 const maxRejectionReasonLength = 300;

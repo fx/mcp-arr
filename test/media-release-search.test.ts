@@ -224,12 +224,35 @@ describe("protected release data", () => {
     expect(serialized).not.toContain("://");
   });
 
-  it("keeps the sentence around a link in a rejection while removing the link", async () => {
+  it("removes a link from a rejection rather than dropping the whole reason", async () => {
     const { items } = await run("sonarr", episodeSearch, poisoned(releases.sonarr));
 
     expect(items[0]?.release.decision?.rejections).toEqual([
       { reason: "Blocked by the indexer, see [redacted]", type: "permanent" },
     ]);
+  });
+
+  /**
+   * Unlike a path, a link runs to whitespace and so takes a closing delimiter
+   * with it. That is the deliberate direction — a URL query legitimately
+   * contains brackets and commas, so stopping early would leave the tail of one
+   * behind — and it is pinned here so the asymmetry with the path rule stays a
+   * decision rather than drifting into an accident.
+   */
+  it("lets a link take its closing delimiter rather than leave part of a URL", async () => {
+    const [record] = releases.sonarr;
+    const { items } = await run("sonarr", episodeSearch, [
+      {
+        ...record,
+        approved: false,
+        rejections: [`Blocked (see https://${trackerHost}/rules?a=(1,2)&k=${canary}) now`],
+      },
+    ]);
+
+    const reason = items[0]?.release.decision?.rejections[0]?.reason ?? "";
+    expect(reason).toBe("Blocked (see [redacted] now");
+    expect(reason).not.toContain(canary);
+    expect(reason).not.toContain(trackerHost);
   });
 
   it("holds the upstream cache identity apart from anything a caller sees", async () => {
@@ -259,14 +282,55 @@ describe("protected release data", () => {
     ]);
 
     expect(items[0]?.release.decision?.rejections.map((entry) => entry.reason)).toEqual([
-      "Only 1.2 GB is available on [redacted] which is below the minimum",
+      "Only 1.2 GB is available on [redacted], which is below the minimum",
       // A path whose inner segments contain spaces is redacted whole.
       "Existing file [redacted] is not an upgrade",
-      // A path a sentence wrapped in quotes or brackets is redacted like any other.
-      'Located at ("[redacted] and ([redacted]',
+      // A path a sentence wrapped keeps its wrapper and loses the path.
+      'Located at ("[redacted]") and ([redacted])',
       // Ordinary prose containing a slash is left exactly as the instance wrote it.
       "Quality WEBDL-1080p is not wanted in profile, 24/7 or otherwise",
     ]);
+  });
+
+  /**
+   * The delimiter a sentence closes a path with is the only thing that may
+   * survive it. Tightening the run so prose stays balanced is exactly the change
+   * that could leave a path fragment behind instead, so each terminator is
+   * pinned rather than assumed.
+   */
+  it("leaves no path fragment whichever delimiter ends the path", async () => {
+    const [record] = releases.sonarr;
+    const secret = "private-library-fragment";
+    const { items } = await run("sonarr", episodeSearch, [
+      {
+        ...record,
+        approved: false,
+        rejections: [
+          `Quoted "/var/lib/${secret}/file.mkv" done`,
+          `Paren (/var/lib/${secret}/file.mkv) done`,
+          `Comma /var/lib/${secret}/file.mkv, done`,
+          `Semicolon /var/lib/${secret}/file.mkv; done`,
+          `Bracket [/var/lib/${secret}/file.mkv] done`,
+          `End of string /var/lib/${secret}/file.mkv`,
+        ],
+      },
+    ]);
+
+    const reasons = items[0]?.release.decision?.rejections.map((entry) => entry.reason) ?? [];
+    expect(reasons).toEqual([
+      'Quoted "[redacted]" done',
+      "Paren ([redacted]) done",
+      "Comma [redacted], done",
+      "Semicolon [redacted]; done",
+      "Bracket [[redacted]] done",
+      "End of string [redacted]",
+    ]);
+    // No terminator may buy back a piece of the path it closed.
+    for (const reason of reasons) {
+      expect(reason).not.toContain(secret);
+      expect(reason).not.toContain("file.mkv");
+      expect(reason).not.toContain("var");
+    }
   });
 
   it("takes a credential and the release's own cache identity out of a rejection", async () => {
@@ -288,6 +352,35 @@ describe("protected release data", () => {
       "Indexer refused the request, [redacted] was not accepted",
       "Release [redacted] was already grabbed",
     ]);
+  });
+
+  /**
+   * A cookie or authorization header ends at a space that is *inside* it, so a
+   * credential rule that stopped at the first whitespace would publish
+   * everything after the first pair. The continuation has to look like a pair,
+   * which is what keeps it from eating the prose after a semicolon.
+   */
+  it("follows a credential across the pairs it is written in, and no further", async () => {
+    const [record] = releases.sonarr;
+    const { items } = await run("sonarr", episodeSearch, [
+      {
+        ...record,
+        approved: false,
+        rejections: [
+          `Indexer refused, cookie=sid=first; auth=${canary}; path=x now`,
+          `Indexer refused, apikey=${canary}; and the quality is wrong`,
+        ],
+      },
+    ]);
+
+    const reasons = items[0]?.release.decision?.rejections.map((entry) => entry.reason) ?? [];
+    expect(reasons).toEqual([
+      "Indexer refused, [redacted] now",
+      "Indexer refused, [redacted]; and the quality is wrong",
+    ]);
+    for (const reason of reasons) {
+      expect(reason).not.toContain(canary);
+    }
   });
 
   it("does not offer a release the instance only rejected temporarily", async () => {

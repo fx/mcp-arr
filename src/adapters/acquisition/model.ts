@@ -50,9 +50,10 @@ export type ReleaseRejectionType = (typeof releaseRejectionTypes)[number];
 
 export interface ReleaseRejection {
   /**
-   * The application's own wording, with any embedded link or canonical server
-   * path removed. It is the one free-form sentence an application composes for
-   * itself, so it is the one that has to be scrubbed rather than merely mapped.
+   * The application's own wording, with any embedded link, credential,
+   * canonical server path, or upstream cache identity removed. It is the one
+   * free-form sentence an application composes for itself, so it is the one
+   * that has to be scrubbed rather than merely mapped.
    */
   readonly reason: string;
   readonly type: ReleaseRejectionType;
