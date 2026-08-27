@@ -131,3 +131,10 @@ changes:
     spec: library-management
     status: complete
     depends_on: []
+  - id: "0015"
+    name: flat-tool-input-schemas
+    path: changes/0015-flat-tool-input-schemas.md
+    description: Publish every tool input as one flat object and generate its variant documentation from the union
+    spec: tool-contracts
+    status: in-progress
+    depends_on: ["0012"]
