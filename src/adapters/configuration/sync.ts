@@ -8,6 +8,7 @@ import {
   type ReadSetFingerprint,
   type ReadSetObservation,
 } from "../../state/plans.js";
+import { fingerprint } from "../../state/tokens.js";
 import { createToolError, type ToolError, toolErrorForThrown } from "../../tools/errors.js";
 import { routeFor } from "./domains.js";
 import { type ConfigurationRef, configurationRef } from "./model.js";
@@ -379,6 +380,11 @@ export function describeSelection(
  * observes what its plan disclosed and not only what its request sends. A plan
  * approved for one mapping must not apply against a mapping that has since been
  * renamed into something else, even though no name is written upstream.
+ *
+ * The mapping's own resource is observed as a digest, which covers everything
+ * the two lists above do not: a plan approved for pushing indexers into one
+ * instance must not apply after the mapping was re-pointed at another, and the
+ * field that says which instance is one this module never reads.
  */
 export function syncObservations(
   mapping: ApplicationMapping,
@@ -394,6 +400,14 @@ export function syncObservations(
         level: mapping.reportedLevel,
         tags,
         labels: tags.map((tag) => tagLabels.get(tag)),
+        // The whole mapping, as a digest rather than as itself. What a
+        // synchronization does is only half decided by the level: the other half
+        // is which instance the mapping points at, and that lives in fields this
+        // module deliberately never reads — one of which is a credential. So the
+        // resource is observed by its hash, which moves when any of it moves and
+        // discloses none of it, and the digest is taken here rather than left to
+        // the caller because the observation itself is returned.
+        resource: fingerprint(mapping.resource.payload()),
       },
     },
     {

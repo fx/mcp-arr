@@ -667,6 +667,38 @@ describe("refusals and staleness", () => {
     expect(second.writes).toEqual([]);
   });
 
+  it("refuses a plan whose mapping now points somewhere else", async () => {
+    const first = instance();
+    const plan = planned(await first.run(request({ targets: [2] })));
+    const { fingerprintReadSet } = await import("../src/state/plans.js");
+
+    // The level, the name and the tags are untouched; only the instance the
+    // mapping pushes into has changed. A plan approved for one target must not
+    // send those indexers to another.
+    const repointed = instance({
+      collections: {
+        applications: records("applications").map((record) =>
+          record.id === 2
+            ? {
+                ...record,
+                fields: [
+                  { order: 0, name: "baseUrl", value: "example-other-application" },
+                  { order: 1, name: "apiKey", value: "********", privacy: "apiKey" },
+                ],
+              }
+            : record,
+        ),
+      },
+    });
+    const outcome = await repointed.run(
+      request({ targets: [2], mode: "apply", planned: fingerprintReadSet(plan.observations) }),
+    );
+
+    expect(failed(outcome).error.code).toBe("stale_plan");
+    expect(failed(outcome).error.message).toContain("application:2");
+    expect(repointed.writes).toEqual([]);
+  });
+
   it("names one mapping once however often the call named it", async () => {
     const running = instance();
     const outcome = applied(
