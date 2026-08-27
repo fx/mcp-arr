@@ -60,10 +60,10 @@ The [Activity Management spec](../specs/activity-management/#queue-item-kinds) o
 
 ## Tasks
 
-- [ ] Implement queue transition compilation
-  - [ ] Add tracked intents and exact remove/blocklist/category/search flag mappings
-  - [ ] Add pending-release intents and validation
-  - [ ] Add state-kind and impossible-combination tests for Sonarr and Radarr
+- [x] Implement queue transition compilation
+  - [x] Add tracked intents and exact remove/blocklist/category/search flag mappings
+  - [x] Add pending-release intents and validation
+  - [x] Add state-kind and impossible-combination tests for Sonarr and Radarr
 - [ ] Implement plan/apply and reconciliation
   - [ ] Capture queue/download/media read-set fingerprints and exact predicted effects
   - [ ] Add direct apply, planned apply, stale-plan, partial bulk, retry, and unknown-outcome paths

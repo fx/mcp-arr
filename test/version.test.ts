@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  compareToMinimumVersion,
   compareVersionSegments,
   meetsMinimumVersion,
   parseVersionSegments,
@@ -62,5 +63,50 @@ describe("meetsMinimumVersion", () => {
     expect(meetsMinimumVersion("nightly", "4.0.19.2979")).toBe(true);
     expect(meetsMinimumVersion("main", "4.0.19.2979")).toBe(true);
     expect(meetsMinimumVersion("4.0.19.2979", "unversioned")).toBe(true);
+  });
+});
+
+describe("compareToMinimumVersion", () => {
+  it("separates meeting the minimum from being below it", () => {
+    expect(compareToMinimumVersion("4.0.19.2979", "4.0.19.2979")).toBe("meets");
+    expect(compareToMinimumVersion("5.0.0.1", "4.0.19.2979")).toBe("meets");
+    expect(compareToMinimumVersion("6.3.0.10514-develop", "6.3.0.10514")).toBe("meets");
+    expect(compareToMinimumVersion("4.0.19.2978", "4.0.19.2979")).toBe("below");
+    expect(compareToMinimumVersion("3.0.10.1567", "4.0.19.2979")).toBe("below");
+  });
+
+  it("answers unreadable rather than folding it into either verdict", () => {
+    // This is the whole reason the answers beyond two exist.
+    // `meetsMinimumVersion` reports the same inputs as `true`, which is right
+    // for deciding whether to report an instance as supported and wrong for
+    // deciding whether to send it something — so a caller that must not act on
+    // a guess needs to see the difference rather than inherit somebody else's
+    // safe direction.
+    for (const reported of ["nightly", "main", "", "   ", "v"]) {
+      expect(compareToMinimumVersion(reported, "4.0.19.2979")).toBe("unreadable_reported");
+      expect(meetsMinimumVersion(reported, "4.0.19.2979")).toBe(true);
+    }
+  });
+
+  it("separates an unreadable minimum from an unreadable reported version", () => {
+    // They are faults in different systems: the minimums are authored in this
+    // repository, so one that will not parse is our defect, while a reported
+    // version that will not parse is a fact about the instance. An error
+    // derived from these must not send anybody to inspect the wrong one.
+    expect(compareToMinimumVersion("4.0.19.2979", "unversioned")).toBe("unreadable_minimum");
+
+    // When neither parses the repository's own defect wins, because it is the
+    // one that is certainly wrong and the one whose fix is ours.
+    expect(compareToMinimumVersion("nightly", "unversioned")).toBe("unreadable_minimum");
+  });
+
+  it("agrees with meetsMinimumVersion wherever the comparison is decidable", () => {
+    const versions = ["4.0.19.2979", "4.0.19.2978", "5.0.0.1", "3.0.10.1567", "4.0", "nightly"];
+    for (const reported of versions) {
+      for (const minimum of versions) {
+        const comparison = compareToMinimumVersion(reported, minimum);
+        expect(meetsMinimumVersion(reported, minimum)).toBe(comparison !== "below");
+      }
+    }
   });
 });
