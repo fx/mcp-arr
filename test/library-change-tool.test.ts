@@ -1291,6 +1291,31 @@ describe("arr_library_change delete_media", () => {
     expect(writes("sonarr")).toEqual([]);
   });
 
+  it("keeps a records-only plan applicable when something unrelated moved", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Retired Series");
+    const planned = await change({
+      intent: "delete_media",
+      mode: "plan",
+      items: [series.reference],
+      deleteFiles: false,
+      addImportListExclusion: false,
+    });
+
+    // A metadata refresh and an import both land between planning and applying,
+    // and this plan disclosed neither the title nor the amount of data: the
+    // files stay on disk either way, so neither is a reason to expire it.
+    instances.patch("sonarr", "series", 14, {
+      title: "Example Renamed Series",
+      statistics: { episodeFileCount: 9, sizeOnDisk: 9_000_000_000 },
+    });
+    const applied = await change({ mode: "apply", plan: planReference(planned) });
+
+    expect(errorCodes(applied)).not.toContain("stale_plan");
+    expect(writes("sonarr")).toEqual([
+      expect.objectContaining({ method: "DELETE", route: "series/14" }),
+    ]);
+  });
+
   it("returns the removed record and the stale one together", async () => {
     const records = await seriesRecords();
     const kept = seriesByTitle(records, "Example Retired Series");

@@ -76,9 +76,9 @@ describe("media file reads and rewrites", () => {
     expect(fileParentId("movie_file", { ...file, movieId: 0 })).toBeUndefined();
   });
 
-  it("fingerprints exactly what a file mutation depends on", () => {
+  it("fingerprints exactly what a file mutation depends on and nothing more", () => {
     const file = firstFile("sonarr", "episodefile");
-    const state = fileState("episode_file", file);
+    const state = fileState("episode_file", file, "metadata");
 
     expect(state).toEqual({
       id: 2001,
@@ -90,7 +90,15 @@ describe("media file reads and rewrites", () => {
       releaseGroup: "EXAMPLEGRP",
     });
     // A field nothing here depends on cannot move the fingerprint.
-    expect(fileState("episode_file", { ...file, customFormatScore: 99 })).toEqual(state);
+    expect(fileState("episode_file", { ...file, customFormatScore: 99 }, "metadata")).toEqual(
+      state,
+    );
+    // A deletion depends on the file still being that file under the parent it
+    // was grouped by, so a corrected release group must not expire its plan.
+    expect(fileState("episode_file", file, "identity")).toEqual({ id: 2001, parent: 12 });
+    expect(fileState("episode_file", { ...file, releaseGroup: "OTHERGRP" }, "identity")).toEqual(
+      fileState("episode_file", file, "identity"),
+    );
   });
 
   it("writes a quality over a file and keeps its revision and unknown fields", async () => {
@@ -172,18 +180,26 @@ describe("deletion", () => {
     expect(harness.calls[0]?.url.pathname).toBe("/api/v3/moviefile/501");
   });
 
-  it("fingerprints what a deletion plan discloses about the record", () => {
+  it("observes the record's data only when the caller asked to destroy it", () => {
     const resource: UpstreamResource = {
       id: 14,
       title: "Example Retired Series",
       path: "/media/example/series/Example Retired Series",
       statistics: { episodeFileCount: 2, sizeOnDisk: 1024 },
     };
+    const keepingFiles = { deleteFiles: false, addImportListExclusion: false };
 
-    expect(recordDeletionState(resource)).toEqual({
+    // Removing only the library record depends on nothing but the record still
+    // being there, so a retitled or relocated record does not expire the plan.
+    expect(recordDeletionState(resource, keepingFiles)).toEqual({ id: 14 });
+    expect(
+      recordDeletionState({ ...resource, title: "Example Renamed Series" }, keepingFiles),
+    ).toEqual(recordDeletionState(resource, keepingFiles));
+
+    // Taking the files with it is a scope the plan disclosed, so a record that
+    // grew files since must not be taken silently.
+    expect(recordDeletionState(resource, { ...keepingFiles, deleteFiles: true })).toEqual({
       id: 14,
-      title: "Example Retired Series",
-      path: "/media/example/series/Example Retired Series",
       hasFile: undefined,
       fileCount: 2,
       sizeOnDisk: 1024,

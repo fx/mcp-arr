@@ -23,6 +23,7 @@ import {
   deleteFileResource,
   deleteRecordResource,
   type FileChanges,
+  type FileDependency,
   type FileResource,
   fileApplications,
   fileParentId,
@@ -1091,7 +1092,7 @@ async function readDeletePreconditions(
     items.push({
       reference,
       requestPath: resourcePath,
-      observation: recordDeletionState(resource),
+      observation: recordDeletionState(resource, choices),
     });
   }
 
@@ -1204,6 +1205,7 @@ async function readFiles(
   invocation: OperationInvocation,
   application: MediaApplication,
   references: readonly string[],
+  depends: FileDependency,
 ): Promise<ReadFilesResult> {
   const items: SelectedItem[] = [];
   const selected: SelectedFile[] = [];
@@ -1240,7 +1242,7 @@ async function readFiles(
     }
 
     selected.push({ ...identity.value, reference, parentId, resource });
-    items.push({ reference, observation: fileState(identity.value.kind, resource) });
+    items.push({ reference, observation: fileState(identity.value.kind, resource, depends) });
   }
 
   return { items, selected };
@@ -1350,7 +1352,12 @@ async function readFilePreconditions(
   application: MediaApplication,
   intent: Extract<LibraryChangeIntent, { intent: "update_file_metadata" | "delete_file" }>,
 ): Promise<PreconditionRead> {
-  const read = await readFiles(invocation, application, intent.files);
+  const read = await readFiles(
+    invocation,
+    application,
+    intent.files,
+    intent.intent === "delete_file" ? "identity" : "metadata",
+  );
   const grouping = checkSingleParent(invocation, read.selected);
   if (grouping !== undefined) {
     return blocked(grouping);

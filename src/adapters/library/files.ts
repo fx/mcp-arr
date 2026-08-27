@@ -113,27 +113,45 @@ export function deleteFileResource(
 }
 
 /**
- * The state one file's read set is built from.
+ * What one file mutation depends on, and so what its read set observes.
  *
- * Everything a file mutation depends on is listed, and nothing else is: the
- * fingerprint has to move when the file's parent, location, quality, languages,
- * or release group moves, so a plan that proposed to rename or replace the
- * metadata of one file cannot be applied against another. The parts are named
- * in a fixed order authored here.
+ * The distinction is load-bearing rather than tidy. A read set that observes
+ * more than the mutation depends on does not make a plan safer — it makes it go
+ * stale for reasons the plan never disclosed, and a caller who is told a
+ * deletion plan expired because someone corrected a release group learns to
+ * re-plan reflexively rather than to read why.
+ */
+export type FileDependency =
+  /** A deletion: the file is still that file, under the parent it was grouped by. */
+  | "identity"
+  /** A metadata edit: every field it may rewrite, because it compares them. */
+  | "metadata";
+
+/**
+ * The state one file's read set is built from, for the mutation about to run.
+ *
+ * Everything that mutation depends on is listed, and nothing else is. The parts
+ * are named in a fixed order authored here.
  */
 export function fileState(
   kind: MediaFileKind,
   resource: FileResource,
+  depends: FileDependency,
 ): Readonly<Record<string, unknown>> {
-  return {
+  const identity = {
     id: resource.id,
     parent: fileParentId(kind, resource),
-    seasonNumber: count(resource.seasonNumber),
-    relativePath: text(resource.relativePath),
-    quality: text(resource.quality?.quality?.name),
-    languages: fileLanguageIds(resource),
-    releaseGroup: text(resource.releaseGroup),
   };
+  return depends === "identity"
+    ? identity
+    : {
+        ...identity,
+        seasonNumber: count(resource.seasonNumber),
+        relativePath: text(resource.relativePath),
+        quality: text(resource.quality?.quality?.name),
+        languages: fileLanguageIds(resource),
+        releaseGroup: text(resource.releaseGroup),
+      };
 }
 
 /** The language identifiers a file currently carries, in the order it lists them. */
@@ -315,12 +333,24 @@ export function deleteRecordResource(
 /**
  * The state a deletion's read set is built from.
  *
- * A deletion plan discloses which record it removes and how much data goes with
- * it, so both are fingerprinted: applying a plan must not delete a record that
- * has since become a different title, and must not silently take files that
- * arrived after the plan reported none.
+ * Which record is removed is settled by the reference, not by this: what is
+ * observed is that the record is still there to remove. A title, a path, or a
+ * profile is deliberately not observed — none of them is disclosed by a
+ * deletion plan, and all of them move on a live instance for reasons that have
+ * nothing to do with the deletion.
+ *
+ * How much data goes with it is observed only when the caller asked for the
+ * files too. Then it is the scope of what the plan disclosed destroying, and a
+ * record that grew files since must not be taken silently; when the files stay
+ * on disk, the same numbers are just an instance doing its job.
  */
-export function recordDeletionState(resource: UpstreamResource): Readonly<Record<string, unknown>> {
+export function recordDeletionState(
+  resource: UpstreamResource,
+  choices: DeletionChoices,
+): Readonly<Record<string, unknown>> {
+  if (!choices.deleteFiles) {
+    return { id: resource.id };
+  }
   const statistics =
     typeof resource.statistics === "object" &&
     resource.statistics !== null &&
@@ -329,8 +359,6 @@ export function recordDeletionState(resource: UpstreamResource): Readonly<Record
       : undefined;
   return {
     id: resource.id,
-    title: resource.title,
-    path: resource.path,
     hasFile: resource.hasFile,
     fileCount: statistics?.episodeFileCount ?? statistics?.movieFileCount,
     sizeOnDisk: statistics?.sizeOnDisk,
