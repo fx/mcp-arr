@@ -1,6 +1,6 @@
 import { z } from "zod";
+import type { ApplicationId } from "../../applications.js";
 import { UpstreamError } from "../../http/errors.js";
-import type { MediaApplication } from "./model.js";
 
 /**
  * Shared upstream-payload parsing for the library adapters.
@@ -97,7 +97,7 @@ export function pagedEnvelope<TRecord extends z.ZodType>(record: TRecord) {
 export function parseUpstream<TSchema extends z.ZodType>(
   schema: TSchema,
   body: unknown,
-  application: MediaApplication,
+  application: ApplicationId,
   operation: string,
 ): z.infer<TSchema> {
   const parsed = schema.safeParse(body);

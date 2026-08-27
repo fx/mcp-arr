@@ -1,0 +1,46 @@
+{
+  "metadata": {
+    "application": "prowlarr",
+    "apiVersion": "v1",
+    "version": "2.5.2.5491",
+    "endpoint": "/api/v1/indexer"
+  },
+  "body": [
+    {
+      "id": 1,
+      "name": "Example Indexer A",
+      "enable": true,
+      "protocol": "torrent",
+      "priority": 25,
+      "appProfileId": 1,
+      "tags": []
+    },
+    {
+      "id": 2,
+      "name": "Example Indexer B",
+      "enable": true,
+      "protocol": "usenet",
+      "priority": 25,
+      "appProfileId": 1,
+      "tags": []
+    },
+    {
+      "id": 3,
+      "name": "Example Indexer C",
+      "enable": true,
+      "protocol": "torrent",
+      "priority": 50,
+      "appProfileId": 1,
+      "tags": []
+    },
+    {
+      "id": 4,
+      "name": "Example Indexer D",
+      "enable": false,
+      "protocol": "torrent",
+      "priority": 25,
+      "appProfileId": 1,
+      "tags": []
+    }
+  ]
+}

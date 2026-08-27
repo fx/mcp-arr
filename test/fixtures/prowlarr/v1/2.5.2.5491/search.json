@@ -1,0 +1,46 @@
+{
+  "metadata": {
+    "application": "prowlarr",
+    "apiVersion": "v1",
+    "version": "2.5.2.5491",
+    "endpoint": "/api/v1/search"
+  },
+  "body": [
+    {
+      "guid": "example-indexer-a-7007",
+      "title": "Example Series S01E02 1080p WEB-DL x264-EXAMPLEGRP",
+      "indexer": "Example Indexer A",
+      "indexerId": 1,
+      "protocol": "torrent",
+      "size": 1610612736,
+      "age": 2,
+      "ageHours": 48,
+      "ageMinutes": 2880,
+      "publishDate": "2026-08-25T12:00:00Z",
+      "seeders": 87,
+      "leechers": 4,
+      "grabs": 311,
+      "files": 1,
+      "categories": [{ "id": 5000, "name": "TV" }, { "id": 5040, "name": "TV HD" }],
+      "indexerFlags": ["freeleech"]
+    },
+    {
+      "guid": "example-indexer-a-8008",
+      "title": "Example Series S01E02 720p WEB-DL x264-EXAMPLEGRP",
+      "indexer": "Example Indexer A",
+      "indexerId": 1,
+      "protocol": "torrent",
+      "size": 805306368,
+      "age": 2,
+      "ageHours": 48,
+      "ageMinutes": 2880,
+      "publishDate": "2026-08-25T11:00:00Z",
+      "seeders": 15,
+      "leechers": 1,
+      "grabs": 44,
+      "files": 1,
+      "categories": [{ "id": 5000, "name": "TV" }],
+      "indexerFlags": []
+    }
+  ]
+}
