@@ -655,19 +655,29 @@ describe("refusals and staleness", () => {
         ),
       },
     });
+    const { fingerprintReadSet } = await import("../src/state/plans.js");
     const outcome = await second.run(
-      request({
-        targets: [2],
-        mode: "apply",
-        planned: plan.observations.map((observation) => ({
-          key: observation.key,
-          digest: "",
-        })),
-      }),
+      request({ targets: [2], mode: "apply", planned: fingerprintReadSet(plan.observations) }),
     );
 
+    // The real fingerprints, so this fails if the selection stops being
+    // observed rather than passing because every digest was blank.
     expect(failed(outcome).error.code).toBe("stale_plan");
+    expect(failed(outcome).error.message).toContain("selection:2");
     expect(second.writes).toEqual([]);
+  });
+
+  it("names one mapping once however often the call named it", async () => {
+    const running = instance();
+    const outcome = applied(
+      await running.run(request({ targets: [2, 2, 2], mode: "apply", startSync: false })),
+    );
+
+    // Naming a mapping twice does not ask for two writes: the second would be
+    // sent against a resource the first had already replaced.
+    expect(outcome.items).toHaveLength(1);
+    expect(outcome.dispatched).toBe(1);
+    expect(running.writes.map((write) => write.route)).toEqual(["applications/2"]);
   });
 
   it("refuses a plan whose disclosed names have changed", async () => {

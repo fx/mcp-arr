@@ -562,17 +562,19 @@ export async function runApplicationSync(
   // not only the ones whose level it changes — otherwise applying a harmless
   // change to one mapping would carry out the deletions a *different* mapping's
   // full-sync level implies, and the caller would never have been shown them.
+  // Deduplicated, because naming one mapping twice does not ask for two writes:
+  // the second would be sent against a resource the first had already replaced,
+  // and the call would report two outcomes for one remote application.
+  const named = [...new Set(request.targets)];
   const disclosed = request.startSync
     ? [
-        ...request.targets,
-        ...observation.mappings
-          .map((mapping) => mapping.id)
-          .filter((id) => !request.targets.includes(id)),
+        ...named,
+        ...observation.mappings.map((mapping) => mapping.id).filter((id) => !named.includes(id)),
       ]
-    : request.targets;
+    : named;
 
   for (const target of disclosed) {
-    const named = request.targets.includes(target);
+    const requested = named.includes(target);
     const mapping = observation.mappings.find((candidate) => candidate.id === target);
     if (mapping === undefined) {
       return {
@@ -603,7 +605,7 @@ export async function runApplicationSync(
     observations.push(...syncObservations(mapping, observation.indexers, observation.tagLabels));
     // A mapping this call did not name keeps its own level, so what is disclosed
     // for it is what the started synchronization will do to it as it stands.
-    const level = named ? request.syncLevel : mapping.level;
+    const level = requested ? request.syncLevel : mapping.level;
     const effects = planSyncEffects(mapping, observation.indexers, level);
     resolved.push({ mapping, effects });
     items.push({
@@ -613,13 +615,13 @@ export async function runApplicationSync(
       currentLevel: mapping.level,
       desiredLevel: level,
       effects,
-      changed: named && mapping.level !== request.syncLevel,
+      changed: requested && mapping.level !== request.syncLevel,
       attempted: false,
       warnings: [
-        ...(named && mapping.level === request.syncLevel
+        ...(requested && mapping.level === request.syncLevel
           ? ["this mapping is already at the requested synchronization level"]
           : []),
-        ...(named
+        ...(requested
           ? []
           : [
               "this call does not change this mapping; it is listed because the synchronization it starts runs this mapping too",
