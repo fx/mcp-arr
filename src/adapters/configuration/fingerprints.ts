@@ -28,10 +28,18 @@ import { serializeProviderTemplate } from "./serialize.js";
  * before that reclassification must not be applied after it.
  *
  * What is digested is the *serialized* template rather than the raw payload,
- * which is deliberate twice over: the serializer already drops the default
- * values a schema endpoint echoes back — for a configured template those are
- * current settings — and it is the same shape the observation publishes, so the
- * fingerprint moves exactly when what a caller was told moves.
+ * because the serializer already drops the default values a schema endpoint
+ * echoes back — for a configured template those are current settings, and a
+ * plan must not expire because someone edited a default it never used.
+ *
+ * From that template only the semantics are digested, and the read-set rule
+ * decides which those are: a fingerprint has to move when the plan's meaning
+ * moves and must not move for anything else, or valid plans expire and callers
+ * learn to re-plan reflexively. A field's name, its type, and whether it is a
+ * credential all change what writing to it means. A display label, a template's
+ * own display name, and the advanced flag change how an interface renders it
+ * and nothing else, so they are left out — as is the order the instance happens
+ * to list its fields in.
  */
 
 /** The schema half of a plan's read set, and anything the caller should know. */
@@ -89,6 +97,17 @@ function templateFor(
   return templates.find((template) => template.implementation.toLowerCase() === implementation);
 }
 
+/** The part of a template a write's meaning actually depends on. */
+function semanticsOf(template: ProviderTemplate): unknown {
+  return {
+    implementation: template.implementation,
+    configContract: template.configContract,
+    fields: template.fields
+      .map((field) => ({ name: field.name, type: field.type, secret: field.secret }))
+      .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0)),
+  };
+}
+
 /**
  * Reads the schema this resource's provider is defined by and digests it.
  *
@@ -144,7 +163,10 @@ export async function readSchemaFingerprint(
   const template = templateFor(templates, implementationOf(resource));
   return {
     observations: [
-      { key: schemaKey, value: template === undefined ? missingTemplate : fingerprint(template) },
+      {
+        key: schemaKey,
+        value: template === undefined ? missingTemplate : fingerprint(semanticsOf(template)),
+      },
     ],
     warnings:
       template === undefined

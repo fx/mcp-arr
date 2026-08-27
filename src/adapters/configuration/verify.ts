@@ -2,7 +2,7 @@ import type { ApplicationId } from "../../applications.js";
 import type { UpstreamBody, UpstreamClient } from "../../http/client.js";
 import type { ApplyReconciliation } from "../../state/apply-records.js";
 import { createToolError } from "../../tools/errors.js";
-import { describeSecret } from "./fields.js";
+import { classifyProviderField, describeSecret } from "./fields.js";
 import { isUpstreamRecord } from "./parse.js";
 import type { CompiledPatch } from "./patches.js";
 import { enableSwitches } from "./write.js";
@@ -64,15 +64,23 @@ function contradicted(application: ApplicationId, paths: readonly string[]): App
   };
 }
 
-function fieldValues(record: Record<string, unknown>): ReadonlyMap<string, unknown> {
-  const values = new Map<string, unknown>();
+interface FieldEntry {
+  readonly value: unknown;
+  readonly privacy: string | undefined;
+}
+
+function fieldValues(record: Record<string, unknown>): ReadonlyMap<string, FieldEntry> {
+  const values = new Map<string, FieldEntry>();
   const fields = record.fields;
   if (!Array.isArray(fields)) {
     return values;
   }
   for (const field of fields) {
     if (isUpstreamRecord(field) && typeof field.name === "string" && !values.has(field.name)) {
-      values.set(field.name, field.value);
+      values.set(field.name, {
+        value: field.value,
+        privacy: typeof field.privacy === "string" ? field.privacy : undefined,
+      });
     }
   }
   return values;
@@ -139,16 +147,24 @@ function checksFor(
     checks.push({
       path: `fields.${name}`,
       absent: !currentFields.has(name),
-      agrees: matches(currentFields.get(name), sentFields.get(name), true),
+      agrees: matches(currentFields.get(name)?.value, sentFields.get(name)?.value, true),
     });
   };
   const checkSecret = (name: string, expected: "configured" | "unconfigured"): void => {
     checks.push({
       path: `fields.${name}`,
       absent: !currentFields.has(name),
-      agrees: describeSecret(name, currentFields.get(name)).state === expected,
+      agrees: describeSecret(name, currentFields.get(name)?.value).state === expected,
     });
   };
+  /**
+   * Whether the field this apply wrote is one the record treats as a
+   * credential, judged from the resource that was sent — which is the resource
+   * the writer itself classified from, so the two cannot disagree about which
+   * fields were written as secrets.
+   */
+  const isCredential = (name: string): boolean =>
+    classifyProviderField({ name, privacy: sentFields.get(name)?.privacy }) === "secret";
 
   for (const assignment of patch.assignments) {
     switch (assignment.target) {
@@ -180,11 +196,18 @@ function checksFor(
   for (const removal of patch.removals) {
     if (removal.target === "tags") {
       checks.push(checkProperty(current, sent, "tags", false));
-    } else {
-      // A cleared credential is verified as unconfigured rather than as null:
-      // an application is free to answer a cleared secret with an empty string,
-      // and that is the same statement.
+      continue;
+    }
+    // Presence is the weaker check and is used only where it is the only one
+    // available. A cleared credential can be verified no other way — an
+    // application may answer with an empty string, a null, or nothing at all,
+    // and all three say the same thing — while an ordinary setting was sent an
+    // explicit value and is held to it, so a clear that stored something else
+    // cannot pass as a success.
+    if (isCredential(removal.name)) {
       checkSecret(removal.name, "unconfigured");
+    } else {
+      checkField(removal.name);
     }
   }
 

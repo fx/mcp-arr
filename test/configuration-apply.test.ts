@@ -398,6 +398,32 @@ describe("schema and resource fingerprints", () => {
     expect(expectApplied(applied).attempted).toBe(true);
   });
 
+  it("does not expire a plan for a label the schema renders and nothing reads", async () => {
+    const instance = await newznab();
+    const request = planning("indexers", 1, { fields: [{ name: "priority", value: 30 }] });
+    const { outcome } = await reconcile("sonarr", instance, request);
+    const planned = expectPlanned(outcome);
+
+    // Same fields, same types, same classifications, different display text and
+    // a different order. Nothing a write depends on has moved.
+    const schema = (await fixtureBody<readonly UpstreamRecord[]>("sonarr", "indexer/schema")).map(
+      (template) => ({
+        ...template,
+        implementationName: "Newznab (renamed)",
+        fields: [...(template.fields as readonly UpstreamRecord[])]
+          .reverse()
+          .map((field) => ({ ...field, label: `${String(field.label)} (renamed)` })),
+      }),
+    );
+    const { outcome: applied } = await reconcile(
+      "sonarr",
+      { routes: { ...instance.routes, "indexer/schema": schema } },
+      { ...request, mode: "apply", planned: { readSet: fingerprintReadSet(planned.observations) } },
+    );
+
+    expect(expectApplied(applied).attempted).toBe(true);
+  });
+
   it("makes a plan stale when a field entry has appeared on the record", async () => {
     const instance = await newznab();
     const request = planning("indexers", 1, { fields: [{ name: "priority", value: 30 }] });
@@ -568,6 +594,36 @@ describe("verifying what the instance stored", () => {
     );
 
     expect(expectApplied(outcome).verification).toEqual({ status: "succeeded" });
+  });
+
+  it("holds an ordinary clear to the value it sent rather than to mere absence", async () => {
+    const record = await first("radarr", "downloadclient");
+    const clearing = planning("download_clients", 1, {
+      mode: "apply",
+      removeFields: ["movieCategory"],
+    });
+
+    const stored = await reconcile(
+      "radarr",
+      {
+        routes: { "downloadclient/1": record, "downloadclient/schema": [] },
+        // The instance answers with the value it already had, so the clear did
+        // not happen — a presence check would have called this a success.
+        answerWrite: () => jsonResponse(record),
+      },
+      clearing,
+    );
+    expect(expectApplied(stored.outcome).verification).toMatchObject({
+      status: "failed",
+      error: { code: "conflict", message: expect.stringContaining("fields.movieCategory") },
+    });
+
+    const cleared = await reconcile(
+      "radarr",
+      { routes: { "downloadclient/1": record, "downloadclient/schema": [] } },
+      clearing,
+    );
+    expect(expectApplied(cleared.outcome).verification).toEqual({ status: "succeeded" });
   });
 
   it("reports a cleared credential the instance still holds as a conflict", async () => {
