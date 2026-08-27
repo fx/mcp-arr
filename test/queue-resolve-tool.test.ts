@@ -496,14 +496,23 @@ describe("queue resolution apply mode", () => {
     });
 
     // The request was dispatched and upstream refused it, so the item carries
-    // the rejection and the receipt settles from a real attempt. `unattempted`
-    // is the one thing it must not be: that would say nothing was sent, and
-    // something was.
+    // the rejection. The receipt settles `failed` rather than `succeeded`,
+    // which is the one state a later identical attempt may reuse — a caller
+    // that corrects whatever the instance objected to must be able to retry.
     expect(outcomeOf(result).items?.[0]?.error?.code).toBe("upstream_rejection");
-    expect(result.mutation?.receipt?.state).toBe("succeeded");
-    // The envelope still says the call did not fully do what was asked, so a
-    // caller reading only the summary is not told of a clean success.
-    expect(result.status).toBe("partial");
+    expect(result.mutation?.receipt?.state).toBe("failed");
+    expect(result.status).toBe("error");
+
+    // And that retry really is sent again rather than answered from the
+    // receipt, which is what settling `failed` buys.
+    instance.deleteBehavior = "accept";
+    const retried = await run(resolveTool, {
+      intent: "ignore_tracking",
+      mode: "apply",
+      items: [reference],
+    });
+    expect(outcomeOf(retried).status).toBe("ok");
+    expect(deletes()).toHaveLength(2);
   });
 
   it("routes a manual import without sending anything and still succeeds", async () => {

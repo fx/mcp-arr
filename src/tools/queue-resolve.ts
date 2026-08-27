@@ -470,10 +470,11 @@ async function applyItems(
       continue;
     }
 
+    const outcome = itemOutcome(item.reference, sent.error, sent.warnings);
     if (record !== undefined) {
-      invocation.state.applies.settle(record, settlementForItem(sent.error));
+      invocation.state.applies.settle(record, settlementForItem(sent.error, outcome));
     }
-    outcomes.push(itemOutcome(item.reference, sent.error, sent.warnings));
+    outcomes.push(outcome);
   }
 
   return { outcomes, unresolved, dispatched };
@@ -524,12 +525,14 @@ async function reconcileLostItem(
   );
 
   if (verdict === "succeeded") {
-    return {
-      outcome: itemOutcome(item.reference, undefined, [
-        "the answer to this request was lost, and upstream state confirms it was applied",
-      ]),
-      settlement: { status: "succeeded" },
-    };
+    const outcome = itemOutcome(item.reference, undefined, [
+      "the answer to this request was lost, and upstream state confirms it was applied",
+    ]);
+    // Settled carrying this item's own outcome, because a receipt is the whole
+    // of what a repeat is answered from: a later single-item apply is replayed
+    // from this record, and one that kept only its state would answer with a
+    // bare success where this call had said more.
+    return { outcome, settlement: { status: "succeeded", items: [outcome] } };
   }
 
   // A `failed` verdict is deliberately not acted on here, and this is the one
@@ -541,11 +544,12 @@ async function reconcileLostItem(
   // re-sending a mutation that may already have applied. The record stays
   // outcome-unknown instead, and the same verdict is safe for the store's own
   // reconciliation later, once that race has passed.
+  const outcome = itemOutcome(item.reference, lost, [
+    "the answer to this request was lost and upstream state could not establish what it did",
+  ]);
   return {
-    outcome: itemOutcome(item.reference, lost, [
-      "the answer to this request was lost and upstream state could not establish what it did",
-    ]),
-    settlement: { status: "outcome_unknown", error: lost },
+    outcome,
+    settlement: { status: "outcome_unknown", error: lost, items: [outcome] },
     unresolved: lost,
   };
 }
@@ -645,13 +649,16 @@ function replayedItemOutcome(
  * whose answer was lost stays reconcilable on its own, rather than being
  * absorbed into a batch verdict that says nothing about which item it was.
  */
-function settlementForItem(error: ToolError | undefined): ApplySettlement {
+function settlementForItem(error: ToolError | undefined, outcome: ItemOutcome): ApplySettlement {
   if (error === undefined) {
-    return { status: "succeeded" };
+    return { status: "succeeded", items: [outcome] };
   }
+  // A `failed` settlement deliberately carries no outcomes: it is the one state
+  // nothing is ever answered from, because the next identical attempt re-runs
+  // the mutation and produces outcomes of its own.
   return toolErrorProvesNoEffect(error.code)
     ? { status: "failed", error }
-    : { status: "outcome_unknown", error };
+    : { status: "outcome_unknown", error, items: [outcome] };
 }
 
 /**
@@ -712,6 +719,28 @@ export const queueResolveHandler: OperationHandler = async (invocation) => {
     applied.outcomes.every((item) => item.status === "error")
       ? applied.outcomes[0]?.error
       : undefined;
+
+  // Everything that was sent came back refused, and nothing is unresolved. The
+  // call has to settle `failed` rather than `succeeded`, because `failed` is the
+  // one state the record store lets a later identical attempt reuse — and an
+  // instance that demonstrably refused every request is exactly the case a
+  // caller should be able to correct and retry. Settling it as a success would
+  // answer that retry from a receipt for a mutation that never happened, and
+  // would make a transient refusal permanent for that exact input. Returning an
+  // error is how a handler reaches that settlement, and the per-item outcomes
+  // travel with it.
+  if (
+    applied.unresolved === undefined &&
+    unattempted === undefined &&
+    applied.dispatched > 0 &&
+    applied.outcomes.length > 0 &&
+    applied.outcomes.every((item) => item.status === "error")
+  ) {
+    const refusal = applied.outcomes[0]?.error;
+    if (refusal !== undefined) {
+      return { status: "error", error: refusal, items: applied.outcomes };
+    }
+  }
 
   return {
     status: "ok",
