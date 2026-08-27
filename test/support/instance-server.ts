@@ -281,10 +281,11 @@ export async function startFixtureInstance(
     // release the cache no longer holds. A command is accepted and echoed back
     // as a command record, which is what makes the started job projectable.
     if (request.method === "POST") {
-      // Only where the application actually exposes the endpoint. Prowlarr has
-      // no commands, so a command sent to it is the `404` a real instance gives
-      // for a route that does not exist — not a refusal, which would read as an
-      // instance that has the endpoint and declined this particular command.
+      // Only where the application actually exposes the endpoint, which is what
+      // the route list already says: an application that answers no command
+      // route gives the `404` a real instance gives for a route that does not
+      // exist, rather than a refusal, which would read as an instance that has
+      // the endpoint and declined this particular command.
       const writable = route === grabRoutes[application] || (route === "command" && answers(route));
       if (!writable) {
         send(response, 404, { message: "not found" });

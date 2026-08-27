@@ -112,14 +112,22 @@ describe("the fixture instance's command route", () => {
     });
   }
 
-  it("has no command route on Prowlarr to refuse a command on", async () => {
+  it("answers a Prowlarr command the way Prowlarr's own endpoint does", async () => {
     const running = await instance("prowlarr");
 
-    // 404, not the 400 a named-but-unknown command gets: Prowlarr exposes no
-    // command endpoint at all, and an implementation that tried to start a
-    // search there must see the route missing rather than a plausible refusal.
-    expect((await post(running, "command", { name: "MoviesSearch" })).status).toBe(404);
+    // Prowlarr does expose a command endpoint — `arr_activity_query`'s commands
+    // view reads it — so the double answers one on the same terms as the media
+    // applications rather than pretending the route is absent. What keeps an
+    // automatic search off Prowlarr is the operation table, which registers
+    // every `arr_search_start` target on the media applications alone; a
+    // missing route here would be a guard in the wrong place, and a false
+    // account of the instance besides.
+    expect((await post(running, "command", { name: 42 })).status).toBe(400);
     expect(running.commands).toEqual([]);
+
+    const body = { name: "ApplicationIndexerSync" };
+    expect((await post(running, "command", body)).status).toBe(201);
+    expect(running.commands).toEqual([{ name: body.name, body }]);
   });
 });
 
