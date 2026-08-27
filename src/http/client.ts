@@ -53,14 +53,24 @@ export interface UpstreamValidation {
   /**
    * The body, parsed, where the instance sent JSON.
    *
-   * `undefined` covers three different things and cannot tell them apart: the
-   * instance sent no body, it sent one that is not JSON — which a `4xx`
-   * refusal often is — or it sent one whose text could not be read as JSON at
-   * all. A caller must therefore treat an absent body as "nothing usable came
-   * back" rather than as "the instance objected to nothing", and every reader
-   * in this project does.
+   * `unknown` rather than a narrower type because what a body means belongs to
+   * the domain adapter, and `unknown` already obliges every caller to narrow
+   * before using it — including for the absent case, since it admits
+   * `undefined` and nothing can be read out of it without a check.
    */
   readonly body: unknown;
+  /**
+   * Whether the instance sent a body this server could not read as JSON.
+   *
+   * Here because {@link body} being absent used to mean two things a caller had
+   * no way to tell apart — nothing arrived, or something did and was not JSON,
+   * which a `4xx` refusal often is not. Only the second means the instance had
+   * something to say that went unheard, and that difference decides whether a
+   * refusal can be described to an operator or only reported as a failure. It
+   * is a field rather than a sentence in this comment because a field cannot
+   * drift away from what the code does.
+   */
+  readonly unreadableBody: boolean;
 }
 
 export interface UpstreamClient {
@@ -140,15 +150,28 @@ function buildQueryString(query: UpstreamQuery): string {
   return encoded === "" ? "" : `?${encoded}`;
 }
 
-/** Parses a body that may not be JSON at all, which a rejection often is not. */
-function readJson(text: string): unknown {
+/** One body read, and whether something arrived that could not be read. */
+interface ReadBody {
+  readonly value: unknown;
+  readonly unreadable: boolean;
+}
+
+/**
+ * Parses a body that may not be JSON at all, which a rejection often is not.
+ *
+ * The two ways of having no value are kept apart rather than collapsed: an
+ * instance that sent nothing and an instance that sent prose are different
+ * facts, and only the second means it had something to say that this server
+ * could not hear.
+ */
+function readJson(text: string): ReadBody {
   if (text.trim() === "") {
-    return undefined;
+    return { value: undefined, unreadable: false };
   }
   try {
-    return JSON.parse(text) as unknown;
+    return { value: JSON.parse(text) as unknown, unreadable: false };
   } catch {
-    return undefined;
+    return { value: undefined, unreadable: true };
   }
 }
 
@@ -191,6 +214,7 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
   interface RetainedAnswer {
     readonly retainedStatus: number;
     readonly retainedBody: unknown;
+    readonly retainedUnreadable: boolean;
   }
 
   const isRetainedAnswer = (value: unknown): value is RetainedAnswer =>
@@ -304,9 +328,11 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
             // could act on where nothing was learned at all.
             throw fail(timedOut ? "timeout" : "unavailable");
           }
+          const read = readJson(rejected);
           return {
             retainedStatus: response.status,
-            retainedBody: readJson(rejected),
+            retainedBody: read.value,
+            retainedUnreadable: read.unreadable,
           } satisfies RetainedAnswer;
         }
         discardBody(response);
@@ -342,10 +368,13 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
       if (retainStatus) {
         // The status the instance chose, for a caller that promised to report
         // it. A body that is not JSON is not a failure here either: the caller
-        // reads what came back rather than assuming a shape.
+        // reads what came back rather than assuming a shape, and is told that
+        // it could not be read rather than left to infer it from an absence.
+        const read = readJson(answered);
         return {
           retainedStatus: response.status,
-          retainedBody: readJson(answered),
+          retainedBody: read.value,
+          retainedUnreadable: read.unreadable,
         } satisfies RetainedAnswer;
       }
 
@@ -404,6 +433,7 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
         accepted: answered.retainedStatus >= 200 && answered.retainedStatus < 300,
         status: answered.retainedStatus,
         body: answered.retainedBody,
+        unreadableBody: answered.retainedUnreadable,
       };
     },
 

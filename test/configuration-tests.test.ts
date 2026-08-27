@@ -179,6 +179,9 @@ describe("classifying a test", () => {
 
   it("counts what it could not read rather than dropping it", () => {
     expect(readValidation(undefined)).toEqual({ findings: [], unreadable: 0 });
+    // A body that never parsed is an objection that went unheard, which the
+    // client reports rather than leaving to be inferred from the absence.
+    expect(readValidation(undefined, true)).toEqual({ findings: [], unreadable: 1 });
     // A body that is not a list at all is one unreadable objection, not none.
     expect(readValidation({ message: "not a list" })).toEqual({ findings: [], unreadable: 1 });
     expect(readValidation([{ propertyName: "onGrab" }])).toEqual({ findings: [], unreadable: 1 });
@@ -246,6 +249,25 @@ describe("running a test", () => {
     // refused the test and never why, nor whether it was a warning.
     expect(result.outcome).toBe("warned");
     expect(result.findings.map((finding) => finding.severity)).toEqual(["warning"]);
+  });
+
+  it("reports a refusal that was not JSON as an objection nobody could read", async () => {
+    const harness = libraryHarness("sonarr", () => new Response("Bad Request", { status: 400 }));
+    const result = ok(
+      await runProviderTest("sonarr", harness.client, {
+        domain: "notifications",
+        payload: { id: 1 },
+      }),
+    );
+
+    // The instance objected and this server could not hear what it said. That
+    // is a failure rather than a bypassable warning, and the reason a bypass
+    // gets back says which of the two it was.
+    expect(result.outcome).toBe("failed");
+    expect(result.unreadable).toBe(1);
+    expect(planBypass("sonarr", result).refusal?.message).toContain(
+      "1 objection(s) this server could not read",
+    );
   });
 
   it("reports a hard validation failure as failed", async () => {

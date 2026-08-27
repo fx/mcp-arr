@@ -361,7 +361,12 @@ describe("createUpstreamClient", () => {
 
     // The refusal is the answer for this endpoint, so the body comes back as
     // data. Everything else about the request is what `post` would have sent.
-    expect(answered).toEqual({ accepted: false, status: 400, body: findings });
+    expect(answered).toEqual({
+      accepted: false,
+      status: 400,
+      body: findings,
+      unreadableBody: false,
+    });
     expect(calls[0]?.init.method).toBe("POST");
     expect(calls[0]?.init.body).toBe(JSON.stringify({ id: 1 }));
     expect(new Headers(calls[0]?.init.headers).get("X-Api-Key")).toBe(apiKey);
@@ -388,22 +393,29 @@ describe("createUpstreamClient", () => {
       accepted: true,
       status: 200,
       body: [],
+      unreadableBody: false,
     });
 
+    // Nothing arrived, which is not the same fact as something arriving that
+    // could not be read — and the two are now told apart by a field rather
+    // than by a comment explaining that they cannot be.
     const { client: silent } = harness(() => new Response(null, { status: 200 }));
     await expect(silent.validate("notification/test", { id: 1 })).resolves.toEqual({
       accepted: true,
       status: 200,
       body: undefined,
+      unreadableBody: false,
     });
 
     // A rejection that is not JSON at all is common for these endpoints, and it
-    // is still a rejection rather than a broken response.
+    // is still a rejection rather than a broken response — but the instance did
+    // have something to say, and this says that it went unheard.
     const { client: prose } = harness(() => new Response("not json", { status: 400 }));
     await expect(prose.validate("notification/test", { id: 1 })).resolves.toEqual({
       accepted: false,
       status: 400,
       body: undefined,
+      unreadableBody: true,
     });
   });
 

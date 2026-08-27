@@ -148,11 +148,15 @@ export interface ValidationReading {
  * body listing what failed, so both shapes are read here rather than only the
  * one a passing test produces. A body that is not a list at all is one
  * unreadable entry rather than nothing, for the same reason: a rejection this
- * server cannot parse must not read as a rejection with nothing in it.
+ * server cannot parse must not read as a rejection with nothing in it. The
+ * second argument carries the same fact for a body that never parsed at all,
+ * which the client reports rather than leaving to be inferred from an absence.
  */
-export function readValidation(body: unknown): ValidationReading {
+export function readValidation(body: unknown, unreadableBody = false): ValidationReading {
   if (body === undefined || body === null) {
-    return { findings: [], unreadable: 0 };
+    // Nothing arrived, or something did that was not JSON. The client tells
+    // these apart now, and only the second is an objection that went unheard.
+    return { findings: [], unreadable: unreadableBody ? 1 : 0 };
   }
   if (!Array.isArray(body)) {
     return { findings: [], unreadable: 1 };
@@ -278,7 +282,7 @@ export async function runProviderTest(
 
   try {
     const answered = await client.validate(route, request.payload);
-    const reading = readValidation(answered.body);
+    const reading = readValidation(answered.body, answered.unreadableBody);
     return {
       status: "ok",
       attempted: true,
