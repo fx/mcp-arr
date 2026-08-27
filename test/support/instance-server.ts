@@ -237,7 +237,15 @@ export async function startFixtureInstance(
             acceptCommand(body);
             return;
           }
-          const guid = typeof body.guid === "string" ? body.guid : "";
+          // A grab without a cache identity is a client defect, not an expired
+          // reference. Answering it with the cache-miss `404` below would dress
+          // that defect up as `stale_reference` and leave the suite green, so
+          // this route refuses it here and records nothing.
+          const guid = body.guid;
+          if (typeof guid !== "string" || guid === "") {
+            send(response, 400, { message: "A grab must carry a release GUID" });
+            return;
+          }
           grabs.push({
             route,
             guid,
