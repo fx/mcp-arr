@@ -10,7 +10,7 @@ import type {
 import type { ActivityQueryRequest } from "../adapters/activity/requests.js";
 import { type ActivityViewData, runActivityQuery } from "../adapters/activity/service.js";
 import type { MediaKind, MediaRecordKind, MediaRef } from "../adapters/library/model.js";
-import { isMediaApplication, mediaRecordKinds, mediaRefKey } from "../adapters/library/model.js";
+import { isMediaApplication, mediaRefKey } from "../adapters/library/model.js";
 import { queryDigest } from "../adapters/library/paging.js";
 import type { ReferenceStore } from "../state/references.js";
 import {
@@ -72,6 +72,25 @@ function identityFingerprint(ref: MediaRef): string {
   return queryDigest([mediaRefKey(ref)]);
 }
 
+function isAllowedKind<TKind extends MediaRecordKind>(
+  kind: MediaKind,
+  allowed: readonly TKind[],
+): kind is TKind {
+  return (allowed as readonly MediaKind[]).includes(kind);
+}
+
+/**
+ * The kinds each association a row publishes may actually name.
+ *
+ * A row is associated with the top-level record — a Sonarr series or a Radarr
+ * movie — and, on Sonarr, with the episode it is for. Nothing else: not a
+ * season, not a collection, and never a file. The published schema declares the
+ * same two sets, so what a minter accepts and what the contract admits are one
+ * decision rather than two that can drift.
+ */
+const associatedRecordKinds = ["series", "movie"] as const;
+const associatedEpisodeKinds = ["episode"] as const;
+
 /**
  * Mints the media references one query's results carry.
  *
@@ -83,23 +102,22 @@ function identityFingerprint(ref: MediaRef): string {
  * fingerprint covers the identity alone. Inventing state for it would be a
  * false snapshot.
  */
-function isMediaRecordKind(kind: MediaKind): kind is MediaRecordKind {
-  return (mediaRecordKinds as readonly MediaKind[]).includes(kind);
-}
-
 function createMediaMinter(references: ReferenceStore) {
   const minted = new Map<string, string>();
 
-  return (ref: MediaRef) => {
+  return <TKind extends MediaRecordKind>(ref: MediaRef, allowed: readonly TKind[]) => {
     // Checked before anything is minted, the way the library handler checks the
-    // kind a view may publish. Only a record can be named this way — a row is
-    // associated with a series, a movie, or an episode, never with a file — and
-    // an adapter that mapped one fails here, naming the kind, instead of
-    // surfacing a layer later as a result that merely did not conform. Checking
-    // first is what keeps the failure clean: a reference minted for a kind this
-    // call then refuses would outlive the failed call in the store.
-    if (!isMediaRecordKind(ref.kind)) {
-      throw new Error(`an activity view named a ${ref.kind} where only a record can appear`);
+    // kind a view may publish, and against the kinds this particular field
+    // admits rather than merely against records in general — an adapter that
+    // mapped a file, a season, or a movie where an episode belongs fails here,
+    // naming what it produced, instead of surfacing a layer later as a result
+    // that merely did not conform. Checking first is what keeps the failure
+    // clean: a reference minted for a kind this call then refuses would outlive
+    // the failed call in the store.
+    if (!isAllowedKind(ref.kind, allowed)) {
+      throw new Error(
+        `an activity view named a ${ref.kind} where only ${allowed.join(" or ")} can appear`,
+      );
     }
 
     const key = mediaRefKey(ref);
@@ -140,8 +158,8 @@ function publishQueueItem(
     application: item.application,
     kind: item.kind,
     title: item.title,
-    media: item.media === undefined ? undefined : media(item.media),
-    episode: item.episode === undefined ? undefined : media(item.episode),
+    media: item.media === undefined ? undefined : media(item.media, associatedRecordKinds),
+    episode: item.episode === undefined ? undefined : media(item.episode, associatedEpisodeKinds),
     quality: item.quality,
     evidence: {
       status: item.evidence.status,
@@ -171,8 +189,9 @@ function publishHistoryRecord(
     eventType: record.eventType,
     date: record.date,
     title: record.title,
-    media: record.media === undefined ? undefined : media(record.media),
-    episode: record.episode === undefined ? undefined : media(record.episode),
+    media: record.media === undefined ? undefined : media(record.media, associatedRecordKinds),
+    episode:
+      record.episode === undefined ? undefined : media(record.episode, associatedEpisodeKinds),
     quality: record.quality,
     indexer: record.indexer === undefined ? undefined : publishIndexer(record.indexer),
     downloadIdentity: record.downloadIdentity,
@@ -192,8 +211,8 @@ function publishBlocklistRecord(
     application: record.application,
     title: record.title,
     date: record.date,
-    media: record.media === undefined ? undefined : media(record.media),
-    episodes: record.episodes?.map((ref) => media(ref)),
+    media: record.media === undefined ? undefined : media(record.media, associatedRecordKinds),
+    episodes: record.episodes?.map((ref) => media(ref, associatedEpisodeKinds)),
     quality: record.quality,
     protocol: record.protocol,
     indexer: record.indexer,

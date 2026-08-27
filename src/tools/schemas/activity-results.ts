@@ -8,6 +8,7 @@ import {
   trackedDownloadStates,
   trackedDownloadStatuses,
 } from "../../adapters/activity/model.js";
+import { downloadIdentityLength } from "../../adapters/activity/parse.js";
 import {
   applicationIdSchema,
   blocklistReferenceSchema,
@@ -71,6 +72,22 @@ const queueProgressSchema = z.strictObject({
 });
 
 /**
+ * The salted digest that stands in for a download-client identifier.
+ *
+ * Bounded to the exact shape the adapter mints — a SHA-256 truncated to
+ * {@link downloadIdentityLength} hexadecimal characters, with the length
+ * imported rather than restated so the two cannot drift. Publishing it as any
+ * string would let the raw identifier this field exists to keep off the
+ * transport pass validation on its way out.
+ */
+const downloadIdentitySchema = z
+  .string()
+  .regex(
+    new RegExp(`^[0-9a-f]{${String(downloadIdentityLength)}}$`, "u"),
+    "must be a salted download-identity digest",
+  );
+
+/**
  * Where a row came from.
  *
  * `downloadIdentity` is a process-salted digest, never the download client's
@@ -82,8 +99,24 @@ const queueOriginSchema = z.strictObject({
   protocol: z.string().optional(),
   indexer: z.string().optional(),
   downloadClient: z.string().optional(),
-  downloadIdentity: z.string().optional(),
+  downloadIdentity: downloadIdentitySchema.optional(),
 });
+
+/**
+ * The library record an activity row is associated with.
+ *
+ * A row belongs to a top-level record — a Sonarr series or a Radarr movie —
+ * rather than to any record the shared media identity can name, so the kind is
+ * those two. A season or a collection here would describe an association no
+ * reader produces, and the handler refuses to mint one.
+ */
+const associatedMediaSchema = mediaIdentitySchema.extend({ kind: z.enum(["series", "movie"]) });
+
+/**
+ * The episode an activity row names. Only Sonarr associates one, and it is
+ * always an episode, so the kind is the literal rather than the record union.
+ */
+const associatedEpisodeSchema = mediaIdentitySchema.extend({ kind: z.literal("episode") });
 
 export const activityQueueItemSchema = z.strictObject({
   /** The opaque reference `arr_queue_resolve` accepts for this row. */
@@ -97,8 +130,8 @@ export const activityQueueItemSchema = z.strictObject({
    */
   kind: z.enum(queueItemKinds),
   title: z.string(),
-  media: mediaIdentitySchema.optional(),
-  episode: mediaIdentitySchema.optional(),
+  media: associatedMediaSchema.optional(),
+  episode: associatedEpisodeSchema.optional(),
   quality: z.string().optional(),
   evidence: queueEvidenceSchema,
   progress: queueProgressSchema.optional(),
@@ -165,11 +198,13 @@ export const activityHistoryRecordSchema = z.strictObject({
   eventType: z.enum(historyEventTypes),
   date: z.string().optional(),
   title: z.string().optional(),
-  media: mediaIdentitySchema.optional(),
-  episode: mediaIdentitySchema.optional(),
+  media: associatedMediaSchema.optional(),
+  episode: associatedEpisodeSchema.optional(),
   quality: z.string().optional(),
   indexer: indexerIdentitySchema.optional(),
-  downloadIdentity: z.string().optional(),
+  /** The same salted digest a queue row's origin carries, which is what
+   * correlates this record with the row it grabbed. */
+  downloadIdentity: downloadIdentitySchema.optional(),
   successful: z.boolean().optional(),
   /** Present at `full` detail only. */
   data: historyDataSchema.optional(),
@@ -187,12 +222,12 @@ export const activityBlocklistRecordSchema = z.strictObject({
   application: mediaApplicationSchema,
   title: z.string().optional(),
   date: z.string().optional(),
-  media: mediaIdentitySchema.optional(),
+  media: associatedMediaSchema.optional(),
   /**
    * Every episode the record names. It is a list where a queue row has one,
    * because a season pack is blocked as a single record covering all of them.
    */
-  episodes: z.array(mediaIdentitySchema).optional(),
+  episodes: z.array(associatedEpisodeSchema).optional(),
   quality: z.string().optional(),
   protocol: z.string().optional(),
   indexer: z.string().optional(),
