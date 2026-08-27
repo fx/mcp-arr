@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as z4mini from "zod/v4-mini";
+import type { ConfigurationDomain } from "../src/adapters/configuration/domains.js";
+import { applicationsForDomain } from "../src/adapters/configuration/domains.js";
 import type { ApplicationCapability } from "../src/adapters/registry.js";
 import { applicationIds } from "../src/applications.js";
 import { createWorkflowState } from "../src/state/workflow.js";
@@ -350,5 +352,22 @@ describe("internal operation registry", () => {
     expect(result.status).toBe("error");
     expect(result.applications).toEqual([]);
     expect(result.errors.map((error) => error.code)).toEqual(["unsupported_capability"]);
+  });
+});
+
+describe("the configuration operations", () => {
+  it("advertises each domain on exactly the applications that model it", () => {
+    // The registry and the route table are two statements about the same fact,
+    // and `arr_capabilities` reads the first while a call answers from the
+    // second. A domain advertised where no route exists would tell a caller a
+    // variant is available whose only possible answer is that it is not.
+    for (const operation of operationDefinitions) {
+      if (operation.tool !== "arr_config_observe" || operation.variant === undefined) {
+        continue;
+      }
+      expect([...operation.applications].sort(), operation.id).toEqual(
+        [...applicationsForDomain(operation.variant as ConfigurationDomain)].sort(),
+      );
+    }
   });
 });

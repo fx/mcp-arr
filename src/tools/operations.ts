@@ -577,7 +577,17 @@ const definitions = [
     configObserve,
   ),
   define("config.observe.metadata", "arr_config_observe", "metadata", media, "read", configObserve),
-  define("config.observe.proxies", "arr_config_observe", "proxies", every, "read", configObserve),
+  // Prowlarr alone: an indexer proxy is a Prowlarr concept, and the route table
+  // has no entry for the other two. Advertising it for them would tell a caller
+  // a variant is available whose only possible answer is that it is not.
+  define(
+    "config.observe.proxies",
+    "arr_config_observe",
+    "proxies",
+    prowlarr,
+    "read",
+    configObserve,
+  ),
   define(
     "config.observe.quality_profiles",
     "arr_config_observe",
