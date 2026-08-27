@@ -587,6 +587,21 @@ export async function runApplicationSync(
       ]
     : named;
 
+  // Which mappings exist at all, observed only where the command runs them all.
+  //
+  // A read set is compared key by key, and a key the plan never observed is
+  // deliberately not staleness — otherwise every plan would expire the moment an
+  // adapter learned to read one more thing. That is exactly wrong here: a mapping
+  // created after the plan was made has no key of its own, and the command would
+  // run it, deletions and all, without its effects ever having been disclosed.
+  // The membership of the set is one key that does move when that happens.
+  if (request.startSync) {
+    observations.push({
+      key: "mappings",
+      value: observation.mappings.map((mapping) => mapping.id).sort((left, right) => left - right),
+    });
+  }
+
   for (const target of disclosed) {
     const requested = named.includes(target);
     const mapping = observation.mappings.find((candidate) => candidate.id === target);

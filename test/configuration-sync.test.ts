@@ -667,6 +667,50 @@ describe("refusals and staleness", () => {
     expect(second.writes).toEqual([]);
   });
 
+  it("refuses a plan whose started synchronization would run a mapping nobody planned", async () => {
+    const first = instance();
+    const plan = planned(await first.run(request({ targets: [2], startSync: true })));
+    const { fingerprintReadSet } = await import("../src/state/plans.js");
+
+    // A mapping created since the plan was made has no key of its own, and a
+    // key the plan never observed is deliberately not staleness — so without
+    // observing the set itself the command would run this one's deletions
+    // without their ever having been disclosed.
+    const grown = instance({
+      collections: {
+        applications: [
+          ...records("applications"),
+          {
+            id: 4,
+            name: "Example New Application",
+            implementation: "Sonarr",
+            configContract: "SonarrSettings",
+            syncLevel: "fullSync",
+            tags: [],
+            fields: [],
+          },
+        ],
+      },
+    });
+    const outcome = await grown.run(
+      request({
+        targets: [2],
+        mode: "apply",
+        startSync: true,
+        planned: fingerprintReadSet(plan.observations),
+      }),
+    );
+
+    expect(failed(outcome).error.code).toBe("stale_plan");
+    expect(failed(outcome).error.message).toContain("mappings");
+    expect(grown.writes).toEqual([]);
+
+    // Without a synchronization the command runs nothing, so a mapping this
+    // call neither names nor writes is none of its business.
+    const quiet = planned(await first.run(request({ targets: [2], startSync: false })));
+    expect(quiet.observations.map((observation) => observation.key)).not.toContain("mappings");
+  });
+
   it("refuses a plan whose mapping now points somewhere else", async () => {
     const first = instance();
     const plan = planned(await first.run(request({ targets: [2] })));
