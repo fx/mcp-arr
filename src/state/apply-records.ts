@@ -155,7 +155,21 @@ export type ApplySettlement =
  * where to look — queue, history, command, library, or configuration state.
  */
 export type ApplyReconciliation =
-  | { readonly status: "succeeded"; readonly job?: string | undefined }
+  | {
+      readonly status: "succeeded";
+      readonly job?: string | undefined;
+      /**
+       * The per-item outcomes as reconciliation established them.
+       *
+       * Supplying these matters because the record's retained outcomes were
+       * written by the attempt whose answer was lost, so they say the outcome
+       * was unknown. A record whose state has since moved to `succeeded` while
+       * its items still report an unknown outcome contradicts itself, and a
+       * repeat is answered from both. A reader that can say what each item
+       * actually did replaces them; one that cannot leaves them as they were.
+       */
+      readonly items?: readonly ItemOutcome[] | undefined;
+    }
   | { readonly status: "failed"; readonly error: ToolError }
   /** Upstream could not answer either; the record stays outcome-unknown. */
   | { readonly status: "indeterminate" };
@@ -357,6 +371,13 @@ export function createApplyRecordStore(references: ReferenceStore, clock: Clock)
           settledAt: clock.now(),
           error: outcome.status === "failed" ? outcome.error : undefined,
           job: outcome.status === "succeeded" ? outcome.job : current.record.job,
+          // Kept as they were unless reconciliation established better ones,
+          // so a record never reports a settled state beside outcomes that
+          // contradict it.
+          items:
+            outcome.status === "succeeded"
+              ? (outcome.items ?? current.record.items)
+              : current.record.items,
         }),
       };
     },

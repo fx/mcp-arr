@@ -89,6 +89,7 @@ const allowedFiles = [
   "dist/tools/library.js",
   "dist/tools/names.js",
   "dist/tools/operations.js",
+  "dist/tools/queue-resolve.js",
   "dist/tools/register.js",
   "dist/tools/results.js",
   "dist/tools/schemas/acquisition-results.js",
