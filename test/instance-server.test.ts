@@ -43,6 +43,15 @@ async function call(
   return response.status;
 }
 
+/** Reads one of the instance's routes, as a client would, for what it answered. */
+async function read(running: FixtureInstance, route: string): Promise<unknown> {
+  const { apiBasePath } = describeApplication(running.application);
+  const response = await fetch(`${running.url}${apiBasePath}/${route}`, {
+    headers: { "X-Api-Key": running.apiKey },
+  });
+  return response.json() as Promise<unknown>;
+}
+
 /** Posts a body to one of the instance's write routes, as a client would. */
 async function post(
   running: FixtureInstance,
@@ -197,6 +206,10 @@ describe("the fixture instance's route and method surface", () => {
         body: { id: 12, monitored: false },
       }),
     ]);
+    // Read back, because recording a write and performing one are different
+    // things: a double that logged the request and kept the original record
+    // would satisfy every assertion above and none of this one.
+    expect(await read(sonarr, "series/12")).toEqual({ id: 12, monitored: false });
 
     // Removing it takes it out of both the record read and the collection, and
     // a second removal is the 404 a real instance gives — which is what makes a
@@ -217,6 +230,14 @@ describe("the fixture instance's route and method surface", () => {
 
     expect(await call(radarr, "POST", "movie", { tmdbId: 200004, title: "Example" })).toBe(201);
     expect(radarr.writes).toEqual([expect.objectContaining({ method: "POST", route: "movie" })]);
+
+    // The created record joins the collection under an identifier of its own,
+    // so a create that recorded the request and stored nothing would fail here.
+    const movies = (await read(radarr, "movie")) as Array<Record<string, unknown>>;
+    const created = movies.find((movie) => movie.title === "Example");
+    expect(created).toMatchObject({ tmdbId: 200004 });
+    expect(movies.filter((movie) => movie.id === created?.id)).toHaveLength(1);
+    expect(await read(radarr, `movie/${String(created?.id)}`)).toMatchObject({ tmdbId: 200004 });
   });
 
   it("refuses an unknown path and a wrong API key before anything else", async () => {
