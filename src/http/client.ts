@@ -39,6 +39,21 @@ export type UpstreamQuery = Readonly<Record<string, UpstreamQueryValue | undefin
  */
 export type UpstreamBody = Readonly<Record<string, unknown>>;
 
+/**
+ * One answer to a validating write: the status the instance chose, and whatever
+ * body came with it.
+ *
+ * `accepted` is the status class rather than an interpretation of the body,
+ * because what a body means is the domain adapter's business and what a status
+ * means is HTTP's.
+ */
+export interface UpstreamValidation {
+  readonly accepted: boolean;
+  readonly status: number;
+  /** Parsed where the instance sent JSON, `undefined` where it sent nothing. */
+  readonly body: unknown;
+}
+
 export interface UpstreamClient {
   readonly application: ApplicationId;
   /**
@@ -53,6 +68,23 @@ export interface UpstreamClient {
   post(path: string, body: UpstreamBody, query?: UpstreamQuery): Promise<unknown>;
   /** Replaces an upstream resource. Only a mutation adapter may call this. */
   put(path: string, body: UpstreamBody, query?: UpstreamQuery): Promise<unknown>;
+  /**
+   * Sends a write whose refusal is itself the answer.
+   *
+   * These APIs report a failed provider validation as a `400` whose body is the
+   * list of what failed, so a caller that only learned the status would have to
+   * report "the instance refused it" and could never say why, whether the
+   * refusal was a warning or an error, or which field it was about. That is the
+   * one case where the body of a rejection is the payload rather than a
+   * diagnostic, so this hands it back as data instead of discarding it.
+   *
+   * It is deliberately not the general write path. Only a transport failure
+   * throws here; a status the instance chose is returned, which means the
+   * caller takes on the job of deciding what the answer means — and the job of
+   * keeping the returned body out of anything published, since it is upstream
+   * content like any other.
+   */
+  validate(path: string, body: UpstreamBody, query?: UpstreamQuery): Promise<UpstreamValidation>;
   /**
    * Removes an upstream resource. Only a mutation adapter may call this.
    *
@@ -82,6 +114,18 @@ function buildQueryString(query: UpstreamQuery): string {
   }
   const encoded = params.toString();
   return encoded === "" ? "" : `?${encoded}`;
+}
+
+/** Parses a body that may not be JSON at all, which a rejection often is not. */
+function readJson(text: string): unknown {
+  if (text.trim() === "") {
+    return undefined;
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return undefined;
+  }
 }
 
 function discardBody(response: Response): void {
@@ -117,11 +161,29 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
    * which several upstream writes answer with — resolves as `undefined` rather
    * than as a parse failure.
    */
+  /**
+   * The one answer `send` gives instead of throwing, and only when asked.
+   *
+   * It exists so `validate` can read a rejection the instance chose without a
+   * second copy of the request path — the joining, the serialization, the
+   * timeout, and the redaction all have to be the same or a validating write
+   * would be a different request than every other write. Nothing else passes
+   * the flag that produces one, so no other method can receive it.
+   */
+  interface RetainedRejection {
+    readonly rejectedWithStatus: number;
+    readonly rejectedBody: unknown;
+  }
+
+  const isRetainedRejection = (value: unknown): value is RetainedRejection =>
+    typeof value === "object" && value !== null && "rejectedWithStatus" in value;
+
   const send = async (
     method: "GET" | "POST" | "PUT" | "DELETE",
     path: string,
     query: UpstreamQuery | undefined,
     body: UpstreamBody | undefined,
+    retainRejection = false,
   ): Promise<unknown> => {
     const joined = joinUpstreamUrl(apiBaseUrl, path);
     if (!joined.ok) {
@@ -181,6 +243,17 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
       }
 
       if (!response.ok) {
+        // A status below 500 is a decision the instance made about this request,
+        // and for a validating write that decision's body is the answer. Above
+        // it, the instance is reporting that it failed rather than that the
+        // request did, which is not something to hand back as a result.
+        if (retainRejection && response.status < 500) {
+          const rejected = await response.text().catch(() => "");
+          return {
+            rejectedWithStatus: response.status,
+            rejectedBody: readJson(rejected),
+          } satisfies RetainedRejection;
+        }
         discardBody(response);
         throw new UpstreamError(upstreamErrorKindForStatus(response.status), {
           application,
@@ -237,6 +310,21 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
 
     put(path: string, body: UpstreamBody, query?: UpstreamQuery): Promise<unknown> {
       return send("PUT", path, query, body);
+    },
+
+    async validate(
+      path: string,
+      body: UpstreamBody,
+      query?: UpstreamQuery,
+    ): Promise<UpstreamValidation> {
+      // The same request `post` sends, answered rather than thrown where the
+      // instance chose the status. A transport failure still throws, because a
+      // validation this server never received is not a validation that
+      // answered — and telling those apart is the whole point of the method.
+      const answered = await send("POST", path, query, body, true);
+      return isRetainedRejection(answered)
+        ? { accepted: false, status: answered.rejectedWithStatus, body: answered.rejectedBody }
+        : { accepted: true, status: 200, body: answered };
     },
 
     delete(path: string, query?: UpstreamQuery): Promise<unknown> {

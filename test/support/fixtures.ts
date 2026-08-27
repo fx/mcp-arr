@@ -61,6 +61,7 @@ const approvedRoutes: Readonly<Record<FixtureApplication, readonly string[]>> = 
     "indexer",
     "indexer/schema",
     "importlist",
+    "notification/test",
     "config/downloadclient",
     "importlistexclusion",
   ],

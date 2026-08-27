@@ -353,6 +353,60 @@ describe("createUpstreamClient", () => {
     expect(error.status).toBe(201);
   });
 
+  it("answers a validating write's rejection instead of throwing it away", async () => {
+    const findings = [{ isWarning: true, propertyName: "onGrab", errorMessage: "example" }];
+    const { client, calls } = harness(() => json(findings, 400));
+
+    const answered = await client.validate("notification/test", { id: 1 });
+
+    // The refusal is the answer for this endpoint, so the body comes back as
+    // data. Everything else about the request is what `post` would have sent.
+    expect(answered).toEqual({ accepted: false, status: 400, body: findings });
+    expect(calls[0]?.init.method).toBe("POST");
+    expect(calls[0]?.init.body).toBe(JSON.stringify({ id: 1 }));
+    expect(new Headers(calls[0]?.init.headers).get("X-Api-Key")).toBe(apiKey);
+  });
+
+  it("keeps a validating write's other failures failures", async () => {
+    // Above 500 the instance is reporting that it failed rather than that the
+    // request did, and a transport failure answered nothing at all. Neither is
+    // a validation result, so both still throw.
+    const { client: broken } = harness(() => json({ message: "boom" }, 503));
+    const serverError = await captureError(broken.validate("notification/test", { id: 1 }));
+    expect(serverError.kind).toBe("unexpected-response");
+
+    const { client: unreachable } = harness(() => {
+      throw new Error("connection reset");
+    });
+    const lost = await captureError(unreachable.validate("notification/test", { id: 1 }));
+    expect(lost.kind).toBe("unavailable");
+  });
+
+  it("answers an accepted validating write and a body-less one alike", async () => {
+    const { client: clean } = harness(() => json([], 200));
+    await expect(clean.validate("notification/test", { id: 1 })).resolves.toEqual({
+      accepted: true,
+      status: 200,
+      body: [],
+    });
+
+    const { client: silent } = harness(() => new Response(null, { status: 200 }));
+    await expect(silent.validate("notification/test", { id: 1 })).resolves.toEqual({
+      accepted: true,
+      status: 200,
+      body: undefined,
+    });
+
+    // A rejection that is not JSON at all is common for these endpoints, and it
+    // is still a rejection rather than a broken response.
+    const { client: prose } = harness(() => new Response("not json", { status: 400 }));
+    await expect(prose.validate("notification/test", { id: 1 })).resolves.toEqual({
+      accepted: false,
+      status: 400,
+      body: undefined,
+    });
+  });
+
   it("sends a delete with its query, its credential, and no body at all", async () => {
     const { client, calls } = harness(() => json({ id: 7001 }));
 
