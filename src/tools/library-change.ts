@@ -1150,33 +1150,56 @@ function resolveFileIdentity(
   if (!resolution.ok) {
     return {
       ok: false,
-      error: toolErrorForReferenceFailure(resolution.reason, "media_file", invocation.application),
+      error: toolErrorForReferenceFailure(resolution.reason, "media_file", application),
     };
   }
 
+  // Checked against the media application this call resolved, not against the
+  // invocation's own. The two agree today, because the media application is
+  // narrowed from it — but this function exists to validate a reference against
+  // the library instance being written to, and that is the value that says which
+  // one that is.
   const entry = resolution.entry;
-  if (!entry.applications.includes(invocation.application)) {
-    return { ok: false, error: invalid(invocation, "files names a different application") };
+  if (!entry.applications.includes(application)) {
+    return {
+      ok: false,
+      error: invalid(
+        invocation,
+        `this file reference belongs to ${entry.applications.join(" and ")}, and this call addressed ${application}`,
+      ),
+    };
   }
   if (entry.payload.kind !== "domain") {
-    return { ok: false, error: invalid(invocation, "files does not name a media file") };
+    return { ok: false, error: invalid(invocation, "this file reference does not name a file") };
   }
 
   const kind = entry.payload.snapshot.detail?.kind;
   if (kind !== "episode_file" && kind !== "movie_file") {
-    return { ok: false, error: invalid(invocation, "files does not name a media file") };
+    return { ok: false, error: invalid(invocation, "this file reference does not name a file") };
   }
   if (fileApplications[kind] !== application) {
-    return { ok: false, error: unsupported(invocation, `this application has no ${kind} records`) };
+    return {
+      ok: false,
+      error: unsupported(
+        invocation,
+        `this application has no ${kind.replaceAll("_", " ")} records`,
+      ),
+    };
   }
 
   const upstreamId = entry.payload.snapshot.upstreamId;
   if (!/^\d+$/u.test(upstreamId)) {
-    return { ok: false, error: invalid(invocation, "files does not name a single file") };
+    return {
+      ok: false,
+      error: invalid(invocation, "this file reference does not name a single file"),
+    };
   }
   const id = Number(upstreamId);
   if (!Number.isSafeInteger(id)) {
-    return { ok: false, error: invalid(invocation, "files does not name a single file") };
+    return {
+      ok: false,
+      error: invalid(invocation, "this file reference does not name a single file"),
+    };
   }
   return { ok: true, value: { kind, id } };
 }
@@ -1308,7 +1331,10 @@ async function readFileChanges(
     const options = await readQualityOptions(invocation.adapter.client, application);
     quality = matchOption(options, changes.quality);
     if (quality === undefined) {
-      return { ok: false, error: invalid(invocation, "this instance defines no such quality") };
+      return {
+        ok: false,
+        error: invalid(invocation, `this instance defines no quality named “${changes.quality}”`),
+      };
     }
     observe("quality", quality);
   }
@@ -1320,7 +1346,12 @@ async function readFileChanges(
     for (const name of changes.languages) {
       const matched = matchOption(options, name);
       if (matched === undefined) {
-        return { ok: false, error: invalid(invocation, "this instance knows no such language") };
+        return {
+          ok: false,
+          // Named, because a call listing several languages has to say which of
+          // them the instance did not recognize.
+          error: invalid(invocation, `this instance knows no language named “${name}”`),
+        };
       }
       languages.push(matched);
       observe("language", matched);

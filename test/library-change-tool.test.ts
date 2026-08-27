@@ -1435,6 +1435,9 @@ describe("arr_library_change update_file_metadata", () => {
     });
 
     expect(errorCodes(applied)).toContain("invalid_input");
+    // The name is what the caller has to correct, so the message says which one
+    // the instance did not recognize.
+    expect(outcomeFor(applied, "sonarr").error?.message).toContain("Remux-2160p");
     expect(writes("sonarr")).toEqual([]);
   });
 
@@ -1446,10 +1449,12 @@ describe("arr_library_change update_file_metadata", () => {
       intent: "update_file_metadata",
       mode: "apply",
       files: [requireReference(files[0]?.reference, "movie file")],
-      changes: { languages: ["Klingon"] },
+      changes: { languages: ["English", "Klingon"] },
     });
 
     expect(errorCodes(applied)).toContain("invalid_input");
+    // One of two named languages failed, so the message has to say which.
+    expect(outcomeFor(applied, "radarr").error?.message).toContain("Klingon");
     expect(writes("radarr")).toEqual([]);
   });
 
