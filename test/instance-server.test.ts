@@ -26,20 +26,30 @@ afterEach(async () => {
   await Promise.all(started.splice(0).map((running) => running.close()));
 });
 
+/** Calls one of the instance's routes, as a client would. */
+async function call(
+  running: FixtureInstance,
+  method: string,
+  route: string,
+  body?: unknown,
+): Promise<number> {
+  const { apiBasePath } = describeApplication(running.application);
+  const response = await fetch(`${running.url}${apiBasePath}/${route}`, {
+    method,
+    headers: { "Content-Type": "application/json", "X-Api-Key": running.apiKey },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  await response.text();
+  return response.status;
+}
+
 /** Posts a body to one of the instance's write routes, as a client would. */
 async function post(
   running: FixtureInstance,
   route: string,
   body: unknown,
 ): Promise<{ status: number }> {
-  const { apiBasePath } = describeApplication(running.application);
-  const response = await fetch(`${running.url}${apiBasePath}/${route}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Api-Key": running.apiKey },
-    body: JSON.stringify(body),
-  });
-  await response.text();
-  return { status: response.status };
+  return { status: await call(running, "POST", route, body) };
 }
 
 /** The route each application resolves a grab on. */
@@ -101,4 +111,64 @@ describe("the fixture instance's command route", () => {
       expect(running.commands).toEqual([{ name: body.name, body }]);
     });
   }
+
+  it("has no command route on Prowlarr to refuse a command on", async () => {
+    const running = await instance("prowlarr");
+
+    // 404, not the 400 a named-but-unknown command gets: Prowlarr exposes no
+    // command endpoint at all, and an implementation that tried to start a
+    // search there must see the route missing rather than a plausible refusal.
+    expect((await post(running, "command", { name: "MoviesSearch" })).status).toBe(404);
+    expect(running.commands).toEqual([]);
+  });
+});
+
+describe("the fixture instance's route and method surface", () => {
+  it("refuses a write on a route the application does not resolve one on", async () => {
+    const sonarr = await instance("sonarr");
+    const prowlarr = await instance("prowlarr");
+
+    // Each application writes on its own grab route and nowhere else, so a
+    // write aimed at another application's route is the 404 it would really be.
+    expect((await post(sonarr, "search", { guid: "example" })).status).toBe(404);
+    expect((await post(sonarr, "wanted/missing", { guid: "example" })).status).toBe(404);
+    expect((await post(prowlarr, "release", { guid: "example" })).status).toBe(404);
+    expect(sonarr.grabs).toEqual([]);
+    expect(prowlarr.grabs).toEqual([]);
+  });
+
+  it("refuses a read for a route another application answers", async () => {
+    const sonarr = await instance("sonarr");
+    const radarr = await instance("radarr");
+
+    expect(await call(sonarr, "GET", "movie")).toBe(404);
+    expect(await call(radarr, "GET", "series")).toBe(404);
+    expect(await call(radarr, "GET", "series/12")).toBe(404);
+    // Its own routes still answer, so the refusals above are about the route
+    // and not about the server having stopped serving.
+    expect(await call(sonarr, "GET", "series")).toBe(200);
+    expect(await call(sonarr, "GET", "series/12")).toBe(200);
+  });
+
+  it("refuses a method the route does not expose without answering the read", async () => {
+    const sonarr = await instance("sonarr");
+
+    // 405 where the route exists and 404 where it does not, so a client that
+    // reached for the wrong verb cannot be mistaken for one that got it right.
+    expect(await call(sonarr, "PUT", "series", { id: 12 })).toBe(405);
+    expect(await call(sonarr, "DELETE", "series/12")).toBe(405);
+    expect(await call(sonarr, "PUT", "movie", { id: 8 })).toBe(404);
+  });
+
+  it("refuses an unknown path and a wrong API key before anything else", async () => {
+    const sonarr = await instance("sonarr");
+    const { apiBasePath } = describeApplication("sonarr");
+
+    expect(await call(sonarr, "GET", "nothing/here")).toBe(404);
+    const unauthorized = await fetch(`${sonarr.url}${apiBasePath}/series`, {
+      headers: { "X-Api-Key": "wrong-key" },
+    });
+    await unauthorized.text();
+    expect(unauthorized.status).toBe(401);
+  });
 });

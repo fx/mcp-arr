@@ -69,6 +69,13 @@ function releasesFrom(indexerId: number, name: string): Record_[] {
 
 function respond(instance: Instance): (call: UpstreamCall) => Response | Promise<Response> {
   return (call) => {
+    // An aggregate search is a read on all three routes. A stub that answered a
+    // write with a search body would let a client that posted where it should
+    // have read pass unnoticed, so the method is checked as strictly as the
+    // route below is.
+    if (call.init.method !== "GET") {
+      throw new Error(`unexpected ${String(call.init.method)} to ${call.url.pathname}`);
+    }
     switch (call.url.pathname) {
       case "/api/v1/indexer":
         return jsonResponse(instance.indexers ?? fixtures.indexers);

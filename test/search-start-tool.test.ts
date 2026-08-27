@@ -52,7 +52,10 @@ interface UpstreamOptions {
 
 let statuses: Awaited<ReturnType<typeof loadStatusFixtures>>;
 const commandRecords = new Map<ApplicationId, Record<string, unknown>>();
-/** The recorded library records the precondition check reads, keyed by route. */
+/**
+ * The recorded library records the precondition check reads, keyed by
+ * application and route.
+ */
 const libraryRecords = new Map<string, Record<string, unknown>>();
 
 beforeAll(async () => {
@@ -74,7 +77,10 @@ beforeAll(async () => {
       application,
       route,
     )) {
-      libraryRecords.set(`${route}/${String(record.id)}`, record);
+      // Keyed by application as well as route: Sonarr does not hold Radarr's
+      // movies, and a stub that served them across applications would answer a
+      // request no instance could have answered.
+      libraryRecords.set(`${application}/${route}/${String(record.id)}`, record);
     }
   }
 });
@@ -88,9 +94,18 @@ function applicationForHost(host: string): ApplicationId {
   throw new Error(`Unexpected upstream host: ${host}`);
 }
 
+/** The applications that expose a command endpoint at all. Prowlarr does not. */
+const commandApplications: readonly ApplicationId[] = ["sonarr", "radarr"];
+
 /**
  * A stand-in instance that probes from the status fixtures and answers a
  * created command with the recorded command record, the way a real one does.
+ *
+ * It refuses what a real instance refuses: `command` is the only route it
+ * accepts a write on and only where the application exposes one, a command
+ * without a name is `400`, and any other method is `405`. A stub that answered
+ * every POST with a created command would pass an implementation that started
+ * its search by posting to the wrong endpoint entirely.
  */
 function upstream(options: UpstreamOptions = {}): Upstream {
   const requests: UpstreamRequest[] = [];
@@ -115,10 +130,19 @@ function upstream(options: UpstreamOptions = {}): Upstream {
     requests.push(request);
 
     if (request.method === "POST") {
+      if (route !== "command" || !commandApplications.includes(application)) {
+        return Promise.resolve(jsonResponse({ message: "not found" }, 404));
+      }
+      if (typeof request.body?.name !== "string") {
+        return Promise.resolve(jsonResponse({ message: "unknown command" }, 400));
+      }
       return Promise.resolve(
         options.command?.(request) ??
-          jsonResponse({ ...commandRecords.get(application), name: request.body?.name }, 201),
+          jsonResponse({ ...commandRecords.get(application), name: request.body.name }, 201),
       );
+    }
+    if (request.method !== "GET") {
+      return Promise.resolve(jsonResponse({ message: "method not allowed" }, 405));
     }
     if (route === "system/status") {
       return Promise.resolve(jsonResponse(statuses.get(application)?.body));
@@ -127,7 +151,7 @@ function upstream(options: UpstreamOptions = {}): Upstream {
     if (overridden !== undefined) {
       return Promise.resolve(overridden);
     }
-    const record = libraryRecords.get(route);
+    const record = libraryRecords.get(`${application}/${route}`);
     return Promise.resolve(
       record === undefined ? jsonResponse({ message: "not found" }, 404) : jsonResponse(record),
     );
@@ -182,6 +206,47 @@ function mintMedia(
     }),
   }).reference;
 }
+
+describe("the stand-in instance itself", () => {
+  const url = (application: ApplicationId, route: string): string =>
+    `https://${application}.example.invalid${describeApplication(application).apiBasePath}/${route}`;
+
+  it("accepts a command only where one exists, and only when it is named", async () => {
+    const instance = upstream();
+
+    // The tests below assert that a search was started by looking at what was
+    // posted, so the stub has to be the thing that would refuse the wrong post.
+    expect(
+      (await instance.fetch(url("sonarr", "command"), { method: "POST", body: "{}" })).status,
+    ).toBe(400);
+    expect(
+      (
+        await instance.fetch(url("sonarr", "series"), {
+          method: "POST",
+          body: JSON.stringify({ name: "SeriesSearch" }),
+        })
+      ).status,
+    ).toBe(404);
+    expect(
+      (
+        await instance.fetch(url("prowlarr", "command"), {
+          method: "POST",
+          body: JSON.stringify({ name: "SeriesSearch" }),
+        })
+      ).status,
+    ).toBe(404);
+    expect((await instance.fetch(url("sonarr", "series/12"), { method: "PUT" })).status).toBe(405);
+  });
+
+  it("serves each application only its own records", async () => {
+    const instance = upstream();
+
+    expect((await instance.fetch(url("sonarr", "series/12"), { method: "GET" })).status).toBe(200);
+    // The Radarr fixture holds movie 8; Sonarr must not answer for it.
+    expect((await instance.fetch(url("radarr", "movie/8"), { method: "GET" })).status).toBe(200);
+    expect((await instance.fetch(url("sonarr", "movie/8"), { method: "GET" })).status).toBe(404);
+  });
+});
 
 describe("arr_search_start plan mode", () => {
   it("sends no command, and discloses the one it would send with the caller's own references", async () => {

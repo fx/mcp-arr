@@ -14,6 +14,12 @@ import { fixtureRoot } from "./tool-context.js";
  * view that asks for one series' episodes gets one series' episodes rather than
  * whatever the file happens to hold. It is not, and must never become, a
  * reimplementation of an *arr API: it answers recorded routes and nothing else.
+ *
+ * What it refuses matters as much as what it answers, because a double that
+ * accepts what a real instance would reject stops being evidence about the
+ * client. A route this application does not expose is `404`, a method the route
+ * does not expose is `405`, a write missing the one field it exists to carry is
+ * `400`, and nothing is recorded as done until it has been accepted.
  */
 
 /**
@@ -190,6 +196,14 @@ export async function startFixtureInstance(
     response.end(JSON.stringify(body));
   };
 
+  /**
+   * Whether this application exposes the route at all. The table is per
+   * application because the applications differ, and a double that answered one
+   * application's route on another would let a request no instance could have
+   * served pass for a working one.
+   */
+  const answers = (candidate: string): boolean => routes[application].includes(candidate);
+
   const server: Server = createServer((request, response) => {
     if (options.unreachable === true) {
       request.socket.destroy();
@@ -243,7 +257,12 @@ export async function startFixtureInstance(
     // release the cache no longer holds. A command is accepted and echoed back
     // as a command record, which is what makes the started job projectable.
     if (request.method === "POST") {
-      if (route !== grabRoutes[application] && route !== "command") {
+      // Only where the application actually exposes the endpoint. Prowlarr has
+      // no commands, so a command sent to it is the `404` a real instance gives
+      // for a route that does not exist — not a refusal, which would read as an
+      // instance that has the endpoint and declined this particular command.
+      const writable = route === grabRoutes[application] || (route === "command" && answers(route));
+      if (!writable) {
         send(response, 404, { message: "not found" });
         return;
       }
@@ -285,8 +304,21 @@ export async function startFixtureInstance(
       return;
     }
 
-    const single = /^series\/(\d+)$/u.exec(route);
-    if (application === "sonarr" && single !== null) {
+    const single = application === "sonarr" ? /^series\/(\d+)$/u.exec(route) : null;
+
+    // Everything left is a read, so every other method is one this instance
+    // does not expose here. Answering it with the body a `GET` would have
+    // returned is the whole defect class: a client that reached for the wrong
+    // verb would be indistinguishable from one that got it right.
+    if (request.method !== "GET") {
+      const known = answers(route) || single !== null;
+      send(response, known ? 405 : 404, {
+        message: known ? "method not allowed" : "not found",
+      });
+      return;
+    }
+
+    if (single !== null) {
       const record = recordById(bodies.get("series"), Number(single[1]));
       send(response, record === undefined ? 404 : 200, record ?? { message: "not found" });
       return;
