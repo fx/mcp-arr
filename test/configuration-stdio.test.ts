@@ -357,6 +357,42 @@ describe("arr_config_reconcile over stdio", () => {
     }
   });
 
+  it("tests the credential the caller supplied rather than the stored one", async () => {
+    const sonarr = await instance("sonarr");
+    const child = spawnBuiltServer(instanceEnvironment([sonarr]), 10_000);
+
+    try {
+      await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
+      const target = await indexerReference(child, 2);
+
+      const applied = await reconcile(child, 3, {
+        intent: "test_provider",
+        mode: "apply",
+        application: "sonarr",
+        domain: "indexers",
+        target,
+        secrets: [{ name: "apiKey", value: "CANARY-SUPPLIED-FOR-TEST-0001" }],
+      });
+
+      expect(applied.isError).toBe(false);
+      // Testing a credential before committing it is what the channel is for,
+      // so the request carries the supplied value and not the stored one.
+      const body = sonarr.providerTests[0]?.body as {
+        fields?: readonly { name?: string; value?: unknown }[];
+      };
+      const apiKey = body.fields?.find((field) => field.name === "apiKey")?.value;
+      expect(apiKey).toBe("CANARY-SUPPLIED-FOR-TEST-0001");
+      // And the value is nowhere in what the caller is told.
+      expect(JSON.stringify(applied.envelope)).not.toContain("CANARY-SUPPLIED-FOR-TEST-0001");
+
+      await child.terminateGracefully();
+      assertCleanProtocolStdout(child.stdout);
+      expect(child.stdout).not.toContain("CANARY-SUPPLIED-FOR-TEST-0001");
+    } finally {
+      await child.forceCleanup().catch(() => undefined);
+    }
+  });
+
   it("refuses a bypass the instance's objections do not justify", async () => {
     // The instance answers the test with a failure rather than a warning. A
     // bypass overrides warnings and only warnings, so this is refused however

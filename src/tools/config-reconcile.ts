@@ -1,11 +1,15 @@
 import type { ConfigurationDomain, ProviderDomain } from "../adapters/configuration/domains.js";
 import { isProviderDomain } from "../adapters/configuration/domains.js";
 import type { ConfigurationRef } from "../adapters/configuration/model.js";
-import type { DesiredField } from "../adapters/configuration/patches.js";
+import { compileConfigurationPatch, type DesiredField } from "../adapters/configuration/patches.js";
 import {
   type ConfigurationReconcileOutcome,
   runConfigurationReconciliation,
 } from "../adapters/configuration/reconcile.js";
+import {
+  captureUpstreamResource,
+  type UpstreamValue,
+} from "../adapters/configuration/resources.js";
 import {
   collectTransientSecrets,
   type TransientSecrets,
@@ -20,9 +24,13 @@ import {
   describeExternalEffect,
   externalEffectOf,
   type ProviderTestResult,
+  providerTestObservations,
   runProviderTest,
 } from "../adapters/configuration/tests.js";
-import type { ConfigurationDiff } from "../adapters/configuration/write.js";
+import {
+  type ConfigurationDiff,
+  writeConfigurationPatch,
+} from "../adapters/configuration/write.js";
 import type { UpstreamBody } from "../http/client.js";
 import type { PreconditionRead, TransientSecret } from "../state/plans.js";
 import { fingerprintReadSet } from "../state/plans.js";
@@ -268,20 +276,31 @@ function publishDiff(invocation: OperationInvocation, diff: ConfigurationDiff): 
 }
 
 /**
- * The reference a per-item outcome names its mapping by.
+ * The per-item outcomes of one synchronization, named by the same minter its
+ * payload used.
  *
- * An item outcome is published beside the payload, so it is a second place an
- * identity can escape through: naming the mapping by its upstream row there
- * while the payload names it by token would leave the identifier reachable
- * anyway, and a caller could not use it in the tools that take references.
+ * An item outcome sits beside the payload, so it is a second place an identity
+ * could escape through — and a second minter would be a subtler version of the
+ * same defect: the mapping would carry one token in the payload and another in
+ * its own settlement, and a caller could not tell that the two are one row.
  */
-function mintedItems(invocation: OperationInvocation, ref: ConfigurationRef): string {
-  return referenceMinter(invocation.state.references)(ref);
+function syncItems(
+  items: readonly SyncItemOutcome[],
+  mint: (ref: ConfigurationRef) => string,
+): readonly ItemOutcome[] {
+  return items.map((item) => ({
+    reference: mint(item.ref),
+    status: item.error === undefined ? "ok" : "error",
+    warnings: [...item.warnings],
+    ...(item.error === undefined ? {} : { error: item.error }),
+  }));
 }
 
 /** Publishes each synchronized mapping, references and all. */
-function publishSync(invocation: OperationInvocation, items: readonly SyncItemOutcome[]): unknown {
-  const mint = referenceMinter(invocation.state.references);
+function publishSync(
+  items: readonly SyncItemOutcome[],
+  mint: (ref: ConfigurationRef) => string,
+): unknown {
   return {
     mappings: items.map((item) => ({
       reference: mint(item.ref),
@@ -590,16 +609,12 @@ async function readTestPreconditions(
 
   return {
     status: "ok",
-    // A test reads the provider it is about to contact, so the plan depends on
-    // that provider still being the one it read — and on nothing else, since a
-    // test writes nothing.
-    observations: [
-      { key: "provider", value: (payload.value as { id?: unknown }).id },
-      {
-        key: "provider-implementation",
-        value: (payload.value as { implementation?: unknown }).implementation,
-      },
-    ],
+    // A test sends the provider as the instance holds it, so the plan depends
+    // on the whole resource rather than on its identity: a URL or an account
+    // that moved between the plan and its apply would have the apply contact
+    // something the plan never disclosed. Credentials are folded to their
+    // configured state inside the digest, so a rotation expires nothing.
+    observations: providerTestObservations(payload.value),
     warnings: [],
     validated: context,
   };
@@ -636,6 +651,8 @@ async function readSyncPreconditions(
     return blocked(error(invocation, "conflict", "the plan phase reported an apply"));
   }
 
+  // One minter for this envelope; see syncItems.
+  const mint = referenceMinter(invocation.state.references);
   const removes = outcome.items.some((item) =>
     item.effects.some((entry) => entry.effect === "remove"),
   );
@@ -657,13 +674,8 @@ async function readSyncPreconditions(
     ],
     predicted: [],
     readSet: [...fingerprintReadSet(outcome.observations)],
-    data: publishSync(invocation, outcome.items),
-    items: outcome.items.map((item) => ({
-      reference: mintedItems(invocation, item.ref),
-      status: item.error === undefined ? "ok" : "error",
-      warnings: [...item.warnings],
-      ...(item.error === undefined ? {} : { error: item.error }),
-    })),
+    data: publishSync(outcome.items, mint),
+    items: syncItems(outcome.items, mint),
     sync: { targets, level, startSync: intent.startSync === true },
   };
 
@@ -707,7 +719,7 @@ export const configReconcileHandler: OperationHandler = async (invocation) => {
     return applySync(invocation, context, context.sync);
   }
   if (context.intent === "test_provider") {
-    return applyTest(invocation, context);
+    return applyTest(invocation, context, intent);
   }
   if (context.intent === "force_provider_save") {
     return applyBypass(invocation, context, intent);
@@ -772,6 +784,7 @@ async function applyReconcile(
 async function applyTest(
   invocation: OperationInvocation,
   context: ReconcileContext,
+  intent: DirectIntent,
 ): Promise<Awaited<ReturnType<OperationHandler>>> {
   const domain = context.domain;
   if (!isProviderDomain(domain)) {
@@ -780,7 +793,7 @@ async function applyTest(
       error: error(invocation, "invalid_input", "a provider test names a provider domain"),
     };
   }
-  const payload = await buildTestPayload(invocation, context, domain);
+  const payload = await buildTestPayload(invocation, context, intent, domain);
   if (!payload.ok) {
     return { status: "error", error: payload.error };
   }
@@ -861,12 +874,52 @@ async function applyBypass(
  * caller may have supplied a credential for the test to use and a payload
  * holding one must not sit in validated state.
  */
-function buildTestPayload(
+async function buildTestPayload(
   invocation: OperationInvocation,
   context: ReconcileContext,
+  intent: DirectIntent,
   domain: ProviderDomain,
 ): Promise<Resolved<UpstreamBody>> {
-  return readProviderPayload(invocation, domain, context.targetId);
+  const stored = await readProviderPayload(invocation, domain, context.targetId);
+  if (!stored.ok || (intent.secrets ?? []).length === 0) {
+    return stored;
+  }
+
+  // A supplied credential is written into the payload through the same writer a
+  // save uses, which is the point of the channel: testing a credential before
+  // committing it is what a caller supplies one for, and testing the stored one
+  // instead would answer a question nobody asked. The bundle is erased when the
+  // writer returns, exactly as it is for a save.
+  const bundle = bundleFor(intent);
+  if (!bundle.ok) {
+    return bundle;
+  }
+  const compilation = compileConfigurationPatch(invocation.application, domain, {
+    fields: [],
+    secretNames: bundle.value.names(),
+  });
+  if (compilation.status === "error") {
+    return { ok: false, error: compilation.error };
+  }
+  try {
+    const written = writeConfigurationPatch({
+      application: invocation.application,
+      resource: captureUpstreamResource(
+        invocation.application,
+        domain,
+        stored.value as UpstreamValue,
+      ),
+      patch: compilation.patch,
+      catalog: new Map(),
+      id: context.targetId,
+      secrets: bundle.value,
+    });
+    return written.status === "ok"
+      ? { ok: true, value: written.write.payload }
+      : { ok: false, error: written.error };
+  } finally {
+    bundle.value.erase();
+  }
 }
 
 async function applySync(
@@ -893,17 +946,14 @@ async function applySync(
     };
   }
 
-  const items: readonly ItemOutcome[] = outcome.items.map((item) => ({
-    reference: mintedItems(invocation, item.ref),
-    status: item.error === undefined ? "ok" : "error",
-    warnings: [...item.warnings],
-    ...(item.error === undefined ? {} : { error: item.error }),
-  }));
+  // One minter for this envelope, so the mapping a payload names and the
+  // mapping its own settlement names are the same token.
+  const mint = referenceMinter(invocation.state.references);
 
   return {
     status: "ok",
-    data: publishSync(invocation, outcome.items),
-    items,
+    data: publishSync(outcome.items, mint),
+    items: syncItems(outcome.items, mint),
     effects: context.effects,
     warnings: outcome.warnings,
     // Counted, never inferred: one mapping whose write timed out produces the
