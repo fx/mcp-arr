@@ -488,8 +488,16 @@ function replayReceipt(options: RunOptions, existing: ApplyRecord): OperationRun
  * The three answers are not interchangeable. One whose answer was lost settles
  * as outcome-unknown and stays reconcilable; a mutation nothing was sent for
  * settles as `failed`, which is the one state a later identical attempt may
- * reuse; everything else succeeded. Per-item outcomes are retained whichever it
- * is, because a repeat is answered entirely from the receipt.
+ * reuse; everything else succeeded.
+ *
+ * Only the first two retain the per-item outcomes, because only they are ever
+ * answered from. A repeat of a succeeded or outcome-unknown apply is served
+ * entirely from its receipt, so a bulk mutation that partly failed has to keep
+ * saying so. A `failed` receipt is never served from at all — the next
+ * identical attempt re-runs the mutation and produces outcomes of its own,
+ * which is the same fact that makes reusing that record safe. This call's
+ * caller still sees them: they travel in the response envelope, which is where
+ * outcomes nothing will be asked for a second time belong.
  *
  * An unknown outcome is checked first, and the order is the safety property. A
  * handler that reports both is saying it sent something whose result it could
