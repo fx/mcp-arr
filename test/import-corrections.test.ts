@@ -112,6 +112,7 @@ function retainedFor(overrides: Partial<ImportCandidateContext> = {}): ImportCan
     candidateId: 3001,
     queueItemId: 502,
     mediaId: 12,
+    queueMediaId: 12,
     seasonNumber: 1,
     episodeIds: [1001],
     fileIdentity: fileIdentity(cleanFile),
@@ -169,6 +170,47 @@ describe("the corrections a caller may make", () => {
     expect(compilation.compiled.patch.quality).toMatchObject({ name: "WEBDL-720p" });
   });
 
+  it("carries all five through to the payload and nothing a caller invented", async () => {
+    const running = instance();
+    await reprocessCandidate(
+      running.client,
+      "sonarr",
+      { sourceKind: "tracked_download", queueItemId: 502, mediaId: 12 },
+      fileIdentity(cleanFile),
+      (
+        await compiled({
+          mediaId: 13,
+          episodeIds: [1004],
+          quality: "WEBDL-720p",
+          languages: ["French"],
+          releaseGroup: "OtherGroup",
+        })
+      ).patch,
+    );
+
+    // The intermediate patch is not the guarantee — the row that was sent is.
+    // This is the one payload in the project that names files on disk, so each
+    // correction is checked where it actually lands.
+    const sent = running.posted[0];
+    expect(sent).toMatchObject({
+      series: { id: 13 },
+      episodeIds: [1004],
+      quality: { quality: { name: "WEBDL-720p" } },
+      languages: [{ name: "French" }],
+      releaseGroup: "OtherGroup",
+    });
+    expect(sent?.episodes).toEqual([{ id: 1004 }]);
+
+    // The control: a field the compilation does not produce cannot appear,
+    // whatever a caller put in the object it started from. The payload's keys
+    // are the instance's own row plus the five corrections and the download
+    // identity, so anything else would have come from somewhere it should not.
+    const invented = Object.keys(sent ?? {}).filter(
+      (key) => !Object.keys(sonarr.candidates[0] ?? {}).includes(key),
+    );
+    expect(invented.sort()).toEqual(["downloadId", "episodeIds"]);
+  });
+
   it("costs no request where nothing it names has to be resolved", async () => {
     const running = instance();
     await compileCorrections(running.client, "sonarr", { releaseGroup: "OtherGroup" });
@@ -216,6 +258,21 @@ describe("the corrections a caller may make", () => {
 });
 
 describe("reprocessing a correction", () => {
+  it("re-reads the queue row through its own association, not the corrected one", async () => {
+    const running = instance();
+    // The mapping has been corrected to another series; the download is still
+    // filed under the one it arrived under.
+    await validateForImport(running.client, "sonarr", {
+      retained: retainedFor({ mediaId: 13, queueMediaId: 12 }),
+      patch: {},
+      destination: "/media/example/series",
+    });
+
+    // Scoping that read by the corrected mapping would look for the row under a
+    // series it was never under, and report the file as gone.
+    expect(running.calls[0]?.url.searchParams.get("seriesId")).toBe("12");
+  });
+
   it("re-derives the file's location instead of remembering it", async () => {
     const running = instance();
     const result = await reprocessCandidate(
@@ -348,6 +405,26 @@ describe("free space", () => {
     expect(JSON.stringify(fits)).not.toContain("/media");
   });
 
+  it("matches a mount on a path component rather than on a prefix", async () => {
+    const running = instance({
+      diskspace: [{ path: "/media", freeSpace: 5_000, totalSpace: 9_000 }],
+    });
+
+    // `/media` is not the mount for `/media2`: it is a different disk, and
+    // reading its free space would approve an import against somewhere the
+    // file will never be written.
+    expect(await checkFreeSpace(running.client, "sonarr", "/media2/example", 1_000)).toMatchObject({
+      status: "unknown",
+    });
+    expect(await checkFreeSpace(running.client, "sonarr", "/media/example", 1_000)).toMatchObject({
+      status: "sufficient",
+    });
+    // The mount itself is under itself.
+    expect(await checkFreeSpace(running.client, "sonarr", "/media", 1_000)).toMatchObject({
+      status: "sufficient",
+    });
+  });
+
   it("prefers the longest matching mount over the root it sits under", async () => {
     const running = instance({
       diskspace: [
@@ -380,9 +457,6 @@ describe("free space", () => {
 
     // A precondition nobody could check has not been met, so it does not pass.
     expect(await checkFreeSpace(running.client, "sonarr", "/media/example", 1_000)).toMatchObject({
-      status: "unknown",
-    });
-    expect(await checkFreeSpace(running.client, "sonarr", undefined, 1_000)).toMatchObject({
       status: "unknown",
     });
     expect(
@@ -468,6 +542,20 @@ describe("validating immediately before an import", () => {
     // Checked before the rejections, because the remedy differs: this caller is
     // sent to the library-file workflow rather than told to fix a mapping.
     expect(result).toMatchObject({ status: "refused", refusal: { kind: "existing_file" } });
+  });
+
+  it("refuses an import whose space could not be established at all", async () => {
+    const running = instance({ diskspace: [] });
+
+    const result = await validateForImport(running.client, "sonarr", {
+      retained: retainedFor(),
+      patch: {},
+      destination: "/media/example/series",
+    });
+
+    // Not the same as fitting. An unreachable or unreported mount read as room
+    // enough is the one reading this check exists to prevent.
+    expect(result).toMatchObject({ status: "refused", refusal: { kind: "unverified_space" } });
   });
 
   it("refuses an import the destination has no room for", async () => {

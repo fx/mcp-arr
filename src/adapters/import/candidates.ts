@@ -562,6 +562,16 @@ export function mapCandidate(
   const known = knownLiterals(context, record);
   const rejections = candidateRejections(context, record);
   const importable = rejections.length === 0;
+  // Derived once and used by both the candidate and its context, for the reason
+  // every other value here is: two derivations of one fact are two things that
+  // can disagree, and a context disagreeing with what was displayed would bind
+  // a reference to a mapping nobody was shown.
+  const quality = candidateQuality(record, known);
+  const languages = safeLabelList(
+    (record.languages ?? []).map((language) => language.name),
+    known,
+  );
+  const releaseGroup = scrubLabel(record.releaseGroup, known);
 
   return {
     application,
@@ -581,12 +591,9 @@ export function mapCandidate(
       episodeIds.length === 0
         ? undefined
         : episodeIds.map((id) => mediaRef("sonarr", "episode", id)),
-    quality: candidateQuality(record, known),
-    languages: safeLabelList(
-      (record.languages ?? []).map((language) => language.name),
-      known,
-    ),
-    releaseGroup: scrubLabel(record.releaseGroup, known),
+    quality,
+    languages,
+    releaseGroup,
     releaseType: scrubLabel(record.releaseType, known),
     customFormats: safeLabelList(
       (record.customFormats ?? []).map((format) => format.name),
@@ -607,12 +614,21 @@ export function mapCandidate(
       queueItemId: context.queueItemId,
       mediaId,
       scanMediaId: context.sourceKind === "library_context" ? context.mediaId : undefined,
+      // The scan context's own media is the queue row's association, because
+      // that is where it came from; the mapping's media is the one above, and a
+      // correction moves only that one.
+      queueMediaId: context.sourceKind === "tracked_download" ? context.mediaId : undefined,
       seasonNumber,
       episodeIds: episodeIds.length === 0 ? undefined : episodeIds,
       fileIdentity: identity,
       sizeBytes,
       existingFileId,
       importable,
+      selected: present({
+        quality: quality?.name,
+        languages: languages === undefined ? undefined : [...languages],
+        releaseGroup,
+      }),
     },
   };
 }

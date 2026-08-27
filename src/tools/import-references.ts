@@ -89,6 +89,8 @@ const candidateDetailSchema = z
     mediaId: recordIdSchema.optional(),
     /** The record a library-context scan was scoped to. */
     scanMediaId: recordIdSchema.optional(),
+    /** The media the queue row is filed under, which a correction cannot move. */
+    queueMediaId: recordIdSchema.optional(),
     seasonNumber: seasonNumberSchema.optional(),
     episodeIds: z.array(recordIdSchema).optional(),
     /**
@@ -110,6 +112,22 @@ const candidateDetailSchema = z
      * part of it has to be here, or resolution could never recompute it.
      */
     importable: z.boolean(),
+    /**
+     * The corrected mapping fields the record carries as text rather than as an
+     * identifier.
+     *
+     * Retained because the requirement is that a fingerprint cover every
+     * selected mapping field, and these three are the ones no number stands
+     * for. A candidate corrected to one quality and imported as another would
+     * be exactly the mismatch the fingerprint exists to catch.
+     */
+    selected: z
+      .strictObject({
+        quality: z.string().min(1).optional(),
+        languages: z.array(z.string().min(1)).optional(),
+        releaseGroup: z.string().min(1).optional(),
+      })
+      .optional(),
   })
   .refine(
     (detail) =>
@@ -192,9 +210,14 @@ function detailFor(candidate: ImportCandidate): Record<string, unknown> | undefi
     queueItemId: context.queueItemId,
     mediaId,
     scanMediaId: context.scanMediaId,
+    queueMediaId: context.queueMediaId,
     seasonNumber: candidate.seasonNumber,
     episodeIds: candidate.episodes === undefined ? undefined : episodeIds,
     fileIdentity: candidate.fileIdentity,
+    // Read off the candidate rather than off its context, for the same reason
+    // the mapping identifiers above are: what is stored has to be what was
+    // displayed, or a reference would bind a mapping nobody was shown.
+    selected: presentSelection(candidate),
     sizeBytes: candidate.sizeBytes,
     // The boolean the caller saw decides whether the identifier is stored at
     // all, so a candidate presented as a new import cannot be bound to a
@@ -266,6 +289,10 @@ export function fingerprintFor(detail: CandidateDetail): string {
     // consume the download. Omitting it while including the library scan's own
     // record would have been an asymmetry with no reason behind it.
     detail.queueItemId,
+    // The queue row's own association, because a later step re-reads the row
+    // through it: a plan made when the download sat under one series must not
+    // apply after it was refiled under another.
+    detail.queueMediaId,
     detail.fileIdentity,
     detail.sizeBytes,
     detail.mediaId,
@@ -274,6 +301,12 @@ export function fingerprintFor(detail: CandidateDetail): string {
     ...[...(detail.episodeIds ?? [])].sort((left, right) => left - right),
     detail.existingFileId,
     detail.importable,
+    // The selected mapping's text fields, in a fixed order. Every field a
+    // caller may correct is now covered: the media, the season and the episodes
+    // by the identifiers above, and these three by name.
+    detail.selected?.quality,
+    ...[...(detail.selected?.languages ?? [])],
+    detail.selected?.releaseGroup,
   ]);
 }
 
@@ -315,6 +348,22 @@ function storableDetail(candidate: ImportCandidate): CandidateDetail | undefined
   }
   const parsed = candidateDetailSchema.safeParse(detail);
   return parsed.success ? parsed.data : undefined;
+}
+
+/**
+ * The corrected mapping fields worth storing, or nothing where none were shown.
+ *
+ * An object with every member absent is not stored at all: it would fingerprint
+ * identically to its absence, and a field that cannot change a digest is
+ * decoration in a structure whose whole point is that every part of it can.
+ */
+function presentSelection(candidate: ImportCandidate): Record<string, unknown> | undefined {
+  const selection = {
+    ...(candidate.quality?.name === undefined ? {} : { quality: candidate.quality.name }),
+    ...(candidate.languages === undefined ? {} : { languages: [...candidate.languages] }),
+    ...(candidate.releaseGroup === undefined ? {} : { releaseGroup: candidate.releaseGroup }),
+  };
+  return Object.keys(selection).length === 0 ? undefined : selection;
 }
 
 function mediaKindFor(candidate: ImportCandidate): string {
@@ -436,5 +485,7 @@ function contextFrom(
     sizeBytes: detail.sizeBytes,
     existingFileId: detail.existingFileId,
     importable: detail.importable,
+    queueMediaId: detail.queueMediaId,
+    selected: detail.selected,
   };
 }

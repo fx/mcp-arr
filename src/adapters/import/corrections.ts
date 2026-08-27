@@ -219,6 +219,28 @@ export function staleFacts(
   return moved;
 }
 
+/**
+ * Whether a destination sits under a mount, by path component rather than by
+ * prefix.
+ *
+ * A raw prefix makes `/media` look like the mount for `/media2/show`, which is
+ * a different disk entirely — so an import could be approved against the free
+ * space of somewhere it will never be written, or refused because of it. The
+ * separator is checked in both forms because these instances run on both kinds
+ * of platform, and the mount path is the instance's own rather than a caller's.
+ */
+function isUnderMount(destination: string, mount: string): boolean {
+  const root = mount.replace(/[\\/]+$/u, "");
+  if (root === "") {
+    return true;
+  }
+  if (destination === root) {
+    return true;
+  }
+  const next = destination.slice(root.length, root.length + 1);
+  return destination.startsWith(root) && (next === "/" || next === "\\");
+}
+
 const diskSpaceRoute = "diskspace";
 
 const diskSpaceSchema = z.object({
@@ -254,10 +276,10 @@ export interface FreeSpaceCheck {
 export async function checkFreeSpace(
   client: UpstreamClient,
   application: MediaApplication,
-  destination: string | undefined,
+  destination: string,
   requiredBytes: number | undefined,
 ): Promise<FreeSpaceCheck> {
-  if (requiredBytes === undefined || destination === undefined) {
+  if (requiredBytes === undefined) {
     return { status: "unknown" };
   }
 
@@ -275,7 +297,7 @@ export async function checkFreeSpace(
     if (path === undefined || path === "" || free === undefined) {
       continue;
     }
-    if (!destination.startsWith(path)) {
+    if (!isUnderMount(destination, path)) {
       continue;
     }
     if (best === undefined || path.length > best.path.length) {
@@ -300,7 +322,9 @@ export type ImportRefusal =
   | { readonly kind: "existing_file" }
   | { readonly kind: "rejected"; readonly rejections: readonly ImportRejection[] }
   | { readonly kind: "stale"; readonly moved: readonly string[] }
-  | { readonly kind: "no_space"; readonly space: FreeSpaceCheck };
+  | { readonly kind: "no_space"; readonly space: FreeSpaceCheck }
+  /** The space could not be established, which is not the same as fitting. */
+  | { readonly kind: "unverified_space"; readonly space: FreeSpaceCheck };
 
 export interface ImportValidation {
   /** The candidate as the instance decides it now, not as it was inspected. */
@@ -318,8 +342,15 @@ export interface ImportValidationRequest {
   readonly retained: ImportCandidateContext;
   /** The mapping the caller selected, re-sent exactly as it will be imported. */
   readonly patch: UpstreamMappingPatch;
-  /** The path the file would import to, for the space check. Never published. */
-  readonly destination?: string | undefined;
+  /**
+   * The path the file would import to, for the space check. Never published.
+   *
+   * Required rather than optional: free space is an apply-time precondition, so
+   * a caller that could omit the destination could skip the check by omission —
+   * and the type is the place to make that impossible rather than the place to
+   * document that it would be bad.
+   */
+  readonly destination: string;
 }
 
 /**
@@ -348,7 +379,11 @@ export async function validateForImport(
     queueItemId: retained.queueItemId,
     scanMediaId: retained.scanMediaId,
     seasonNumber: retained.seasonNumber,
-    mediaId: retained.mediaId,
+    // The queue row's own association rather than the mapping's. A correction
+    // moves the mapping and cannot move where the download is filed, so
+    // scoping the queue read by the corrected value would look for the row
+    // under a series it was never under — and report the file as gone.
+    mediaId: retained.queueMediaId,
   };
 
   const reprocessed = await reprocessCandidate(
@@ -383,6 +418,12 @@ export async function validateForImport(
   const space = await checkFreeSpace(client, application, request.destination, candidate.sizeBytes);
   if (space.status === "insufficient") {
     return { status: "refused", refusal: { kind: "no_space", space } };
+  }
+  // A precondition nobody could check has not been met. Falling through here
+  // would let an unreachable or unreported mount read as room enough, which is
+  // the one reading this check exists to prevent.
+  if (space.status === "unknown") {
+    return { status: "refused", refusal: { kind: "unverified_space", space } };
   }
 
   return { status: "ok", validation: { candidate, space } };
