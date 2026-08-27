@@ -359,6 +359,51 @@ describe("reprocessing a correction", () => {
     expect(result.status).toBe("absent");
     expect(running.posted).toEqual([]);
   });
+
+  it.each([
+    { sourceKind: "tracked_download", missing: "queue row" },
+    { sourceKind: "library_context", missing: "library record" },
+  ] as const)(
+    "refuses an origin naming no $missing without reaching for anything",
+    async ({ sourceKind }) => {
+      const running = instance();
+      const result = await reprocessCandidate(
+        running.client,
+        "sonarr",
+        // The identifier this kind of scan is re-read through is not there. No
+        // number stands in for it: substituting one would read an unrelated
+        // record, or report a malformed reference as a target that has gone.
+        { sourceKind, mediaId: 12 },
+        fileIdentity(cleanFile),
+        {},
+      );
+
+      expect(result.status).toBe("unmapped");
+      if (result.status === "unmapped") {
+        expect(result.error.code).toBe("conflict");
+      }
+      // Refused where it was discovered, so nothing was asked of the instance
+      // at all — not the queue, not the record, not the scan.
+      expect(running.calls).toEqual([]);
+      expect(running.posted).toEqual([]);
+    },
+  );
+
+  it("refuses an origin whose identifier is the applications' own zero", async () => {
+    const running = instance();
+    const result = await reprocessCandidate(
+      running.client,
+      "sonarr",
+      // Zero is how both applications report "no record", so it is refused for
+      // the same reason an absent identifier is rather than sent as a row.
+      { sourceKind: "library_context", scanMediaId: 0 },
+      fileIdentity(cleanFile),
+      {},
+    );
+
+    expect(result.status).toBe("unmapped");
+    expect(running.calls).toEqual([]);
+  });
 });
 
 describe("what blocks an import", () => {

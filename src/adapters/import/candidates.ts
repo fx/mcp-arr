@@ -828,14 +828,25 @@ export async function reprocessCandidate(
   identity: string,
   patch: UpstreamMappingPatch,
 ): Promise<ReprocessResult> {
+  // An origin whose own identifier is missing names nothing, and there is no
+  // number that stands in for one: substituting a default would turn an absent
+  // identifier into a real-looking one and send it to the instance, where it
+  // would either read an unrelated record or come back as "gone" — reporting a
+  // malformed reference as a target that used to exist. It is refused here,
+  // where it is discovered, before any upstream read.
+  const anchor = origin.sourceKind === "tracked_download" ? origin.queueItemId : origin.scanMediaId;
+  if (anchor === undefined || !isRecordIdentifier(anchor)) {
+    return { status: "unmapped", error: scanRefusal(application, "unmapped") };
+  }
+
   const resolved =
     origin.sourceKind === "tracked_download"
       ? await readTrackedScanContext(client, application, {
-          queueItemId: origin.queueItemId ?? 0,
+          queueItemId: anchor,
           mediaId: origin.mediaId,
         })
       : await readLibraryScanContext(client, application, {
-          mediaId: origin.scanMediaId ?? 0,
+          mediaId: anchor,
           seasonNumber: origin.seasonNumber,
         });
   if (!resolved.ok) {
