@@ -43,6 +43,11 @@ That is deliberate. A plan is worth reading only if it describes the request the
 `OperationSideEffect` in `src/tools/operations.ts` is a single value per operation, and `arr_capabilities` reports it. An intent that does two consequential things therefore cannot say both there: `config.reconcile.force_provider_save` writes configuration *and*, on every apply, tests the provider first, which contacts whatever that provider is configured against. It is declared `mutate`, because the save is what it is for, and the contact is disclosed where a caller actually reads it — the tool's own annotation already declares `openWorldHint`, and the intent's *requested* effects name the contact in both plan and apply, unconditionally rather than as a prediction.
 
 Asking for the declaration to become `external` instead is a false positive: that trades one omission for a worse one, since a client would then read a configuration write as a read-only probe. Asking for a second declaration field is a change to change 0002's published capability contract, not a fix to this intent.
+## Zod 4 `.int()` Already Means Safe Integer
+
+In the pinned zod 4, `z.number().int()` accepts only safe integers — `2 ** 53` and larger are refused, as are fractions and infinities; verified by parsing those values against the pinned version. So `z.number().int().positive()` already means "positive safe integer", and reporting it as missing a `Number.isSafeInteger` check is a false positive. That was true of zod 3, whose `.int()` used `Number.isInteger`.
+
+Where a schema and an adapter must agree on such a rule, share one predicate rather than writing the constraint twice — see `isRecordIdentifier`, `isSeasonNumber` and `isFileSize` in `src/adapters/import/model.ts`.
 
 ## Zod 4 Schema Conventions
 

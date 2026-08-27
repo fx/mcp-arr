@@ -1,0 +1,160 @@
+{
+  "metadata": {
+    "application": "sonarr",
+    "apiVersion": "v3",
+    "version": "4.0.19.2979",
+    "endpoint": "/api/v3/manualimport"
+  },
+  "body": [
+    {
+      "id": 3001,
+      "path": "/media/example/downloads/complete/example-series/Example Series - S01E01 - Example Pilot Bluray-1080p.mkv",
+      "relativePath": "Example Series - S01E01 - Example Pilot Bluray-1080p.mkv",
+      "folderName": "example-series",
+      "name": "Example Series - S01E01 - Example Pilot Bluray-1080p",
+      "size": 3221225472,
+      "series": {
+        "id": 12,
+        "title": "Example Series"
+      },
+      "seasonNumber": 1,
+      "episodes": [
+        {
+          "id": 1001,
+          "episodeNumber": 1,
+          "seasonNumber": 1
+        }
+      ],
+      "quality": {
+        "quality": {
+          "id": 6,
+          "name": "Bluray-1080p",
+          "source": "bluray",
+          "resolution": 1080
+        },
+        "revision": {
+          "version": 2,
+          "real": 0,
+          "isRepack": false
+        }
+      },
+      "languages": [
+        {
+          "id": 1,
+          "name": "English"
+        }
+      ],
+      "releaseGroup": "ExampleGroup",
+      "releaseType": "singleEpisode",
+      "qualityWeight": 1080,
+      "customFormats": [
+        {
+          "id": 2,
+          "name": "Example Format"
+        }
+      ],
+      "customFormatScore": 25,
+      "indexerFlags": ["freeleech"],
+      "episodeFileId": 0,
+      "rejections": []
+    },
+    {
+      "id": 3002,
+      "path": "/media/example/downloads/complete/example-series/Season 02/Example Series - S02E05 - Example Second WEBDL-720p.mkv",
+      "relativePath": "Season 02/Example Series - S02E05 - Example Second WEBDL-720p.mkv",
+      "folderName": "example-series",
+      "name": "Example Series - S02E05 - Example Second WEBDL-720p",
+      "size": 1610612736,
+      "series": {
+        "id": 12,
+        "title": "Example Series"
+      },
+      "seasonNumber": 2,
+      "episodes": [],
+      "quality": {
+        "quality": {
+          "id": 4,
+          "name": "WEBDL-720p",
+          "source": "web",
+          "resolution": 720
+        },
+        "revision": {
+          "version": 1,
+          "real": 0,
+          "isRepack": true
+        }
+      },
+      "languages": [
+        {
+          "id": 1,
+          "name": "English"
+        }
+      ],
+      "releaseGroup": null,
+      "releaseType": "seasonPack",
+      "qualityWeight": 720,
+      "customFormats": [],
+      "customFormatScore": 0,
+      "indexerFlags": [],
+      "episodeFileId": 0,
+      "rejections": [
+        {
+          "reason": "Unable to parse episode from filename at /media/example/downloads/complete/example-series/Season 02",
+          "type": "permanent"
+        }
+      ]
+    },
+    {
+      "id": 3003,
+      "path": "/media/example/downloads/complete/example-series/Example Series - S01E02 - Example Existing Bluray-1080p.mkv",
+      "relativePath": "Example Series - S01E02 - Example Existing Bluray-1080p.mkv",
+      "folderName": "example-series",
+      "name": "Example Series - S01E02 - Example Existing Bluray-1080p",
+      "size": 3006477107,
+      "series": {
+        "id": 12,
+        "title": "Example Series"
+      },
+      "seasonNumber": 1,
+      "episodes": [
+        {
+          "id": 1002,
+          "episodeNumber": 2,
+          "seasonNumber": 1
+        }
+      ],
+      "quality": {
+        "quality": {
+          "id": 6,
+          "name": "Bluray-1080p",
+          "source": "bluray",
+          "resolution": 1080
+        },
+        "revision": {
+          "version": 1,
+          "real": 0,
+          "isRepack": false
+        }
+      },
+      "languages": [
+        {
+          "id": 1,
+          "name": "English"
+        }
+      ],
+      "releaseGroup": "ExampleGroup",
+      "releaseType": "singleEpisode",
+      "qualityWeight": 1080,
+      "customFormats": [],
+      "customFormatScore": 0,
+      "indexerFlags": [],
+      "episodeFileId": 5001,
+      "rejections": [
+        {
+          "reason": "Episode file already imported at this quality",
+          "type": "temporary"
+        }
+      ]
+    }
+  ]
+}
