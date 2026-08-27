@@ -196,21 +196,25 @@ describe("arr_job_cancel", () => {
       {
         acknowledgement: { kind: "accepted" } as const,
         outcome: "cancelled",
+        status: "ok",
         receipt: "succeeded",
       },
       {
         acknowledgement: { kind: "requested" } as const,
         outcome: "cancellation_requested",
+        status: "ok",
         receipt: "succeeded",
       },
       {
         acknowledgement: { kind: "rejected" } as const,
         outcome: "uncancellable",
+        status: "ok",
         receipt: "succeeded",
       },
       {
         acknowledgement: { kind: "already_finished", status: "completed" } as const,
         outcome: "completed",
+        status: "ok",
         receipt: "succeeded",
       },
       {
@@ -219,8 +223,10 @@ describe("arr_job_cancel", () => {
           failure: { kind: "timeout", message: "sonarr: the request timed out" },
         } as const,
         outcome: "unknown",
-        // An unconfirmed request may well have reached the application, so the
-        // receipt must not claim the mutation succeeded.
+        // An unconfirmed request may well have reached the application, so
+        // neither the receipt nor the envelope claims the mutation succeeded —
+        // the projection still reports what was observed.
+        status: "error",
         receipt: "outcome_unknown",
       },
     ];
@@ -229,7 +235,7 @@ describe("arr_job_cancel", () => {
       const job = running(acknowledging(scenario.acknowledgement));
       const result = await cancel(job.context, job.record.reference);
 
-      expect(result.status, scenario.outcome).toBe("ok");
+      expect(result.status, scenario.outcome).toBe(scenario.status);
       expect(projectionOf(result).outcome, scenario.outcome).toBe(scenario.outcome);
       expect(result.mutation?.receipt?.state, scenario.outcome).toBe(scenario.receipt);
     }

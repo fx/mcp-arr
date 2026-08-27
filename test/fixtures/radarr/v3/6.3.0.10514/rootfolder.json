@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "application": "radarr",
+    "apiVersion": "v3",
+    "version": "6.3.0.10514",
+    "endpoint": "/api/v3/rootfolder"
+  },
+  "body": [
+    {
+      "id": 1,
+      "path": "/media/example/movies",
+      "accessible": true,
+      "freeSpace": 824633720832,
+      "unmappedFolders": []
+    }
+  ]
+}

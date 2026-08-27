@@ -6,6 +6,7 @@ import {
   type WantedReason,
 } from "../../adapters/library/model.js";
 import {
+  configurationReferenceSchema,
   mediaApplicationSchema,
   mediaFileReferenceSchema,
   mediaReferenceSchema,
@@ -39,11 +40,17 @@ const mediaStatisticsSchema = z.strictObject({
 });
 
 /**
- * A pointer at a configuration object by the application's own identifier.
- * Reading the configuration objects themselves belongs to change 0008, so this
- * is not an opaque reference and no tool accepts it as one.
+ * A pointer at a configuration object a library record uses.
+ *
+ * It carries both forms of identity for the same reason a record does: the
+ * application's own identifier so a caller can line the value up against what
+ * the application's interface shows, and an opaque process-local reference,
+ * which is the only form the library mutations accept. Reading the
+ * configuration objects themselves still belongs to change 0008; this names
+ * one without describing it.
  */
 const configurationPointerSchema = z.strictObject({
+  reference: configurationReferenceSchema,
   application: mediaApplicationSchema,
   kind: z.enum(configurationPointerKinds),
   id: z.string(),
@@ -307,14 +314,20 @@ const calendarEventSchema = z.strictObject({
 export type LibraryCalendarEvent = z.infer<typeof calendarEventSchema>;
 
 const lookupResultShape = {
+  /**
+   * The opaque reference `arr_library_change` accepts as an add candidate.
+   * Absent when the application reported no metadata identifier for the result,
+   * which is the one case there is nothing for an add intent to name.
+   */
+  reference: mediaReferenceSchema.optional(),
   title: z.string(),
   sortTitle: z.string().optional(),
   year: z.number().optional(),
   status: z.string().optional(),
   /**
    * The library record this result already matches, when the application
-   * reports one. It is the only link a lookup result carries: reading a lookup
-   * result adds nothing, and the add intent belongs to change 0009.
+   * reports one. Reading a lookup result still adds nothing; the link is what
+   * lets an add intent refuse to create a duplicate.
    */
   existing: mediaIdentitySchema.optional(),
   detail: mediaDetailSchema.optional(),

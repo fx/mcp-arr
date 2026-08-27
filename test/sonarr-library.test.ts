@@ -435,6 +435,9 @@ describe("sonarr library reads", () => {
     expect(lookupResults(ok.data)).toEqual([
       {
         application: "sonarr",
+        // The candidate's own identity is its metadata identifier, which is
+        // what an add intent names; it is not the library record's id.
+        ref: { application: "sonarr", kind: "series_lookup", id: "100001" },
         title: "Example Series",
         sortTitle: "example series",
         year: 2019,
@@ -446,6 +449,7 @@ describe("sonarr library reads", () => {
       },
       {
         application: "sonarr",
+        ref: { application: "sonarr", kind: "series_lookup", id: "100004" },
         title: "Example New Series",
         sortTitle: "example new series",
         year: 2026,

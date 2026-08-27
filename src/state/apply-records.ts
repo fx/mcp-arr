@@ -1,7 +1,7 @@
 import type { ApplicationId } from "../applications.js";
 import type { ToolError } from "../tools/errors.js";
 import type { ProjectedToolName } from "../tools/names.js";
-import type { ApplyRecordState } from "../tools/results.js";
+import type { ApplyRecordState, ItemOutcome } from "../tools/results.js";
 import type { Clock } from "./clock.js";
 import { readTransientSecrets } from "./plans.js";
 import type { ReferenceEntry, ReferenceFailureReason, ReferenceStore } from "./references.js";
@@ -34,6 +34,16 @@ export interface ApplyRecord {
   readonly error?: ToolError | undefined;
   /** The job this mutation started, when it started one. */
   readonly job?: string | undefined;
+  /**
+   * The per-item outcomes the mutation reported, retained because the receipt
+   * is the whole of what a repeat is answered from.
+   *
+   * A bulk mutation is not transactional, so one that partly failed is a normal
+   * result rather than an error — and a record that kept only its state would
+   * answer the repeat with an unqualified success, concealing exactly the
+   * partial failure the caller repeated it to see.
+   */
+  readonly items?: readonly ItemOutcome[] | undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -126,10 +136,18 @@ export type ApplyAttempt =
   | { readonly status: "replayed"; readonly record: ApplyRecord };
 
 export type ApplySettlement =
-  | { readonly status: "succeeded"; readonly job?: string | undefined }
+  | {
+      readonly status: "succeeded";
+      readonly job?: string | undefined;
+      readonly items?: readonly ItemOutcome[] | undefined;
+    }
   | { readonly status: "failed"; readonly error: ToolError }
   /** The request may have been accepted and the answer was lost. */
-  | { readonly status: "outcome_unknown"; readonly error: ToolError };
+  | {
+      readonly status: "outcome_unknown";
+      readonly error: ToolError;
+      readonly items?: readonly ItemOutcome[] | undefined;
+    };
 
 /**
  * What authoritative upstream state says about a mutation whose outcome was
@@ -292,6 +310,10 @@ export function createApplyRecordStore(references: ReferenceStore, clock: Clock)
         settledAt: clock.now(),
         error: settlement.status === "succeeded" ? undefined : settlement.error,
         job: settlement.status === "succeeded" ? settlement.job : resolution.record.job,
+        items:
+          settlement.status === "failed"
+            ? resolution.record.items
+            : (settlement.items ?? resolution.record.items),
       });
     },
 

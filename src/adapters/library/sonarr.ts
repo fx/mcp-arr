@@ -333,8 +333,10 @@ export async function lookupSeries(
     window,
     map: (result): LookupResult => {
       const existingId = count(result.id);
+      const tvdbId = count(result.tvdbId);
       return {
         application,
+        ref: tvdbId === undefined ? undefined : mediaRef(application, "series_lookup", tvdbId),
         title: result.title,
         sortTitle: text(result.sortTitle),
         year: count(result.year),
@@ -345,7 +347,7 @@ export async function lookupSeries(
             : mediaRef(application, "series", existingId),
         detail: request.detail === "full" ? present(seriesDetail(result)) : undefined,
         sonarr: {
-          tvdbId: count(result.tvdbId),
+          tvdbId,
           seriesType: text(result.seriesType),
           network: text(result.network),
         },

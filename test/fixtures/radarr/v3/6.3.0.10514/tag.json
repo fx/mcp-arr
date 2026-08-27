@@ -1,0 +1,18 @@
+{
+  "metadata": {
+    "application": "radarr",
+    "apiVersion": "v3",
+    "version": "6.3.0.10514",
+    "endpoint": "/api/v3/tag"
+  },
+  "body": [
+    {
+      "id": 7,
+      "label": "example-tag"
+    },
+    {
+      "id": 8,
+      "label": "example-archive"
+    }
+  ]
+}

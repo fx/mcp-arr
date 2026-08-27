@@ -15,6 +15,7 @@ import {
 import { createToolError, type ToolError } from "./errors.js";
 import { jobCancelHandler, jobCancelPreconditions, jobGetHandler } from "./jobs.js";
 import { libraryQueryHandler } from "./library.js";
+import { libraryChangeHandler, libraryChangePreconditions } from "./library-change.js";
 import type { ProjectedToolName, ToolName } from "./names.js";
 import type { Effect, ItemOutcome } from "./results.js";
 import type { Continuation } from "./schemas/common.js";
@@ -58,6 +59,14 @@ export interface OperationInvocation {
   readonly state: WorkflowState;
   /** Set when this invocation is applying a recorded plan. */
   readonly plan?: PlanRecord | undefined;
+  /**
+   * What this operation's own {@link OperationDefinition.readPreconditions}
+   * reader resolved for this call, or `undefined` for an operation with no
+   * reader. A handler that needs current state receives the state that was just
+   * validated rather than re-reading it, so nothing can change between the
+   * check and the write.
+   */
+  readonly validated?: unknown;
 }
 
 /**
@@ -97,6 +106,24 @@ export type OperationOutcome =
        * confirmed, and the record stays reconcilable against upstream state.
        */
       readonly outcomeUnknown?: ToolError;
+      /**
+       * Set when the handler can show that no upstream request was dispatched,
+       * and says why.
+       *
+       * The receipt then settles as `failed` — the one state a later identical
+       * attempt may reuse — because recording it as a success would answer that
+       * attempt from a receipt for a mutation that never happened, and a
+       * transient failure would become permanent for that exact input.
+       *
+       * "Can show" is the whole of the contract. A handler must set this from
+       * something it observed — a request it never sent, a payload the client
+       * refused before dispatch — and never from an aggregate of item failures,
+       * which is equally true of a single write that timed out. Reporting a
+       * mutation that may have applied as one that certainly did not is the one
+       * direction a receipt must never round in, so where this and
+       * {@link outcomeUnknown} disagree, the unknown outcome wins.
+       */
+      readonly unattempted?: ToolError;
     }
   | {
       readonly status: "error";
@@ -233,6 +260,18 @@ const libraryQuery: DefineOptions = { handler: libraryQueryHandler };
  * which the handler re-validates against the published schema.
  */
 const releaseSearch: DefineOptions = { handler: releaseSearchHandler };
+
+/**
+ * Every implemented `arr_library_change` intent runs the same handler behind
+ * the same precondition reader. Pairing them here rather than per variant is
+ * what makes a mutation unreachable without its current-state validation: an
+ * intent registered with the handler and without the reader would apply
+ * against state nothing had checked.
+ */
+const libraryChange: DefineOptions = {
+  handler: libraryChangeHandler,
+  readPreconditions: libraryChangePreconditions,
+};
 
 const every = ["sonarr", "radarr", "prowlarr"] as const;
 const media = ["sonarr", "radarr"] as const;
@@ -510,9 +549,30 @@ const definitions = [
   define("import.execute", "arr_import_execute", undefined, media, "destructive"),
 
   // arr_library_change
-  define("library.change.add_media", "arr_library_change", "add_media", media, "mutate"),
-  define("library.change.set_monitoring", "arr_library_change", "set_monitoring", media, "mutate"),
-  define("library.change.edit_media", "arr_library_change", "edit_media", media, "mutate"),
+  define(
+    "library.change.add_media",
+    "arr_library_change",
+    "add_media",
+    media,
+    "mutate",
+    libraryChange,
+  ),
+  define(
+    "library.change.set_monitoring",
+    "arr_library_change",
+    "set_monitoring",
+    media,
+    "mutate",
+    libraryChange,
+  ),
+  define(
+    "library.change.edit_media",
+    "arr_library_change",
+    "edit_media",
+    media,
+    "mutate",
+    libraryChange,
+  ),
   define("library.change.delete_media", "arr_library_change", "delete_media", media, "destructive"),
   define(
     "library.change.update_file_metadata",

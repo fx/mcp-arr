@@ -51,6 +51,9 @@ const approvedRoutes: Readonly<Record<FixtureApplication, readonly string[]>> = 
     "health",
     "command",
     "diskspace",
+    "rootfolder",
+    "qualityprofile",
+    "tag",
   ],
   radarr: [
     "system/status",
@@ -70,6 +73,9 @@ const approvedRoutes: Readonly<Record<FixtureApplication, readonly string[]>> = 
     "health",
     "command",
     "diskspace",
+    "rootfolder",
+    "qualityprofile",
+    "tag",
   ],
   prowlarr: [
     "system/status",

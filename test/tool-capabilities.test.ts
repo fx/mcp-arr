@@ -299,6 +299,9 @@ describe("arr_capabilities", () => {
       "arr_release_search/sonarr_season",
       "arr_job_get/-",
       "arr_release_grab/-",
+      "arr_library_change/add_media",
+      "arr_library_change/set_monitoring",
+      "arr_library_change/edit_media",
       "arr_job_cancel/-",
     ]);
     expect(reportFor(result, "radarr").supportedOperations.map(operationKey)).toEqual([
@@ -312,6 +315,9 @@ describe("arr_capabilities", () => {
       "arr_release_search/radarr_movie",
       "arr_job_get/-",
       "arr_release_grab/-",
+      "arr_library_change/add_media",
+      "arr_library_change/set_monitoring",
+      "arr_library_change/edit_media",
       "arr_job_cancel/-",
     ]);
     expect(reportFor(result, "prowlarr").supportedOperations.map(operationKey)).toEqual([

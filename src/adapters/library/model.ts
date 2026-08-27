@@ -38,11 +38,24 @@ export const mediaRecordKinds = ["series", "season", "episode", "movie", "collec
 
 export const mediaFileKinds = ["episode_file", "movie_file"] as const;
 
-export const mediaKinds = [...mediaRecordKinds, ...mediaFileKinds] as const;
+/**
+ * The metadata candidates a lookup answers with.
+ *
+ * A candidate is not a library record: it is a result the application matched
+ * in its metadata source, identified by that source's own identifier rather
+ * than by a library id. It is its own kind so an add intent can only ever be
+ * given something a lookup produced, and so a candidate reference can never be
+ * supplied where a record reference is required.
+ */
+export const mediaLookupKinds = ["series_lookup", "movie_lookup"] as const;
+
+export const mediaKinds = [...mediaRecordKinds, ...mediaFileKinds, ...mediaLookupKinds] as const;
 
 export type MediaRecordKind = (typeof mediaRecordKinds)[number];
 
 export type MediaFileKind = (typeof mediaFileKinds)[number];
+
+export type MediaLookupKind = (typeof mediaLookupKinds)[number];
 
 export type MediaKind = (typeof mediaKinds)[number];
 
@@ -61,6 +74,15 @@ export interface MediaRef {
 /** An identity that names a library record rather than a file under one. */
 export interface MediaRecordRef extends MediaRef {
   readonly kind: MediaRecordKind;
+}
+
+/**
+ * An identity that names a metadata candidate. Its `id` is the metadata
+ * source's identifier — a TVDB id for Sonarr, a TMDB id for Radarr — because a
+ * candidate that is not in the library has no library id to be named by.
+ */
+export interface MediaLookupRef extends MediaRef {
+  readonly kind: MediaLookupKind;
 }
 
 /**
@@ -350,14 +372,20 @@ export interface CalendarEvent {
 }
 
 interface LookupResultBase {
+  /**
+   * The candidate's own metadata identity, absent when the application reported
+   * no metadata identifier for it. A result with no identity cannot be added,
+   * because nothing would name which candidate to add.
+   */
+  readonly ref?: MediaLookupRef | undefined;
   readonly title: string;
   readonly sortTitle?: string | undefined;
   readonly year?: number | undefined;
   readonly status?: string | undefined;
   /**
    * The library record this result already matches, when the application
-   * reports one. It is the only link a lookup result carries: reading a lookup
-   * result adds nothing and implies no add, which change 0009 owns.
+   * reports one. Reading a lookup result still adds nothing: the link is what
+   * lets an add intent refuse to create a duplicate.
    */
   readonly existing?: MediaRecordRef | undefined;
   readonly detail?: MediaDetail | undefined;

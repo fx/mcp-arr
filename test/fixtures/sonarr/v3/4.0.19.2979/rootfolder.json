@@ -1,0 +1,24 @@
+{
+  "metadata": {
+    "application": "sonarr",
+    "apiVersion": "v3",
+    "version": "4.0.19.2979",
+    "endpoint": "/api/v3/rootfolder"
+  },
+  "body": [
+    {
+      "id": 1,
+      "path": "/media/example/series",
+      "accessible": true,
+      "freeSpace": 549755813888,
+      "unmappedFolders": []
+    },
+    {
+      "id": 2,
+      "path": "/media/example/archive",
+      "accessible": true,
+      "freeSpace": 274877906944,
+      "unmappedFolders": []
+    }
+  ]
+}

@@ -427,6 +427,9 @@ describe("radarr library reads", () => {
     expect(lookupResults(ok.data)).toEqual([
       {
         application: "radarr",
+        // The candidate's own identity is its metadata identifier, which is
+        // what an add intent names; it is not the library record's id.
+        ref: { application: "radarr", kind: "movie_lookup", id: "200001" },
         title: "Example Movie",
         sortTitle: "example movie",
         year: 2021,
@@ -437,6 +440,7 @@ describe("radarr library reads", () => {
       },
       {
         application: "radarr",
+        ref: { application: "radarr", kind: "movie_lookup", id: "200004" },
         title: "Example Unadded Movie",
         sortTitle: "example unadded movie",
         year: 2018,
