@@ -246,9 +246,21 @@ export interface HistoryData {
   readonly elapsedTimeMs?: number | undefined;
 }
 
+/**
+ * The adapter context one history record's opaque reference is minted from.
+ *
+ * `mediaId` is retained for the same reason a queue row's is: it is what keeps a
+ * later read bounded. Marking a grab failed has to re-read the record it names
+ * immediately before writing, and a media application answers one series' or
+ * movie's whole history directly — so a record that carries its association is
+ * re-read with one scoped request instead of paging back through everything
+ * that has happened since. Prowlarr history has no media association and simply
+ * carries none.
+ */
 export interface HistoryRecordContext {
   readonly application: ApplicationId;
   readonly historyRecordId: number;
+  readonly mediaId?: number | undefined;
 }
 
 export interface HistoryRecord {

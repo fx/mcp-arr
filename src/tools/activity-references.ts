@@ -64,6 +64,14 @@ export interface QueueReferenceContext {
 export interface HistoryReferenceContext {
   readonly application: ApplicationId;
   readonly historyRecordId: number;
+  /**
+   * The series or movie the record was associated with, where upstream named
+   * one. It is retained for the same reason a queue reference retains its: a
+   * mark-failed has to re-read the record it names immediately before writing,
+   * and this is what lets that read be one scoped request instead of a walk
+   * back through the instance's whole history.
+   */
+  readonly mediaId?: number | undefined;
 }
 
 export interface BlocklistReferenceContext {
@@ -120,6 +128,7 @@ function historyFingerprint(record: HistoryRecord): string {
     record.eventType,
     record.date,
     record.successful,
+    record.context.mediaId,
   ]);
 }
 
@@ -175,7 +184,14 @@ export function mintHistoryReference(references: ReferenceStore, record: History
       snapshot: {
         upstreamId: String(record.context.historyRecordId),
         fingerprint: historyFingerprint(record),
-        detail: { kind: detailKinds.history, eventType: record.eventType },
+        detail: {
+          kind: detailKinds.history,
+          eventType: record.eventType,
+          // The media association and nothing else about the media record: it
+          // is an identifier this server already reports as a media reference,
+          // and it is what bounds the re-read a later mark-failed performs.
+          mediaId: record.context.mediaId,
+        },
       },
     }),
   }).reference;
@@ -205,6 +221,50 @@ function invalid(application: ApplicationId, message: string): ToolError {
     message: `${application}: ${message}`,
     application,
   });
+}
+
+/**
+ * What each kind of activity record is called in a message.
+ *
+ * The labels are keyed by the stored discriminant so a rejection can name the
+ * sort of record the caller asked for rather than the generic word "activity
+ * record", which tells a reader nothing about which half of its input was
+ * wrong. They are constants authored here: a message must never interpolate
+ * anything read back out of a snapshot, because that content is influenced by
+ * whatever produced the reference.
+ */
+const detailKindLabels: Readonly<Record<string, string>> = {
+  [detailKinds.queue]: "queue item",
+  [detailKinds.history]: "history record",
+  [detailKinds.blocklist]: "blocklist record",
+};
+
+/**
+ * The retained fields a resolution can fail on, named for a message.
+ *
+ * A corrupt retained field is a different failure from a reference that does
+ * not name the right sort of record, and the two must not share a message: the
+ * record's own identity may be perfectly good while the state stored beside it
+ * is not, and a message blaming the identity sends the reader to look at the
+ * half that is fine. Like the labels above, these are closed values.
+ */
+const retainedParts = {
+  status: "retained queue status",
+  trackedState: "retained tracked download state",
+  mediaId: "retained media association",
+} as const;
+
+type RetainedPart = (typeof retainedParts)[keyof typeof retainedParts];
+
+/** Reports the one retained field that was unusable, naming it and nothing else. */
+function corruptRetained(
+  application: ApplicationId,
+  property: string,
+  detailKind: string,
+  part: RetainedPart,
+): ToolError {
+  const label = detailKindLabels[detailKind] ?? "activity record";
+  return invalid(application, `${property} names a ${label} whose ${part} is unusable`);
 }
 
 interface ResolveOptions {
@@ -245,11 +305,14 @@ function resolveRecord(
     };
   }
 
+  const label = detailKindLabels[options.detailKind] ?? "activity record";
   const payload = entry.payload;
   if (payload.kind !== "domain" || payload.snapshot.detail?.kind !== options.detailKind) {
+    // The sort of record that was required, not the generic word: a blocklist
+    // reference supplied where a history record belongs has to read as such.
     return {
       ok: false,
-      error: invalid(application, `${options.property} does not name an activity record`),
+      error: invalid(application, `${options.property} does not name a ${label}`),
     };
   }
 
@@ -261,7 +324,7 @@ function resolveRecord(
   if (!Number.isSafeInteger(id)) {
     return {
       ok: false,
-      error: invalid(application, `${options.property} does not name a single record`),
+      error: invalid(application, `${options.property} does not name a single ${label}`),
     };
   }
   return { ok: true, value: { id, detail: payload.snapshot.detail } };
@@ -350,12 +413,22 @@ export function resolveQueueReference(
   // tracked state and a media association are not: a pending release has no
   // tracked state, and upstream does not always associate a row with a media
   // record.
-  if (
-    status.state !== "present" ||
-    trackedState.state === "invalid" ||
-    mediaId.state === "invalid"
-  ) {
-    return { ok: false, error: invalid(application, `${property} does not name a queue item`) };
+  //
+  // Each is reported as itself. Collapsing the three into "does not name a
+  // queue item" would name the one thing that did not fail — the row's identity
+  // is intact in all three cases — and send the reader to look at it.
+  const corruptQueue = (part: RetainedPart): ReferenceResolved<QueueReferenceContext> => ({
+    ok: false,
+    error: corruptRetained(application, property, detailKinds.queue, part),
+  });
+  if (status.state !== "present") {
+    return corruptQueue(retainedParts.status);
+  }
+  if (trackedState.state === "invalid") {
+    return corruptQueue(retainedParts.trackedState);
+  }
+  if (mediaId.state === "invalid") {
+    return corruptQueue(retainedParts.mediaId);
   }
 
   // Derived from the status rather than read back, by the same function the
@@ -400,9 +473,34 @@ export function resolveHistoryReference(
     detailKind: detailKinds.history,
     property,
   });
-  return record.ok
-    ? { ok: true, value: { application, historyRecordId: record.value.id } }
-    : record;
+  if (!record.ok) {
+    return record;
+  }
+
+  // A media association this module never wrote is legitimately absent — a
+  // Prowlarr history record has none, and neither does a media row upstream
+  // could not associate. One holding something this module would never have
+  // written is refused rather than dropped: silently continuing without it
+  // would turn a corrupt reference into an unbounded history walk.
+  //
+  // What failed is the association, not the record: the history identifier this
+  // reference names may be perfectly good, and saying it "does not name a
+  // history record" would blame the half that is intact.
+  const mediaId = storedId(record.value.detail.mediaId);
+  if (mediaId.state === "invalid") {
+    return {
+      ok: false,
+      error: corruptRetained(application, property, detailKinds.history, retainedParts.mediaId),
+    };
+  }
+  return {
+    ok: true,
+    value: {
+      application,
+      historyRecordId: record.value.id,
+      mediaId: mediaId.state === "present" ? mediaId.value : undefined,
+    },
+  };
 }
 
 export function resolveBlocklistReference(

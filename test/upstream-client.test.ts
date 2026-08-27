@@ -353,6 +353,95 @@ describe("createUpstreamClient", () => {
     expect(error.status).toBe(201);
   });
 
+  it("sends a delete with its query, its credential, and no body at all", async () => {
+    const { client, calls } = harness(() => json({ id: 7001 }));
+
+    await expect(client.delete("blocklist/7001")).resolves.toEqual({ id: 7001 });
+    await expect(
+      client.delete("queue/502", { removeFromClient: true, blocklist: false }),
+    ).resolves.toEqual({ id: 7001 });
+
+    const removed = calls[0];
+    expect(removed?.url).toBe("https://sonarr.example.invalid/sonarr/api/v3/blocklist/7001");
+    expect(removed?.init.method).toBe("DELETE");
+    expect(removed?.init.body).toBeUndefined();
+    const headers = new Headers(removed?.init.headers);
+    expect(headers.get("X-Api-Key")).toBe(apiKey);
+    expect(headers.get("Accept")).toBe("application/json");
+    // No body means no type describing one, which is what keeps a delete from
+    // looking like a write that simply forgot its payload.
+    expect(headers.get("Content-Type")).toBeNull();
+    expect(removed?.init.signal).toBeInstanceOf(AbortSignal);
+
+    // The flags that change what a delete means travel as query parameters an
+    // adapter authors, in the same sorted order every other request uses.
+    expect(calls[1]?.url).toBe(
+      "https://sonarr.example.invalid/sonarr/api/v3/queue/502?blocklist=false&removeFromClient=true",
+    );
+  });
+
+  it("resolves a delete the instance accepted without a body", async () => {
+    // Pinned rather than left as an inference from the method gate: both
+    // applications answer a single-record removal with no content, and either
+    // status has to resolve rather than fail to parse an empty body.
+    for (const response of [
+      () => new Response(null, { status: 204 }),
+      () => new Response("", { status: 200 }),
+    ]) {
+      const { client } = harness(response);
+      await expect(client.delete("blocklist/7001")).resolves.toBeUndefined();
+    }
+  });
+
+  it("redacts a failed delete exactly as it redacts a failed read and write", async () => {
+    for (const status of [400, 401, 404, 429, 500]) {
+      const { client } = harness(() => json({ message: `raw upstream body ${apiKey}` }, status));
+      const error = await captureError(client.delete("blocklist/7001"));
+      expect(error.kind).toBe(upstreamErrorKindForStatus(status));
+      expect(error.status).toBe(status);
+      expect(error.operation).toBe("blocklist/7001");
+      const disclosed = `${error.message}\n${JSON.stringify(error.toJSON())}`;
+      expect(disclosed).not.toContain(apiKey);
+      expect(disclosed).not.toContain("raw upstream body");
+    }
+  });
+
+  it("reports an unreachable instance and a silent one the same way for a delete", async () => {
+    const unreachable = harness(() => {
+      throw new TypeError(`fetch failed for https://user:${apiKey}@sonarr.example.invalid`);
+    });
+    const failure = await captureError(unreachable.client.delete("blocklist/7001"));
+    expect(failure.kind).toBe("unavailable");
+    expect(failure.message).not.toContain(apiKey);
+
+    const silent = harness(
+      (call) =>
+        new Promise<Response>((_resolve, reject) => {
+          call.init.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+            once: true,
+          });
+        }),
+      { timeoutMs: 5 },
+    );
+    const timeout = await captureError(silent.client.delete("blocklist/7001"));
+    expect(timeout.kind).toBe("timeout");
+    expect(timeout.message).toContain("timed out after 5ms");
+    expect(silent.calls[0]?.init.signal?.aborted).toBe(true);
+  });
+
+  it("refuses an unusable path on a delete and reports a non-JSON success body", async () => {
+    const { client, calls } = harness(() => json({ id: 7001 }));
+    const rejection = client.delete("../../admin");
+    await expect(rejection).rejects.toBeInstanceOf(UpstreamError);
+    expect((await captureError(rejection)).pathProblem).toBe("relative-segment");
+    expect(calls).toEqual([]);
+
+    const html = harness(() => new Response("<html>gone</html>", { status: 200 }));
+    const error = await captureError(html.client.delete("blocklist/7001"));
+    expect(error.kind).toBe("unexpected-response");
+    expect(error.status).toBe(200);
+  });
+
   it("normalizes an unusable path into an UpstreamError instead of a raw Error", async () => {
     const { client, calls } = harness(() => json({ version: "4.0.19.2979" }));
     const unusable: ReadonlyArray<readonly [string, UpstreamPathProblem]> = [

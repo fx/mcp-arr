@@ -260,7 +260,13 @@ describe("sonarr history, blocklist, health, command, and disk reads", () => {
       "grabbed",
       "download_folder_imported",
     ]);
-    expect(records[0]?.context).toEqual({ application: "sonarr", historyRecordId: 9001 });
+    // The media association is retained in the context as well as reported as a
+    // reference: it is what bounds the re-read a later mark-failed performs.
+    expect(records[0]?.context).toEqual({
+      application: "sonarr",
+      historyRecordId: 9001,
+      mediaId: 12,
+    });
     expect(records[0]?.media).toEqual({ application: "sonarr", kind: "series", id: "12" });
     expect(records[0]?.data).toEqual({
       indexer: "Example Indexer",

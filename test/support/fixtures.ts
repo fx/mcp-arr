@@ -47,6 +47,7 @@ const approvedRoutes: Readonly<Record<FixtureApplication, readonly string[]>> = 
     "queue",
     "queue/details",
     "history",
+    "history/series",
     "blocklist",
     "health",
     "command",
@@ -57,6 +58,7 @@ const approvedRoutes: Readonly<Record<FixtureApplication, readonly string[]>> = 
     "indexer",
     "indexer/schema",
     "importlist",
+    "config/downloadclient",
   ],
   radarr: [
     "system/status",
@@ -72,6 +74,7 @@ const approvedRoutes: Readonly<Record<FixtureApplication, readonly string[]>> = 
     "queue",
     "queue/details",
     "history",
+    "history/movie",
     "blocklist",
     "health",
     "command",
@@ -80,6 +83,7 @@ const approvedRoutes: Readonly<Record<FixtureApplication, readonly string[]>> = 
     "qualityprofile",
     "tag",
     "downloadclient",
+    "config/downloadclient",
   ],
   prowlarr: [
     "system/status",

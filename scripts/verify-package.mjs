@@ -28,6 +28,7 @@ const allowedFiles = [
   "dist/adapters/acquisition/requests.js",
   "dist/adapters/acquisition/service.js",
   "dist/adapters/acquisition/sonarr.js",
+  "dist/adapters/activity/changes.js",
   "dist/adapters/activity/diagnosis.js",
   "dist/adapters/activity/media.js",
   "dist/adapters/activity/model.js",

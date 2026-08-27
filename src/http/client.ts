@@ -53,6 +53,15 @@ export interface UpstreamClient {
   post(path: string, body: UpstreamBody, query?: UpstreamQuery): Promise<unknown>;
   /** Replaces an upstream resource. Only a mutation adapter may call this. */
   put(path: string, body: UpstreamBody, query?: UpstreamQuery): Promise<unknown>;
+  /**
+   * Removes an upstream resource. Only a mutation adapter may call this.
+   *
+   * It carries no body, because none of these APIs reads one on a delete: what
+   * is removed is named by the route, and the flags that change what a delete
+   * means — the queue's removal precedence, most consequentially — are query
+   * parameters an adapter authors explicitly.
+   */
+  delete(path: string, query?: UpstreamQuery): Promise<unknown>;
 }
 
 /**
@@ -109,7 +118,7 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
    * than as a parse failure.
    */
   const send = async (
-    method: "GET" | "POST" | "PUT",
+    method: "GET" | "POST" | "PUT" | "DELETE",
     path: string,
     query: UpstreamQuery | undefined,
     body: UpstreamBody | undefined,
@@ -228,6 +237,10 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
 
     put(path: string, body: UpstreamBody, query?: UpstreamQuery): Promise<unknown> {
       return send("PUT", path, query, body);
+    },
+
+    delete(path: string, query?: UpstreamQuery): Promise<unknown> {
+      return send("DELETE", path, query, undefined);
     },
   };
 }

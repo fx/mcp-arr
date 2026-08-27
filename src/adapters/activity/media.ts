@@ -148,7 +148,12 @@ const queueStatusSchema = z.object({
   unknownWarnings: z.boolean(),
 });
 
-const blocklistRecordSchema = z.object({
+/**
+ * Exported because change 0010's removal mutation parses the same payload: it
+ * re-reads one blocked release before it writes, and reading it through a
+ * second declaration of the same shape is how the two would drift apart.
+ */
+export const blocklistRecordSchema = z.object({
   id: upstreamId,
   sourceTitle: upstreamText,
   date: upstreamText,
@@ -412,6 +417,36 @@ export async function readQueueDetails(
   return page.items[0];
 }
 
+export type BlocklistUpstream = z.infer<typeof blocklistRecordSchema>;
+
+/**
+ * Maps one blocked release.
+ *
+ * It is separate from the page that reads it because change 0010's removal
+ * mutation re-reads exactly one such record before it writes, and the record a
+ * plan discloses has to be mapped by the same function the query mapped it
+ * with — otherwise a caller could be shown one record and have another removed.
+ */
+export function mapBlocklistRecord(
+  profile: MediaProfile,
+  record: BlocklistUpstream,
+): BlocklistRecord {
+  const application = profile.application;
+  const mediaId = mediaIdOf(profile, record);
+  return {
+    application,
+    context: { application, blocklistRecordId: record.id },
+    title: safeText(record.sourceTitle, maxTitleLength),
+    date: safeLabel(record.date),
+    media: mediaAssociation(profile, mediaId),
+    episodes: episodeAssociations(profile, record.episodeIds),
+    quality: qualityName(record.quality),
+    protocol: safeLabel(record.protocol),
+    indexer: safeLabel(record.indexer),
+    message: safeText(record.message),
+  };
+}
+
 /**
  * One bounded page of the blocklist.
  *
@@ -438,7 +473,6 @@ export async function readBlocklist(
     mediaRoutes.blocklist,
   );
   const wanted = request.mediaIds === undefined ? undefined : new Set(request.mediaIds);
-  const application = profile.application;
 
   const records = envelope.records.filter((record) => {
     const mediaId = mediaIdOf(profile, record);
@@ -449,21 +483,7 @@ export async function readBlocklist(
   });
 
   return filteredUpstreamPage(
-    records.map((record): BlocklistRecord => {
-      const mediaId = mediaIdOf(profile, record);
-      return {
-        application,
-        context: { application, blocklistRecordId: record.id },
-        title: safeText(record.sourceTitle, maxTitleLength),
-        date: safeLabel(record.date),
-        media: mediaAssociation(profile, mediaId),
-        episodes: episodeAssociations(profile, record.episodeIds),
-        quality: qualityName(record.quality),
-        protocol: safeLabel(record.protocol),
-        indexer: safeLabel(record.indexer),
-        message: safeText(record.message),
-      };
-    }),
+    records.map((record) => mapBlocklistRecord(profile, record)),
     window,
     envelope.records.length,
     count(envelope.totalRecords),
@@ -508,6 +528,32 @@ export async function readDiskSpace(
  * history route, which is the bounded way to ask the question; anything else
  * falls through to the shared routing.
  */
+export function mapMediaHistoryRecord(
+  profile: MediaProfile,
+  record: HistoryUpstream,
+  detail: DetailLevel,
+): HistoryRecord {
+  const application = profile.application;
+  const mediaId = mediaIdOf(profile, record);
+  return {
+    application,
+    // The media association is retained in the context as well as reported as
+    // a reference, because those two serve different readers: the reference
+    // names the record for a caller, and the context is what a later
+    // mark-failed re-reads it through.
+    context: { application, historyRecordId: record.id, mediaId },
+    eventType: historyEventType(record.eventType),
+    date: safeLabel(record.date),
+    title: safeText(record.sourceTitle, maxTitleLength),
+    media: mediaAssociation(profile, mediaId),
+    episode: episodeAssociation(profile, record.episodeId),
+    quality: qualityName(record.quality),
+    downloadIdentity: downloadIdentity(record.downloadId),
+    successful: flag(record.successful),
+    data: detail === "full" ? mediaHistoryData(record.data) : undefined,
+  };
+}
+
 export async function readMediaHistory(
   client: UpstreamClient,
   window: PageWindow,
@@ -518,22 +564,8 @@ export async function readMediaHistory(
   const only = request.mediaIds?.length === 1 ? request.mediaIds[0] : undefined;
   const wanted = request.mediaIds === undefined ? undefined : new Set(request.mediaIds);
 
-  const map = (record: HistoryUpstream): HistoryRecord => {
-    const mediaId = mediaIdOf(profile, record);
-    return {
-      application,
-      context: { application, historyRecordId: record.id },
-      eventType: historyEventType(record.eventType),
-      date: safeLabel(record.date),
-      title: safeText(record.sourceTitle, maxTitleLength),
-      media: mediaAssociation(profile, mediaId),
-      episode: episodeAssociation(profile, record.episodeId),
-      quality: qualityName(record.quality),
-      downloadIdentity: downloadIdentity(record.downloadId),
-      successful: flag(record.successful),
-      data: request.detail === "full" ? mediaHistoryData(record.data) : undefined,
-    };
-  };
+  const map = (record: HistoryUpstream): HistoryRecord =>
+    mapMediaHistoryRecord(profile, record, request.detail);
 
   return readHistory(client, window, request, {
     application,
