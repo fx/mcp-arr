@@ -76,7 +76,7 @@ const queueSelection = bulkReferences(queueReferenceSchema);
  * delete flags have consequential precedence, and each intent compiles to
  * exactly one valid flag combination.
  */
-const queueResolveIntentSchema = z.discriminatedUnion("intent", [
+export const queueResolveIntentSchema = z.discriminatedUnion("intent", [
   z.strictObject({
     /** Stops tracking without removal, blocklist, or category change. */
     intent: z.literal("ignore_tracking"),
@@ -127,6 +127,15 @@ const queueResolveIntentSchema = z.discriminatedUnion("intent", [
 export const queueResolveInputSchema = variantUnion(
   z.union([queueResolveIntentSchema, planApplySchema]),
 );
+
+/**
+ * One direct queue-resolution intent, as the handler narrows it.
+ *
+ * The published input above also accepts a plan reference; this is the other
+ * arm, and it is the type a handler works from, because by the time one runs
+ * the dispatcher has already replayed any plan into its recorded intent.
+ */
+export type QueueResolveIntentInput = z.infer<typeof queueResolveIntentSchema>;
 
 /**
  * History and blocklist mutations.

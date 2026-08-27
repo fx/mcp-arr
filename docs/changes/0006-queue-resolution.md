@@ -64,10 +64,10 @@ The [Activity Management spec](../specs/activity-management/#queue-item-kinds) o
   - [x] Add tracked intents and exact remove/blocklist/category/search flag mappings
   - [x] Add pending-release intents and validation
   - [x] Add state-kind and impossible-combination tests for Sonarr and Radarr
-- [ ] Implement plan/apply and reconciliation
-  - [ ] Capture queue/download/media read-set fingerprints and exact predicted effects
-  - [ ] Add direct apply, planned apply, stale-plan, partial bulk, retry, and unknown-outcome paths
-  - [ ] Reconcile against queue, history, blocklist, and command state
+- [x] Implement plan/apply and reconciliation
+  - [x] Capture queue/download/media read-set fingerprints and exact predicted effects
+  - [x] Add direct apply, planned apply, stale-plan, partial bulk, retry, and unknown-outcome paths
+  - [x] Reconcile against queue, history, blocklist, and command state
 - [ ] Register and verify `arr_queue_resolve`
   - [ ] Add typed input/output unions and conservative annotations
   - [ ] Add fixture and stdio tests for data deletion, blocklist, replacement search, ignore, category change, pending grab, and stale references
