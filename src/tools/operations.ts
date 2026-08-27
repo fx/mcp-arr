@@ -11,6 +11,8 @@ import {
   releaseGrabHandler,
   releaseGrabPreconditions,
   releaseSearchHandler,
+  searchStartHandler,
+  searchStartPreconditions,
 } from "./acquisition.js";
 import { createToolError, type ToolError } from "./errors.js";
 import { jobCancelHandler, jobCancelPreconditions, jobGetHandler } from "./jobs.js";
@@ -273,6 +275,16 @@ const libraryChange: DefineOptions = {
   readPreconditions: libraryChangePreconditions,
 };
 
+/**
+ * Every `arr_search_start` target runs the same handler and the same
+ * precondition reader; which command a target compiles to is decided by the
+ * adapter's own closed table, never by this one.
+ */
+const searchStart: DefineOptions = {
+  handler: searchStartHandler,
+  readPreconditions: searchStartPreconditions,
+};
+
 const every = ["sonarr", "radarr", "prowlarr"] as const;
 const media = ["sonarr", "radarr"] as const;
 const sonarr = ["sonarr"] as const;
@@ -470,12 +482,47 @@ const definitions = [
   }),
 
   // arr_search_start
-  define("search.start.sonarr_episode", "arr_search_start", "sonarr_episode", sonarr, "start_job"),
-  define("search.start.sonarr_season", "arr_search_start", "sonarr_season", sonarr, "start_job"),
-  define("search.start.sonarr_series", "arr_search_start", "sonarr_series", sonarr, "start_job"),
-  define("search.start.radarr_movie", "arr_search_start", "radarr_movie", radarr, "start_job"),
-  define("search.start.missing", "arr_search_start", "missing", media, "start_job"),
-  define("search.start.cutoff_unmet", "arr_search_start", "cutoff_unmet", media, "start_job"),
+  define(
+    "search.start.sonarr_episode",
+    "arr_search_start",
+    "sonarr_episode",
+    sonarr,
+    "start_job",
+    searchStart,
+  ),
+  define(
+    "search.start.sonarr_season",
+    "arr_search_start",
+    "sonarr_season",
+    sonarr,
+    "start_job",
+    searchStart,
+  ),
+  define(
+    "search.start.sonarr_series",
+    "arr_search_start",
+    "sonarr_series",
+    sonarr,
+    "start_job",
+    searchStart,
+  ),
+  define(
+    "search.start.radarr_movie",
+    "arr_search_start",
+    "radarr_movie",
+    radarr,
+    "start_job",
+    searchStart,
+  ),
+  define("search.start.missing", "arr_search_start", "missing", media, "start_job", searchStart),
+  define(
+    "search.start.cutoff_unmet",
+    "arr_search_start",
+    "cutoff_unmet",
+    media,
+    "start_job",
+    searchStart,
+  ),
 
   // arr_release_grab
   define("release.grab", "arr_release_grab", undefined, every, "start_job", {

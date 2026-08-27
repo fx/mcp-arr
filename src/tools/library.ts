@@ -603,15 +603,18 @@ export function resolveUpstreamId(
   return { ok: true, value: id };
 }
 
-function resolveUpstreamIds(
+/**
+ * The same for a list the caller had to supply. Exported alongside
+ * {@link resolveUpstreamId} because `arr_search_start` accepts the very same
+ * bulk media references, and one resolver is one place for the kind and
+ * application checks to live.
+ */
+export function resolveUpstreamIds(
   invocation: OperationInvocation,
-  tokens: readonly string[] | undefined,
+  tokens: readonly string[],
   expected: MediaKind,
   property: string,
-): Resolved<readonly number[] | undefined> {
-  if (tokens === undefined) {
-    return { ok: true, value: undefined };
-  }
+): Resolved<readonly number[]> {
   const ids: number[] = [];
   for (const token of tokens) {
     const resolved = resolveUpstreamId(invocation, token, expected, property);
@@ -621,6 +624,18 @@ function resolveUpstreamIds(
     ids.push(resolved.value);
   }
   return { ok: true, value: ids };
+}
+
+/** The same for an optional filter, where absence means "no filter at all". */
+function resolveOptionalUpstreamIds(
+  invocation: OperationInvocation,
+  tokens: readonly string[] | undefined,
+  expected: MediaKind,
+  property: string,
+): Resolved<readonly number[] | undefined> {
+  return tokens === undefined
+    ? { ok: true, value: undefined }
+    : resolveUpstreamIds(invocation, tokens, expected, property);
 }
 
 /**
@@ -639,7 +654,7 @@ function buildRequest(
 
   switch (input.view) {
     case "series": {
-      const ids = resolveUpstreamIds(invocation, input.media, "series", "media");
+      const ids = resolveOptionalUpstreamIds(invocation, input.media, "series", "media");
       return ids.ok
         ? {
             ok: true,
@@ -701,7 +716,7 @@ function buildRequest(
         value: { ...base, view: "cutoff_unmet_episodes", monitored: input.monitored },
       };
     case "movies": {
-      const ids = resolveUpstreamIds(invocation, input.media, "movie", "media");
+      const ids = resolveOptionalUpstreamIds(invocation, input.media, "movie", "media");
       return ids.ok
         ? {
             ok: true,

@@ -74,6 +74,77 @@ export type ReleaseSearchRequest =
   | (ReleaseSearchBase & { readonly target: "radarr_movie"; readonly movieId: number })
   | (ReleaseSearchBase & { readonly target: "prowlarr_aggregate"; readonly term: string });
 
+/**
+ * The automatic searches `arr_search_start` can begin.
+ *
+ * Interactive search and automatic search are deliberately separate target
+ * sets. An interactive search asks the indexers now and hands the caller the
+ * releases; an automatic search asks the application to go and do the whole
+ * thing on its own, grab included. The first is a read, the second starts a
+ * job, so nothing is shared between the two lists but the naming style.
+ */
+export const searchStartTargets = [
+  "sonarr_episode",
+  "sonarr_season",
+  "sonarr_series",
+  "radarr_movie",
+  "missing",
+  "cutoff_unmet",
+] as const;
+
+export type SearchStartTarget = (typeof searchStartTargets)[number];
+
+/**
+ * Which applications model each automatic search.
+ *
+ * As with the interactive targets, this mirrors what the internal operation
+ * registry declares for the `arr_search_start` variants, and a test holds the
+ * two lists to each other so a target can never be advertised in one place and
+ * refused in the other. Prowlarr appears nowhere: it has no library to search
+ * for and no command that would do it.
+ */
+export const searchStartApplications: Readonly<
+  Record<SearchStartTarget, readonly ApplicationId[]>
+> = {
+  sonarr_episode: ["sonarr"],
+  sonarr_season: ["sonarr"],
+  sonarr_series: ["sonarr"],
+  radarr_movie: ["radarr"],
+  missing: ["sonarr", "radarr"],
+  cutoff_unmet: ["sonarr", "radarr"],
+};
+
+/**
+ * Per-target minimum versions for the automatic searches.
+ *
+ * Empty for the same reason {@link releaseSearchMinimumVersions} is: every
+ * command in the allowlist already exists in the recorded application minimums,
+ * and raising one without a behavior this code knowingly depends on would
+ * reject instances that work.
+ */
+export const searchStartMinimumVersions: Readonly<
+  Partial<Record<SearchStartTarget, Readonly<Partial<Record<ApplicationId, string>>>>>
+> = {};
+
+/**
+ * The adapter-facing automatic-search request.
+ *
+ * Like {@link ReleaseSearchRequest} this is not the published tool input: the
+ * tool layer has already turned every opaque media reference into the upstream
+ * identifier it stands for, so an adapter never sees a process-local token.
+ */
+export type SearchStartRequest =
+  | { readonly target: "sonarr_episode"; readonly episodeIds: readonly number[] }
+  | {
+      readonly target: "sonarr_season";
+      readonly seriesId: number;
+      readonly seasonNumber: number;
+    }
+  | { readonly target: "sonarr_series"; readonly seriesId: number }
+  | { readonly target: "radarr_movie"; readonly movieIds: readonly number[] }
+  | { readonly target: "missing"; readonly monitoredOnly: boolean }
+  | { readonly target: "cutoff_unmet"; readonly monitoredOnly: boolean };
+
 export type ReleaseRequestFor<TTarget extends ReleaseSearchTarget> = Extract<
   ReleaseSearchRequest,
   { readonly target: TTarget }

@@ -50,9 +50,18 @@ interface Upstream {
 interface UpstreamOptions {
   /** Answers a grab; the default accepts every release. */
   readonly grab?: (request: UpstreamRequest) => Response;
+  /** Answers a read; the default serves the recorded fixture for the route. */
+  readonly read?: (request: UpstreamRequest) => Response | undefined;
   /** Drops every request, the way an instance that is not running does. */
   readonly unreachable?: boolean;
 }
+
+/** The route each application resolves a grab on, and the only route it writes. */
+const grabRoutes: Readonly<Record<ApplicationId, string>> = {
+  sonarr: "release",
+  radarr: "release",
+  prowlarr: "search",
+};
 
 let statuses: Awaited<ReturnType<typeof loadStatusFixtures>>;
 const searchBodies = new Map<string, unknown>();
@@ -82,6 +91,11 @@ function applicationForHost(host: string): ApplicationId {
 /**
  * A stand-in instance that answers the recorded search fixtures and records
  * every request, so a test can assert both what came back and what was sent.
+ *
+ * It refuses what a real instance refuses: a grab is accepted only on the route
+ * that application resolves one on, any other write is `404`, and any other
+ * method is `405`. A stub that accepted every POST would let a grab sent to the
+ * wrong endpoint look exactly like one sent to the right one.
  */
 function upstream(options: UpstreamOptions = {}): Upstream {
   const requests: UpstreamRequest[] = [];
@@ -104,10 +118,20 @@ function upstream(options: UpstreamOptions = {}): Upstream {
     requests.push(request);
 
     if (request.method === "POST") {
+      if (route !== grabRoutes[application]) {
+        return Promise.resolve(jsonResponse({ message: "not found" }, 404));
+      }
       return Promise.resolve(options.grab?.(request) ?? jsonResponse({}));
+    }
+    if (request.method !== "GET") {
+      return Promise.resolve(jsonResponse({ message: "method not allowed" }, 405));
     }
     if (route === "system/status") {
       return Promise.resolve(jsonResponse(statuses.get(application)?.body));
+    }
+    const overridden = options.read?.(request);
+    if (overridden !== undefined) {
+      return Promise.resolve(overridden);
     }
     const body = searchBodies.get(`${application}/${route}`);
     return Promise.resolve(
@@ -211,6 +235,36 @@ function grabDataFor(result: ToolResult<unknown>, application: ApplicationId) {
   return outcome.data as ReleaseGrabResultData | undefined;
 }
 
+describe("the stand-in instance itself", () => {
+  const url = (application: ApplicationId, route: string): string =>
+    `https://${application}.example.invalid${describeApplication(application).apiBasePath}/${route}`;
+
+  it("accepts a grab only on the route that application resolves one on", async () => {
+    const instance = upstream();
+    const grab = JSON.stringify({ guid: "example-guid" });
+
+    // The grab tests assert that a release was grabbed by looking at what was
+    // posted, so the stub has to be the thing that refuses the wrong post.
+    expect(
+      (await instance.fetch(url("sonarr", "release"), { method: "POST", body: grab })).status,
+    ).toBe(200);
+    expect(
+      (await instance.fetch(url("sonarr", "search"), { method: "POST", body: grab })).status,
+    ).toBe(404);
+    expect(
+      (await instance.fetch(url("prowlarr", "release"), { method: "POST", body: grab })).status,
+    ).toBe(404);
+    expect((await instance.fetch(url("sonarr", "release"), { method: "PUT" })).status).toBe(405);
+  });
+
+  it("serves each application only its own recorded routes", async () => {
+    const instance = upstream();
+
+    expect((await instance.fetch(url("prowlarr", "search"), { method: "GET" })).status).toBe(200);
+    expect((await instance.fetch(url("sonarr", "search"), { method: "GET" })).status).toBe(404);
+  });
+});
+
 describe("arr_release_search results", () => {
   it("publishes every release behind an opaque reference and never its cache identity", async () => {
     const { releases, instance } = await searched();
@@ -280,19 +334,13 @@ describe("arr_release_search results", () => {
     }));
 
     const state = createWorkflowState();
-    const instance: Upstream = {
-      requests: [],
-      fetch: (input, init) => {
-        const url = new URL(input);
-        const application = applicationForHost(url.host);
-        if (url.pathname.endsWith("system/status")) {
-          return Promise.resolve(jsonResponse(statuses.get(application)?.body));
-        }
-        return Promise.resolve(
-          String(init.method) === "POST" ? jsonResponse(poisoned[0]) : jsonResponse(poisoned),
-        );
-      },
-    };
+    // Served through the same guarded instance the other tests use, so the
+    // secret is planted in the recorded route's answer rather than in a stub
+    // that would have answered any route at all.
+    const instance = upstream({
+      read: (request) => (request.route === "release" ? jsonResponse(poisoned) : undefined),
+      grab: () => jsonResponse(poisoned[0]),
+    });
     const context = contextFor(instance, state);
 
     const search = await call(searchTool, context, {

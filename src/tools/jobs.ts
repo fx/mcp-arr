@@ -12,7 +12,7 @@ import type { JobCancellationProjection, JobProjection } from "./schemas/jobs.js
  * identity is a name and an id, the status is normalized, and the per-item
  * outcomes travel in the shared item list rather than in the payload.
  */
-function projectJob(record: JobRecord): JobProjection {
+export function projectJob(record: JobRecord): JobProjection {
   return {
     job: record.reference,
     application: record.application,

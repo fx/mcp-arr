@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { toolResultSchema } from "../results.js";
-import { releaseGrabDataSchema, releaseSearchDataSchema } from "./acquisition-results.js";
+import {
+  releaseGrabDataSchema,
+  releaseSearchDataSchema,
+  searchStartDataSchema,
+} from "./acquisition-results.js";
 import {
   bulkReferences,
   importCandidateReferenceSchema,
@@ -70,6 +74,28 @@ export const releaseGrabInputSchema = variantUnion(
   ]),
 );
 
+const wantedSearchApplications = z
+  .array(z.enum(["sonarr", "radarr"]))
+  .min(1)
+  .max(2)
+  .optional();
+
+/**
+ * Whether a wanted-list search stays inside the monitored set.
+ *
+ * `false` does not widen the search to unmonitored media. The upstream filter
+ * selects rather than switches, so asking for the unmonitored items would
+ * search media the caller never named; `false` therefore sends no filter and
+ * runs at the application's own default wanted scope. The result says so in a
+ * warning, and the description says so here, because a caller reading only the
+ * published schema would otherwise expect the opposite.
+ */
+const monitoredOnlySchema = z
+  .boolean()
+  .describe(
+    "true restricts the search to monitored wanted media; false sends no filter and runs at the application's own default wanted scope, which does not necessarily include unmonitored media",
+  );
+
 /**
  * Automatic search commands. These start upstream work and return a job
  * reference; reading wanted media stays in `arr_library_query` so a wanted-list
@@ -100,22 +126,14 @@ const searchStartIntentSchema = z.discriminatedUnion("target", [
   z.strictObject({
     target: z.literal("missing"),
     ...mutationBaseShape,
-    applications: z
-      .array(z.enum(["sonarr", "radarr"]))
-      .min(1)
-      .max(2)
-      .optional(),
-    monitoredOnly: z.boolean(),
+    applications: wantedSearchApplications,
+    monitoredOnly: monitoredOnlySchema,
   }),
   z.strictObject({
     target: z.literal("cutoff_unmet"),
     ...mutationBaseShape,
-    applications: z
-      .array(z.enum(["sonarr", "radarr"]))
-      .min(1)
-      .max(2)
-      .optional(),
-    monitoredOnly: z.boolean(),
+    applications: wantedSearchApplications,
+    monitoredOnly: monitoredOnlySchema,
   }),
 ]);
 
@@ -187,11 +205,16 @@ export type ReleaseSearchInput = z.infer<typeof releaseSearchInputSchema>;
 
 export type ReleaseGrabInput = z.infer<typeof releaseGrabInputSchema>;
 
+export type SearchStartInput = z.infer<typeof searchStartInputSchema>;
+
 export const releaseSearchOutputSchema = toolResultSchema({ data: releaseSearchDataSchema });
 export const releaseGrabOutputSchema = toolResultSchema({
   data: releaseGrabDataSchema,
   mutation: true,
 });
-export const searchStartOutputSchema = toolResultSchema({ mutation: true });
+export const searchStartOutputSchema = toolResultSchema({
+  data: searchStartDataSchema,
+  mutation: true,
+});
 export const importInspectOutputSchema = toolResultSchema();
 export const importExecuteOutputSchema = toolResultSchema({ mutation: true });

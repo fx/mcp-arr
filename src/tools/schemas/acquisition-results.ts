@@ -5,8 +5,9 @@ import {
   releaseProtocols,
   releaseRejectionTypes,
 } from "../../adapters/acquisition/model.js";
-import { releaseSearchTargets } from "../../adapters/acquisition/requests.js";
-import { applicationIdSchema, releaseReferenceSchema } from "./common.js";
+import { releaseSearchTargets, searchStartTargets } from "../../adapters/acquisition/requests.js";
+import { applicationIdSchema, mediaReferenceSchema, releaseReferenceSchema } from "./common.js";
+import { jobProjectionSchema } from "./jobs.js";
 
 /**
  * The published shapes `arr_release_search` and `arr_release_grab` return.
@@ -181,3 +182,35 @@ export const releaseGrabDataSchema = z.discriminatedUnion("stage", [
 ]);
 
 export type ReleaseGrabResultData = z.infer<typeof releaseGrabDataSchema>;
+
+/**
+ * What starting an automatic search returns, discriminated by stage.
+ *
+ * A plan states which application would be asked, which allowlisted command it
+ * would be asked to run, and which media the caller named — by their opaque
+ * references, never by the upstream identifiers those resolve to. An apply
+ * replaces that with the normalized job the accepted command was projected
+ * into, so a caller follows the work through `arr_job_get` rather than through
+ * anything specific to this tool.
+ *
+ * The command name is safe to publish because it is one of this server's own
+ * constants: a caller cannot supply one, and the instance's echo of it is not
+ * what is reported.
+ */
+export const searchStartDataSchema = z.discriminatedUnion("stage", [
+  z.strictObject({
+    stage: z.literal("planned"),
+    target: z.enum(searchStartTargets),
+    application: applicationIdSchema,
+    command: z.string().min(1),
+    /** The media references the plan would search for; empty for a wanted-list search. */
+    media: z.array(mediaReferenceSchema),
+  }),
+  z.strictObject({
+    stage: z.literal("started"),
+    target: z.enum(searchStartTargets),
+    job: jobProjectionSchema,
+  }),
+]);
+
+export type SearchStartResultData = z.infer<typeof searchStartDataSchema>;
