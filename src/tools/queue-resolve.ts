@@ -1,12 +1,15 @@
 import {
   type MediaProfile,
   profileFor,
-  readBlocklist,
   readMediaHistory,
   readQueueDetails,
 } from "../adapters/activity/media.js";
-import type { QueueItem, QueueStatus, TrackedDownloadState } from "../adapters/activity/model.js";
-import { readCommands } from "../adapters/activity/shared.js";
+import type {
+  HistoryEventType,
+  QueueItem,
+  QueueStatus,
+  TrackedDownloadState,
+} from "../adapters/activity/model.js";
 import {
   compileQueueTransition,
   type ObservedQueueItem,
@@ -63,6 +66,14 @@ interface ValidatedItem {
   readonly transition: QueueTransition;
   /** The row as the reader just observed it, which is what was compiled from. */
   readonly observed: ObservedQueueItem;
+  /**
+   * The row's salted download digest, kept for reconciliation alone.
+   *
+   * It is deliberately not part of {@link ObservedQueueItem}: compilation must
+   * not see a download identifier in any form, and this one exists only so a
+   * lost outcome can be tied to the download it was about.
+   */
+  readonly downloadIdentity?: string | undefined;
 }
 
 type ItemValidation =
@@ -214,7 +225,13 @@ async function readItem(
     ...("replacementSearch" in intent ? { replacementSearch: intent.replacementSearch } : {}),
   });
   return compilation.status === "compiled"
-    ? { status: "ok", reference, transition: compilation.transition, observed }
+    ? {
+        status: "ok",
+        reference,
+        transition: compilation.transition,
+        observed,
+        downloadIdentity: current.origin?.downloadIdentity,
+      }
     : { status: "error", reference, error: compilation.error };
 }
 
@@ -512,6 +529,17 @@ export interface QueueReconciliationTarget {
   readonly mediaId?: number | undefined;
   readonly observedStatus: QueueStatus;
   readonly observedTrackedState?: TrackedDownloadState | undefined;
+  /**
+   * The salted digest of the download-client identifier this row named, where
+   * upstream named one.
+   *
+   * It is what ties a history record to *this* download rather than to the
+   * series it belongs to, and it is the only reason corroboration can claim
+   * anything at all. It is a process-local digest, never the identifier itself,
+   * and it lives only in this reader's closure — nothing here reaches a tool
+   * result, a plan, or a receipt.
+   */
+  readonly downloadIdentity?: string | undefined;
 }
 
 export interface QueueReconciliationOptions {
@@ -566,43 +594,30 @@ async function readTargetRow(
 }
 
 /**
- * Whether a blocklist record now exists for the media this row belonged to.
+ * Whether the application recorded an event naming *this* download.
  *
- * Consulted only for the intents that ask for one, and only when the queue read
- * was ambiguous. It can raise a verdict to succeeded and can never lower one to
- * failed, which is what keeps a coincidence — a record blocked for the same
- * series by something else — from turning an unknown outcome into a false
- * failure.
+ * Attribution is the whole difficulty, and the download identity is what
+ * supplies it. A history event for the same series proves nothing: series have
+ * many downloads and histories are long, so a record from last week would read
+ * as evidence for a mutation sent a minute ago. The identity is the salted
+ * digest of the download-client identifier — the same correlation the bounded
+ * diagnosis already joins on — so an event carrying it is an event about the
+ * download this row stands for and no other.
+ *
+ * The read is still scoped to the media record, because that is what keeps it
+ * bounded; the identity decides, and the scope only decides how much is read.
  */
-async function hasBlocklistRecord(
+async function hasDownloadEvent(
   options: QueueReconciliationOptions,
-  mediaId: number,
+  target: QueueReconciliationTarget,
+  events: readonly HistoryEventType[],
 ): Promise<boolean> {
-  try {
-    const page = await readBlocklist(
-      options.client,
-      { offset: 0, pageSize: corroborationPageSize },
-      { view: "blocklist", detail: "summary", paging: { pageSize: corroborationPageSize } },
-      profileFor(options.application),
-    );
-    return page.items.some((record) => record.media?.id === String(mediaId));
-  } catch {
+  const mediaId = target.mediaId;
+  const identity = target.downloadIdentity;
+  if (mediaId === undefined || identity === undefined) {
     return false;
   }
-}
 
-/**
- * Whether the application recorded an event that only the transition produces.
- *
- * A grab records `grabbed`; ignoring or failing a tracked download records
- * `download_ignored` or `download_failed`. None of these is read as evidence on
- * its own — the queue read has to have been ambiguous first.
- */
-async function hasHistoryEvent(
-  options: QueueReconciliationOptions,
-  mediaId: number,
-  events: readonly string[],
-): Promise<boolean> {
   try {
     const page = await readMediaHistory(
       options.client,
@@ -615,28 +630,9 @@ async function hasHistoryEvent(
       },
       profileFor(options.application),
     );
-    return page.items.some((record) => events.includes(record.eventType));
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Whether a search command is running or has run.
- *
- * Only consulted for a blocklisting that allowed a replacement search, because
- * that is the only queue transition whose effect reaches the command list at
- * all: the application starts the search itself once it has processed the
- * removal, so a search command is evidence the removal was processed.
- */
-async function hasSearchCommand(options: QueueReconciliationOptions): Promise<boolean> {
-  try {
-    const page = await readCommands(
-      options.client,
-      { offset: 0, pageSize: corroborationPageSize },
-      options.application,
+    return page.items.some(
+      (record) => record.downloadIdentity === identity && events.includes(record.eventType),
     );
-    return page.items.some((command) => command.name.toLowerCase().includes("search"));
   } catch {
     return false;
   }
@@ -647,41 +643,47 @@ async function hasSearchCommand(options: QueueReconciliationOptions): Promise<bo
  *
  * Reached only when the row is still in the queue but no longer in the state the
  * mutation was compiled against — so something happened, and the question is
- * whether it was this mutation.
+ * whether this mutation did it.
+ *
+ * Only history is consulted, and only by download identity. The other two
+ * authoritative sources were considered and are deliberately not read here,
+ * because neither can be tied to this apply:
+ *
+ * - A **blocklist** record carries no download identity, and the only other
+ *   things that could match it are the release title and the media association.
+ *   The title is upstream text this server does not retain, and the media
+ *   association alone would let a release blocked for the same series last week
+ *   settle an unknown outcome from a minute ago.
+ * - A **command** is instance-wide. A search running now may have been started
+ *   by a scheduled task, by another caller, or by an unrelated grab, and "a
+ *   search exists" is true of most instances most of the time.
+ *
+ * Reading either and calling it corroboration would manufacture confidence
+ * rather than establish it, and an unknown outcome reported as a success is the
+ * one direction a receipt must never round in.
  */
 async function corroborate(
   options: QueueReconciliationOptions,
   target: QueueReconciliationTarget,
 ): Promise<TargetVerdict> {
-  const mediaId = target.mediaId;
-  if (mediaId === undefined) {
-    return "indeterminate";
-  }
-
   switch (options.intent) {
-    case "blocklist_and_remove":
-      if (options.replacementSearch === "allow" && (await hasSearchCommand(options))) {
-        return "succeeded";
-      }
-      return (await hasBlocklistRecord(options, mediaId)) ? "succeeded" : "indeterminate";
-    case "blocklist_pending":
-      return (await hasBlocklistRecord(options, mediaId)) ? "succeeded" : "indeterminate";
     case "ignore_tracking":
-      return (await hasHistoryEvent(options, mediaId, ["download_ignored"]))
+      return (await hasDownloadEvent(options, target, ["download_ignored"]))
         ? "succeeded"
         : "indeterminate";
     case "remove_from_client_and_delete_data":
-      return (await hasHistoryEvent(options, mediaId, ["download_failed", "download_ignored"]))
+    case "blocklist_and_remove":
+      return (await hasDownloadEvent(options, target, ["download_failed", "download_ignored"]))
         ? "succeeded"
         : "indeterminate";
     case "force_pending_grab":
-      return (await hasHistoryEvent(options, mediaId, ["grabbed", "release_grabbed"]))
+      return (await hasDownloadEvent(options, target, ["grabbed", "release_grabbed"]))
         ? "succeeded"
         : "indeterminate";
     default:
-      // A category change and a pending removal leave no record of their own
-      // that this server can attribute, so an ambiguous row stays unknown
-      // rather than being guessed into a verdict.
+      // A category change, a pending removal, and a pending blocklisting leave
+      // no record this server can attribute to this download, so an ambiguous
+      // row stays unknown rather than being guessed into a verdict.
       return "indeterminate";
   }
 }
@@ -689,12 +691,28 @@ async function corroborate(
 /**
  * What authoritative state says about one row.
  *
- * The ladder is deliberate. The queue answers first and decisively where it can:
- * gone means the request arrived, and still there in exactly the state the
- * mutation was compiled against means it did not. Only the middle case — still
- * there, but changed — reaches the corroborating reads, and only they can raise
- * a verdict. Nothing here can produce `failed` from corroboration, because a
- * missing record is not proof that nothing happened.
+ * The ladder is deliberate.
+ *
+ * **Gone from the queue is read as succeeded**, and that is a decision worth
+ * stating rather than assuming. It is not proof that *this* request removed the
+ * row: another caller, or an operator at the application's own interface, could
+ * have removed it inside the window between the lost answer and this read. It is
+ * read as success anyway because it is exactly as much as a delivered response
+ * would have established — every one of these transitions asks for the row to
+ * leave the queue, and an acknowledged 200 says the application accepted that
+ * request, never that the download client acted on it. Refusing to settle here
+ * would leave every lost outcome permanently unknown, which is the same as
+ * having no reconciliation at all.
+ *
+ * **Still there, in exactly the state the mutation was compiled against, is read
+ * as failed.** Nothing moved, so nothing arrived. This is the only path to
+ * `failed`, and it rests on the row itself rather than on the absence of a
+ * corroborating record — because a record that is missing is not evidence that
+ * nothing happened.
+ *
+ * **Still there but moved** is the ambiguous case, and only it reaches
+ * {@link corroborate}, which can raise the verdict to succeeded and can never
+ * lower it.
  */
 async function reconcileTarget(
   options: QueueReconciliationOptions,
@@ -779,5 +797,6 @@ export function reconciliationTargetsFor(validated: unknown): readonly QueueReco
       mediaId: item.observed.mediaId,
       observedStatus: item.observed.status,
       observedTrackedState: item.observed.trackedState,
+      downloadIdentity: item.downloadIdentity,
     }));
 }

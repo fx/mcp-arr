@@ -530,7 +530,40 @@ describe("queue resolution reconciliation", () => {
     );
   });
 
-  it("raises an ambiguous row to succeeded when history corroborates it", async () => {
+  it("does not accept a record about a different download as corroboration", async () => {
+    const lost = await lostApply();
+    const row = instance.rows.find((candidate) => candidate.id === blockedImport) as QueueRow;
+    row.trackedDownloadState = "importing";
+    // The right event type, for the right series, and older than this apply —
+    // but about another download entirely. Matching on the media association
+    // alone would read this as proof; matching on the download identity does
+    // not, which is the whole reason the identity is carried.
+    instance.history = [
+      {
+        id: 9000,
+        eventType: "downloadIgnored",
+        date: "2020-01-01T00:00:00Z",
+        seriesId: row.seriesId,
+        downloadId: "a-different-download",
+        sourceTitle: "some other release",
+        quality: { quality: { name: "Bluray-1080p" } },
+      },
+    ];
+
+    const reconciled = await state.applies.reconcile(
+      lost.receipt,
+      createQueueReconciliationReader({
+        client: context.registry.adapter("sonarr")?.client as never,
+        application: "sonarr",
+        intent: "ignore_tracking",
+        targets: reconciliationTargetsFor(lost.validated),
+      }),
+    );
+
+    expect(reconciled.status).toBe("indeterminate");
+  });
+
+  it("raises an ambiguous row to succeeded when history names this download", async () => {
     const lost = await lostApply();
     const row = instance.rows.find((candidate) => candidate.id === blockedImport) as QueueRow;
     row.trackedDownloadState = "importing";
@@ -540,6 +573,9 @@ describe("queue resolution reconciliation", () => {
         eventType: "downloadIgnored",
         date: "2026-08-27T10:00:00Z",
         seriesId: row.seriesId,
+        // The same download-client identifier the queue row carried, which is
+        // what the salted digests on both sides are derived from.
+        downloadId: canary,
         sourceTitle: `ignored ${canary}`,
         quality: { quality: { name: "Bluray-1080p" } },
       },
