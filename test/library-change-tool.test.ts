@@ -1718,6 +1718,23 @@ describe("arr_library_change rename", () => {
     expect(startedCommands("sonarr")).toEqual([]);
   });
 
+  it("keeps a rename plan applicable when the record itself moved", async () => {
+    const series = seriesByTitle(await seriesRecords(), "Example Series");
+    const planned = await change({ intent: "rename", mode: "plan", media: series.reference });
+
+    // The proposals are relative to the record's own folder, and the command
+    // names file identifiers rather than paths, so a relocation renames the
+    // same files the same way and is no reason to expire the plan.
+    instances.patch("sonarr", "series", 12, {
+      path: "/media/example/archive/Example Series",
+      rootFolderPath: "/media/example/archive",
+    });
+    const applied = await change({ mode: "apply", plan: planReference(planned) });
+
+    expect(errorCodes(applied)).not.toContain("stale_plan");
+    expect(startedCommands("sonarr")).toEqual(["RenameFiles"]);
+  });
+
   it("refuses a plan whose proposed paths have changed", async () => {
     const series = seriesByTitle(await seriesRecords(), "Example Series");
     const planned = await change({ intent: "rename", mode: "plan", media: series.reference });

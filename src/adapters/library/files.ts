@@ -370,13 +370,25 @@ export function recordDeletionState(
   };
 }
 
+/** What a path mutation depends on, and so what its read set observes. */
+export type PathDependency =
+  /**
+   * A rename: which record it is, and nothing about where that record sits. The
+   * proposals are fingerprinted beside this and are relative to the record's own
+   * folder, so a record that moved still renames the same files the same way.
+   */
+  | "record"
+  /** A move: that, and where the record is now, which is the path it sends. */
+  | "location";
+
 /**
  * The state a rename or a move depends on, and discloses.
  *
- * Deliberately narrower than the state a metadata edit depends on: folding in
- * monitoring, tags, or a profile would make a plan go stale because something
- * unrelated to the filesystem moved, and a caller would learn to re-plan rather
- * than to read why.
+ * Deliberately narrower than the state a metadata edit depends on. Monitoring,
+ * tags, a profile, and the root folder a record is filed under are all absent:
+ * neither workflow sends any of them and neither plan discloses one, so
+ * observing them would only make a valid plan expire because something
+ * unrelated moved, and a caller would learn to re-plan rather than to read why.
  *
  * The title is here even though neither request sends it, because both plans
  * quote it — "rename 3 file(s) of “X”", "move the files of “X”" — and a plan
@@ -385,13 +397,12 @@ export function recordDeletionState(
  * candidate title it discloses: a read set observes what its plan disclosed,
  * not only what its payload carries.
  */
-export function recordPathState(resource: UpstreamResource): Readonly<Record<string, unknown>> {
-  return {
-    id: resource.id,
-    title: resource.title,
-    path: resource.path,
-    rootFolderPath: resource.rootFolderPath,
-  };
+export function recordPathState(
+  resource: UpstreamResource,
+  depends: PathDependency,
+): Readonly<Record<string, unknown>> {
+  const disclosed = { id: resource.id, title: resource.title };
+  return depends === "record" ? disclosed : { ...disclosed, path: resource.path };
 }
 
 /** The record a rename preview is read for. A season narrows it to one season. */

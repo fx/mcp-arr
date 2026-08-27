@@ -1637,7 +1637,7 @@ async function readRenamePreconditions(
     status: "ok",
     validated: context,
     observations: [
-      { key: `media:${intent.media}`, value: recordPathState(resource) },
+      { key: `media:${intent.media}`, value: recordPathState(resource, "record") },
       {
         key: `rename:${intent.media}`,
         // Every proposal is fingerprinted, in the order the instance returned
@@ -1745,7 +1745,7 @@ async function readMovePreconditions(
     validated: context,
     observations: [
       ...dependencyObservations(dependencies.value),
-      { key: `media:${intent.media}`, value: recordPathState(resource) },
+      { key: `media:${intent.media}`, value: recordPathState(resource, "location") },
     ],
   };
 }
