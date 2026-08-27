@@ -7,6 +7,11 @@ import { createWorkflowState, type WorkflowState } from "../../src/state/workflo
 import type { ToolContext } from "../../src/tools/dispatch.js";
 import type { ToolName } from "../../src/tools/names.js";
 import { createOperationRegistry, type OperationDefinition } from "../../src/tools/operations.js";
+import {
+  profileDomainSchema,
+  providerDomainSchema,
+  resourceDomainSchema,
+} from "../../src/tools/schemas/configuration.js";
 import { loadFixture, type VersionedFixture } from "./fixtures.js";
 
 export const fixtureRoot = fileURLToPath(new URL("../fixtures", import.meta.url));
@@ -142,61 +147,256 @@ export const sampleToolInputs: Readonly<Record<ToolName, Record<string, unknown>
   arr_job_cancel: { mode: "apply", job: sampleReferences.job },
 };
 
+/** The apply-from-plan form, which every mutation tool accepts in place of an intent. */
+const planApplyArguments = { mode: "apply", plan: sampleReferences.plan } as const;
+
 /**
- * A minimal accepted argument object for each `arr_library_change` intent.
+ * Every observation domain, assembled from the three domain schemas the
+ * reconciliation intents narrow to.
  *
- * Registering an intent publishes it, so every one of them has to survive the
- * conversion to the schema a host reads over `tools/list` — a variant that is
- * accepted in process and rejected by its own published schema is a contract a
- * caller cannot use. {@link sampleToolInputs} carries one entry per tool and so
- * exercises one variant; this covers the rest of this tool's union, and it
- * lives here rather than beside a single tool's stdio suite because the
- * per-branch coverage it feeds is generic over every tool.
+ * `arr_config_observe` names its sixteen domains one literal at a time, so
+ * these lists are a second statement of the same set rather than a restatement
+ * of that tool's own union — a domain added to one and not the other is what
+ * the completeness guard is there to catch.
  */
-export const libraryChangeIntentArguments: Readonly<Record<string, Record<string, unknown>>> = {
-  add_media: {
-    intent: "add_media",
-    mode: "plan",
-    application: "sonarr",
-    lookup: sampleReferences.media,
-    rootFolder: sampleReferences.configuration,
-    qualityProfile: sampleReferences.configuration,
-    monitor: "all",
-    searchOnAdd: false,
-  },
-  set_monitoring: {
-    intent: "set_monitoring",
-    mode: "plan",
-    items: [sampleReferences.media],
-    monitored: true,
-  },
-  edit_media: {
-    intent: "edit_media",
-    mode: "plan",
-    items: [sampleReferences.media],
-    changes: { monitored: true },
-  },
-  delete_media: {
-    intent: "delete_media",
-    mode: "plan",
-    items: [sampleReferences.media],
-    deleteFiles: false,
-    addImportListExclusion: false,
-  },
-  update_file_metadata: {
-    intent: "update_file_metadata",
-    mode: "plan",
-    files: [sampleReferences.mediaFile],
-    changes: { releaseGroup: "EXAMPLEGRP" },
-  },
-  delete_file: { intent: "delete_file", mode: "plan", files: [sampleReferences.mediaFile] },
-  rename: { intent: "rename", mode: "plan", media: sampleReferences.media },
-  move_media: {
-    intent: "move_media",
-    mode: "plan",
-    media: sampleReferences.media,
-    rootFolder: sampleReferences.configuration,
-  },
+const configurationDomains: readonly string[] = [
+  ...providerDomainSchema.options,
+  ...profileDomainSchema.options,
+  ...resourceDomainSchema.options,
+];
+
+/**
+ * The queue intents whose only argument beyond the mode is the item selection.
+ *
+ * Written out rather than harvested from `queueResolveIntentSchema`: a list
+ * taken from the very union it is checked against would agree with it by
+ * construction, and the completeness guard over it would assert nothing.
+ */
+const uniformQueueResolveIntents: readonly string[] = [
+  "ignore_tracking",
+  "remove_from_client_and_delete_data",
+  "change_category_mark_imported",
+  "route_to_manual_import",
+  "force_pending_grab",
+  "remove_pending",
+  "blocklist_pending",
+];
+
+/**
+ * A minimal accepted argument object for every branch of every tool's input.
+ *
+ * A published input schema is one flat object per tool, so the variant a caller
+ * actually supplies is no longer a shape the schema names — which makes "the
+ * published schema admits what this tool accepts" a claim that has to be
+ * checked once per variant rather than once per tool. {@link sampleToolInputs}
+ * exercises one variant each; this covers the rest.
+ *
+ * Written by hand, one literal per branch. A generated minimal object is a
+ * value nobody chose, a generator sharing a bug with the schema would make both
+ * halves of the round-trip pass for the wrong reason, and a generator cannot
+ * satisfy a branch guarded by a refinement at all — the calendar window below
+ * is two real dates in order, which no date pattern can be asked for. The
+ * completeness guard in `tool-stdio.test.ts` is what keeps the table honest: a
+ * variant nobody adds an entry for fails immediately.
+ */
+export const sampleBranchInputs: Readonly<Record<ToolName, readonly Record<string, unknown>[]>> = {
+  arr_capabilities: [{}],
+  arr_library_query: [
+    { view: "series" },
+    { view: "seasons", series: sampleReferences.media },
+    { view: "episodes", series: sampleReferences.media },
+    { view: "episode_files", series: sampleReferences.media },
+    { view: "missing_episodes" },
+    { view: "cutoff_unmet_episodes" },
+    { view: "movies" },
+    { view: "collections" },
+    { view: "movie_files", movie: sampleReferences.media },
+    { view: "missing_movies" },
+    { view: "cutoff_unmet_movies" },
+    { view: "calendar", start: "2026-01-01", end: "2026-01-31" },
+    { view: "lookup", term: "example" },
+  ],
+  arr_activity_query: [
+    { view: "queue_status" },
+    { view: "queue" },
+    { view: "queue_details", queue: sampleReferences.queue },
+    { view: "history" },
+    { view: "blocklist" },
+    { view: "health" },
+    { view: "commands" },
+    { view: "disk_space" },
+    { view: "indexer_status" },
+    { view: "indexer_statistics" },
+  ],
+  arr_release_search: [
+    { target: "sonarr_episode", episode: sampleReferences.media },
+    { target: "sonarr_season", series: sampleReferences.media, seasonNumber: 2 },
+    { target: "radarr_movie", movie: sampleReferences.media },
+    { target: "prowlarr_aggregate", term: "example" },
+  ],
+  arr_import_inspect: [
+    { source: "queue_item", queue: sampleReferences.queue },
+    { source: "library_context", media: sampleReferences.media },
+    {
+      source: "candidate_reprocess",
+      candidate: sampleReferences.importCandidate,
+      mapping: { releaseGroup: "EXAMPLEGRP" },
+    },
+  ],
+  arr_config_observe: configurationDomains.map((domain) => ({ domain })),
+  arr_job_get: [{ job: sampleReferences.job }],
+  arr_search_start: [
+    { target: "sonarr_episode", mode: "plan", episodes: [sampleReferences.media] },
+    { target: "sonarr_season", mode: "plan", series: sampleReferences.media, seasonNumber: 2 },
+    { target: "sonarr_series", mode: "plan", series: sampleReferences.media },
+    { target: "radarr_movie", mode: "plan", movies: [sampleReferences.media] },
+    { target: "missing", mode: "plan", monitoredOnly: true },
+    { target: "cutoff_unmet", mode: "plan", monitoredOnly: false },
+    planApplyArguments,
+  ],
+  arr_release_grab: [{ mode: "plan", releases: [sampleReferences.release] }, planApplyArguments],
+  arr_queue_resolve: [
+    ...uniformQueueResolveIntents.map((intent) => ({
+      intent,
+      mode: "plan",
+      items: [sampleReferences.queue],
+    })),
+    {
+      intent: "blocklist_and_remove",
+      mode: "plan",
+      items: [sampleReferences.queue],
+      replacementSearch: "suppress",
+    },
+    planApplyArguments,
+  ],
+  arr_activity_change: [
+    { intent: "mark_history_failed", mode: "plan", records: [sampleReferences.history] },
+    { intent: "remove_blocklist_record", mode: "plan", records: [sampleReferences.blocklist] },
+    planApplyArguments,
+  ],
+  arr_import_execute: [
+    {
+      mode: "plan",
+      candidates: [sampleReferences.importCandidate],
+      importMode: "auto",
+    },
+    planApplyArguments,
+  ],
+  arr_library_change: [
+    {
+      intent: "add_media",
+      mode: "plan",
+      application: "sonarr",
+      lookup: sampleReferences.media,
+      rootFolder: sampleReferences.configuration,
+      qualityProfile: sampleReferences.configuration,
+      monitor: "all",
+      searchOnAdd: false,
+    },
+    {
+      intent: "set_monitoring",
+      mode: "plan",
+      items: [sampleReferences.media],
+      monitored: true,
+    },
+    {
+      intent: "edit_media",
+      mode: "plan",
+      items: [sampleReferences.media],
+      changes: { monitored: true },
+    },
+    {
+      intent: "delete_media",
+      mode: "plan",
+      items: [sampleReferences.media],
+      deleteFiles: false,
+      addImportListExclusion: false,
+    },
+    {
+      intent: "update_file_metadata",
+      mode: "plan",
+      files: [sampleReferences.mediaFile],
+      changes: { releaseGroup: "EXAMPLEGRP" },
+    },
+    { intent: "delete_file", mode: "plan", files: [sampleReferences.mediaFile] },
+    { intent: "rename", mode: "plan", media: sampleReferences.media },
+    {
+      intent: "move_media",
+      mode: "plan",
+      media: sampleReferences.media,
+      rootFolder: sampleReferences.configuration,
+    },
+    planApplyArguments,
+  ],
+  arr_config_reconcile: [
+    {
+      intent: "reconcile_provider",
+      mode: "plan",
+      application: "sonarr",
+      domain: "indexers",
+      fields: [{ name: "baseUrl", value: "https://indexer.example.invalid" }],
+    },
+    {
+      intent: "delete_provider",
+      mode: "plan",
+      application: "sonarr",
+      domain: "indexers",
+      target: sampleReferences.configuration,
+    },
+    {
+      intent: "test_provider",
+      mode: "plan",
+      application: "sonarr",
+      domain: "indexers",
+      target: sampleReferences.configuration,
+    },
+    {
+      intent: "force_provider_save",
+      mode: "plan",
+      application: "sonarr",
+      domain: "indexers",
+      fields: [{ name: "baseUrl", value: "https://indexer.example.invalid" }],
+      acceptValidationWarnings: true,
+    },
+    {
+      intent: "reconcile_profile",
+      mode: "plan",
+      application: "sonarr",
+      domain: "quality_profiles",
+      fields: [{ name: "name", value: "Example" }],
+    },
+    {
+      intent: "delete_profile",
+      mode: "plan",
+      application: "sonarr",
+      domain: "quality_profiles",
+      target: sampleReferences.configuration,
+    },
+    {
+      intent: "reconcile_resource",
+      mode: "plan",
+      application: "sonarr",
+      domain: "tags",
+      fields: [{ name: "label", value: "example" }],
+    },
+    {
+      intent: "delete_resource",
+      mode: "plan",
+      application: "sonarr",
+      domain: "tags",
+      target: sampleReferences.configuration,
+    },
+    {
+      intent: "reconcile_application_sync",
+      mode: "plan",
+      application: "prowlarr",
+      targets: [sampleReferences.configuration],
+      syncLevel: "add_only",
+      startSync: false,
+    },
+    planApplyArguments,
+  ],
+  arr_job_cancel: [{ mode: "apply", job: sampleReferences.job }, planApplyArguments],
 };
 
 export interface TestContextOptions {
