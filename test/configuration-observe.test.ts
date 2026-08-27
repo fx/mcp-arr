@@ -134,16 +134,17 @@ describe("observing providers", () => {
     const indexer = firstRecord(providerRecords(outcome));
 
     expect(indexer.implementation).toBe("Cardigann");
-    // The definition file's own field names never reach the output as values;
-    // only the credentials among them are acknowledged, by name and state.
-    expect(indexer.fields).toEqual([{ name: "minimumSeeders", value: 1 }]);
+    // A definition-driven provider reports no field values at all. Its field
+    // names were chosen by the tracker definition, so none of them is evidence
+    // about what the value holds; only the credentials are acknowledged.
+    expect(indexer.fields).toEqual([]);
     expect(indexer.secrets).toEqual([
       { name: "username", state: "configured", masked: false },
       { name: "password", state: "configured", masked: false },
       { name: "passkey", state: "configured", masked: false },
       { name: "cardigannCaptcha", state: "unconfigured", masked: false },
     ]);
-    expect(indexer.withheld).toEqual({ count: 9 });
+    expect(indexer.withheld).toEqual({ count: 10 });
   });
 
   it("reads a provider whose payload carries no dynamic fields at all", async () => {

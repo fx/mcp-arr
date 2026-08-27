@@ -149,6 +149,26 @@ const providerSurfacedKeys = [
   "fields",
 ];
 
+/**
+ * Whether this provider's field list comes from a tracker definition rather
+ * than from the application's own compiled schema.
+ *
+ * Prowlarr's Cardigann indexers take their fields from a YAML file, so every
+ * name in them is chosen by that file. The classifier already refuses a value
+ * whose kind does not match the name it borrowed, but a handful of allowlisted
+ * names legitimately carry free text, and for a definition-driven provider
+ * there is no reason to trust those either. So a dynamically defined provider
+ * reports no field values at all: its credentials are still acknowledged, and
+ * everything else is counted as withheld.
+ */
+function isDynamicallyDefined(
+  resource: { readonly implementation?: string | null | undefined },
+  raw: Record<string, unknown>,
+): boolean {
+  const implementation = text(resource.implementation)?.toLowerCase();
+  return implementation === "cardigann" || "definitionName" in raw || "definitionFile" in raw;
+}
+
 export function serializeProvider(
   context: SerializationContext,
   raw: Record<string, unknown>,
@@ -166,6 +186,9 @@ export function serializeProvider(
       privacy: field.privacy,
     })),
   );
+  const dynamic = isDynamicallyDefined(resource, raw);
+  const reportedFields = dynamic ? [] : classified.fields;
+  const withheldFieldCount = classified.withheldCount + (dynamic ? classified.fields.length : 0);
   const secrets = [...classified.secrets, ...topLevelSecrets(raw)];
   const tags = (resource.tags ?? []).map((id) => configurationRef(context.application, "tags", id));
   const surfaced = [
@@ -184,10 +207,10 @@ export function serializeProvider(
     enabled: providerEnabled(resource),
     syncLevel: text(resource.syncLevel),
     ...(tags.length === 0 ? {} : { tags }),
-    ...(context.detail === "full" ? { fields: classified.fields } : {}),
+    ...(context.detail === "full" ? { fields: reportedFields } : {}),
     secrets,
     withheld: {
-      count: classified.withheldCount + countWithheldProperties(raw, surfaced),
+      count: withheldFieldCount + countWithheldProperties(raw, surfaced),
     },
   };
 }

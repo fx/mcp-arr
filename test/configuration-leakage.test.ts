@@ -144,7 +144,9 @@ describe("dynamic Cardigann fields are classified, not passed through", () => {
     expect(serialized).not.toContain("exampletracker");
     expect(serialized).not.toContain("example-tracker");
     expect(serialized).not.toContain("info_tpp");
-    expect(record.fields?.map((field) => field.name)).toEqual(["minimumSeeders"]);
+    // Not even an allowlisted operational name survives on a Cardigann
+    // provider: the definition chose that name, so it vouches for nothing.
+    expect(record.fields).toEqual([]);
     expect(record.secrets.map((secret) => secret.name)).toEqual([
       "username",
       "password",
