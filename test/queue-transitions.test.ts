@@ -477,6 +477,22 @@ describe("impossible intent combinations", () => {
     }
   });
 
+  it("refuses to import or re-categorize a download whose status could not be read", () => {
+    // `unknown` is what an upstream status word this server does not recognize
+    // maps onto. It is not evidence the download finished, and treating it as
+    // such is how an unfinished download would be marked imported.
+    const observed = tracked("sonarr", { status: "unknown", trackedState: "unknown" });
+
+    for (const intent of ["route_to_manual_import", "change_category_mark_imported"] as const) {
+      const error = expectRejected(compile("sonarr", intent, observed));
+      expect(error.code).toBe("conflict");
+      expect(error.message).toContain("could not be established");
+    }
+    expect(expectCompiled(compile("sonarr", "ignore_tracking", observed)).intent).toBe(
+      "ignore_tracking",
+    );
+  });
+
   it("refuses a manual import while the download client is unreachable", () => {
     const error = expectRejected(
       compile(
@@ -504,14 +520,27 @@ describe("impossible intent combinations", () => {
     expect(error.message).toContain("no managed-download queue");
   });
 
+  it("passes a flag only on an instance at or above the release it was reviewed against", () => {
+    for (const version of ["4.0.0", "4.0.19.2979", "5.1.0.1", "6.0.0-develop"]) {
+      expect(
+        expectCompiled(
+          compile("sonarr", "change_category_mark_imported", tracked("sonarr"), { version }),
+        ).intent,
+      ).toBe("change_category_mark_imported");
+    }
+  });
+
   it("refuses a flag on an instance older than the release it was reviewed against", () => {
-    const error = expectRejected(
-      compile("sonarr", "change_category_mark_imported", tracked("sonarr"), {
-        version: "3.0.10.1567",
-      }),
-    );
-    expect(error.code).toBe("unsupported_capability");
-    expect(error.message).toContain("sonarr 4.0.0 or newer");
+    // `4.0` is deliberately absent: a missing trailing segment counts as zero,
+    // so it meets a 4.0.0 minimum rather than falling below it.
+    for (const version of ["3.0.10.1567", "3.9.9.9999", "1.0.0.1"]) {
+      const error = expectRejected(
+        compile("sonarr", "change_category_mark_imported", tracked("sonarr"), { version }),
+      );
+      expect(error.code).toBe("unsupported_capability");
+      expect(error.message).toContain("sonarr 4.0.0 or newer");
+      expect(error.message).not.toContain("could not be read");
+    }
 
     // The two intents that carry no delete flag are unaffected by the table.
     expect(
@@ -522,6 +551,68 @@ describe("impossible intent combinations", () => {
     expect(
       expectCompiled(
         compile("sonarr", "force_pending_grab", pending("sonarr"), { version: "3.0.10.1567" }),
+      ).intent,
+    ).toBe("force_pending_grab");
+  });
+
+  it("refuses a flag on an instance whose reported version cannot be read", () => {
+    // The gate fails closed. An unreadable version establishes nothing: the
+    // instance may support the flag and may not, and sending it anyway would be
+    // acting on a version nobody could parse. Every flag-bearing intent is
+    // checked, because the gate is per flag rather than per intent.
+    for (const version of ["nightly", "", "   ", "v", "unversioned"]) {
+      for (const intent of [
+        "ignore_tracking",
+        "remove_from_client_and_delete_data",
+        "change_category_mark_imported",
+        "remove_pending",
+        "blocklist_pending",
+      ] as const) {
+        const error = expectRejected(
+          compile("sonarr", intent, observedFor("sonarr", intent), { version }),
+        );
+        expect(error.code).toBe("unsupported_capability");
+        expect(error.message).toContain("could not be read");
+      }
+
+      expect(
+        expectRejected(
+          compile("radarr", "blocklist_and_remove", tracked("radarr"), {
+            version,
+            replacementSearch: "allow",
+          }),
+        ).message,
+      ).toContain("radarr 5.0.0 or newer");
+    }
+  });
+
+  it("does not quote an unreadable version back in the refusal", () => {
+    // The instance's own version string is upstream text this server did not
+    // author, and a capability message is not a place to repeat one. The value
+    // is distinctive rather than a short word, so the assertion cannot pass on
+    // a substring that any English sentence would contain.
+    const error = expectRejected(
+      compile("sonarr", "ignore_tracking", tracked("sonarr"), {
+        version: "build-CANARY-4f21-from-the-instance",
+      }),
+    );
+
+    expect(error.code).toBe("unsupported_capability");
+    expect(JSON.stringify(error)).not.toContain("CANARY");
+  });
+
+  it("still compiles the two flagless intents when the version cannot be read", () => {
+    // They send no delete flag, so there is nothing the table vouches for and
+    // nothing to fail closed on. Refusing them would be the mirror error:
+    // failing closed on a question that was never asked.
+    expect(
+      expectCompiled(
+        compile("sonarr", "route_to_manual_import", tracked("sonarr"), { version: "nightly" }),
+      ).intent,
+    ).toBe("route_to_manual_import");
+    expect(
+      expectCompiled(
+        compile("sonarr", "force_pending_grab", pending("sonarr"), { version: "nightly" }),
       ).intent,
     ).toBe("force_pending_grab");
   });

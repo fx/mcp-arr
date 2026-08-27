@@ -3,7 +3,7 @@ import type { UpstreamQuery } from "../../http/client.js";
 import { createToolError, type ToolError } from "../../tools/errors.js";
 import type { Effect } from "../../tools/results.js";
 import { isMediaApplication, type MediaApplication } from "../library/model.js";
-import { meetsMinimumVersion } from "../version.js";
+import { compareToMinimumVersion } from "../version.js";
 import type { QueueItemKind, QueueStatus, TrackedDownloadState } from "./model.js";
 import {
   queueItemKindForStatus,
@@ -214,13 +214,16 @@ interface QueueDeleteFlags {
 /**
  * The release each flag has been reviewed against, per application.
  *
- * The recorded application minimums are already newer than all of these, so
- * nothing an instance reaches this module with is refused by the table today.
- * It is here so that stays true by check rather than by luck: a lowered
- * minimum, or an instance whose reported version is older than this project
- * vouches for, refuses the intent instead of sending a flag whose behavior on
- * that release nobody looked at. A flag with no entry is one both applications
- * have always accepted.
+ * The recorded application minimums are already newer than all of these, so an
+ * in-support instance reporting a readable version is refused by nothing in
+ * this table today. It is here so that stays true by check rather than by luck:
+ * a lowered minimum, an instance older than this project vouches for, or an
+ * instance whose reported version cannot be read at all refuses the intent
+ * instead of sending a flag whose behavior on that release nobody looked at.
+ * The third of those is why {@link checkVersion} compares in three outcomes
+ * rather than two — an unreadable version is not evidence of support, and a
+ * gate that treated it as such would be a gate that fails open. A flag with no
+ * entry is one both applications have always accepted.
  */
 interface FlagSupport {
   readonly flag: keyof QueueDeleteFlags;
@@ -405,14 +408,34 @@ function checkRequestWords(
 }
 
 /**
- * The statuses in which a download has produced nothing to act on yet.
+ * The statuses in which this server cannot say the download's payload is there
+ * to act on.
  *
- * Two intents depend on the payload already being there — routing to a manual
- * import, and handing the download to the client's post-import category — and
- * both are refused in these states rather than sent and left to fail upstream
- * in a way that would be much harder to explain.
+ * Two intents depend on it already being there — routing to a manual import,
+ * and handing the download to the client's post-import category — and both are
+ * refused in these states rather than sent and left to fail upstream in a way
+ * that would be much harder to explain.
+ *
+ * `unknown` is in the list for the same reason an unreadable version is refused
+ * by {@link checkVersion}: it is the status this server maps an upstream word it
+ * does not recognize onto, so it is not evidence the download finished. Leaving
+ * it out would let "we could not tell" be treated as "yes, it finished", which
+ * is the answer that marks an unfinished download imported.
  */
-const unfinishedStatuses: readonly QueueStatus[] = ["queued", "downloading", "paused"];
+const unestablishedStatuses: readonly QueueStatus[] = [
+  "unknown",
+  "queued",
+  "downloading",
+  "paused",
+];
+
+/** Why the payload cannot be acted on yet, or `undefined` when it can. */
+function unestablishedReason(status: QueueStatus): string | undefined {
+  if (status === "unknown") {
+    return "this download's status could not be established, so it cannot be treated as finished";
+  }
+  return unestablishedStatuses.includes(status) ? "this download has not finished" : undefined;
+}
 
 /**
  * Whether the observed row is internally consistent.
@@ -427,15 +450,38 @@ function isConsistent(observed: ObservedQueueItem): boolean {
   return queueItemKindForStatus(observed.status) === observed.itemKind;
 }
 
+/**
+ * Whether the instance is one this project vouches for each set flag on.
+ *
+ * The gate fails closed, and the third comparison outcome is why it can. A
+ * version string this server cannot read establishes nothing: the instance may
+ * be new enough and may not, and sending a consequential flag on the strength
+ * of a version nobody could parse is acting on a guess. So `unreadable` is
+ * refused exactly as `below` is, and says which of the two it was — the two
+ * have different remedies, and a caller told only "too old" would go looking
+ * for an upgrade that may already have happened.
+ *
+ * The reported version is deliberately not quoted back. It is upstream text
+ * this server did not author, and a capability message is not a place to repeat
+ * one.
+ */
 function checkVersion(
   application: MediaApplication,
   version: string,
   flags: QueueDeleteFlags,
 ): string | undefined {
   for (const support of flagMinimumVersions) {
+    if (!flags[support.flag]) {
+      continue;
+    }
     const minimum = support.minimums[application];
-    if (flags[support.flag] && !meetsMinimumVersion(version, minimum)) {
-      return `this intent needs ${application} ${minimum} or newer`;
+    switch (compareToMinimumVersion(version, minimum)) {
+      case "meets":
+        continue;
+      case "below":
+        return `this intent needs ${application} ${minimum} or newer`;
+      case "unreadable":
+        return `this intent needs ${application} ${minimum} or newer, and this instance reported a version that could not be read`;
     }
   }
   return undefined;
@@ -497,13 +543,20 @@ function effectsFor(
         removal,
         dataDeletion,
         effect(application, "consequential", "block this release so it is not grabbed again"),
-        replacementSearch === "allow"
-          ? effect(application, "consequential", "let the application search for a replacement")
-          : effect(
+        // Branched on `suppress` rather than on `allow`, which is the same
+        // comparison {@link blocklistAndRemoveFlags} computes `skipRedownload`
+        // from. Testing for `allow` instead would read identically today and
+        // disagree the moment a value reached here that was neither: the flag
+        // would request a search while this text said none was requested, and
+        // the disclosure would be the more favourable of the two. They are
+        // written as one comparison so they cannot come apart.
+        replacementSearch === "suppress"
+          ? effect(
               application,
               "informational",
               "no replacement search is requested for this release",
-            ),
+            )
+          : effect(application, "consequential", "let the application search for a replacement"),
       ];
     case "change_category_mark_imported":
       return [
@@ -651,11 +704,9 @@ export function compileQueueTransition(
   });
 
   if (intent === "route_to_manual_import") {
-    if (unfinishedStatuses.includes(observed.status)) {
-      return conflict(
-        application,
-        "this download has not finished, so there is nothing to import from it yet",
-      );
+    const unestablished = unestablishedReason(observed.status);
+    if (unestablished !== undefined) {
+      return conflict(application, `${unestablished}, so there is nothing to import from it yet`);
     }
     if (observed.status === "download_client_unavailable") {
       return conflict(
@@ -681,11 +732,14 @@ export function compileQueueTransition(
     });
   }
 
-  if (intent === "change_category_mark_imported" && unfinishedStatuses.includes(observed.status)) {
-    return conflict(
-      application,
-      "this download has not finished, so it cannot be handed to the post-import category",
-    );
+  if (intent === "change_category_mark_imported") {
+    const unestablished = unestablishedReason(observed.status);
+    if (unestablished !== undefined) {
+      return conflict(
+        application,
+        `${unestablished}, so it cannot be handed to the post-import category`,
+      );
+    }
   }
 
   const flags = flagsFor(intent, request.replacementSearch);
