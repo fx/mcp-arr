@@ -292,6 +292,25 @@ describe("planned effects", () => {
     expect(first?.reason).toContain("never re-sends it");
   });
 
+  it("reports an excluded indexer a level cannot delete rather than omitting it", async () => {
+    // The add-only mapping stays add-only: nothing changes, and the point is
+    // what the remote may already be holding that Prowlarr no longer maintains.
+    const outcome = planned(await instance().run(request({ targets: [2], syncLevel: "add_only" })));
+
+    expect(effectsOf(outcome, "remove")).toEqual([]);
+    expect(effectsOf(outcome, "stale")).toEqual([
+      "Example Indexer A",
+      "Example Indexer B",
+      "Example Indexer C",
+      "Example Indexer D",
+    ]);
+    const excluded = outcome.items[0]?.effects.find(
+      (effect) => effect.name === "Example Indexer A",
+    );
+    expect(excluded?.reason).toContain("outside the mapping's tag selection");
+    expect(excluded?.reason).toContain("deletes nothing");
+  });
+
   it("says a disabled level abandons everything rather than deleting it", async () => {
     const outcome = planned(await instance().run(request({ targets: [1], syncLevel: "disabled" })));
 
@@ -338,6 +357,70 @@ describe("planned effects", () => {
     expect(
       planSyncEffects(mapping as never, indexers, "add_only").map((one) => one.effect),
     ).toEqual(["stale"]);
+  });
+});
+
+describe("the synchronization a level change starts", () => {
+  it("discloses every mapping the started synchronization runs, not only the named one", async () => {
+    const running = instance();
+    const quiet = planned(await running.run(request({ targets: [2], startSync: false })));
+    const loud = planned(await running.run(request({ targets: [2], startSync: true })));
+
+    // Prowlarr's command is not addressed to a mapping: it runs all of them. A
+    // plan that started one and disclosed only the named mapping would carry out
+    // the deletions the untouched full-sync mapping implies, unannounced.
+    expect(quiet.items.map((item) => item.name)).toEqual(["Example Movie Application"]);
+    expect(loud.items.map((item) => item.name)).toEqual([
+      "Example Movie Application",
+      "Example Series Application",
+      "Example Paused Application",
+    ]);
+    expect(loud.items[1]).toMatchObject({
+      changed: false,
+      currentLevel: "full_sync",
+      desiredLevel: "full_sync",
+      warnings: [expect.stringContaining("runs this mapping too")],
+    });
+    // And what it discloses for that mapping is what a run does to it as it
+    // stands: the full-sync mapping still deletes the indexer it excludes.
+    expect(loud.items[1]?.effects.filter((effect) => effect.effect === "remove")).toEqual([
+      expect.objectContaining({ name: "Example Indexer D" }),
+    ]);
+    expect(loud.warnings[0]).toContain("deletes 4 indexer(s)");
+  });
+
+  it("refuses to start one while a mapping it would run reports an unmodelled level", async () => {
+    const running = instance({
+      collections: {
+        applications: records("applications").map((record) =>
+          record.id === 1 ? { ...record, syncLevel: "partialSync" } : record,
+        ),
+      },
+    });
+
+    // Mapping 1 is not named, but the command runs it, and there is no honest
+    // claim to make about what an unrecognized level will do to a remote.
+    expect(failed(await running.run(request({ targets: [2], startSync: true }))).error.code).toBe(
+      "unsupported_capability",
+    );
+    // Without the command, that mapping is nobody's business.
+    expect(
+      planned(await running.run(request({ targets: [2], startSync: false }))).items,
+    ).toHaveLength(1);
+  });
+
+  it("writes only the mappings the call named, however many it disclosed", async () => {
+    const running = instance();
+    const outcome = applied(
+      await running.run(request({ targets: [2], mode: "apply", startSync: true })),
+    );
+
+    expect(outcome.items).toHaveLength(3);
+    expect(outcome.dispatched).toBe(1);
+    expect(running.writes.map((write) => write.route)).toEqual(["applications/2", "command"]);
+    expect(outcome.items.filter((item) => item.attempted).map((item) => item.name)).toEqual([
+      "Example Movie Application",
+    ]);
   });
 });
 
@@ -515,6 +598,45 @@ describe("refusals and staleness", () => {
 
     expect(failed(outcome).error.code).toBe("stale_plan");
     expect(second.writes).toEqual([]);
+  });
+
+  it("refuses a plan whose disclosed names have changed", async () => {
+    const first = instance();
+    const plan = planned(await first.run(request({ targets: [2] })));
+    const { fingerprintReadSet } = await import("../src/state/plans.js");
+
+    // The mapping was renamed. Nothing upstream depends on its name and the
+    // write would still land — but the plan named it, and applying against a
+    // mapping that now describes something else is not what was approved.
+    const renamed = instance({
+      collections: {
+        applications: records("applications").map((record) =>
+          record.id === 2 ? { ...record, name: "Example Other Application" } : record,
+        ),
+      },
+    });
+    const outcome = await renamed.run(
+      request({ targets: [2], mode: "apply", planned: fingerprintReadSet(plan.observations) }),
+    );
+
+    expect(failed(outcome).error.code).toBe("stale_plan");
+    expect(renamed.writes).toEqual([]);
+
+    // The same holds for an indexer this plan listed an effect for by name.
+    const relabelled = instance({
+      collections: {
+        indexer: records("indexer").map((record) =>
+          record.id === 1 ? { ...record, name: "Example Renamed Indexer" } : record,
+        ),
+      },
+    });
+    expect(
+      failed(
+        await relabelled.run(
+          request({ targets: [2], mode: "apply", planned: fingerprintReadSet(plan.observations) }),
+        ),
+      ).error.code,
+    ).toBe("stale_plan");
   });
 
   it("applies a plan whose state has not moved", async () => {

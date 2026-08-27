@@ -328,13 +328,13 @@ export function planSyncEffects(
       });
       continue;
     }
-    if (before.removes) {
-      effects.push({
-        ...base,
-        effect: "stale",
-        reason: `${reason}; the current level would have deleted it and this one leaves it in place`,
-      });
-    }
+    effects.push({
+      ...base,
+      effect: "stale",
+      reason: before.removes
+        ? `${reason}; the current level would have deleted it and this one leaves it in place`
+        : `${reason}, and this level deletes nothing, so whatever the remote holds for it stays`,
+    });
   }
 
   return effects;
@@ -355,26 +355,41 @@ export function describeSelection(
 /**
  * The state one mapping's plan rests on.
  *
- * The level and the tag selection are here because the effects are computed
- * from them, and every selected indexer's identity and enabled state are here
- * because each of those decided one effect. An indexer that was disabled while
- * a removal was planned for it must make that plan stale rather than be deleted
- * from the remote on the strength of a plan that described a different set.
+ * Two kinds of thing are here, and both have to be. The level and the tag
+ * selection are what the effects are computed from, and every indexer's
+ * identity, enabled state, and selection are what decided one effect each: an
+ * indexer disabled while a removal was planned for it must make that plan stale
+ * rather than be deleted on the strength of a plan that described a different
+ * set.
+ *
+ * And every name this plan *discloses* is here too — the mapping's, each
+ * indexer's, and the labels the tag selection reads as — because a read set
+ * observes what its plan disclosed and not only what its request sends. A plan
+ * approved for one mapping must not apply against a mapping that has since been
+ * renamed into something else, even though no name is written upstream.
  */
 export function syncObservations(
   mapping: ApplicationMapping,
   indexers: readonly SyncIndexer[],
+  tagLabels: ReadonlyMap<number, string>,
 ): readonly ReadSetObservation[] {
+  const tags = [...mapping.tagIds].sort((left, right) => left - right);
   return [
     {
       key: `application:${String(mapping.id)}`,
-      value: { level: mapping.reportedLevel, tags: [...mapping.tagIds].sort((a, b) => a - b) },
+      value: {
+        name: mapping.name,
+        level: mapping.reportedLevel,
+        tags,
+        labels: tags.map((tag) => tagLabels.get(tag)),
+      },
     },
     {
       key: `selection:${String(mapping.id)}`,
       value: indexers
         .map((indexer) => ({
           id: indexer.id,
+          name: indexer.name,
           enabled: indexer.enabled,
           selected: selects(mapping, indexer),
         }))
@@ -530,7 +545,22 @@ export async function runApplicationSync(
   const items: SyncItemOutcome[] = [];
   const observations: ReadSetObservation[] = [];
 
-  for (const target of request.targets) {
+  // Prowlarr's synchronization command is not addressed to a mapping: it runs
+  // every one of them. So a call that starts one has to disclose every mapping,
+  // not only the ones whose level it changes — otherwise applying a harmless
+  // change to one mapping would carry out the deletions a *different* mapping's
+  // full-sync level implies, and the caller would never have been shown them.
+  const disclosed = request.startSync
+    ? [
+        ...request.targets,
+        ...observation.mappings
+          .map((mapping) => mapping.id)
+          .filter((id) => !request.targets.includes(id)),
+      ]
+    : request.targets;
+
+  for (const target of disclosed) {
+    const named = request.targets.includes(target);
     const mapping = observation.mappings.find((candidate) => candidate.id === target);
     if (mapping === undefined) {
       return {
@@ -558,22 +588,31 @@ export async function runApplicationSync(
       };
     }
 
-    observations.push(...syncObservations(mapping, observation.indexers));
-    const effects = planSyncEffects(mapping, observation.indexers, request.syncLevel);
+    observations.push(...syncObservations(mapping, observation.indexers, observation.tagLabels));
+    // A mapping this call did not name keeps its own level, so what is disclosed
+    // for it is what the started synchronization will do to it as it stands.
+    const level = named ? request.syncLevel : mapping.level;
+    const effects = planSyncEffects(mapping, observation.indexers, level);
     resolved.push({ mapping, effects });
     items.push({
       ref: mapping.ref,
       name: mapping.name,
       selection: describeSelection(mapping, observation.tagLabels),
       currentLevel: mapping.level,
-      desiredLevel: request.syncLevel,
+      desiredLevel: level,
       effects,
-      changed: mapping.level !== request.syncLevel,
+      changed: named && mapping.level !== request.syncLevel,
       attempted: false,
-      warnings:
-        mapping.level === request.syncLevel
+      warnings: [
+        ...(named && mapping.level === request.syncLevel
           ? ["this mapping is already at the requested synchronization level"]
-          : [],
+          : []),
+        ...(named
+          ? []
+          : [
+              "this call does not change this mapping; it is listed because the synchronization it starts runs this mapping too",
+            ]),
+      ],
     });
   }
 
