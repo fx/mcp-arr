@@ -367,7 +367,7 @@ describe("createUpstreamClient", () => {
     expect(new Headers(calls[0]?.init.headers).get("X-Api-Key")).toBe(apiKey);
   });
 
-  it("keeps a validating write's other failures failures", async () => {
+  it("keeps a validating write's other failures as failures", async () => {
     // Above 500 the instance is reporting that it failed rather than that the
     // request did, and a transport failure answered nothing at all. Neither is
     // a validation result, so both still throw.
@@ -405,14 +405,36 @@ describe("createUpstreamClient", () => {
       status: 400,
       body: undefined,
     });
+  });
+
+  it("surfaces a redirect as itself rather than following it with the credential", async () => {
+    const { client, calls } = harness(() => new Response(null, { status: 302 }));
+
+    // Asked for, not assumed: the request declares that a redirect is to be
+    // reported rather than followed, because following one would send this
+    // instance's API key to a location the instance named rather than the one
+    // an operator configured.
+    await captureError(client.get("system/status"));
+    expect(calls[0]?.init.redirect).toBe("manual");
 
     // A redirect is neither a success nor a validation the instance performed,
-    // so its status is reported and it is not accepted.
-    const { client: moved } = harness(() => new Response(null, { status: 302 }));
-    await expect(moved.validate("notification/test", { id: 1 })).resolves.toMatchObject({
+    // so its status is reported and it is not acceptance. Without the mode
+    // above the client would never see the 3xx at all: the runtime would follow
+    // it and hand back whatever answered, and a redirect could stand in for a
+    // test that passed.
+    await expect(client.validate("notification/test", { id: 1 })).resolves.toMatchObject({
       accepted: false,
       status: 302,
     });
+
+    // On the ordinary paths it is the error a misconfigured base URL deserves,
+    // rather than something this client quietly works around.
+    const read = await captureError(client.get("system/status"));
+    expect(read.kind).toBe("unexpected-response");
+    expect(read.status).toBe(302);
+    const written = await captureError(client.post("notification", { id: 1 }));
+    expect(written.kind).toBe("unexpected-response");
+    expect(written.status).toBe(302);
   });
 
   it("fails a validating write whose rejection body never arrived", async () => {

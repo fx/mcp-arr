@@ -237,6 +237,18 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
             ...(payload === undefined ? {} : { "Content-Type": "application/json" }),
           },
           ...(payload === undefined ? {} : { body: payload }),
+          // Surfaced rather than followed, for two reasons that point the same
+          // way. Every request here carries the instance's API key, and
+          // following a redirect would send that credential to a location the
+          // instance named rather than the one an operator configured —
+          // whether the header survives that hop depends on the runtime and on
+          // whether the hop is same-origin, which is not something to rely on
+          // implicitly for a credential. And a redirect is not an answer to the
+          // question that was asked: an instance whose configured URL redirects
+          // is a configuration this operator should be told about rather than
+          // one this client quietly works around. The status falls through to
+          // the handling below and is reported as itself.
+          redirect: "manual",
           signal: controller.signal,
         });
       } catch {
