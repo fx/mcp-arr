@@ -272,7 +272,12 @@ export const importInspectOutputSchema = toolResultSchema({ data: importInspectD
  */
 export const importExecuteDataSchema = z.strictObject({
   job: jobProjectionSchema,
-  files: z.int().min(1),
+  /**
+   * The files this job is about, by reference alone. There is no status here:
+   * these applications report one outcome for a whole `ManualImport`, so a
+   * per-file verdict would be one this server invented.
+   */
+  files: z.array(z.strictObject({ reference: importCandidateReferenceSchema })).min(1),
   importMode: z.enum(["auto", "move", "copy"]),
 });
 

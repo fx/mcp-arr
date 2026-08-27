@@ -1,6 +1,7 @@
 import type { CandidateOrigin, UpstreamMappingPatch } from "../adapters/import/candidates.js";
 import { readMediaFolder } from "../adapters/import/candidates.js";
 import {
+  checkFreeSpace,
   compileCorrections,
   type ImportRefusal,
   validateForImport,
@@ -45,6 +46,9 @@ const contextKind = "import-execute";
 interface ValidatedFile {
   readonly reference: string;
   readonly identity: string;
+  /** Where this file would land, for the aggregate room check below. */
+  readonly destination: string;
+  readonly sizeBytes?: number | undefined;
   readonly origin: CandidateOrigin;
   readonly patch: UpstreamMappingPatch;
   /** The candidate as the instance decided it just now, not as it was inspected. */
@@ -205,8 +209,19 @@ function effectsFor(
   ];
 }
 
-function itemsFor(files: readonly ValidatedFile[]): readonly ItemOutcome[] {
+/**
+ * The per-item outcomes of a *plan*, where `ok` means what it says: this file
+ * passed every precondition an import has. An apply publishes no item statuses
+ * at all — see the handler — because these applications report one outcome for
+ * the whole command and a status here would invent a verdict for each file.
+ */
+function validatedItems(files: readonly ValidatedFile[]): readonly ItemOutcome[] {
   return files.map((file) => ({ reference: file.reference, status: "ok", warnings: [] }));
+}
+
+/** Which files an import is about, named without claiming anything about them. */
+function membership(files: readonly ValidatedFile[]): readonly { readonly reference: string }[] {
+  return files.map((file) => ({ reference: file.reference }));
 }
 
 export const importExecutePreconditions: PreconditionReader = async (invocation) => {
@@ -282,6 +297,8 @@ export const importExecutePreconditions: PreconditionReader = async (invocation)
     files.push({
       reference: token,
       identity: retained.fileIdentity,
+      destination,
+      sizeBytes: validated.validation.candidate.sizeBytes,
       origin,
       patch: compiled.compiled.patch,
       candidate: validated.validation.candidate,
@@ -295,6 +312,39 @@ export const importExecutePreconditions: PreconditionReader = async (invocation)
 
   if (files.length === 0) {
     return blocked(fail(invocation, "invalid_input", "name at least one candidate to import"));
+  }
+
+  // Each file was checked against the room its own size needs, which is not the
+  // question a batch asks: two files that each fit can still not fit together,
+  // and this import sends them as one command. So the sizes are summed per
+  // destination and the check is repeated for the total.
+  const totals = new Map<string, number>();
+  for (const file of files) {
+    totals.set(file.destination, (totals.get(file.destination) ?? 0) + (file.sizeBytes ?? 0));
+  }
+  for (const [destination, bytes] of totals) {
+    if (bytes === 0) {
+      continue;
+    }
+    const room = await checkFreeSpace(invocation.adapter.client, application, destination, bytes);
+    if (room.status === "insufficient") {
+      return blocked(
+        fail(
+          invocation,
+          "conflict",
+          "the destination does not have room for these files together; import fewer of them or free space",
+        ),
+      );
+    }
+    if (room.status === "unknown") {
+      return blocked(
+        fail(
+          invocation,
+          "conflict",
+          "this application did not report free space for the destination, so there is no evidence these files fit",
+        ),
+      );
+    }
   }
 
   const context: ExecuteContext = {
@@ -321,7 +371,7 @@ export const importExecuteHandler: OperationHandler = async (invocation) => {
     return {
       status: "ok",
       plan: { requestedEffects: effects, predictedEffects: [], warnings: context.warnings },
-      items: itemsFor(context.files),
+      items: validatedItems(context.files),
     };
   }
 
@@ -339,39 +389,34 @@ export const importExecuteHandler: OperationHandler = async (invocation) => {
   if (submission.status !== "ok") {
     // Nothing was sent: the recovery that failed happens before the command is
     // built, so this is a refusal rather than an outcome nobody can settle.
-    return {
-      status: "error",
-      error: submission.error,
-      items: itemsFor(context.files),
-    };
+    return { status: "error", error: submission.error };
   }
 
   const record = invocation.state.jobs.project({
     application: context.application,
     command: { name: submission.command.name, upstreamId: submission.command.upstreamId },
-    observation: {
-      ...submission.command.observation,
-      // One item per file the command carries, so a caller can see which files
-      // this job is about. They carry no per-file verdict, and that is a fact
-      // about the applications rather than a gap here: a `ManualImport`
-      // reports one state for the whole command, so a terminal failure says
-      // that the import failed and never which file did.
-      items: itemsFor(context.files),
-    },
+    // No per-item outcomes: a `ManualImport` reports one state for the whole
+    // command and never one per file, so an item list here would carry a
+    // verdict nobody gave — and a terminal snapshot would then preserve it.
+    // Which files the job is about is published beside it instead.
+    observation: submission.command.observation,
     // This server has no way to ask an application to stop a running import.
     cancellation: { supported: false },
   });
 
   return {
     status: "ok",
-    data: { job: projectJob(record), files: context.files.length, importMode: context.importMode },
-    items: itemsFor(context.files),
+    data: {
+      job: projectJob(record),
+      files: membership(context.files),
+      importMode: context.importMode,
+    },
     effects,
     job: record.reference,
     warnings: [
       ...context.warnings,
       ...record.warnings,
-      "this application reports one outcome for the whole import rather than one per file",
+      "this application reports one outcome for the whole import rather than one per file, so the job's result covers every file together",
     ],
   };
 };

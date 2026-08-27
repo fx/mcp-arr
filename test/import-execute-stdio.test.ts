@@ -56,7 +56,7 @@ interface Envelope {
     readonly application: string;
     readonly status: string;
     readonly data?: {
-      readonly files?: number;
+      readonly files?: readonly { readonly reference: string }[];
       readonly importMode?: string;
       readonly job?: unknown;
     };
@@ -157,8 +157,12 @@ describe("arr_import_execute over stdio", () => {
       expect(JSON.stringify(command?.body)).toContain("/media/example/downloads");
       // The path went upstream and nowhere else.
       expect(JSON.stringify(applied.envelope)).not.toContain("/media/example/downloads");
-      expect(applied.envelope.applications[0]?.data?.files).toBe(1);
-      expect(applied.envelope.applications[0]?.items?.[0]?.reference).toBe(importable.reference);
+      // The files the job is about, by reference and without a verdict: these
+      // applications report one outcome for the whole command.
+      expect(applied.envelope.applications[0]?.data?.files).toEqual([
+        { reference: importable.reference },
+      ]);
+      expect(applied.envelope.applications[0]?.items).toBeUndefined();
 
       await child.terminateGracefully();
       assertCleanProtocolStdout(child.stdout);
