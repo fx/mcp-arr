@@ -83,7 +83,6 @@
         "eventType": "movieFileDeleted",
         "date": "2026-08-20T12:00:00Z",
         "sourceTitle": "Example Fallback 2019 WEBDL-1080p",
-        "downloadId": null,
         "quality": {
           "quality": {
             "id": 7,

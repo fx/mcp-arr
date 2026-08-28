@@ -22,7 +22,6 @@
         "year": 2021,
         "runtime": 118,
         "path": "/media/example/movies/Example Movie (2021)",
-        "rootFolderPath": "/media/example/movies",
         "qualityProfileId": 2,
         "monitored": true,
         "minimumAvailability": "released",
@@ -63,35 +62,7 @@
             "type": "user"
           }
         },
-        "images": [],
-        "movieFile": {
-          "id": 501,
-          "movieId": 8,
-          "relativePath": "Example Movie (2021) Bluray-1080p.mkv",
-          "size": 2147483648,
-          "dateAdded": "2024-02-02T10:00:00Z",
-          "quality": {
-            "quality": {
-              "id": 7,
-              "name": "Bluray-1080p",
-              "source": "bluray",
-              "resolution": 1080
-            },
-            "revision": {
-              "version": 1,
-              "real": 0,
-              "isRepack": false
-            }
-          },
-          "languages": [
-            {
-              "id": 1,
-              "name": "English"
-            }
-          ],
-          "releaseGroup": "EXAMPLEGRP",
-          "edition": "Director Cut"
-        }
+        "images": []
       }
     ]
   }

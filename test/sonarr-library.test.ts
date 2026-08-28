@@ -274,7 +274,10 @@ describe("sonarr library reads", () => {
       languages: ["English"],
       releaseGroup: "EXAMPLEGRP",
       detail: undefined,
-      sonarr: { seriesId: 12, seasonNumber: 1, episodeIds: [1001] },
+      // Sonarr 4.0.19.2979 answers this route with no `episodeIds` on any row —
+      // the episode-to-file association is carried on the episode instead — so
+      // the namespaced list is empty for every recorded file.
+      sonarr: { seriesId: 12, seasonNumber: 1, episodeIds: [] },
     });
 
     const secondSeason = expectOk(

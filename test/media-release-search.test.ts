@@ -92,7 +92,23 @@ describe("sonarr interactive search", () => {
   });
 
   it("normalizes both rejection serializations and keeps the permanence apart", async () => {
-    const { items } = await run("sonarr", episodeSearch, releases.sonarr);
+    // Every rejection Sonarr 4.0.19.2979 and Radarr 6.3.0.10514 send on this
+    // route is a bare string, so the recorded bodies carry that form and the
+    // object form is supplied here rather than recorded as a response neither
+    // instance produces. The union still accepts both, and a newer release that
+    // starts sending the object form must keep working.
+    const structured = releases.sonarr.map((record, index) =>
+      index === 1
+        ? {
+            ...record,
+            rejections: [
+              { reason: "Quality HDTV-720p is not wanted in profile", type: "permanent" },
+              { reason: "Indexer request limit reached", type: "temporary" },
+            ],
+          }
+        : record,
+    );
+    const { items } = await run("sonarr", episodeSearch, structured);
 
     expect(items[1]?.release.decision).toEqual({
       approved: false,
@@ -219,16 +235,27 @@ describe("radarr interactive search", () => {
       protocol: "torrent",
       radarr: {
         movieTitles: ["Example Movie", "Example Movie Alternate Title"],
-        year: 2021,
         edition: "Director's Cut",
+        // Radarr 6.3.0.10514 sends no `year` on this route, so the namespaced
+        // field the adapter declares for it is absent from every recorded row.
+        year: undefined,
       },
-    });
-    // An instance that reports the single-title form is normalized to the list.
-    expect(items[1]?.release).toMatchObject({
-      radarr: { movieTitles: ["Example Movie"], edition: undefined },
     });
     expect(items[2]?.release.quality).toMatchObject({ proper: true, repack: false });
     expect(items[2]?.release.languages).toEqual(["English", "French"]);
+  });
+
+  it("normalizes an instance that reports the single-title form", async () => {
+    // Radarr 6.3.0.10514 sends `movieTitles` and never the singular
+    // `movieTitle`, so the singular form is supplied here rather than recorded
+    // as a response no instance produces. The normalization still has to hold
+    // for a release that sends it.
+    const [record] = releases.radarr;
+    const { items } = await run("radarr", movieSearch, [
+      { ...record, movieTitles: undefined, movieTitle: "Example Movie" },
+    ]);
+
+    expect(items[0]?.release).toMatchObject({ radarr: { movieTitles: ["Example Movie"] } });
   });
 
   it("normalizes an instance that reports age in days only", async () => {

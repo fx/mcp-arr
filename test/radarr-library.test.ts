@@ -192,7 +192,10 @@ describe("radarr library reads", () => {
     expect(mediaItems(ok.data)[0]).toMatchObject({
       ref: { application: "radarr", kind: "collection", id: "21" },
       title: "Example Collection",
-      monitoring: { monitored: true, monitoredChildren: 1, totalChildren: 2 },
+      // Radarr 6.3.0.10514 sends no `monitored` on a collection's member rows,
+      // so no recorded member counts as monitored; the collection's own
+      // monitoring flag is the one it does send.
+      monitoring: { monitored: true, monitoredChildren: 0, totalChildren: 2 },
       radarr: { kind: "collection", tmdbId: 300001, movieCount: 2, searchOnAdd: false },
     });
     expect(JSON.stringify(ok.data.items)).not.toContain("Example Movie Sequel");

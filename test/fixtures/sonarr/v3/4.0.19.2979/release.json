@@ -25,11 +25,30 @@
       "temporarilyRejected": false,
       "rejections": [],
       "quality": {
-        "quality": { "id": 3, "name": "WEBDL-1080p", "source": "web", "resolution": 1080 },
-        "revision": { "version": 1, "real": 0, "isRepack": false }
+        "quality": {
+          "id": 3,
+          "name": "WEBDL-1080p",
+          "source": "web",
+          "resolution": 1080
+        },
+        "revision": {
+          "version": 1,
+          "real": 0,
+          "isRepack": false
+        }
       },
-      "languages": [{ "id": 1, "name": "English" }],
-      "customFormats": [{ "id": 4, "name": "Example Custom Format" }],
+      "languages": [
+        {
+          "id": 1,
+          "name": "English"
+        }
+      ],
+      "customFormats": [
+        {
+          "id": 4,
+          "name": "Example Custom Format"
+        }
+      ],
       "customFormatScore": 25,
       "indexerFlags": 0,
       "seriesTitle": "Example Series",
@@ -49,21 +68,30 @@
       "ageHours": 2,
       "ageMinutes": 120,
       "publishDate": "2026-08-26T09:00:00Z",
-      "seeders": null,
-      "leechers": null,
       "releaseGroup": "OTHERGRP",
       "approved": false,
       "rejected": true,
       "temporarilyRejected": true,
-      "rejections": [
-        { "reason": "Quality HDTV-720p is not wanted in profile", "type": "permanent" },
-        { "reason": "Indexer request limit reached", "type": "temporary" }
-      ],
+      "rejections": ["Quality HDTV-720p is not wanted in profile", "Indexer request limit reached"],
       "quality": {
-        "quality": { "id": 4, "name": "HDTV-720p", "source": "television", "resolution": 720 },
-        "revision": { "version": 2, "real": 0, "isRepack": true }
+        "quality": {
+          "id": 4,
+          "name": "HDTV-720p",
+          "source": "television",
+          "resolution": 720
+        },
+        "revision": {
+          "version": 2,
+          "real": 0,
+          "isRepack": true
+        }
       },
-      "languages": [{ "id": 1, "name": "English" }],
+      "languages": [
+        {
+          "id": 1,
+          "name": "English"
+        }
+      ],
       "customFormats": [],
       "customFormatScore": 0,
       "indexerFlags": 0,
@@ -92,10 +120,24 @@
       "temporarilyRejected": false,
       "rejections": ["Full season release is not wanted for a single episode"],
       "quality": {
-        "quality": { "id": 3, "name": "WEBDL-1080p", "source": "web", "resolution": 1080 },
-        "revision": { "version": 1, "real": 0, "isRepack": false }
+        "quality": {
+          "id": 3,
+          "name": "WEBDL-1080p",
+          "source": "web",
+          "resolution": 1080
+        },
+        "revision": {
+          "version": 1,
+          "real": 0,
+          "isRepack": false
+        }
       },
-      "languages": [{ "id": 1, "name": "English" }],
+      "languages": [
+        {
+          "id": 1,
+          "name": "English"
+        }
+      ],
       "customFormats": [],
       "customFormatScore": 0,
       "indexerFlags": 0,

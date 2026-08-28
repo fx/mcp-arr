@@ -19,7 +19,6 @@
         "episodeFileId": 0,
         "seasonNumber": 2,
         "episodeNumber": 3,
-        "absoluteEpisodeNumber": null,
         "title": "Example Season Finale",
         "airDate": "2026-09-30",
         "airDateUtc": "2026-09-30T20:00:00Z",
@@ -62,7 +61,6 @@
         "hasFile": false,
         "monitored": true,
         "unverifiedSceneNumbering": false,
-        "finaleType": null,
         "series": {
           "id": 13,
           "title": "Example Anime",

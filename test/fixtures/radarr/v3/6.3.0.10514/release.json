@@ -25,15 +25,33 @@
       "temporarilyRejected": false,
       "rejections": [],
       "quality": {
-        "quality": { "id": 19, "name": "Bluray-2160p", "source": "bluray", "resolution": 2160 },
-        "revision": { "version": 1, "real": 0, "isRepack": false }
+        "quality": {
+          "id": 19,
+          "name": "Bluray-2160p",
+          "source": "bluray",
+          "resolution": 2160
+        },
+        "revision": {
+          "version": 1,
+          "real": 0,
+          "isRepack": false
+        }
       },
-      "languages": [{ "id": 1, "name": "English" }],
-      "customFormats": [{ "id": 7, "name": "Example Custom Format" }],
+      "languages": [
+        {
+          "id": 1,
+          "name": "English"
+        }
+      ],
+      "customFormats": [
+        {
+          "id": 7,
+          "name": "Example Custom Format"
+        }
+      ],
       "customFormatScore": 60,
       "indexerFlags": ["G_Freeleech"],
       "movieTitles": ["Example Movie", "Example Movie Alternate Title"],
-      "year": 2021,
       "edition": "Director's Cut"
     },
     {
@@ -47,25 +65,33 @@
       "ageHours": 26,
       "ageMinutes": 1560,
       "publishDate": "2026-08-26T05:30:00Z",
-      "seeders": null,
-      "leechers": null,
       "releaseGroup": "OTHERGRP",
       "approved": false,
       "rejected": true,
       "temporarilyRejected": false,
-      "rejections": [
-        { "reason": "Quality WEBRip-1080p is not wanted in profile", "type": "permanent" }
-      ],
+      "rejections": ["Quality WEBRip-1080p is not wanted in profile"],
       "quality": {
-        "quality": { "id": 14, "name": "WEBRip-1080p", "source": "webRip", "resolution": 1080 },
-        "revision": { "version": 1, "real": 0, "isRepack": false }
+        "quality": {
+          "id": 14,
+          "name": "WEBRip-1080p",
+          "source": "webRip",
+          "resolution": 1080
+        },
+        "revision": {
+          "version": 1,
+          "real": 0,
+          "isRepack": false
+        }
       },
-      "languages": [{ "id": 1, "name": "English" }],
+      "languages": [
+        {
+          "id": 1,
+          "name": "English"
+        }
+      ],
       "customFormats": [],
       "customFormatScore": 0,
       "indexerFlags": [],
-      "movieTitle": "Example Movie",
-      "year": 2021,
       "edition": ""
     },
     {
@@ -87,16 +113,32 @@
       "temporarilyRejected": false,
       "rejections": [],
       "quality": {
-        "quality": { "id": 7, "name": "Bluray-1080p", "source": "bluray", "resolution": 1080 },
-        "revision": { "version": 3, "real": 1, "isRepack": false }
+        "quality": {
+          "id": 7,
+          "name": "Bluray-1080p",
+          "source": "bluray",
+          "resolution": 1080
+        },
+        "revision": {
+          "version": 3,
+          "real": 1,
+          "isRepack": false
+        }
       },
-      "languages": [{ "id": 1, "name": "English" }, { "id": 2, "name": "French" }],
+      "languages": [
+        {
+          "id": 1,
+          "name": "English"
+        },
+        {
+          "id": 2,
+          "name": "French"
+        }
+      ],
       "customFormats": [],
       "customFormatScore": 0,
       "indexerFlags": [],
-      "movieTitles": ["Example Movie"],
-      "year": 2021,
-      "edition": null
+      "movieTitles": ["Example Movie"]
     }
   ]
 }

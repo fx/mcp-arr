@@ -55,13 +55,15 @@ describe("prowlarr activity reads", () => {
 
     expect(calls[0]?.url.pathname).toBe("/api/v1/history");
     const records = historyRecords(expectOk(outcome).data);
+    // The recorded body is in the order its own `sortKey`/`sortDirection`
+    // declare, which is the order Prowlarr answers this route in.
     expect(records.map((record) => record.eventType)).toEqual([
-      "indexer_query",
       "release_grabbed",
+      "indexer_query",
       "indexer_auth",
     ]);
-    expect(records[0]?.indexer).toEqual({ application: "prowlarr", indexerId: 21 });
-    expect(records[0]?.data).toEqual({
+    expect(records[1]?.indexer).toEqual({ application: "prowlarr", indexerId: 21 });
+    expect(records[1]?.data).toEqual({
       queryType: "tvsearch",
       queryResults: 42,
       elapsedTimeMs: 812,

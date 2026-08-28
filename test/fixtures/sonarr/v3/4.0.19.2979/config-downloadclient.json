@@ -9,7 +9,6 @@
     "id": 1,
     "downloadClientWorkingFolders": "_UNPACK_|_FAILED_",
     "enableCompletedDownloadHandling": true,
-    "checkForFinishedDownloadInterval": 1,
     "autoRedownloadFailed": true,
     "autoRedownloadFailedFromInteractiveSearch": true
   }
