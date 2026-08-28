@@ -26,7 +26,7 @@ Probing both instances directly settles it — the two applications name this re
 | `/api/v3/exclusions` | 404 | 200 |
 | `/api/v3/exclusions/paged` | 404 | 200 |
 
-The domain map hard-codes `importlistexclusion` for both. The field allowlist for this domain already names `tmdbId`, `movieTitle`, and `movieYear` alongside Sonarr's `tvdbId`, so the Radarr half of the feature was designed and then pointed at a route that never existed. The recorded fixture is `radarr/v3/6.3.0.10514/importlistexclusion.json`, a body attributed to a route Radarr does not serve, which is why nothing caught it.
+The domain map hard-codes `importlistexclusion` for both. The field allowlist for this domain already names `tmdbId`, `movieTitle`, and `movieYear` alongside Sonarr's `tvdbId`, so the Radarr half of the feature was designed and then pointed at a route that never existed. The recorded fixture was `radarr/v3/6.3.0.10514/importlistexclusion.json`, a body attributed to a route Radarr does not serve, which is why nothing caught it. This change replaces it with `radarr/v3/6.3.0.10514/exclusions-paged.json`, captured against the route Radarr actually serves.
 
 The second defect is in the reporting. A 404 is mapped to `stale_reference`, whose remediation tells the caller to repeat the query that produced the reference. This request carried no reference, so the advice is not merely unhelpful — it describes a recovery that does not apply, and it hides a permanent misconfiguration behind an error code that means "try again".
 
