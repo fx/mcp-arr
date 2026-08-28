@@ -17,7 +17,7 @@ Changes 0011 through 0014 were scheduled ahead of the lower-numbered domain chan
 
 Changes 0021 through 0027 come from sweeping all fourteen tools against live instances at the recorded minimum versions, which found six defects the full green test suite did not. 0022 through 0027 are those defects, and each is independent of the others. 0021 is the reason they were invisible: several recorded fixtures describe responses their named instances do not produce, so fixture-backed tests confirmed each adapter against its own assumption.
 
-A corrected fixture is the failing test for the defect it exposes, so each change corrects the fixtures it needs and lands green on its own: 0022 corrects the Sonarr `release` fixture, 0023 the Radarr exclusions one. 0021 owns the capture procedure, the fixtures no point fix needs, and a sweep across the rest — which is why it is the one change here with prerequisites, landing after 0022 and 0023 so that sweep can reach their fixtures once each is correct. No change lands with a failing gate.
+A corrected fixture is the failing test for the defect it exposes, so each change corrects the fixtures it needs and lands green on its own: 0022 corrects the Sonarr `release` fixture, 0023 both exclusion fixtures. 0021 owns the capture procedure, the fixtures no point fix needs, and a sweep across the rest — which is why it is the one change here with prerequisites, landing after 0022 and 0023 so that sweep can reach their fixtures once each is correct. No change lands with a failing gate.
 
 | # | Change | Spec | Status | Depends On |
 |---|--------|------|--------|------------|

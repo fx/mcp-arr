@@ -62,7 +62,7 @@ The [Configuration Reconciliation spec](../specs/configuration-reconciliation/#o
 ### Approach
 
 - Give the exclusion domain a per-application route, as the domain map already supports for other differences.
-- Recapture the Radarr fixture from `exclusions` and keep the Sonarr fixture as it is.
+- Recapture this domain's fixtures against the route each observation sends. Radarr's moves from `importlistexclusion`, which it 404s, to `exclusions/paged`; Sonarr's moves to `importlistexclusion/paged` because preferring the paged form repoints its read too, and its records are carried over unchanged rather than recaptured.
 - Extend the domain's tests to cover both applications.
 - Separate the 404 mapping so a route-level miss on a referenceless request is not reported as a recoverable stale reference.
 
@@ -83,7 +83,7 @@ The [Configuration Reconciliation spec](../specs/configuration-reconciliation/#o
 - Adding, removing, or editing exclusions — configuration writes remain withdrawn per [0020](./0020-withdraw-configuration-writes.md).
 - Reviewing every other domain's route map, beyond confirming this domain.
 - Reworking the error taxonomy generally.
-- Repairing any fixture other than this domain's Radarr one, or adding the capture procedure — that is [0021](./0021-live-verified-fixtures.md).
+- Repairing any fixture other than this domain's own, or adding the capture procedure — that is [0021](./0021-live-verified-fixtures.md).
 
 ## Tasks
 

@@ -383,13 +383,21 @@ describe("observing resources", () => {
   });
 
   it("refuses an exclusion page the instance answered with something else", async () => {
-    const { outcome } = await observe(
-      "radarr",
-      observationRequest("import_list_exclusions"),
-      serving([{ id: 1, tmdbId: 11 }]),
-    );
+    for (const body of [
+      // The bare collection the unpaged route answers with, which the paged
+      // route does not.
+      [{ id: 1, tmdbId: 11 }],
+      // An envelope whose records are not records.
+      { page: 1, pageSize: 25, totalRecords: 1, records: ["not a record"] },
+    ]) {
+      const { outcome } = await observe(
+        "radarr",
+        observationRequest("import_list_exclusions"),
+        serving(body),
+      );
 
-    expect(expectObservationError(outcome).code).toBe("unexpected_response");
+      expect(expectObservationError(outcome).code).toBe("unexpected_response");
+    }
   });
 
   /**
