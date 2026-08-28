@@ -230,10 +230,7 @@ export const mutationBaseShape = {
  * could never actually replace it. The mode is fixed to `apply` because
  * planning a plan reference has no meaning.
  */
-export const planApplyShape = {
+export const planApplySchema = z.strictObject({
   mode: z.literal("apply"),
   plan: planReferenceSchema,
-} as const;
-
-/** The apply-from-plan form for a tool that carries no transient secrets. */
-export const planApplySchema = z.strictObject({ ...planApplyShape });
+});
