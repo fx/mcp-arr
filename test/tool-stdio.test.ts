@@ -297,6 +297,7 @@ describe("built stdio tool surface", () => {
     // And nowhere does the sentence name a property the root does not publish,
     // which is what a path generated from the pre-strip shape could drift into
     // if the merge later renamed or dropped one.
+    let restating = 0;
     for (const [name, schema] of published) {
       const stated = /^Maximum lengths in characters, enforced but not published: (.*)\.$/mu.exec(
         String(schema.description ?? ""),
@@ -304,13 +305,32 @@ describe("built stdio tool surface", () => {
       if (stated === undefined) {
         continue;
       }
-      const roots = stated.split(", ").map((entry) => entry.split(" ")[0]?.split(".")[0] ?? "");
+      restating += 1;
+      const entries = stated.split(", ");
+      // Every entry ends in the length it states. This is what stops the check
+      // below being satisfied by a capture that ran past the list and into
+      // prose: a fragment of a sentence has no number at the end of it, where
+      // every real entry does. Anything appended to this line — a note, a
+      // second sentence — fails here rather than quietly being split on ", "
+      // and mined for property names.
+      expect(
+        entries.filter((entry) => !/ \d+$/u.test(entry)),
+        `${name} states a bound entry that does not end in a length`,
+      ).toEqual([]);
+      const roots = entries.map((entry) => entry.split(" ")[0]?.split(".")[0] ?? "");
       const declared = publishedPropertyNames(schema);
       expect(
         roots.filter((property) => !declared.has(property)),
         `${name} names a bound on a property it does not publish`,
       ).toEqual([]);
     }
+
+    // A loop is only a check if it ran. Skipping a tool whose description
+    // carries no sentence is correct — eight of them declare no bound — but a
+    // capture that stopped matching would skip all fourteen and assert nothing,
+    // which is the shape of guard that agrees with the defect it exists to
+    // catch.
+    expect(restating, "tools restating a stripped bound").toBe(6);
   });
 
   it("publishes no variant the operation registry refuses unconditionally", async () => {
