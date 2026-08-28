@@ -54,8 +54,7 @@
         }
       ],
       "customFormatScore": 25,
-      "indexerFlags": ["freeleech"],
-      "episodeFileId": 0,
+      "indexerFlags": 0,
       "rejections": []
     },
     {
@@ -90,13 +89,11 @@
           "name": "English"
         }
       ],
-      "releaseGroup": null,
       "releaseType": "seasonPack",
       "qualityWeight": 720,
       "customFormats": [],
       "customFormatScore": 0,
-      "indexerFlags": [],
-      "episodeFileId": 0,
+      "indexerFlags": 0,
       "rejections": [
         {
           "reason": "Unable to parse episode from filename at /media/example/downloads/complete/example-series/Season 02",
@@ -147,8 +144,7 @@
       "qualityWeight": 1080,
       "customFormats": [],
       "customFormatScore": 0,
-      "indexerFlags": [],
-      "episodeFileId": 5001,
+      "indexerFlags": 0,
       "rejections": [
         {
           "reason": "Episode file already imported at this quality",
