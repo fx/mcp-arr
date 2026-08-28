@@ -264,12 +264,19 @@ describe("published payload paths", () => {
   });
 
   it("refuses a payload whose fields it cannot name", () => {
-    // Four shapes that hold fields this walk has no path for. Publishing any of
-    // them as one leaf — or, for the empty object, as nothing at all — would
-    // quietly stop telling a caller about everything inside it, so registration
-    // fails instead. None of them occurs in the tree today; the point is that
-    // one arriving is caught rather than silently truncating the inventory.
-    const refused = {
+    // Shapes that hold fields this walk has no path for. Publishing any of them
+    // as one leaf — or, for the empty object, as nothing at all — would quietly
+    // stop telling a caller about everything inside it, so registration fails
+    // instead. None of them occurs in the tree today; the point is that one
+    // arriving is caught rather than silently truncating the inventory, which
+    // is now the payload's only discovery surface.
+    const recursive = z.strictObject({
+      name: z.string(),
+      get child(): z.ZodType {
+        return recursive.optional();
+      },
+    });
+    const unnamable = {
       map: toolResultSchema({ data: z.record(z.string(), z.strictObject({ title: z.string() })) }),
       tuple: toolResultSchema({
         data: z.strictObject({ pair: z.tuple([z.string(), z.number()]) }),
@@ -283,10 +290,24 @@ describe("published payload paths", () => {
         }),
       }),
       emptyObject: toolResultSchema({ data: z.strictObject({ nothing: z.strictObject({}) }) }),
+      // Converts to a bare `$ref`, which declares no type and no properties —
+      // the shape a check that only refuses known structures never sees.
+      recursive: toolResultSchema({ data: z.strictObject({ tree: recursive }) }),
     };
 
-    for (const [shape, schema] of Object.entries(refused)) {
+    for (const [shape, schema] of Object.entries(unnamable)) {
       expect(() => payloadInventory(schema), shape).toThrow(/bottom out at a value/u);
+    }
+
+    // And a payload that names nothing at all, rather than one field it cannot
+    // name: a bare value, or a union with no alternatives to reach.
+    const empty = {
+      scalar: toolResultSchema({ data: z.string() }),
+      emptyUnion: toolResultSchema({ data: z.union([]) }),
+    };
+
+    for (const [shape, schema] of Object.entries(empty)) {
+      expect(() => payloadInventory(schema), shape).toThrow(/must name at least one field/u);
     }
   });
 

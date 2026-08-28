@@ -71,6 +71,32 @@ function fixedValues(node: JsonSchema): readonly string[] {
 const leafTypes: ReadonlySet<string> = new Set(["string", "number", "integer", "boolean", "null"]);
 
 /**
+ * Whether a node is a value rather than something still holding fields.
+ *
+ * Recognised positively rather than by refusing a list of known structures. The
+ * ways a converted node can hold fields without saying so are exactly the ones
+ * a refuse-what-we-know-about check has never heard of: an intersection is a
+ * bare `allOf` with no type, and a recursive payload is a bare `$ref`. Both
+ * would pass every "is this an object?" test and publish as a leaf naming
+ * nothing inside them.
+ *
+ * An empty node is the one thing with no type that really is a value:
+ * `z.unknown()` constrains nothing and holds nothing to descend into.
+ */
+function isValue(node: JsonSchema): boolean {
+  if (Object.keys(node).length === 0) {
+    return true;
+  }
+  if (node.const !== undefined || Array.isArray(node.enum)) {
+    return true;
+  }
+  const declared = Array.isArray(node.type) ? node.type : [node.type];
+  return (
+    declared.length > 0 && declared.every((type) => typeof type === "string" && leafTypes.has(type))
+  );
+}
+
+/**
  * Every dot-path from `node` down to a leaf, in declaration order.
  *
  * A leaf is a node with no properties and no alternatives left to descend
@@ -90,27 +116,22 @@ const leafTypes: ReadonlySet<string> = new Set(["string", "number", "integer", "
  * the time a result exists.
  *
  * A node that still holds fields this walk cannot name — an object declaring no
- * properties, a tuple, a map keyed by a value, an intersection — throws when
- * the tool is registered rather than being published as a leaf or dropped.
- * Either would silently stop telling a caller about everything inside it, which
- * is the same failure `publish.ts` refuses on the input side and for the same
- * reason: a field a caller is never told about is worse than a server that will
- * not start.
+ * properties, a tuple, a map keyed by a value, an intersection, a recursive
+ * reference — throws when the tool is registered rather than being published as
+ * a leaf or dropped. Either would silently stop telling a caller about
+ * everything inside it, which is the same failure `publish.ts` refuses on the
+ * input side and for the same reason: a field a caller is never told about is
+ * worse than a server that will not start.
  */
 function refuseUnnamable(node: JsonSchema, prefix: string, holding: string): Error {
   return new Error(
-    `A payload field must bottom out at a value; found ${holding} at ` +
-      `${prefix === "" ? "the payload itself" : prefix}: ${JSON.stringify(node).slice(0, 200)}`,
+    `A payload field must bottom out at a value; ${holding} at ` +
+      `${prefix === "" ? "the payload itself" : prefix} does not: ` +
+      `${JSON.stringify(node).slice(0, 200)}`,
   );
 }
 
 function leafPaths(node: JsonSchema, prefix: string, into: string[]): string[] {
-  // An intersection is checked before anything else, because it carries the
-  // fields of its members without declaring a type or properties of its own —
-  // so every test below would pass it through as though it held nothing.
-  if (Array.isArray(node.allOf)) {
-    throw refuseUnnamable(node, prefix, "an intersection this walk cannot flatten");
-  }
   const alternatives = alternativesOf(node);
   if (alternatives !== undefined) {
     for (const alternative of alternatives) {
@@ -135,8 +156,8 @@ function leafPaths(node: JsonSchema, prefix: string, into: string[]): string[] {
     }
     return into;
   }
-  if (typeof node.type === "string" && !leafTypes.has(node.type)) {
-    throw refuseUnnamable(node, prefix, `a ${node.type} declaring neither properties nor items`);
+  if (!isValue(node)) {
+    throw refuseUnnamable(node, prefix, "the node");
   }
   if (prefix !== "" && !into.includes(prefix)) {
     into.push(prefix);
@@ -197,22 +218,30 @@ export function payloadInventory(outputSchema: z.ZodType): PayloadInventory | un
 
   const converted = z.toJSONSchema(payload, { target: "draft-7", io: "output" }) as JsonSchema;
   const alternatives = alternativesOf(converted);
-  if (alternatives === undefined) {
-    return {
-      discriminator: undefined,
-      payloads: [{ variants: [], paths: leafPaths(converted, "", []) }],
-    };
+  const payloads: PayloadPaths[] =
+    alternatives === undefined
+      ? [{ variants: [], paths: leafPaths(converted, "", []) }]
+      : alternatives.map((alternative) => {
+          const declared =
+            discriminator === undefined ? undefined : propertyAt(alternative, discriminator);
+          return {
+            variants: declared === undefined ? [] : fixedValues(declared),
+            paths: leafPaths(alternative, "", []),
+          };
+        });
+
+  // A payload naming nothing is not a smaller inventory — it is a line in the
+  // description promising a caller some fields and listing none. It means the
+  // payload is a bare value, or a union whose alternatives this walk never
+  // reached.
+  if (payloads.length === 0 || payloads.some((entry) => entry.paths.length === 0)) {
+    throw new Error(
+      "A published payload must name at least one field; found none in " +
+        `${JSON.stringify(converted).slice(0, 200)}`,
+    );
   }
 
-  const payloads = alternatives.map((alternative) => {
-    const declared =
-      discriminator === undefined ? undefined : propertyAt(alternative, discriminator);
-    return {
-      variants: declared === undefined ? [] : fixedValues(declared),
-      paths: leafPaths(alternative, "", []),
-    };
-  });
-  return { discriminator, payloads };
+  return { discriminator: alternatives === undefined ? undefined : discriminator, payloads };
 }
 
 const inventoryHeader =
