@@ -767,6 +767,27 @@ describe("published length bounds", () => {
     );
   });
 
+  it("keeps the array half of a bound a later form applies to elements", () => {
+    // The scalar form comes first deliberately. One bound sighted twice is one
+    // bound to name, but the second sighting is the only one that says the
+    // length applies to each element rather than to the property — so dropping
+    // it as a duplicate would leave the description silent about exactly the
+    // form whose path needs explaining.
+    const union = variantUnion(
+      z.union([
+        z.strictObject({ view: z.literal("one"), thing: z.string().max(5) }),
+        z.strictObject({ view: z.literal("many"), thing: z.array(z.string().max(5)) }),
+      ]),
+    );
+    const published = publishedInput(union);
+
+    expect(declaredKeywordPaths(published, "maxLength")).toEqual([]);
+    expect(String(published.description).split("\n").at(-1)).toBe(
+      "Maximum lengths in characters, enforced but not published: thing 5. " +
+        "A bound named for an array property bounds each of its elements.",
+    );
+  });
+
   it("reaches every nesting a converted bound can sit in, not the ones in use today", () => {
     // The three shapes a walk written from the current corpus misses. A tuple
     // publishes its elements as an `items` *list* rather than one schema, a

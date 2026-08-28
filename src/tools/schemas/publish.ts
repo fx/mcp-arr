@@ -530,7 +530,10 @@ const lengthKeyword = "maxLength";
  * afterwards: a generator reading the stripped shape has nothing left to name.
  * The same path is recorded once per distinct value rather than once per
  * variant that declares it — thirteen views bounding `cursor` at 512 are one
- * bound a caller has to know about, not thirteen.
+ * bound a caller has to know about, not thirteen. A repeat sighting still
+ * carries one thing the first may not have: a form that applies the bound to an
+ * array's elements says something about how to read the path that a scalar form
+ * does not, so it upgrades the record rather than being dropped.
  *
  * `minLength`, `pattern`, `minItems`, and `maxItems` are deliberately retained.
  * A pattern constrains the admissible alphabet far more usefully than a length
@@ -543,11 +546,13 @@ function takeLengthBounds(
   into: LengthBound[],
 ): LengthBound[] {
   const declared = node[lengthKeyword];
-  if (
-    typeof declared === "number" &&
-    !into.some((known) => known.path === path && known.maxLength === declared)
-  ) {
-    into.push({ path, maxLength: declared, inArray });
+  if (typeof declared === "number") {
+    const seen = into.findIndex((known) => known.path === path && known.maxLength === declared);
+    if (seen === -1) {
+      into.push({ path, maxLength: declared, inArray });
+    } else if (inArray && into[seen]?.inArray === false) {
+      into[seen] = { path, maxLength: declared, inArray: true };
+    }
   }
   delete node[lengthKeyword];
   for (const child of childSchemas(node, path, inArray)) {
