@@ -576,6 +576,45 @@ describe("arr_search_start refusals", () => {
     expect(JSON.stringify(result)).not.toContain("canary");
   });
 
+  it("reports the instance's sentence once, and does not republish it from the job", async () => {
+    // The start path and the refresh path have to agree about the same
+    // sentence. Saying it on the call that started the command is reporting;
+    // writing it into the projection would republish it on every later read,
+    // including the read that finds the job finished successfully.
+    const state = createWorkflowState();
+    const instance = upstream({
+      command: (request) =>
+        jsonResponse({
+          ...commandRecords.get("sonarr"),
+          name: request.body?.name,
+          status: "queued",
+          message: "Refreshing series",
+        }),
+      record: (route) =>
+        route.startsWith("command/")
+          ? jsonResponse({ id: 3001, status: "completed", result: "successful" })
+          : undefined,
+    });
+    const context = contextFor(instance, state);
+
+    const started = await call(searchStartTool, context, {
+      target: "sonarr_series",
+      mode: "apply",
+      series: mintMedia(state, "sonarr", "series", "12"),
+    });
+
+    // Said once, by the call that read it.
+    expect(outcomeFor(started, "sonarr").warnings).toContain("Refreshing series");
+
+    const read = await call(jobGetTool, context, { job: started.mutation?.job });
+
+    expect((read.applications[0]?.data as { status?: string } | undefined)?.status).toBe(
+      "completed",
+    );
+    expect(outcomeFor(read, "sonarr").warnings).toEqual([]);
+    expect(JSON.stringify(read)).not.toContain("Refreshing series");
+  });
+
   it("keeps a planted upstream secret out of the job, its warnings, and the envelope", async () => {
     const secret = "canary-instance-key-9f3d21ab";
     const state = createWorkflowState();

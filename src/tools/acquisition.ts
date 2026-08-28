@@ -1,4 +1,5 @@
 import {
+  observationForJob,
   readSearchTargets,
   searchCommandName,
   startSearchCommand,
@@ -1042,7 +1043,12 @@ export const searchStartHandler: OperationHandler = async (invocation) => {
   const record = invocation.state.jobs.project({
     application,
     command: { name: started.name, upstreamId: started.upstreamId },
-    observation: started.observation,
+    // The instance's own sentence about the command is reported below, on this
+    // call, but is not written into the projection unless it explains a bad
+    // ending: a job read republishes what the projection holds every time, and
+    // "Refreshing series" beside a job that has since succeeded is prose in a
+    // channel that means something needs attention.
+    observation: observationForJob(started.observation, started.message),
     // See the handler's own note: this server has no way to ask upstream to
     // stop a command, so the job never claims it can.
     cancellation: { supported: false },
@@ -1056,7 +1062,7 @@ export const searchStartHandler: OperationHandler = async (invocation) => {
   return {
     status: "ok",
     data,
-    warnings: [...scopeWarnings(selection.request), ...record.warnings],
+    warnings: [...scopeWarnings(selection.request), ...(started.observation.warnings ?? [])],
     job: record.reference,
     effects: [searchStartEffect(application, intent.value)],
   };

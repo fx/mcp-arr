@@ -1,10 +1,10 @@
 import { beforeAll, describe, expect, it } from "vitest";
+import { observationForJob } from "../src/adapters/acquisition/commands.js";
 import {
   type CommandRefresh,
   commandGoneWarning,
   commandRecordRoute,
   readCommandRecord,
-  refreshObservation,
 } from "../src/adapters/jobs.js";
 import type { ApplicationId } from "../src/applications.js";
 import { normalizeJobStatus, type UpstreamCommandObservation } from "../src/state/jobs.js";
@@ -230,7 +230,7 @@ describe("readCommandRecord", () => {
       warnings: ["Processing file 1 of 1", "a notice this reader gained later"],
     } as const;
 
-    expect(refreshObservation(observation, "Processing file 1 of 1").warnings).toEqual([
+    expect(observationForJob(observation, "Processing file 1 of 1").warnings).toEqual([
       "a notice this reader gained later",
     ]);
   });

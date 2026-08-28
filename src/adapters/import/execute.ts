@@ -192,6 +192,7 @@ export async function submitManualImport(
       // identity a caller reads is this project's vocabulary throughout.
       name: manualImportCommandName,
       observation: accepted.observation,
+      message: accepted.message,
     },
   };
 }

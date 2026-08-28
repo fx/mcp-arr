@@ -1,12 +1,12 @@
 import type { ApplicationId } from "../applications.js";
 import type { UpstreamClient } from "../http/client.js";
 import { isUpstreamError } from "../http/errors.js";
+import type { UpstreamCommandObservation } from "../state/jobs.js";
 import {
-  isTerminalJobStatus,
-  normalizeJobStatus,
-  type UpstreamCommandObservation,
-} from "../state/jobs.js";
-import { readAcceptedCommand, searchCommandRoutes } from "./acquisition/commands.js";
+  observationForJob,
+  readAcceptedCommand,
+  searchCommandRoutes,
+} from "./acquisition/commands.js";
 import type { UpstreamFailure } from "./registry.js";
 
 /**
@@ -70,49 +70,6 @@ export type CommandRefresh =
   | { readonly status: "refused"; readonly failure: UpstreamFailure };
 
 /**
- * Whether this reading is the one that should carry the command's own sentence.
- *
- * Only a reading that ends the job badly keeps it. That happens at most once —
- * a terminal job is never refreshed again — and on a `failed`, `aborted`, or
- * `cancelled` command the instance's sentence is the only account of *why* it
- * ended that way, on the single reading that will ever see it.
- *
- * Every other reading drops it. A job is refreshed on every read, so a command
- * that narrates itself would otherwise file one line of prose per poll into a
- * channel that means something needs attention, walk the projection's warning
- * cap, and evict the warnings that do. A successful ending drops it too, and
- * that is not an oversight: a live Radarr `RssSync` ends `completed /
- * successful` with "RSS Sync Completed. Reports found: 100, Reports grabbed:
- * 0", and a caller told a job succeeded needs no warning attached to it.
- */
-function explainsAnEnding(observation: UpstreamCommandObservation): boolean {
-  const status = normalizeJobStatus(observation.state, observation.result);
-  return isTerminalJobStatus(status) && status !== "completed";
-}
-
-/**
- * The reading a refresh publishes, with the command's narration left behind
- * unless this is the reading that explains an ending.
- *
- * The message is filtered by value rather than by dropping `warnings` whole.
- * That channel is shared: anything the command reader gains later — a
- * truncation notice, a redaction notice — has to keep reaching the caller from
- * a refresh, and only the one sentence named here is this path's to discard.
- */
-export function refreshObservation(
-  observation: UpstreamCommandObservation,
-  message: string | undefined,
-): UpstreamCommandObservation {
-  if (message === undefined || explainsAnEnding(observation)) {
-    return observation;
-  }
-  return {
-    ...observation,
-    warnings: (observation.warnings ?? []).filter((warning) => warning !== message),
-  };
-}
-
-/**
  * Reads the current state of one upstream command.
  *
  * Nothing an instance can do to this read is an exception: what comes back is
@@ -137,7 +94,7 @@ export async function readCommandRecord(
     const accepted = readAcceptedCommand(await client.get(route), application, route);
     return {
       status: "observed",
-      observation: refreshObservation(accepted.observation, accepted.message),
+      observation: observationForJob(accepted.observation, accepted.message),
     };
   } catch (error) {
     if (!isUpstreamError(error)) {
