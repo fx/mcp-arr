@@ -350,9 +350,19 @@ export function assertWellFormed(schema: Schema, path = ""): void {
 export function declaredPropertyValues(schema: Schema, name: string): readonly string[] {
   const properties = isRecord(schema.properties) ? schema.properties : {};
   const node = properties[name];
-  if (!isRecord(node)) {
-    return [];
-  }
+  return isRecord(node) ? fixedValues(node) : [];
+}
+
+/**
+ * The string values one node fixes itself to, in the order it lists them, or
+ * none where it fixes no set.
+ *
+ * Split out of the lookup above because two questions are asked of a published
+ * node's accepted set — which values a discriminator names, and whether a
+ * property's whole set is applications — and a second reader would let the two
+ * disagree about what "fixes a value" means.
+ */
+export function fixedValues(node: Schema): readonly string[] {
   if (typeof node.const === "string") {
     return [node.const];
   }
@@ -463,4 +473,68 @@ export function publishedPropertyNames(node: unknown, found: Set<string> = new S
     publishedPropertyNames(value, found);
   }
   return found;
+}
+
+/** One form of a published union, as its generated documentation describes it. */
+export interface VariantLine {
+  /** The discriminator values this form's label lists, empty when it has none. */
+  readonly values: readonly string[];
+  /** The arguments the form requires, its own discriminator value included. */
+  readonly required: ReadonlySet<string>;
+  /** Every argument the form names, required or optional. */
+  readonly names: ReadonlySet<string>;
+}
+
+/** The argument names one comma-separated part names, annotations stripped. */
+function argumentNames(part: string): string[] {
+  return part
+    .split(",")
+    .map((argument) => argument.trim().split("=")[0]?.trim() ?? "")
+    .filter((name) => name !== "");
+}
+
+/**
+ * Reads one generated variant line back into the form it describes.
+ *
+ * The grammar is fixed: an optional `<discriminator>=<value>|<value>` label,
+ * the required arguments after `: `, the optional ones after `; optional `, and
+ * any argument may carry an `=<narrowing>` annotation. Parsing it is what keeps
+ * an expectation derived from what the server published — matching literal text
+ * would restate the variant list this whole mechanism exists to stop
+ * maintaining by hand.
+ */
+function parseVariantLine(line: string, discriminator: string | undefined): VariantLine {
+  const [head = "", optional = ""] = line.slice(2).split("; optional ");
+  let label = "";
+  let requiredPart = head;
+  if (discriminator !== undefined && head.startsWith(`${discriminator}=`)) {
+    const separator = head.indexOf(": ");
+    label = separator === -1 ? head : head.slice(0, separator);
+    requiredPart = separator === -1 ? "" : head.slice(separator + 2);
+  }
+  const required = new Set(argumentNames(requiredPart));
+  if (label !== "" && discriminator !== undefined) {
+    required.add(discriminator);
+  }
+  return {
+    values: label === "" ? [] : label.slice(label.indexOf("=") + 1).split("|"),
+    required,
+    names: new Set([...required, ...argumentNames(optional)]),
+  };
+}
+
+/**
+ * Every form a published schema's generated documentation describes.
+ *
+ * Shared rather than parsed twice, because the documentation is the only
+ * published place a per-form requirement survives the merge into one flat root
+ * — the root's `required` is the intersection across forms — so two callers
+ * asking whether a form requires an argument have to read the same prose the
+ * same way.
+ */
+export function variantLines(schema: Schema, discriminator: string | undefined): VariantLine[] {
+  return String(schema.description ?? "")
+    .split("\n")
+    .filter((line) => line.startsWith("- "))
+    .map((line) => parseVariantLine(line, discriminator));
 }

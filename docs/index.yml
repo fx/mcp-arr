@@ -192,7 +192,7 @@ changes:
     path: changes/0023-radarr-exclusion-route.md
     description: Read Radarr import-list exclusions from the route Radarr serves and stop reporting the 404 as a stale reference
     spec: configuration-reconciliation
-    status: draft
+    status: complete
     depends_on: []
   - id: "0024"
     name: manual-import-request-shape
@@ -213,12 +213,12 @@ changes:
     path: changes/0026-plan-mode-mutation-envelopes.md
     description: Make every mutation tool's published output schema admit its own plan-mode envelope
     spec: tool-contracts
-    status: draft
+    status: complete
     depends_on: []
   - id: "0027"
     name: single-application-mutation-scope
     path: changes/0027-single-application-mutation-scope.md
     description: Stop publishing a wanted-search application selection the server always refuses
     spec: tool-contracts
-    status: draft
+    status: complete
     depends_on: []

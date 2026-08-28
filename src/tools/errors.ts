@@ -187,7 +187,9 @@ export function createToolError(input: ToolErrorInput): ToolError {
  *
  * `not-found` becomes `stale_reference` because an upstream resource that no
  * longer exists and a process-local reference that no longer resolves have the
- * same remedy: re-run the query that produced the reference.
+ * same remedy: re-run the query that produced the reference. That reading holds
+ * only where the caller named the resource, which is what
+ * {@link UpstreamRequestOrigin} decides.
  */
 const upstreamErrorCodes: Readonly<Record<UpstreamErrorKind, ToolErrorCode>> = {
   "invalid-request": "invalid_input",
@@ -200,7 +202,27 @@ const upstreamErrorCodes: Readonly<Record<UpstreamErrorKind, ToolErrorCode>> = {
   "unexpected-response": "unexpected_response",
 };
 
-export function toolErrorCodeForUpstreamKind(kind: UpstreamErrorKind): ToolErrorCode {
+/**
+ * Where the failing request's target came from, for the one classification that
+ * turns on it.
+ *
+ * A `caller_reference` request names something the caller supplied, so a miss is
+ * a stale reference and refreshing it is a remedy the caller can act on. A
+ * `server_composed` request names only what this server chose — a route from its
+ * own table — so the same miss says the request was wrong, and the error
+ * contract requires it to be reported as an unexpected response rather than as a
+ * recoverable failure whose remediation describes refreshing a reference the
+ * caller never supplied.
+ */
+export type UpstreamRequestOrigin = "caller_reference" | "server_composed";
+
+export function toolErrorCodeForUpstreamKind(
+  kind: UpstreamErrorKind,
+  origin: UpstreamRequestOrigin = "caller_reference",
+): ToolErrorCode {
+  if (kind === "not-found" && origin === "server_composed") {
+    return "unexpected_response";
+  }
   return upstreamErrorCodes[kind];
 }
 
@@ -212,9 +234,10 @@ export function toolErrorCodeForUpstreamKind(kind: UpstreamErrorKind): ToolError
 export function toolErrorForUpstreamFailure(
   failure: { readonly kind: UpstreamErrorKind; readonly message: string },
   application: ApplicationId,
+  origin: UpstreamRequestOrigin = "caller_reference",
 ): ToolError {
   return createToolError({
-    code: upstreamErrorCodes[failure.kind],
+    code: toolErrorCodeForUpstreamKind(failure.kind, origin),
     message: failure.message,
     application,
   });
@@ -264,9 +287,13 @@ export function toolErrorForReferenceFailure(
  * {@link isUpstreamError} result is reported with a static message: its own
  * message may embed a URL, a response body, or a configured API key.
  */
-export function toolErrorForThrown(error: unknown, application?: ApplicationId): ToolError {
+export function toolErrorForThrown(
+  error: unknown,
+  application?: ApplicationId,
+  origin: UpstreamRequestOrigin = "caller_reference",
+): ToolError {
   if (isUpstreamError(error)) {
-    return toolErrorForUpstreamFailure(error, error.application);
+    return toolErrorForUpstreamFailure(error, error.application, origin);
   }
   return createToolError({
     code: "unexpected_response",

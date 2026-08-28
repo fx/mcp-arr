@@ -33,6 +33,7 @@ import {
   type Effect,
   type ItemOutcome,
   type MutationDetail,
+  maxMutationApplications,
   type Receipt,
   type ToolResult,
 } from "./results.js";
@@ -713,7 +714,7 @@ function resolvePlanApply(
   }
 
   const application = plan.applications[0];
-  if (application === undefined || plan.applications.length !== 1) {
+  if (application === undefined || plan.applications.length !== maxMutationApplications) {
     return {
       error: createToolError({
         code: "stale_plan",
@@ -804,7 +805,7 @@ export async function dispatchOperation(
       ? selectApplications(request.applications, operation, checked.binding.application)
       : [planned.application];
 
-  if (request.mode !== "read" && targets.length > 1) {
+  if (request.mode !== "read" && targets.length > maxMutationApplications) {
     return errorResult(refuseMultiApplicationMutation(targets));
   }
 

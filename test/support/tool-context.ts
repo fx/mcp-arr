@@ -242,8 +242,11 @@ export const sampleBranchInputs: Readonly<Record<ToolName, readonly Record<strin
     { target: "sonarr_season", mode: "plan", series: sampleReferences.media, seasonNumber: 2 },
     { target: "sonarr_series", mode: "plan", series: sampleReferences.media },
     { target: "radarr_movie", mode: "plan", movies: [sampleReferences.media] },
-    { target: "missing", mode: "plan", monitoredOnly: true },
-    { target: "cutoff_unmet", mode: "plan", monitoredOnly: false },
+    // A wanted-list search names the one application it runs on: the mutation
+    // envelope carries one job and one receipt, so the published schema
+    // requires the application rather than defaulting to both.
+    { target: "missing", mode: "plan", application: "sonarr", monitoredOnly: true },
+    { target: "cutoff_unmet", mode: "plan", application: "radarr", monitoredOnly: false },
     planApplyArguments,
   ],
   arr_release_grab: [{ mode: "plan", releases: [sampleReferences.release] }, planApplyArguments],
