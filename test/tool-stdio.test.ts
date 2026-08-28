@@ -122,12 +122,17 @@ const propertyKeyPattern = /^[a-zA-Z0-9_.-]{1,64}$/u;
  * Every session pays this before making a single call, so its size is part of
  * the contract rather than an implementation detail. The number is a recorded
  * measurement plus a margin, not a budget somebody chose: it was read off a
- * spawned server at 57,686 bytes. The margin is about a kilobyte — room for a
- * tool description or a payload field, and nowhere near room for a schema
- * coming back. Raising it is a deliberate act, which is the point: a change
- * that reintroduces bulk fails here rather than merely being regrettable.
+ * spawned server at 57,686 bytes.
+ *
+ * The margin is sized against what it has to catch. The cheapest way for the
+ * bulk to come back is one tool publishing its payload schema again, and the
+ * smallest of those is `arr_job_get`'s at 1,431 bytes — so a margin under that
+ * cannot hide even the least expensive regression, while still leaving room for
+ * a tool description or a few payload fields. Raising it is a deliberate act,
+ * which is the point: a change that reintroduces bulk fails here rather than
+ * merely being regrettable.
  */
-const listingByteCeiling = 59_000;
+const listingByteCeiling = 58_500;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
