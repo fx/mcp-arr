@@ -8,7 +8,7 @@ Two of those four are the failing test for a defect with its own change document
 
 **Spec:** [Architecture](../specs/architecture/)
 **Status:** draft
-**Depends On:** —
+**Depends On:** [0022](./0022-upstream-field-shape-tolerance.md), [0023](./0023-radarr-exclusion-route.md)
 
 ## Motivation
 
@@ -40,7 +40,7 @@ A corrected fixture is not a chore to be batched — it is the failing test that
 
 The two this change corrects break no adapter, because the import adapter already declares the field permissively. They do break the assertions written against the counterfactual bodies, and updating those assertions is part of this change's work rather than a surprise for whoever runs the suite next.
 
-That split is why this change lands **last**: by then the point fixes have landed with their own corrected fixtures, and nothing here stands in for a fix nobody has made yet.
+That split is why this change depends on [0022](./0022-upstream-field-shape-tolerance.md) and [0023](./0023-radarr-exclusion-route.md) and lands after both: until each has corrected its own fixture, a sweep here would either have to correct it for them — landing red, since the adapter fix is not in — or record that it deliberately left a known-counterfactual fixture in place. It has no ordering relationship to 0024 through 0027, which touch no fixture.
 
 ## Requirements
 
@@ -95,8 +95,9 @@ The [Architecture spec](../specs/architecture/#testing-contract) owns the fixtur
 - **Decision:** Each defect's own change corrects the fixture that exposes it; this change corrects only what no point fix needs.
   - **Why:** The corrected fixture is the failing test for that defect, so the two belong in one commit — the test goes red, the fix turns it green, and the gate holds at every point. Batching the corrections here instead would land a change that is knowingly red, which the project's testing contract forbids, and would leave each point fix with nothing demonstrating it was needed.
   - **Alternatives considered:** Correcting all four here and letting the failures stand until the point fixes land, rejected because it breaks the green gate this change is itself held to; one change fixing every fixture and adapter together, rejected because it produces a large PR in which no individual defect can be shown to have been caught.
-- **Decision:** Land this change last.
-  - **Why:** Its remaining corrections are the ones no fix depends on, so they are only safe once the point fixes have landed theirs. Going first would mean either holding corrections back or landing red.
+- **Decision:** Depend on 0022 and 0023, and land after both.
+  - **Why:** The sweep this change runs has to reach every fixture, including the two those changes own. Running it before they land would force one of two bad outcomes: correct their fixtures here and land red, because neither adapter fix is in yet, or record a known-counterfactual fixture as acceptable, which is the habit this change exists to end. Waiting costs nothing, since neither point fix depends on anything here.
+  - **Alternatives considered:** Landing first with the two fixtures excluded from the sweep, rejected because an excluded fixture is exactly what went unnoticed for six defects.
 - **Decision:** Record the route in metadata and verify it resolves at capture time.
   - **Why:** The Radarr exclusions fixture proves a wrong route can otherwise be recorded, validated, and depended on indefinitely. A route that 404s must fail at capture rather than become a fixture.
 - **Decision:** Do not raise the recorded minimum versions.

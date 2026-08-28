@@ -17,7 +17,7 @@ Changes 0011 through 0014 were scheduled ahead of the lower-numbered domain chan
 
 Changes 0021 through 0027 come from sweeping all fourteen tools against live instances at the recorded minimum versions, which found six defects the full green test suite did not. 0022 through 0027 are those defects, and each is independent of the others. 0021 is the reason they were invisible: several recorded fixtures describe responses their named instances do not produce, so fixture-backed tests confirmed each adapter against its own assumption.
 
-A corrected fixture is the failing test for the defect it exposes, so each change corrects the fixtures it needs and lands green on its own: 0022 corrects the Sonarr `release` fixture, 0023 the Radarr exclusions one. 0021 owns the capture procedure, the fixtures no point fix needs, and the sweep across the rest; it lands last, when the remaining corrections no longer stand in for a fix nobody has made yet. No change lands with a failing gate.
+A corrected fixture is the failing test for the defect it exposes, so each change corrects the fixtures it needs and lands green on its own: 0022 corrects the Sonarr `release` fixture, 0023 the Radarr exclusions one. 0021 owns the capture procedure, the fixtures no point fix needs, and a sweep across the rest — which is why it is the one change here with prerequisites, landing after 0022 and 0023 so that sweep can reach their fixtures once each is correct. No change lands with a failing gate.
 
 | # | Change | Spec | Status | Depends On |
 |---|--------|------|--------|------------|
@@ -41,7 +41,7 @@ A corrected fixture is the failing test for the defect it exposes, so each chang
 | 0018 | [Bounded Tool Listing](changes/0018-bounded-tool-listing.md) | [Tool Contracts](specs/tool-contracts/) | complete | 0015 |
 | 0019 | [Selected Result Fields](changes/0019-selected-result-fields.md) | [Tool Contracts](specs/tool-contracts/) | complete | 0017, 0018 |
 | 0020 | [Withdraw the Configuration Write Surface](changes/0020-withdraw-configuration-writes.md) | [Configuration Reconciliation](specs/configuration-reconciliation/) | complete | — |
-| 0021 | [Live-Verified Fixtures](changes/0021-live-verified-fixtures.md) | [Architecture](specs/architecture/) | draft | — |
+| 0021 | [Live-Verified Fixtures](changes/0021-live-verified-fixtures.md) | [Architecture](specs/architecture/) | draft | 0022, 0023 |
 | 0022 | [Upstream Field Shape Tolerance](changes/0022-upstream-field-shape-tolerance.md) | [Architecture](specs/architecture/) | draft | — |
 | 0023 | [Radarr Exclusion Route](changes/0023-radarr-exclusion-route.md) | [Configuration Reconciliation](specs/configuration-reconciliation/) | draft | — |
 | 0024 | [Manual Import Request Shape](changes/0024-manual-import-request-shape.md) | [Acquisition and Import](specs/acquisition-and-import/) | draft | — |
