@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { ApplicationId } from "../../applications.js";
 import type { UpstreamClient } from "../../http/client.js";
 import { UpstreamError } from "../../http/errors.js";
@@ -13,6 +14,7 @@ import {
   queryDigest,
   upstreamPage,
 } from "../library/paging.js";
+import { count, pagedEnvelope } from "../library/parse.js";
 import { type ConfigurationDomain, configurationReadFor, familyOf } from "./domains.js";
 import type {
   ConfigurationRecord,
@@ -21,12 +23,7 @@ import type {
   ProviderRecord,
   ResourceRecord,
 } from "./model.js";
-import {
-  isUpstreamRecord,
-  pagedCollectionSchema,
-  parseCollection,
-  parseConfiguration,
-} from "./parse.js";
+import { isUpstreamRecord, parseCollection, parseConfiguration } from "./parse.js";
 import {
   ConfigurationResourceSet,
   captureUpstreamResource,
@@ -126,9 +123,10 @@ function mapRecord(context: SerializationContext, value: unknown): MappedRecord 
     value as UpstreamValue,
   );
   if (!isUpstreamRecord(value)) {
-    // `parseCollection` already established this is an array; an element that
-    // is not an object is a payload this server cannot read, and refusing it
-    // names only the route.
+    // The collection itself has already been established, whether as a bare
+    // array or as a paged envelope's records; an element that is not an object
+    // is a payload this server cannot read, and refusing it names only the
+    // route.
     throw new UpstreamError("unexpected-response", {
       application: context.application,
       operation: context.route,
@@ -176,7 +174,7 @@ async function readPagedCollection(
     pageSize: window.pageSize,
   });
   const envelope = parseConfiguration(
-    pagedCollectionSchema,
+    pagedEnvelope(z.unknown()),
     body,
     context.application,
     context.route,
@@ -184,7 +182,7 @@ async function readPagedCollection(
   return upstreamPage(
     envelope.records.map((value) => mapRecord(context, value)),
     window,
-    envelope.totalRecords ?? undefined,
+    count(envelope.totalRecords),
   );
 }
 

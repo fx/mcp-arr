@@ -144,7 +144,7 @@ export function configurationReadFor(
   domain: ConfigurationDomain,
   application: ApplicationId,
 ): ConfigurationRead | undefined {
-  const route = configurationRoutes[domain][application];
+  const route = routeFor(domain, application);
   if (route === undefined) {
     return undefined;
   }
@@ -153,6 +153,13 @@ export function configurationReadFor(
     : { route, upstreamPaged: false };
 }
 
+/**
+ * The collection an application answers a domain from.
+ *
+ * This is the base route, not necessarily the one an observation sends:
+ * {@link configurationReadFor} is what decides that, and it prefers the paged
+ * form where the application serves one.
+ */
 export function routeFor(
   domain: ConfigurationDomain,
   application: ApplicationId,

@@ -86,7 +86,7 @@ describe("the configuration domain table", () => {
     expect(configurationReadFor("app_profiles", "sonarr")).toBeUndefined();
   });
 
-  it("derives every paged route from the collection its own application answers", () => {
+  it("reads every domain but the exclusions from its plain collection route", () => {
     for (const domain of configurationDomains) {
       for (const application of applicationIds) {
         const read = configurationReadFor(domain, application);
@@ -96,7 +96,11 @@ describe("the configuration domain table", () => {
           expect(read).toBeUndefined();
           continue;
         }
-        expect(read?.route).toBe(read?.upstreamPaged === true ? `${route}/paged` : route);
+        expect(read, `${domain} on ${application}`).toEqual(
+          domain === "import_list_exclusions"
+            ? { route: `${route}/paged`, upstreamPaged: true }
+            : { route, upstreamPaged: false },
+        );
       }
     }
   });

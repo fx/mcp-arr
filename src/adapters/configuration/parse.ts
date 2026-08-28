@@ -110,19 +110,6 @@ export const flatRecordSchema = z.object({
   label: upstreamText,
 });
 
-/**
- * The envelope an upstream-paged configuration route answers with.
- *
- * `records` is the only member a reader needs: an instance that stops reporting
- * a total still produces a usable page, and `upstreamPage` already has an answer
- * for that case. The elements stay `unknown` because the same per-family mapping
- * that reads an unpaged collection reads these.
- */
-export const pagedCollectionSchema = z.object({
-  totalRecords: optionalUpstreamId,
-  records: z.array(z.unknown()),
-});
-
 export function isUpstreamRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -152,9 +139,11 @@ export function parseConfiguration<TSchema extends z.ZodType>(
 /**
  * Requires a collection body.
  *
- * Every configuration route this server reads answers with an array. An
+ * Every configuration route this server reads unpaged answers with an array. An
  * instance that answers with an object is reporting something else — an error
- * document is the usual case — and is refused without being read.
+ * document is the usual case — and is refused without being read. A route read
+ * through its paged form answers with an envelope instead, and is parsed against
+ * the shared `pagedEnvelope` schema rather than here.
  */
 export function parseCollection(
   body: unknown,

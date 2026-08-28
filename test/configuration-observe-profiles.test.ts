@@ -347,10 +347,7 @@ describe("observing resources", () => {
    * default of ten, which would make the query's page bound advisory.
    */
   it("asks the instance for the window rather than paging its whole collection", async () => {
-    for (const [application, pathname] of [
-      ["sonarr", "/api/v3/importlistexclusion/paged"],
-      ["radarr", "/api/v3/exclusions/paged"],
-    ] as const) {
+    for (const application of ["sonarr", "radarr"] as const) {
       const { outcome, calls } = await observe(
         application,
         observationRequest("import_list_exclusions", { paging: { pageSize: 2 } }),
@@ -358,7 +355,6 @@ describe("observing resources", () => {
       );
       const query = calls[0]?.url.searchParams;
 
-      expect(calls[0]?.url.pathname).toBe(pathname);
       expect(query?.get("page")).toBe("1");
       expect(query?.get("pageSize")).toBe("2");
       // The instance reported five, so the continuation says more remain even
