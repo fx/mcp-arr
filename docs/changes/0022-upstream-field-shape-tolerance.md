@@ -47,7 +47,8 @@ Skipping or weakening any of these rules to land the PR MUST be treated as a bug
 
 Additionally, because the defect is a refused result rather than a wrong value:
 
-- The Sonarr release fixture MUST carry the numeric `indexerFlags` its instance sends, so a test fails if the array-only declaration returns.
+- The Sonarr release fixture MUST carry the numeric `indexerFlags` its instance sends, so a test fails if the array-only declaration returns. Correcting it is this change's own work, not [0021](./0021-live-verified-fixtures.md)'s: it is the red test the adapter fix turns green, and the two MUST land together so the gate holds at every commit.
+- The assertions written against the fixture's current flag arrays MUST be updated in the same change, so correcting the fixture does not leave the suite failing for an unrelated reason.
 - A test MUST assert that a release carrying an unnameable flags value is returned with no flags rather than dropped or errored.
 
 ### Functional requirements
@@ -90,14 +91,14 @@ The [Architecture spec](../specs/architecture/#upstream-connection-handling) own
 - Adding indexer-flag filtering, sorting, or scoring.
 - Changing Radarr or Prowlarr search behavior, which is correct.
 - Relaxing any field a release result depends on.
-- Repairing the fixtures generally — that is [0021](./0021-live-verified-fixtures.md).
+- Repairing any fixture other than the Sonarr release one, or adding the capture procedure — that is [0021](./0021-live-verified-fixtures.md).
 
 ## Tasks
 
 - [ ] Tolerate the shapes both applications send for indexer flags
   - [ ] Declare the field so neither an array nor a number is refused, matching the import adapter's existing form
   - [ ] Confirm an unnameable value maps to no flags with every other field intact
-  - [ ] Correct the Sonarr release fixture to the numeric shape and add a case for an unnameable value, confirming both fail against the current declaration
+  - [ ] Correct the Sonarr release fixture to the numeric shape, update the assertions written against its current flag arrays, and add a case for an unnameable value — confirming the fixture correction fails against the current declaration before the fix lands
 - [ ] Check the rest of the release schema against captured bodies
   - [ ] Compare each declared field against the Sonarr and Radarr release bodies and report any further divergence rather than widening this change
 

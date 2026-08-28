@@ -2,7 +2,9 @@
 
 ## Summary
 
-Make the recorded upstream fixtures correspond to what the named instances genuinely return, and give the project a repeatable way to recapture them. Three fixtures are demonstrably counterfactual today, which is why 1034 passing tests reported a healthy server while six tool paths were broken against the real applications. The [Architecture spec](../specs/architecture/#testing-contract) now states the rule.
+Give the project a repeatable way to capture upstream fixtures from the instances they name, and bring the fixtures no other change owns into line with what those instances genuinely return. Four fixtures are demonstrably counterfactual today, which is why 1034 passing tests reported a healthy server while six tool paths were broken against the real applications. The [Architecture spec](../specs/architecture/#testing-contract) now states the rule.
+
+Two of those four are the failing test for a defect with its own change document, so they are corrected there rather than here — see [Ownership](#ownership) below.
 
 **Spec:** [Architecture](../specs/architecture/)
 **Status:** draft
@@ -24,6 +26,21 @@ The fixtures are not missing and not unversioned. They are stored per applicatio
 The last one is the clearest tell: a fixture records a response from a route that does not exist on the application it names. These bodies were authored to the shape the adapter expected rather than captured from an instance, so every fixture-backed test confirmed the adapter against its own assumption. That is a closed loop, and it will keep producing defects of exactly this kind — it already has once before, when a provider field's absent `value` key broke `arr_config_observe` against every real instance while the fixtures passed.
 
 The fix is not more tests. It is making the recorded contract answerable to the instance it claims to describe.
+
+### Ownership
+
+A corrected fixture is not a chore to be batched — it is the failing test that proves a defect is real. Where one exposes a defect that has its own change document, correcting it belongs to that document, so the correction and the adapter fix land together and the gate is green at every commit:
+
+| Fixture | Corrected by | Because |
+|---|---|---|
+| `sonarr/…/release.json` | [0022](./0022-upstream-field-shape-tolerance.md) | it is that change's red test; the adapter fix turns it green |
+| `radarr/…` exclusions | [0023](./0023-radarr-exclusion-route.md) | same — the route fix is what makes the recaptured body reachable |
+| `sonarr/…/manualimport.json` | **this change** | no point fix needs it; the import adapter already tolerates the real shape |
+| `radarr/…/manualimport.json` | **this change** | same |
+
+The two this change corrects break no adapter, because the import adapter already declares the field permissively. They do break the assertions written against the counterfactual bodies, and updating those assertions is part of this change's work rather than a surprise for whoever runs the suite next.
+
+That split is why this change lands **last**: by then the point fixes have landed with their own corrected fixtures, and nothing here stands in for a fix nobody has made yet.
 
 ## Requirements
 
@@ -47,17 +64,18 @@ Additionally, because this change is about the fixtures themselves:
 
 The [Architecture spec](../specs/architecture/#testing-contract) owns the fixture-fidelity rule and its scenario — this change's acceptance criteria, not restated here. What implementing them requires of this change:
 
-- The four fixtures named in the Motivation MUST be corrected to the shapes their named instances return, including the Radarr exclusions route.
 - A capture procedure MUST exist that an operator can run against a configured instance to produce or refresh a fixture, and MUST sanitize secrets, identifying values, and canonical paths before writing.
 - The captured metadata MUST record the application, API version, exact instance version, and route, so a later reader can re-verify the body against the same source.
 - A fixture whose route the named application does not serve MUST be detectable, so a recorded route that 404s cannot survive as a passing fixture.
-- Correcting a fixture MUST NOT quietly relax the adapter that reads it; where a corrected fixture reveals an adapter defect, that defect is owned by its own change document and MUST NOT be repaired here.
+- The two `manualimport` fixtures MUST be corrected to the shapes their instances return, together with the assertions written against their current bodies, so this change lands with a green gate.
+- Every remaining recorded fixture MUST be checked against its instance, and any further divergence MUST be reported rather than corrected here if correcting it would need an adapter change.
+- Correcting a fixture MUST NOT quietly relax the adapter that reads it; where a correction would require an adapter change, that change is owned by its own document.
 
-#### Scenario: Recapture reveals an adapter defect
+#### Scenario: A correction would need an adapter change
 
 - **GIVEN** a fixture is recaptured and its real shape is one the adapter refuses
-- **WHEN** the suite runs
-- **THEN** the adapter's test fails, naming the shape the instance sends, rather than the fixture being edited back toward what the adapter accepts
+- **WHEN** the divergence is found
+- **THEN** it is reported for its own change document rather than the fixture being edited back toward what the adapter accepts, and this change lands without it
 
 ## Design
 
@@ -65,7 +83,8 @@ The [Architecture spec](../specs/architecture/#testing-contract) owns the fixtur
 
 - Add an operator-run capture script, outside the test suite, that reads a route from a configured instance and writes a sanitized fixture with full metadata.
 - Reuse the existing sanitizing and validation helpers so a captured fixture is held to the same screens a hand-written one is.
-- Recapture the four counterfactual fixtures and let the resulting failures stand as the evidence that the point-fix changes are needed.
+- Correct the two `manualimport` fixtures and the assertions written against them, leaving the other two to the changes that own them.
+- Sweep the remaining fixtures against their instances and report what the sweep finds.
 - Record the capture command and its expectations in the project documentation so a future contributor refreshes rather than authors.
 
 ### Decisions
@@ -73,9 +92,11 @@ The [Architecture spec](../specs/architecture/#testing-contract) owns the fixtur
 - **Decision:** Capture is an operator-run script, not a test.
   - **Why:** [Architecture](../specs/architecture/#testing-contract) forbids committed tests that depend on live personal instances, and that rule is right — CI has no instances and must stay offline. The fidelity guarantee comes from the captured artifact being committed, not from the suite reaching an instance.
   - **Alternatives considered:** An opt-in integration suite gated on environment variables, rejected because a suite that is skipped in CI provides no gate and drifts exactly as the fixtures did.
-- **Decision:** Correct the fixtures here and leave the adapter defects to their own changes.
-  - **Why:** The corrected fixture is the failing test for each point fix. Landing both together would hide which change is load-bearing and make the regression un-demonstrable.
-  - **Alternatives considered:** One change fixing fixtures and adapters together, rejected because it produces a large PR in which no individual defect can be shown to have been caught.
+- **Decision:** Each defect's own change corrects the fixture that exposes it; this change corrects only what no point fix needs.
+  - **Why:** The corrected fixture is the failing test for that defect, so the two belong in one commit — the test goes red, the fix turns it green, and the gate holds at every point. Batching the corrections here instead would land a change that is knowingly red, which the project's testing contract forbids, and would leave each point fix with nothing demonstrating it was needed.
+  - **Alternatives considered:** Correcting all four here and letting the failures stand until the point fixes land, rejected because it breaks the green gate this change is itself held to; one change fixing every fixture and adapter together, rejected because it produces a large PR in which no individual defect can be shown to have been caught.
+- **Decision:** Land this change last.
+  - **Why:** Its remaining corrections are the ones no fix depends on, so they are only safe once the point fixes have landed theirs. Going first would mean either holding corrections back or landing red.
 - **Decision:** Record the route in metadata and verify it resolves at capture time.
   - **Why:** The Radarr exclusions fixture proves a wrong route can otherwise be recorded, validated, and depended on indefinitely. A route that 404s must fail at capture rather than become a fixture.
 - **Decision:** Do not raise the recorded minimum versions.
@@ -83,7 +104,8 @@ The [Architecture spec](../specs/architecture/#testing-contract) owns the fixtur
 
 ### Non-Goals
 
-- Fixing any adapter defect the corrected fixtures reveal — each is owned by 0022 through 0025.
+- Correcting the Sonarr `release` fixture or the Radarr exclusions fixture — each is the red test of the change that owns it, [0022](./0022-upstream-field-shape-tolerance.md) and [0023](./0023-radarr-exclusion-route.md) respectively.
+- Fixing any adapter defect a corrected fixture reveals.
 - Capturing routes the server does not currently read.
 - Testing against live instances in CI.
 - Changing the fixture storage layout, metadata schema, or contract test beyond adding route verification.
@@ -95,10 +117,12 @@ The [Architecture spec](../specs/architecture/#testing-contract) owns the fixtur
   - [ ] Sanitize secrets, identifying values, and canonical paths through the existing helpers, and fail the capture rather than write a body that would not pass the contract test
   - [ ] Fail the capture when the named route does not resolve on the named application
   - [ ] Document the procedure so fixtures are refreshed rather than authored
-- [ ] Recapture the counterfactual fixtures
-  - [ ] Correct the Sonarr and Radarr `manualimport` fixtures and the Sonarr `release` fixture to the shapes their instances return
-  - [ ] Replace the Radarr exclusions fixture with one recorded from the route Radarr actually serves
-  - [ ] Confirm the resulting adapter failures reproduce the defects 0022 through 0025 describe, and leave them failing for those changes
+- [ ] Correct the fixtures no point fix owns
+  - [ ] Recapture the Sonarr and Radarr `manualimport` fixtures, and update the assertions written against their current bodies so the suite stays green
+  - [ ] Confirm the import adapter needs no change to read the recaptured bodies
+- [ ] Sweep the remaining fixtures
+  - [ ] Compare every other recorded fixture against its instance at the version it names
+  - [ ] Report any further divergence for its own change document rather than correcting it here
 
 ## Open Questions
 

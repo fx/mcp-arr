@@ -45,7 +45,7 @@ Skipping or weakening any of these rules to land the PR MUST be treated as a bug
 
 Additionally:
 
-- The Radarr fixture for this domain MUST be recorded against the route Radarr serves, so a fixture cannot again stand in for a route that 404s.
+- The Radarr fixture for this domain MUST be recorded against the route Radarr serves, so a fixture cannot again stand in for a route that 404s. Recording it is this change's own work, not [0021](./0021-live-verified-fixtures.md)'s: it is the red test the route fix turns green, and the two MUST land together so the gate holds at every commit.
 - A test MUST cover both applications for this domain, since a single-application test is what allowed a half-wrong route map to pass.
 
 ### Functional requirements
@@ -89,6 +89,7 @@ The [Configuration Reconciliation spec](../specs/configuration-reconciliation/#o
 - Adding, removing, or editing exclusions — configuration writes remain withdrawn per [0020](./0020-withdraw-configuration-writes.md).
 - Reviewing every other domain's route map, beyond confirming this domain.
 - Reworking the error taxonomy generally.
+- Repairing any fixture other than this domain's Radarr one, or adding the capture procedure — that is [0021](./0021-live-verified-fixtures.md).
 
 ## Tasks
 

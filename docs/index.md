@@ -15,7 +15,9 @@
 
 Changes 0011 through 0014 were scheduled ahead of the lower-numbered domain changes that were still outstanding at the time. 0011 establishes distribution; 0012 through 0014 correct defects found testing the merged server against live Sonarr, Radarr, and Prowlarr instances. 0012 in particular was worth landing before any further domain change, because every one of them adds tools onto the same broken publication path. Which changes are still outstanding is the table's answer rather than this note's.
 
-Changes 0021 through 0027 come from sweeping all fourteen tools against live instances at the recorded minimum versions, which found six defects the full green test suite did not. 0022 through 0027 are those defects, and each is independent of the others. 0021 is the reason they were invisible: several recorded fixtures describe responses their named instances do not produce, so fixture-backed tests confirmed each adapter against its own assumption. It is worth landing last among them, once the point fixes have corrected the fixtures they each depend on.
+Changes 0021 through 0027 come from sweeping all fourteen tools against live instances at the recorded minimum versions, which found six defects the full green test suite did not. 0022 through 0027 are those defects, and each is independent of the others. 0021 is the reason they were invisible: several recorded fixtures describe responses their named instances do not produce, so fixture-backed tests confirmed each adapter against its own assumption.
+
+A corrected fixture is the failing test for the defect it exposes, so each change corrects the fixtures it needs and lands green on its own: 0022 corrects the Sonarr `release` fixture, 0023 the Radarr exclusions one. 0021 owns the capture procedure, the fixtures no point fix needs, and the sweep across the rest; it lands last, when the remaining corrections no longer stand in for a fix nobody has made yet. No change lands with a failing gate.
 
 | # | Change | Spec | Status | Depends On |
 |---|--------|------|--------|------------|
