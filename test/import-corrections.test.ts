@@ -593,6 +593,32 @@ describe("what a reprocess answer leaves out", () => {
     expect(result.candidate.indexerFlags).toEqual(["freeleech"]);
   });
 
+  it("keeps the release type the scan stated, over the default the answer echoes", async () => {
+    // Sonarr answers `releaseType: "unknown"` for a file its own scan called a
+    // single episode, so taking the answer's word would have the same file
+    // report a type when it is inspected and no type when it is re-decided —
+    // an untrue answer about something this server is holding.
+    const scanned = sonarr.candidates[0] as Record<string, unknown>;
+    expect(scanned.releaseType).toBe("singleEpisode");
+
+    const running = instance({ decided: [reDecided()] });
+    const result = await reprocessCandidate(
+      running.client,
+      "sonarr",
+      { sourceKind: "tracked_download", queueItemId: 502, mediaId: 12 },
+      fileIdentity(cleanFile),
+      {},
+    );
+
+    if (result.status !== "ok") {
+      throw new Error(`Expected a re-decided candidate, got ${result.status}`);
+    }
+    // The control: the answer really did say "unknown", so the assertion above
+    // it is about what this adapter chose rather than about what it was given.
+    expect(reDecided().releaseType).toBe("unknown");
+    expect(result.candidate.releaseType).toBe("singleEpisode");
+  });
+
   it("still refuses a rejection the answer raised, though it carries no other facts", async () => {
     // The rejection is the one thing this answer does state, and it still stops
     // the import once the call succeeds: completing the file's facts from the

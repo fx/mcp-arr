@@ -968,6 +968,15 @@ export async function reprocessCandidate(
  * decision the answer does state — including an empty rejection list — wins
  * over the scan's, which is the whole reason for asking.
  *
+ * Two fields the answer does state are deliberately not among them, because
+ * what it states is a default rather than a decision. Sonarr answers
+ * `releaseType: "unknown"` for a file its own scan called a single episode or a
+ * season pack, and both applications answer `indexerFlags` as a numeric
+ * bitfield naming nothing a caller can read. Taking either would replace
+ * something this server knows with something it does not, and reporting
+ * "unknown" for a value already in hand is exactly the untrue answer this
+ * surface must not give.
+ *
  * Nothing is weakened by this: the fingerprint comparison still runs against a
  * scan performed now rather than against anything a reference remembered.
  */
@@ -984,7 +993,6 @@ function decidedRow(scanned: UpstreamCandidate, decided: UpstreamCandidate): Ups
       quality: decided.quality,
       languages: decided.languages,
       releaseGroup: decided.releaseGroup,
-      releaseType: decided.releaseType,
       customFormats: decided.customFormats,
       customFormatScore: decided.customFormatScore,
       rejections: decided.rejections,
