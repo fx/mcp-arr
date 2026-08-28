@@ -6,7 +6,6 @@ import {
   readCommandRecord,
 } from "../src/adapters/jobs.js";
 import type { ApplicationId } from "../src/applications.js";
-import { UpstreamError } from "../src/http/errors.js";
 import { normalizeJobStatus, type UpstreamCommandObservation } from "../src/state/jobs.js";
 import { activityFixture } from "./support/activity.js";
 import { jsonResponse, libraryHarness, type UpstreamCall } from "./support/library.js";
@@ -60,17 +59,6 @@ function serving(application: ApplicationId, respond: (call: UpstreamCall) => Re
     calls: harness.calls,
     read: (upstreamId) => readCommandRecord(harness.client, application, upstreamId),
   };
-}
-
-/** The upstream error one read raised, failing the test if it raised none. */
-async function rejectionOf(read: Promise<CommandRefresh>): Promise<UpstreamError> {
-  try {
-    await read;
-  } catch (error) {
-    expect(error).toBeInstanceOf(UpstreamError);
-    return error as UpstreamError;
-  }
-  throw new Error("Expected the read to raise an upstream error");
 }
 
 /** Narrows a refresh to the observation it carried, failing the test if it did not. */
@@ -169,22 +157,26 @@ describe("readCommandRecord", () => {
     // dropped rather than one that was never there.
     expect(command.body?.name).toBe("RefreshSeries");
     expect(command.trigger).toBe("manual");
-    expect(Object.keys(observation).sort()).toEqual(["result", "state", "warnings"]);
+    expect(Object.keys(observation).sort()).toEqual(["result", "state"]);
     expect(JSON.stringify(observation)).not.toContain("manual");
     expect(JSON.stringify(observation)).not.toContain("updateScheduledTask");
   });
 
-  it("reads a command whose only progress signal is a sentence without deriving counts", async () => {
+  it("reads a command whose only progress signal is a sentence without carrying the sentence", async () => {
     // The one progress signal any of the three was observed to send is this
-    // free-text message. It travels as a warning, and nothing parses "1 of 1"
-    // out of it into the published `{completed, total}` pair.
+    // free-text message. Nothing parses "1 of 1" out of it into the published
+    // `{completed, total}` pair — and nothing files it as a warning either. A
+    // job is refreshed on every read, so a message that changes per poll would
+    // otherwise accumulate one line of prose at a time under a channel that
+    // means something needs attention.
     const command = { ...commandOf("sonarr"), message: "Processing file 1 of 1" };
     const instance = serving("sonarr", () => jsonResponse(command));
 
     const observation = observationOf(await instance.read(String(command.id)));
 
     expect(observation.progress).toBeUndefined();
-    expect(observation.warnings).toEqual(["Processing file 1 of 1"]);
+    expect(observation.warnings).toBeUndefined();
+    expect(JSON.stringify(observation)).not.toContain("Processing file");
   });
 
   it("treats a command the application no longer holds as an observation, not a failure", async () => {
@@ -213,25 +205,31 @@ describe("readCommandRecord", () => {
     expect(refresh.failure.message).not.toContain(testApiKeys.sonarr);
   });
 
-  it("raises a rejected API key rather than reporting it as an unreachable instance", async () => {
-    // An operator who rotates a key mid-job must learn that the key is being
-    // refused. Reported as an outage, it would leave a poller reading a stale
-    // projection beside a warning, forever, and nothing about it improves by
-    // being read again.
+  it("keeps a refused API key apart from an instance it could not reach", async () => {
+    // An operator who rotates a key mid-job must be able to learn that the key
+    // is being refused. Reported as an outage it would read as a blip worth
+    // polling through, and polling is exactly what will never fix it.
     const instance = serving("sonarr", () => jsonResponse({ message: "Unauthorized" }, 401));
 
-    const raised = await rejectionOf(instance.read("77"));
+    const refresh = await instance.read("77");
 
-    expect(raised.kind).toBe("authentication");
-    expect(raised.message).not.toContain(testApiKeys.sonarr);
+    if (refresh.status !== "refused") {
+      throw new Error("Expected a refused refresh");
+    }
+    expect(refresh.failure.kind).toBe("authentication");
+    expect(refresh.failure.message).toContain("API key");
+    expect(refresh.failure.message).not.toContain(testApiKeys.sonarr);
   });
 
-  it("raises a request the instance rejected as invalid", async () => {
+  it("keeps a request the instance rejected as invalid apart from an outage too", async () => {
     // Same reasoning as a refused key: the instance answered, and what it said
     // is that this request is wrong. That is not an outage to wait out.
     const instance = serving("sonarr", () => jsonResponse({ message: "Bad Request" }, 400));
 
-    expect((await rejectionOf(instance.read("77"))).kind).toBe("validation");
+    const refresh = await instance.read("77");
+
+    expect(refresh.status).toBe("refused");
+    expect(refresh.status === "refused" && refresh.failure.kind).toBe("validation");
   });
 
   it("reports an unreadable command record as a failure rather than as no state", async () => {

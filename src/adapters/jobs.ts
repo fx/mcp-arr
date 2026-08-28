@@ -44,29 +44,47 @@ export const commandGoneWarning = "the application no longer holds this command 
  *
  * A command that is gone is an observation rather than a failure, because the
  * projection genuinely learned something: the command record has expired and
- * the job's state is no longer knowable from it. A failure to reach the
- * instance at all learned nothing, and is kept apart so a job read can still
- * answer from what it already holds.
+ * the job's state is no longer knowable from it. The two failures learned
+ * nothing about the command, and are kept apart from it — and from each other —
+ * so a job read can still answer from what it already holds while saying which
+ * of the two happened.
+ *
+ * `unreachable` is an outage: down, slow, throttling, or answering something
+ * this server cannot read. Waiting is the remedy, and the next poll may well
+ * succeed. `refused` is not an outage. The instance rejected the credential or
+ * the request, or this server could not compose the request at all, and no
+ * amount of polling changes that — somebody has to fix something. Collapsing
+ * the two is how an operator who rotated an API key mid-job would poll forever
+ * behind a warning that reads like a transient blip.
  */
 export type CommandRefresh =
   | { readonly status: "observed"; readonly observation: UpstreamCommandObservation }
-  | { readonly status: "unreachable"; readonly failure: UpstreamFailure };
+  | { readonly status: "unreachable"; readonly failure: UpstreamFailure }
+  | { readonly status: "refused"; readonly failure: UpstreamFailure };
+
+/**
+ * The half of a command reading a refresh keeps: what the command is doing.
+ *
+ * Written as an omission rather than as a copy of the fields it keeps, so a
+ * value added to the observation later travels without this module having to be
+ * remembered, and the single field a refresh drops stays named in one place.
+ */
+function withoutCommandMessage(
+  observation: UpstreamCommandObservation,
+): UpstreamCommandObservation {
+  const { warnings: _message, ...state } = observation;
+  return state;
+}
 
 /**
  * Reads the current state of one upstream command.
  *
- * Two things come back without an exception: an observation the job store can
- * fold in, or a redacted failure that learned nothing about the command. That
- * is what makes it usable from a read that must keep answering with the
- * instance switched off — the caller decides what an unreachable instance means
- * for the projection it already holds, rather than having the read fail
- * underneath it.
- *
- * The exception is reserved for the failures a caller must act on rather than
- * wait out: a rejected API key, a request the instance called invalid, and a
- * defect in this process. Swallowing one of those into a warning beside a
- * projection that can never advance is how an operator who rotated a key would
- * poll a job forever without ever being told why it stopped moving.
+ * Nothing an instance can do to this read is an exception: what comes back is
+ * an observation the job store can fold in, or a redacted failure that names
+ * which kind of failure it was. That is what makes it usable from a read that
+ * must keep answering with the instance switched off — the caller decides what
+ * a failed refresh means for the projection it already holds, rather than
+ * having the read fail underneath it and take the locally held state with it.
  */
 export async function readCommandRecord(
   client: UpstreamClient,
@@ -76,7 +94,14 @@ export async function readCommandRecord(
   const route = commandRecordRoute(upstreamId);
   try {
     const accepted = readAcceptedCommand(await client.get(route), application, route);
-    return { status: "observed", observation: accepted.observation };
+    // The command's own message is deliberately left behind. It is the sentence
+    // an instance writes about its progress — "Processing file 1 of 1" — and a
+    // job is refreshed on every read, so carrying it would file one line of
+    // prose per poll under a channel that means "something needs attention",
+    // walk the projection's warning cap, and evict the warnings that do. The
+    // start path carries one message because it reads the command once; that is
+    // not licence for a path that reads it repeatedly.
+    return { status: "observed", observation: withoutCommandMessage(accepted.observation) };
   } catch (error) {
     if (!isUpstreamError(error)) {
       // Not an instance this server could not reach. Every failure the upstream
@@ -92,27 +117,24 @@ export async function readCommandRecord(
       case "not-found":
         return { status: "observed", observation: { warnings: [commandGoneWarning] } };
 
-      // Nothing was learned about the command, and nothing about the failure is
-      // the caller's to fix: the instance was down, slow, throttling, or said
-      // something this server could not read. A job read is answerable with the
-      // instance switched off, so these leave the held projection alone.
+      // The instance was down, slow, throttling, or said something this server
+      // could not read. Nothing was learned about the command and nothing here
+      // is anybody's to fix, so the next poll is a reasonable thing to do.
       case "unavailable":
       case "timeout":
       case "rate-limit":
       case "unexpected-response":
         return { status: "unreachable", failure: { kind: error.kind, message: error.message } };
 
-      // A rejected API key, a request the instance called invalid, and a
-      // request this server could not even compose are all failures a caller
-      // has to be told about, and none of them get better by being read again.
-      // Degrading them would leave a poller reading `ok` beside a projection
-      // that can never advance, never learning that its credentials are being
-      // refused. Every other read in this project surfaces them as errors, and
-      // so does this one.
+      // A refused API key, a request the instance called invalid, and a request
+      // this server could not compose at all. The read learned nothing either,
+      // so the held projection is still the answer — but polling will not
+      // improve it, and the caller has to be told that rather than being left
+      // to read the same stale state indefinitely.
       case "authentication":
       case "validation":
       case "invalid-request":
-        throw error;
+        return { status: "refused", failure: { kind: error.kind, message: error.message } };
     }
   }
 }

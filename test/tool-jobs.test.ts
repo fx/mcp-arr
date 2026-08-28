@@ -292,30 +292,41 @@ describe("arr_job_get", () => {
     });
   });
 
-  it("reports an API key the instance refused rather than answering from a stale projection", async () => {
-    // An operator rotating a key mid-job must be able to learn that the key is
-    // being refused. Reported as a warning beside `status: ok`, the job would
-    // sit at `started` for the life of the process and a polling caller would
-    // never find out why.
+  it("names a refused API key while still answering from what it holds", async () => {
+    // Two things have to be true at once. The read is `local_first`, so an
+    // operator who rotated a key must still get the identity, status, and
+    // outcomes this server already holds rather than losing them to an error.
+    // And the warning must say the key was refused, because a caller told only
+    // that its projection is stale would poll a job that can never advance.
+    // Only the successful item, so the envelope's status reflects the refused
+    // refresh alone rather than a per-item failure the job already carried.
+    const held = items.slice(0, 1);
     const { context, state } = harness([{ status: 401 }]);
     const record = state.jobs.project({
       application: "sonarr",
       command,
-      observation: { state: "started" },
+      observation: { state: "started", items: held },
       cancellation: { supported: false },
     });
 
     const result = await callTool(context, "arr_job_get", { job: record.reference });
 
-    expect(result.status).toBe("error");
-    expect(result.applications[0]?.error?.code).toBe("upstream_authentication");
-    expect(result.applications[0]?.data).toBeUndefined();
-    // The projection the caller would otherwise have been handed is still the
-    // one this job was minted with, which is exactly what makes answering `ok`
-    // from it a lie.
+    expect(result.status).toBe("ok");
+    expect(projectionOf(result)).toMatchObject({ status: "started", command });
+    expect(result.applications[0]?.items).toEqual(held);
+
+    const warning = result.applications[0]?.warnings.join(" ") ?? "";
+    expect(warning).toContain("API key");
+    expect(warning).toContain("cannot advance until that is resolved");
+    // An outage says the projection is what was last observed and stops there;
+    // a refusal has to say more than that, or the two read the same.
+    expect(warning).not.toContain("could not reach the instance");
+
+    // The failure describes this call, not the job, so it is not folded into
+    // the record and does not outlive the rotated key.
     expect(state.jobs.resolve(record.reference)).toMatchObject({
       ok: true,
-      record: { status: "started" },
+      record: { status: "started", warnings: [] },
     });
   });
 
@@ -351,9 +362,11 @@ describe("arr_job_get", () => {
 
     expect(result.status).toBe("ok");
     expect(projectionOf(result)).toMatchObject({ status: "started" });
-    expect(result.applications[0]?.warnings.join(" ")).toContain(
-      "this projection is the state this server last observed",
-    );
+    const warning = result.applications[0]?.warnings.join(" ") ?? "";
+    expect(warning).toContain("this projection is the state this server last observed");
+    // An outage is worth polling through, so it does not tell the caller that
+    // the job can never advance — which is what separates it from a refusal.
+    expect(warning).not.toContain("cannot advance until that is resolved");
     // A failure that learned nothing is not folded into the record, so it does
     // not outlive the outage.
     expect(state.jobs.resolve(record.reference)).toMatchObject({
@@ -389,9 +402,14 @@ describe("arr_job_get", () => {
     expect(serialized).not.toContain("Missing Episode Search");
   });
 
-  it("reports no progress for a command whose only signal is a sentence", async () => {
+  it("neither derives progress from a command's sentence nor keeps the sentence", async () => {
+    // Four polls of a command that narrates itself, which is how the one
+    // application that sends a message actually behaves.
     const { context, state } = harness([
-      { record: commandRecord({ status: "started", message: "Processing file 1 of 1" }) },
+      { record: commandRecord({ status: "started", message: "Processing file 1 of 4" }) },
+      { record: commandRecord({ status: "started", message: "Processing file 2 of 4" }) },
+      { record: commandRecord({ status: "started", message: "Processing file 3 of 4" }) },
+      { record: commandRecord({ status: "started", message: "Processing file 4 of 4" }) },
     ]);
     const record = state.jobs.project({
       application: "sonarr",
@@ -400,12 +418,23 @@ describe("arr_job_get", () => {
       cancellation: { supported: false },
     });
 
-    const result = await callTool(context, "arr_job_get", { job: record.reference });
+    let result = await callTool(context, "arr_job_get", { job: record.reference });
+    for (let poll = 0; poll < 3; poll += 1) {
+      result = await callTool(context, "arr_job_get", { job: record.reference });
+    }
 
-    // The sentence is disclosed as a warning; the counts inside it are prose,
-    // not a contract, and nothing parses them into the published pair.
-    expect(result.applications[0]?.warnings).toContain("Processing file 1 of 1");
+    // The counts inside the sentence are prose, not a contract, so nothing
+    // parses them into the published pair — and the sentence itself is not
+    // filed as a warning either. Warnings mean something needs attention, and a
+    // job read on every poll would otherwise accumulate one line of narration
+    // per read until the projection's cap evicted the warnings that matter.
     expect(projectionOf(result).progress).toBeUndefined();
+    expect(result.applications[0]?.warnings).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain("Processing file");
+    expect(state.jobs.resolve(record.reference)).toMatchObject({
+      ok: true,
+      record: { status: "started", warnings: [] },
+    });
   });
 
   it("still answers from the terminal snapshot after the instance goes away", async () => {

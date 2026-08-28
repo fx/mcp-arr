@@ -85,6 +85,8 @@ The [Tool Contracts spec](../specs/tool-contracts/#job-projection) owns job refr
 - Treat a 404 as the command being gone, mapping it to unknown state instead of an error.
 - Guard the observation so a terminal status and result already held are never replaced by a weaker reading.
 - Answer terminal jobs from the snapshot, without an upstream call.
+- Answer a refresh that failed from the held projection as well, disclosing what failed as a warning that separates an outage from a refusal.
+- Leave the command's free-text message out of the reading a refresh produces.
 
 ### Decisions
 
@@ -96,8 +98,17 @@ The [Tool Contracts spec](../specs/tool-contracts/#job-projection) owns job refr
 - **Decision:** Keep the observed terminal result even when a later reading is less definite.
   - **Why:** Observed behavior, not a hypothetical: the same Sonarr command reported `successful` and then `unknown` minutes apart. The first reading is the more definite one and the one the caller is entitled to. Holding it also makes the rule independent of why the degradation happens, which is what keeps the fix correct even though the trigger was not pinned down.
   - **Alternatives considered:** Trusting the newest reading, rejected because it makes a job's reported outcome depend on when it was polled.
+- **Decision:** Report a completed command whose result is present but indefinite as unknown state, not as a terminal one.
+  - **Why:** The no-degradation rule above protects an earlier definite reading. It does nothing when the *first* reading is the indefinite one, and in that case mapping `completed / "unknown"` onto the terminal `completed` publishes `succeeded` — a definite success the application explicitly declined to state, made permanent by the fact that a terminal job is never re-read. A result an application never sends at all is a different answer and still completes, which is what keeps Prowlarr's result-less commands working.
+  - **Consequence:** such a job never settles. Every read of it issues an upstream request, and once the command record is trimmed the 404 pins it at unknown, so a caller polling for a terminal state never gets one. That is accepted: an unsettled job reports what this server knows, and a fabricated success does not.
+  - **Alternatives considered:** A published job result meaning "ended, verdict unstated", rejected because `jobResults` is a public contract and this change document does not authorize extending it; trusting the state and ignoring the result, rejected as the fabrication described above.
 - **Decision:** Map a 404 to unknown rather than to an error.
   - **Why:** [Tool Contracts](../specs/tool-contracts/#job-projection) already requires job state to degrade safely when the upstream command record expires, and all three applications express expiry as 404. A failed read would turn ordinary expiry into an error the caller cannot act on.
+- **Decision:** Answer a failed refresh from the held record, but say whether the failure was an outage or a refusal.
+  - **Why:** `arr_job_get` is a local-first read: the identity, the status, and the per-item outcomes are already held here, and an operator who rotated an API key mid-job should not lose them to an error. But an outage and a refused credential call for opposite responses — one is worth polling through and the other will never resolve on its own — so a single "could not reach the instance" warning would leave a caller polling a job that can never advance. The warning names which happened.
+  - **Alternatives considered:** Raising a refused key as an error, rejected because it destroys a read the caller is entitled to and contradicts the operation's `local_first` declaration; treating every failure as an outage, rejected because it makes a rejected credential indistinguishable from a blip and therefore invisible.
+- **Decision:** Do not carry the command's free-text message into the projection on a refresh.
+  - **Why:** The same reasoning that keeps counts from being parsed out of prose. A job is refreshed on every read, so a message that changes per poll — "Processing file 1 of 4", then 2, then 3 — would file one line of narration at a time under a channel that means something needs attention, walk the projection's warning cap, and evict the warnings that do. The start path reads the command once and carries its message; that is not licence for a path that reads it repeatedly.
 - **Decision:** Use the existing observation path rather than adding a second one.
   - **Why:** It already normalizes status, captures the terminal snapshot, bounds and de-duplicates warnings, and carries per-item outcomes. A parallel path would be a second place for the projection to disagree with itself.
 

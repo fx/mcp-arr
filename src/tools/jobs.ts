@@ -1,4 +1,4 @@
-import { readCommandRecord } from "../adapters/jobs.js";
+import { type CommandRefresh, readCommandRecord } from "../adapters/jobs.js";
 import type { JobRecord, JobStore } from "../state/jobs.js";
 import type { PreconditionRead } from "../state/plans.js";
 import { createToolError, type ToolError, toolErrorForReferenceFailure } from "./errors.js";
@@ -81,6 +81,25 @@ interface RefreshedJob {
 }
 
 /**
+ * Says what a refresh that learned nothing means for the answer.
+ *
+ * Both sentences begin with the upstream boundary's own already-redacted
+ * message, which names the failure precisely — a key check, a rejected request,
+ * an instance that could not be reached. What differs is what the caller should
+ * do next, and that is the distinction worth publishing: an outage is worth
+ * polling through, and a refusal is not. A caller told only that a projection
+ * is stale would keep polling a job that can never advance again.
+ */
+function describeFailedRefresh(
+  refresh: Exclude<CommandRefresh, { readonly status: "observed" }>,
+): string {
+  const held = "this projection is the state this server last observed";
+  return refresh.status === "unreachable"
+    ? `${refresh.failure.message}; ${held}`
+    : `${refresh.failure.message}; ${held}, and it cannot advance until that is resolved`;
+}
+
+/**
  * Brings a job projection up to date with the command behind it.
  *
  * A job that has ended is answered from its terminal snapshot and nothing is
@@ -96,11 +115,12 @@ interface RefreshedJob {
  * a job read is answerable with the instance switched off and turning that into
  * a failure would hide the state the caller asked for.
  *
- * A refused API key is the one thing that is not answered from the held record:
- * the reader raises it, this handler does not catch it, and the caller gets the
- * error every other read in this project would give it. Nothing about it
- * improves by polling, and a job that answered `ok` from a projection that can
- * never advance again would keep the reason to itself.
+ * A refused credential is answered from the held record too — losing the
+ * command identity, the status, and the per-item outcomes this server already
+ * holds would punish the caller for an operator's key rotation — but it is not
+ * described as an outage. The warning says what was refused, so a caller
+ * polling a job that has stopped advancing learns why instead of watching the
+ * same state repeat.
  */
 async function refreshJob(
   invocation: OperationInvocation,
@@ -118,13 +138,8 @@ async function refreshJob(
     record.application,
     record.command.upstreamId,
   );
-  if (refresh.status === "unreachable") {
-    return {
-      record,
-      warnings: [
-        `${refresh.failure.message}; this projection is the state this server last observed`,
-      ],
-    };
+  if (refresh.status !== "observed") {
+    return { record, warnings: [describeFailedRefresh(refresh)] };
   }
 
   const observed = invocation.state.jobs.observe(record.reference, refresh.observation);
