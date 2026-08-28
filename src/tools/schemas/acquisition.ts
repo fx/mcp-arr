@@ -9,6 +9,8 @@ import {
   bulkReferences,
   importCandidateReferenceSchema,
   maxBulkItems,
+  maxMutationApplications,
+  mediaApplicationSchema,
   mediaReferenceSchema,
   mutationBaseShape,
   planApplySchema,
@@ -75,11 +77,24 @@ export const releaseGrabInputSchema = variantUnion(
   ]),
 );
 
+/**
+ * The one application a wanted-list search runs on.
+ *
+ * Required and bounded to a single entry, because these two targets are the
+ * only mutation intents that name the applications they act on and a mutation
+ * targets exactly one. Left optional it published a default the dispatcher
+ * refused every time, and bounded at two it published a second call the
+ * dispatcher refused as well; a caller reading the schema could learn the rule
+ * only by being rejected. Searching both instances is two calls, each with its
+ * own job and its own receipt.
+ */
 const wantedSearchApplications = z
-  .array(z.enum(["sonarr", "radarr"]))
+  .array(mediaApplicationSchema)
   .min(1)
-  .max(2)
-  .optional();
+  .max(maxMutationApplications)
+  .describe(
+    "The single application to run this search on, as a one-element list. A mutation targets exactly one application, so this is required; search the other application with a second call.",
+  );
 
 /**
  * Whether a wanted-list search stays inside the monitored set.

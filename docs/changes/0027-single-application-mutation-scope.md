@@ -5,7 +5,7 @@
 Stop publishing a search intent the server always refuses. `arr_search_start` accepts `missing` and `cutoff_unmet` with `applications` optional and up to two entries, but a mutation targets exactly one application, so omitting the argument — the documented default — fails every time. The [Tool Contracts spec](../specs/tool-contracts/#plan-and-apply) now states the single-application rule and requires it to be discoverable.
 
 **Spec:** [Tool Contracts](../specs/tool-contracts/)
-**Status:** draft
+**Status:** complete
 **Depends On:** —
 
 ## Motivation
@@ -99,13 +99,13 @@ The [Tool Contracts spec](../specs/tool-contracts/#plan-and-apply) owns the sing
 
 ## Tasks
 
-- [ ] Publish the single-application constraint on wanted searches
-  - [ ] Require a single application on the `missing` and `cutoff_unmet` variants and confirm the generated variant documentation states it
-  - [ ] Confirm the capability report still lists the variant for each supporting application
-  - [ ] Confirm a call built from the published schema alone is accepted
-- [ ] Guard the class
-  - [ ] Assert across every published input schema that no admitted application selection exceeds what a mutation can target, and confirm the assertion fails against the current schema
-  - [ ] Confirm the dispatcher's refusal remains as the runtime backstop
+- [x] Publish the single-application constraint on wanted searches
+  - [x] Require a single application on the `missing` and `cutoff_unmet` variants and confirm the generated variant documentation states it
+  - [x] Confirm the capability report still lists the variant for each supporting application
+  - [x] Confirm a call built from the published schema alone is accepted
+- [x] Guard the class
+  - [x] Assert across every published input schema that no admitted application selection exceeds what a mutation can target, and confirm the assertion fails against the current schema
+  - [x] Confirm the dispatcher's refusal remains as the runtime backstop
 
 ## Open Questions
 

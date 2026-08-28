@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { findToolDefinition } from "../src/tools/definitions.js";
 import { type ToolName, toolNames } from "../src/tools/names.js";
 import { isImplementedOperation, operationDefinitions } from "../src/tools/operations.js";
+import { maxMutationApplications } from "../src/tools/schemas/common.js";
 import { maxProjectionPathLength, maxProjectionPaths } from "../src/tools/schemas/projection.js";
 import { describePayloadPaths, payloadInventory } from "../src/tools/schemas/publish-results.js";
 import {
@@ -625,6 +626,44 @@ describe("built stdio tool surface", () => {
       .map((line) => /\brecords=([^,;]+)/u.exec(line)?.[1])
       .filter((annotation): annotation is string => annotation !== undefined);
     expect(new Set(recordAnnotations).size, "arr_activity_change records annotations").toBe(2);
+  });
+
+  it("documents the wanted search as naming the one application it mutates", async () => {
+    const published = await publishedInputSchemas();
+    const schema = published.get("arr_search_start") ?? {};
+    const lines = String(schema.description ?? "")
+      .split("\n")
+      .filter((line) => line.startsWith("- "))
+      .map((line) => parseVariantLine(line, "target"));
+
+    // The two wanted targets take the same arguments, so they document as one
+    // form; finding it by discriminator value rather than by position is what
+    // keeps this reading the server's own prose.
+    const wanted = lines.filter((line) =>
+      line.values.some((value) => value === "missing" || value === "cutoff_unmet"),
+    );
+    expect(wanted).toHaveLength(1);
+    expect([...(wanted[0]?.values ?? [])].sort()).toEqual(["cutoff_unmet", "missing"]);
+
+    // Required, not optional. This is the half a caller could previously learn
+    // only by making the call the documentation described and being refused,
+    // and it is generated from the same union that validates, so the prose and
+    // the rule cannot come apart.
+    expect(wanted[0]?.required.has("applications"), "wanted search names its application").toBe(
+      true,
+    );
+
+    // And the other half: the published property admits exactly what a mutation
+    // can target, stated as a bound a host reads and as a sentence a caller
+    // does.
+    const properties = isRecord(schema.properties) ? schema.properties : {};
+    const applications = isRecord(properties.applications) ? properties.applications : {};
+    expect(applications.type).toBe("array");
+    expect(applications.minItems).toBe(1);
+    expect(applications.maxItems).toBe(maxMutationApplications);
+    expect(String(applications.description ?? "")).toContain(
+      "A mutation targets exactly one application",
+    );
   });
 
   it("returns the unsupported_capability error without contacting an instance", async () => {

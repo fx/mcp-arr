@@ -300,22 +300,75 @@ describe("arr_search_start over stdio", () => {
     }
   }, 30_000);
 
-  it("refuses a wanted-list search that does not name one application", async () => {
+  it("runs a wanted-list search on the one application the published schema makes it name", async () => {
     const sonarr = await instance("sonarr");
     const radarr = await instance("radarr");
     const child = spawnBuiltServer(instanceEnvironment([sonarr, radarr]), 10_000);
 
     try {
       await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
+      // Exactly what the published schema and its generated documentation
+      // describe, with both library applications configured. What is under test
+      // is that reading the schema is enough: the call is accepted, and the one
+      // job the envelope carries is a job on the one instance that was asked.
+      const called = (await child.request(2, "tools/call", {
+        name: "arr_search_start",
+        arguments: {
+          target: "missing",
+          mode: "apply",
+          applications: ["sonarr"],
+          monitoredOnly: true,
+        },
+      })) as CallResult;
+
+      expect(called.result?.isError).toBe(false);
+      const envelope = called.result?.structuredContent as {
+        status: string;
+        applications: Array<{ application: string; data?: { stage: string } }>;
+        mutation?: { job?: string };
+      };
+      expect(envelope.status).toBe("ok");
+      expect(envelope.applications.map((outcome) => outcome.application)).toEqual(["sonarr"]);
+      expect(envelope.applications[0]?.data?.stage).toBe("started");
+      expect(typeof envelope.mutation?.job).toBe("string");
+
+      expect(sonarr.commands.map((entry) => entry.name)).toEqual(["MissingEpisodeSearch"]);
+      // The application the caller did not name was never asked, which is what
+      // makes one job reference and one receipt the whole record of the call.
+      expect(radarr.commands).toEqual([]);
+
+      await child.terminateGracefully();
+      assertCleanProtocolStdout(child.stdout);
+      expect(child.stderr).toBe("");
+    } finally {
+      await child.forceCleanup().catch(() => undefined);
+    }
+  }, 30_000);
+
+  it("refuses a wanted-list search that names no application, before anything runs", async () => {
+    const sonarr = await instance("sonarr");
+    const radarr = await instance("radarr");
+    const child = spawnBuiltServer(instanceEnvironment([sonarr, radarr]), 10_000);
+
+    try {
+      await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
+      // The call the schema used to advertise as valid by publishing the
+      // selection as optional. It is now refused against the published contract
+      // itself rather than by the dispatcher one layer later, so no reading of
+      // the schema produces it in the first place.
       const called = (await child.request(2, "tools/call", {
         name: "arr_search_start",
         arguments: { target: "missing", mode: "apply", monitoredOnly: true },
       })) as CallResult;
 
+      // Refused against the declared input schema, so the refusal names the
+      // arguments rather than an outcome, and the call never became a dispatch
+      // at all.
       expect(called.result?.isError).toBe(true);
-      const summary = called.result?.content?.[0]?.text ?? "";
-      expect(summary).toContain("invalid_input");
-      // Nothing was started on either instance.
+      expect(called.result?.content?.[0]?.text ?? "").toContain(
+        "Invalid arguments for tool arr_search_start",
+      );
+      expect(called.result?.structuredContent).toBeUndefined();
       expect(sonarr.commands).toEqual([]);
       expect(radarr.commands).toEqual([]);
 

@@ -36,7 +36,11 @@ import {
   type Receipt,
   type ToolResult,
 } from "./results.js";
-import { isReferenceProperty, type ReferenceKind } from "./schemas/common.js";
+import {
+  isReferenceProperty,
+  maxMutationApplications,
+  type ReferenceKind,
+} from "./schemas/common.js";
 
 /**
  * Everything a tool handler is allowed to reach. All three dependencies are
@@ -804,7 +808,7 @@ export async function dispatchOperation(
       ? selectApplications(request.applications, operation, checked.binding.application)
       : [planned.application];
 
-  if (request.mode !== "read" && targets.length > 1) {
+  if (request.mode !== "read" && targets.length > maxMutationApplications) {
     return errorResult(refuseMultiApplicationMutation(targets));
   }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import * as z4mini from "zod/v4-mini";
+import { applicationIds } from "../src/applications.js";
 import { findToolDefinition, toolDefinitions } from "../src/tools/definitions.js";
 import { toolNames } from "../src/tools/names.js";
 import { operationDefinitions } from "../src/tools/operations.js";
@@ -8,6 +9,7 @@ import {
   defaultPageSize,
   isReferenceProperty,
   maxBulkItems,
+  maxMutationApplications,
   maxPageSize,
   referenceKinds,
   referencePattern,
@@ -117,6 +119,124 @@ function collectReferencePropertyNames(node: unknown, found: Set<string>): void 
   for (const value of Object.values(record)) {
     collectReferencePropertyNames(value, found);
   }
+}
+
+/**
+ * The two properties a caller names applications in.
+ *
+ * They are what `readApplications` in `src/tools/definitions.ts` reads to decide
+ * which instances a call targets. Writing them here rather than importing a
+ * reader is safe because of the second assertion below, which checks that no
+ * published schema names an application selection under a third spelling — so a
+ * property this list misses fails rather than going unguarded.
+ */
+const applicationSelectionProperties = ["applications", "application"] as const;
+
+/** Every place a published schema declares one property, at any depth. */
+function collectPropertyNodes(
+  node: unknown,
+  name: string,
+  found: Array<Record<string, unknown>> = [],
+): Array<Record<string, unknown>> {
+  if (Array.isArray(node)) {
+    for (const entry of node) {
+      collectPropertyNodes(entry, name, found);
+    }
+    return found;
+  }
+  if (typeof node !== "object" || node === null) {
+    return found;
+  }
+  const record = node as Record<string, unknown>;
+  const properties = record.properties;
+  if (typeof properties === "object" && properties !== null) {
+    const declared = (properties as Record<string, unknown>)[name];
+    if (typeof declared === "object" && declared !== null) {
+      found.push(declared as Record<string, unknown>);
+    }
+  }
+  for (const value of Object.values(record)) {
+    collectPropertyNodes(value, name, found);
+  }
+  return found;
+}
+
+/**
+ * How many applications one published node admits at once.
+ *
+ * An array admits as many as its own ceiling allows, and one without a ceiling
+ * admits every application there is; a single value admits one. A node that is
+ * neither throws rather than answering, because a selection whose shape this
+ * cannot count is one the assertion below would silently stop checking.
+ */
+function admittedApplications(node: Record<string, unknown>): number {
+  if (Array.isArray(node.anyOf)) {
+    return Math.max(
+      ...node.anyOf.map((alternative) =>
+        admittedApplications(alternative as Record<string, unknown>),
+      ),
+    );
+  }
+  if (node.type === "array") {
+    return typeof node.maxItems === "number" ? node.maxItems : Number.POSITIVE_INFINITY;
+  }
+  if (node.type === "string") {
+    return 1;
+  }
+  throw new Error(
+    `An application selection published as ${JSON.stringify(node.type ?? null)} cannot be counted`,
+  );
+}
+
+/** The values one published node fixes itself, or its elements, to. */
+function admittedValues(node: Record<string, unknown>): readonly string[] {
+  const items = node.items;
+  const source =
+    typeof items === "object" && items !== null ? (items as Record<string, unknown>) : node;
+  if (typeof source.const === "string") {
+    return [source.const];
+  }
+  return Array.isArray(source.enum)
+    ? source.enum.filter((value): value is string => typeof value === "string")
+    : [];
+}
+
+/** Whether a published node's whole accepted set is applications. */
+function namesApplications(node: Record<string, unknown>): boolean {
+  const values = admittedValues(node);
+  return (
+    values.length > 0 &&
+    values.every((value) => (applicationIds as readonly string[]).includes(value))
+  );
+}
+
+/** Every property a published schema declares, named beside its own node. */
+function collectDeclaredProperties(
+  node: unknown,
+  found: Array<readonly [string, Record<string, unknown>]> = [],
+): Array<readonly [string, Record<string, unknown>]> {
+  if (Array.isArray(node)) {
+    for (const entry of node) {
+      collectDeclaredProperties(entry, found);
+    }
+    return found;
+  }
+  if (typeof node !== "object" || node === null) {
+    return found;
+  }
+  const record = node as Record<string, unknown>;
+  const properties = record.properties;
+  if (typeof properties === "object" && properties !== null) {
+    for (const [name, declared] of Object.entries(properties as Record<string, unknown>)) {
+      if (typeof declared === "object" && declared !== null) {
+        found.push([name, declared as Record<string, unknown>]);
+      }
+    }
+  }
+  for (const value of Object.values(record)) {
+    collectDeclaredProperties(value, found);
+  }
+  return found;
 }
 
 describe("published tool surface", () => {
@@ -233,6 +353,50 @@ describe("published tool surface", () => {
       parseInput("arr_queue_resolve", { intent: "ignore_tracking", mode: "apply", items: [] })
         .success,
     ).toBe(false);
+  });
+
+  it("admits no application selection larger than a mutation can target", () => {
+    // The class rather than the two variants that prompted it: a published
+    // schema that advertises a selection the dispatcher refuses for naming more
+    // than one instance is the defect, and naming the tools it is known to
+    // affect today would pass while the next mutation to publish one repeated
+    // it. Read tools are deliberately absent — fanning a query across instances
+    // is correct, and only a mutation carries the one plan, job, and receipt
+    // that make a second target unreportable.
+    const swept: string[] = [];
+    for (const name of toolNames.filter((tool) => "mode" in sampleToolInputs[tool])) {
+      const schema = inputJsonSchema(name);
+      for (const property of applicationSelectionProperties) {
+        for (const node of collectPropertyNodes(schema, property)) {
+          swept.push(`${name}.${property}`);
+          expect(admittedApplications(node), `${name} publishes ${property}`).toBeLessThanOrEqual(
+            maxMutationApplications,
+          );
+        }
+      }
+    }
+
+    // The sweep found the selections it is meant to be checking. Without this
+    // the assertion above would pass just as happily over nothing at all.
+    expect(swept).toContain("arr_search_start.applications");
+    expect(swept).toContain("arr_library_change.application");
+  });
+
+  it("names an application selection nothing but applications or application", () => {
+    // What keeps the sweep above honest. It looks for two property names, so a
+    // selection published under a third would go unchecked — and would also be
+    // one the dispatcher never reads, since those two names are exactly what it
+    // resolves a call's targets from.
+    const named = new Set<string>();
+    for (const definition of toolDefinitions) {
+      for (const [name, node] of collectDeclaredProperties(inputJsonSchema(definition.name))) {
+        if (namesApplications(node)) {
+          named.add(name);
+        }
+      }
+    }
+
+    expect([...named].sort()).toEqual([...applicationSelectionProperties].sort());
   });
 
   it("requires an explicit mode on every mutation tool and rejects it on read tools", () => {
