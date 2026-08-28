@@ -222,3 +222,10 @@ changes:
     spec: tool-contracts
     status: complete
     depends_on: []
+  - id: "0028"
+    name: prowlarr-indexer-status-shape
+    path: changes/0028-prowlarr-indexer-status-shape.md
+    description: Stop requiring an indexer-status member Prowlarr does not send, and record the member set it does
+    spec: architecture
+    status: complete
+    depends_on: []
