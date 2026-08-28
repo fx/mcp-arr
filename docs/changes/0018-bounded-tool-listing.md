@@ -5,7 +5,7 @@
 Publish a loose output schema per tool and move each payload's selectable paths into generated documentation. At the baseline this change was measured against, `tools/list` is 165,839 bytes, of which 135,490 is output schemas — 59,302 of that being one near-identical copy of the same result envelope per tool. Every session pays the whole thing before making a single call. This does for output what [0015](./0015-flat-tool-input-schemas.md) did for input: publish the shape a host needs, and carry what publication cannot afford as prose generated from the same schemas that validate.
 
 **Spec:** [Tool Contracts](../specs/tool-contracts/)
-**Status:** draft
+**Status:** complete
 **Depends On:** [0015](./0015-flat-tool-input-schemas.md)
 
 ## Motivation
@@ -99,20 +99,20 @@ The [Tool Contracts spec](../specs/tool-contracts/#bounded-structured-results) o
 
 ## Tasks
 
-- [ ] Pin the listing before changing it
-  - [ ] Add a wire test recording `tools/list` byte size and asserting a ceiling, taking the pre-change size by measurement at implementation time rather than from this document's baseline figure, which a differing landing order makes unreproducible
-  - [ ] Add a test asserting every returned envelope validates against its tool's internal output schema, green today
-- [ ] Publish a broadened output schema
-  - [ ] Derive the published envelope at registration, with `data` unconstrained, leaving internal schemas untouched
-  - [ ] Confirm every existing structured-content assertion passes unedited and the new ceiling is met
-- [ ] Generate the selectable-path inventory
-  - [ ] Walk each internal output schema down to its leaves to produce paths, grouped by payload discriminator where one exists, with no type annotations
-  - [ ] Carry the inventory in the published output schema root's `description`, generated at one site, and emit none for a tool that accepts no projection
-  - [ ] Assert every generated path resolves to a leaf of the schema it came from, and that no payload leaf goes unnamed
-- [ ] Record the contract
-  - [ ] Amend the Tool Contracts spec for broadened output schemas and the generated path inventory, with a changelog row
-  - [ ] Correct the README's claim that every tool "is published with their full output schemas", which this change makes false, and describe the path inventory as the discovery surface in its place
-  - [ ] Tick these tasks and set the status in this document, `docs/index.yml`, and `docs/index.md`
+- [x] Pin the listing before changing it
+  - [x] Add a wire test recording `tools/list` byte size and asserting a ceiling, taking the pre-change size by measurement at implementation time rather than from this document's baseline figure, which a differing landing order makes unreproducible
+  - [x] Add a test asserting every returned envelope validates against its tool's internal output schema, green today
+- [x] Publish a broadened output schema
+  - [x] Derive the published envelope at registration, with `data` unconstrained, leaving internal schemas untouched
+  - [x] Confirm every existing structured-content assertion passes unedited and the new ceiling is met
+- [x] Generate the selectable-path inventory
+  - [x] Walk each internal output schema down to its leaves to produce paths, grouped by payload discriminator where one exists, with no type annotations
+  - [x] Carry the inventory in the published output schema root's `description`, generated at one site, and emit none for a tool that accepts no projection
+  - [x] Assert every generated path resolves to a leaf of the schema it came from, and that no payload leaf goes unnamed
+- [x] Record the contract
+  - [x] Amend the Tool Contracts spec for broadened output schemas and the generated path inventory, with a changelog row
+  - [x] Correct the README's claim that every tool "is published with their full output schemas", which this change makes false, and describe the path inventory as the discovery surface in its place
+  - [x] Tick these tasks and set the status in this document, `docs/index.yml`, and `docs/index.md`
 
 ## Open Questions
 
