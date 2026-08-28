@@ -150,7 +150,7 @@ changes:
     path: changes/0017-grammar-compilable-input-schemas.md
     description: Drop string length bounds from published input schemas and guard against publishing a refused intent
     spec: tool-contracts
-    status: draft
+    status: complete
     depends_on: ["0015", "0020"]
   - id: "0018"
     name: bounded-tool-listing

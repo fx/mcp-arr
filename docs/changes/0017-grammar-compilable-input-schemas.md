@@ -5,7 +5,7 @@
 Stop publishing string length bounds in tool input schemas. A host that compiles a published schema into a constrained-decoding grammar expands a `maxLength` once per admissible character, and the one tool that carried long bounds failed to compile, taking the whole request with it. [0020](./0020-withdraw-configuration-writes.md) removes that tool for unrelated reasons, so this change is what keeps the failure from returning: the bounds stay in validation and move into the generated variant documentation, exactly as cross-property constraints already do.
 
 **Spec:** [Tool Contracts](../specs/tool-contracts/)
-**Status:** draft
+**Status:** complete
 **Depends On:** [0015](./0015-flat-tool-input-schemas.md), [0020](./0020-withdraw-configuration-writes.md)
 
 ## Motivation
@@ -107,20 +107,20 @@ The [Tool Contracts spec](../specs/tool-contracts/#stable-typed-surface) owns wh
 
 ## Tasks
 
-- [ ] Pin what must not change
-  - [ ] Add an over-length rejection-message test with the exact string captured against the unmodified implementation
-  - [ ] Extend the wire-reading test to assert no published input schema declares `maxLength` at any depth, and confirm it fails against the pre-change implementation
-- [ ] Sanitize the published input schemas
-  - [ ] Collect every `maxLength` with the property path that declared it, then strip them recursively in `src/tools/schemas/publish.ts`, in that order and before branch merging
-  - [ ] Route `arr_capabilities` and `arr_job_get` through the same publication site
-  - [ ] Emit the bound restatement into every published root's `description`, from the collection rather than the stripped shape, and assert it appears for a plain-object input as well as a variant union
-  - [ ] Confirm the wire guard is green and every `safeParse`-based assertion passes unedited
-- [ ] Guard against publishing a refused intent
-  - [ ] Add the cross-check between each published schema's declared variants and the operation registry's unimplemented list
-  - [ ] Confirm it is green against the current corpus, and verify it fails when a registry entry is temporarily marked unimplemented
-- [ ] Record the contract
-  - [ ] Amend the Tool Contracts spec for the length-bound and unconditional-refusal rules, with a changelog row
-  - [ ] Tick these tasks and set the status in this document, `docs/index.yml`, and `docs/index.md`
+- [x] Pin what must not change
+  - [x] Add an over-length rejection-message test with the exact string captured against the unmodified implementation
+  - [x] Extend the wire-reading test to assert no published input schema declares `maxLength` at any depth, and confirm it fails against the pre-change implementation
+- [x] Sanitize the published input schemas
+  - [x] Collect every `maxLength` with the property path that declared it, then strip them recursively in `src/tools/schemas/publish.ts`, in that order and before branch merging
+  - [x] Route `arr_capabilities` and `arr_job_get` through the same publication site
+  - [x] Emit the bound restatement into every published root's `description`, from the collection rather than the stripped shape, and assert it appears for a plain-object input as well as a variant union
+  - [x] Confirm the wire guard is green and every `safeParse`-based assertion passes unedited
+- [x] Guard against publishing a refused intent
+  - [x] Add the cross-check between each published schema's declared variants and the operation registry's unimplemented list
+  - [x] Confirm it is green against the current corpus, and verify it fails when a registry entry is temporarily marked unimplemented
+- [x] Record the contract
+  - [x] Amend the Tool Contracts spec for the length-bound and unconditional-refusal rules, with a changelog row
+  - [x] Tick these tasks and set the status in this document, `docs/index.yml`, and `docs/index.md`
 
 ## Open Questions
 

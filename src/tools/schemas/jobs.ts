@@ -13,16 +13,18 @@ import {
   mutationBaseShape,
   planApplySchema,
 } from "./common.js";
-import { variantUnion } from "./publish.js";
+import { objectInput, variantUnion } from "./publish.js";
 
 /**
  * Reads a normalized job projection. The reference is process-local, so a
  * reference minted before a restart is rejected rather than guessed at, and
  * the caller never needs to know the upstream command payload shape.
  */
-export const jobGetInputSchema = z.strictObject({
-  job: jobReferenceSchema,
-});
+export const jobGetInputSchema = objectInput(
+  z.strictObject({
+    job: jobReferenceSchema,
+  }),
+);
 
 /**
  * Requests cancellation of a projected job. Cancellation is a request, not a

@@ -13,19 +13,33 @@ import {
   referencePattern,
   referenceProperties,
 } from "../src/tools/schemas/common.js";
-import { variantUnion } from "../src/tools/schemas/publish.js";
-import { declaredPropertyValues, publishedPropertyNames } from "./support/json-schema.js";
+import { objectInput, variantUnion } from "../src/tools/schemas/publish.js";
+import {
+  declaredKeywordPaths,
+  declaredPropertyValues,
+  publishedPropertyNames,
+} from "./support/json-schema.js";
 import { sampleReferences, sampleToolInputs } from "./support/tool-context.js";
+
+/**
+ * One schema as the JSON Schema a host receives, converted through the mini
+ * build the server SDK itself uses. Shared by every assertion here that reads a
+ * published input, so none of them can be measuring a different conversion than
+ * the others.
+ */
+function publishedInput(schema: z.ZodType): Record<string, unknown> {
+  return z4mini.toJSONSchema(schema as never, {
+    target: "draft-7",
+    io: "input",
+  }) as unknown as Record<string, unknown>;
+}
 
 function inputJsonSchema(name: (typeof toolNames)[number]): Record<string, unknown> {
   const definition = findToolDefinition(name);
   if (definition === undefined) {
     throw new Error(`Missing definition for ${name}`);
   }
-  return z4mini.toJSONSchema(definition.inputSchema as never, {
-    target: "draft-7",
-    io: "input",
-  }) as unknown as Record<string, unknown>;
+  return publishedInput(definition.inputSchema);
 }
 
 function parseInput(name: (typeof toolNames)[number], value: unknown) {
@@ -402,6 +416,20 @@ const noAlternativeMatched = "Invalid input";
 /** A `strictObject` reporting a required string that was not supplied. */
 const missingRequiredString = "Invalid input: expected string, received undefined";
 
+/**
+ * Zod's own wording for a string longer than its schema allows.
+ *
+ * Captured by running the cases below against the implementation as it stood
+ * before the bound stopped being published, rather than written from what the
+ * sanitized publication was expected to produce. The whole promise of removing
+ * a length from the schema a host reads is that the refusal a caller reads is
+ * untouched, and an expectation derived from the new code would assert that
+ * promise against itself.
+ */
+function tooLong(maximum: number): string {
+  return `Too big: expected string to have <=${maximum} characters`;
+}
+
 /** `z.discriminatedUnion` reporting a value outside its declared set. */
 function discriminatorMismatch(variants: readonly string[]): string {
   return `Invalid discriminator value. Expected ${variants.map((variant) => `'${variant}'`).join(" | ")}`;
@@ -505,6 +533,84 @@ describe("input rejection messages", () => {
     }
   });
 
+  it("words an over-length value by naming the maximum it exceeds", () => {
+    // Every bounded string in the corpus, at each depth and kind it occurs at:
+    // a root property of a variant, a property of a nested mapping object, and
+    // the elements of an array inside one. These are the values whose bound the
+    // published schema no longer states, so they are the ones whose refusal has
+    // to be shown to be unchanged.
+    const cases: ReadonlyArray<
+      readonly [(typeof toolNames)[number], Record<string, unknown>, string]
+    > = [
+      ["arr_library_query", { view: "lookup", term: "x".repeat(201) }, tooLong(200)],
+      ["arr_library_query", { view: "series", cursor: "c".repeat(513) }, tooLong(512)],
+      ["arr_activity_query", { view: "history", cursor: "c".repeat(513) }, tooLong(512)],
+      ["arr_release_search", { target: "prowlarr_aggregate", term: "x".repeat(201) }, tooLong(200)],
+      ["arr_config_observe", { domain: "tags", cursor: "c".repeat(513) }, tooLong(512)],
+      [
+        "arr_import_inspect",
+        {
+          source: "candidate_reprocess",
+          candidate: sampleReferences.importCandidate,
+          mapping: { releaseGroup: "x".repeat(121) },
+        },
+        tooLong(120),
+      ],
+      [
+        "arr_import_inspect",
+        {
+          source: "candidate_reprocess",
+          candidate: sampleReferences.importCandidate,
+          mapping: { quality: "x".repeat(121) },
+        },
+        tooLong(120),
+      ],
+      [
+        "arr_import_inspect",
+        {
+          source: "candidate_reprocess",
+          candidate: sampleReferences.importCandidate,
+          mapping: { languages: ["x".repeat(61)] },
+        },
+        tooLong(60),
+      ],
+      [
+        "arr_library_change",
+        {
+          intent: "update_file_metadata",
+          mode: "plan",
+          files: [sampleReferences.mediaFile],
+          changes: { releaseGroup: "x".repeat(121) },
+        },
+        tooLong(120),
+      ],
+      [
+        "arr_library_change",
+        {
+          intent: "update_file_metadata",
+          mode: "plan",
+          files: [sampleReferences.mediaFile],
+          changes: { quality: "x".repeat(121) },
+        },
+        tooLong(120),
+      ],
+      [
+        "arr_library_change",
+        {
+          intent: "update_file_metadata",
+          mode: "plan",
+          files: [sampleReferences.mediaFile],
+          changes: { languages: ["x".repeat(61)] },
+        },
+        tooLong(60),
+      ],
+    ];
+
+    for (const [name, input, expected] of cases) {
+      expect(rejectionMessages(name, input), `${name} ${expected}`).toEqual([expected]);
+    }
+  });
+
   it("words a reference of the wrong kind by naming the kind it wanted", () => {
     expect(rejectionMessages("arr_job_get", { job: sampleReferences.release })).toEqual([
       "must be a job reference",
@@ -571,10 +677,7 @@ describe("published variant merge", () => {
       ]),
     );
 
-    const published = z4mini.toJSONSchema(union as never, {
-      target: "draft-7",
-      io: "input",
-    }) as unknown as Record<string, unknown>;
+    const published = publishedInput(union);
     const properties = published.properties as Record<string, unknown>;
 
     // A description asserts nothing about the value, so it cannot be the reason
@@ -608,10 +711,7 @@ describe("published variant merge", () => {
       ]),
     );
 
-    const published = z4mini.toJSONSchema(union as never, {
-      target: "draft-7",
-      io: "input",
-    }) as unknown as Record<string, unknown>;
+    const published = publishedInput(union);
     const properties = published.properties as Record<string, unknown>;
 
     // Distinct shapes are published verbatim as alternatives, so there is
@@ -639,6 +739,138 @@ describe("published variant merge", () => {
     ).toThrow(
       'Every variant of a published union must be a closed object; found "object" with ' +
         "additionalProperties null, on the variant declaring mode=apply, plan",
+    );
+  });
+});
+
+/**
+ * The sanitizing, over inputs written here rather than over a shipped tool.
+ *
+ * Two of the three questions it has to answer cannot be asked of the shipped
+ * corpus at all. No plain-object tool declares a length bound today, and that
+ * is the one publication path with no variant documentation for the sentence to
+ * join — so the mechanism is proven on a bound added here, which is also the
+ * form the regression would first take. Nor does any tool bound one property
+ * differently in two forms, which is what decides whether stripping before the
+ * merge or after it is the same thing.
+ */
+describe("published length bounds", () => {
+  it("names a bound stripped from a plain object, which publishes no variant prose", () => {
+    const input = objectInput(
+      z.strictObject({
+        token: z.string().min(4).max(64),
+        tags: z.array(z.string().max(16)).max(3),
+      }),
+    );
+    const published = publishedInput(input);
+
+    expect(declaredKeywordPaths(published, "maxLength")).toEqual([]);
+    // The whole of the description, not a fragment of it: a plain object has
+    // nothing else generated for it, so what a caller reads about the ceiling
+    // is exactly this sentence or nothing at all.
+    expect(published.description).toBe(
+      "Maximum lengths in characters, enforced but not published: token 64, tags elements 16.",
+    );
+
+    // What the length is traded for stays published. A pattern or a minimum
+    // constrains the admissible alphabet far more usefully than a ceiling, and
+    // an item count is the half a caller acts on.
+    expect(declaredKeywordPaths(published, "minLength")).toEqual(["token declares minLength 4"]);
+    expect(declaredKeywordPaths(published, "maxItems")).toEqual(["tags declares maxItems 3"]);
+
+    // And the bound still refuses what it always refused. Removing it from
+    // publication is the whole change; removing it from validation would be a
+    // different one.
+    expect(input.safeParse({ token: "x".repeat(65), tags: [] }).success).toBe(false);
+    expect(input.safeParse({ token: "x".repeat(64), tags: ["short"] }).success).toBe(true);
+    expect(input.safeParse({ token: "abcd", tags: ["x".repeat(17)] }).success).toBe(false);
+  });
+
+  it("names a bound stripped from a variant union beneath its variant prose", () => {
+    const union = variantUnion(
+      z.union([
+        z.strictObject({ view: z.literal("search"), term: z.string().max(200) }),
+        z.strictObject({ view: z.literal("page"), cursor: z.string().max(512) }),
+      ]),
+    );
+    const published = publishedInput(union);
+
+    expect(declaredKeywordPaths(published, "maxLength")).toEqual([]);
+    const description = String(published.description);
+    expect(description).toContain("Supply exactly one of these forms in full");
+    // Last, so the variant lines stay a contiguous block a reader — and the
+    // wire test's line parser — can read as one list.
+    expect(description.split("\n").at(-1)).toBe(
+      "Maximum lengths in characters, enforced but not published: term 200, cursor 512.",
+    );
+  });
+
+  it("keeps the element half of a bound a later form applies to elements", () => {
+    // The scalar form comes first deliberately. Two forms bounding one property
+    // at the same length are still two things to say when one of them bounds
+    // the elements instead of the value, so collapsing them on path and length
+    // alone would leave the description silent about the second.
+    const union = variantUnion(
+      z.union([
+        z.strictObject({ view: z.literal("one"), thing: z.string().max(5) }),
+        z.strictObject({ view: z.literal("many"), thing: z.array(z.string().max(5)) }),
+      ]),
+    );
+    const published = publishedInput(union);
+
+    expect(declaredKeywordPaths(published, "maxLength")).toEqual([]);
+    expect(String(published.description).split("\n").at(-1)).toBe(
+      "Maximum lengths in characters, enforced but not published: thing 5, thing elements 5.",
+    );
+  });
+
+  it("reaches every nesting a converted bound can sit in, not the ones in use today", () => {
+    // The three shapes a walk written from the current corpus misses. A tuple
+    // publishes its elements as an `items` *list* rather than one schema, a
+    // record publishes its keys under `propertyNames`, and a tuple rest under
+    // `additionalItems` — and a bound the walk never visits is one that reaches
+    // a host's grammar compiler while CI stays green, which is the whole
+    // failure this change exists to prevent.
+    const input = objectInput(
+      z.strictObject({
+        pair: z.tuple([z.string().max(5), z.string().max(9)]),
+        rest: z.tuple([z.string().max(7)], z.string().max(11)),
+        dict: z.record(z.string().max(6), z.string().max(12)),
+      }),
+    );
+    const published = publishedInput(input);
+
+    expect(declaredKeywordPaths(published, "maxLength")).toEqual([]);
+    // Each bound says what it bounds. A record's keys and its values are two
+    // separate ceilings against one property name, so two unlabelled numbers
+    // would leave a caller to guess which was which.
+    expect(published.description).toBe(
+      "Maximum lengths in characters, enforced but not published: pair elements 5 or 9, " +
+        "rest elements 7 or 11, dict keys 6, dict values 12.",
+    );
+    expect(input.safeParse({ pair: ["x".repeat(6), "y"], rest: ["z"], dict: {} }).success).toBe(
+      false,
+    );
+  });
+
+  it("collapses two forms that bound one property differently, and names both bounds", () => {
+    const union = variantUnion(
+      z.union([
+        z.strictObject({ view: z.literal("short"), term: z.string().max(20) }),
+        z.strictObject({ view: z.literal("long"), term: z.string().max(200) }),
+      ]),
+    );
+    const published = publishedInput(union);
+    const properties = published.properties as Record<string, unknown>;
+
+    // This is why the stripping runs before the branches are merged. Merged
+    // first, the two shapes differ only in the bound and would be published as
+    // a nested `anyOf` of two strings — the one combinator a host never
+    // inspects — and stripping it afterwards would leave two identical
+    // alternatives behind. Stripped first, they are one shape.
+    expect(properties.term).toEqual({ type: "string" });
+    expect(String(published.description).split("\n").at(-1)).toBe(
+      "Maximum lengths in characters, enforced but not published: term 20 or 200.",
     );
   });
 });

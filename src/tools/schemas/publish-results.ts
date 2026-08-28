@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { payloadSchemaOf, toolResultStatuses } from "../results.js";
+import { isRecord, type JsonSchema, schemaAt } from "./json-schema.js";
 
 /**
  * The envelope every tool publishes, in place of its own output schema.
@@ -32,24 +33,14 @@ const publishedEnvelope = z.looseObject({
 });
 
 /**
- * A converted JSON Schema node. Every node a tool's output schema produces is a
- * plain object with no `$ref` and no `$defs`, so a walk of it needs no
- * resolution step — and {@link refuseReference} holds it to that rather than
- * leaving it asserted here, because the walk's output is the only place a
- * caller can read what a payload contains.
+ * The node one of a schema's properties declares, where it declares one.
+ *
+ * Every node a tool's output schema produces is a plain object with no `$ref`
+ * and no `$defs`, so a walk of it needs no resolution step — and {@link
+ * refuseReference} holds it to that rather than leaving it asserted, because
+ * the walk's output is the only place a caller can read what a payload
+ * contains.
  */
-type JsonSchema = Record<string, unknown>;
-
-function isRecord(value: unknown): value is JsonSchema {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function schemaAt(node: JsonSchema, key: string): JsonSchema | undefined {
-  const value = node[key];
-  return isRecord(value) ? value : undefined;
-}
-
-/** The node one of a schema's properties declares, where it declares one. */
 function propertyAt(node: JsonSchema, name: string): JsonSchema | undefined {
   const declared = schemaAt(node, "properties")?.[name];
   return isRecord(declared) ? declared : undefined;
