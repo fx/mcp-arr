@@ -402,6 +402,32 @@ describe("published tool surface", () => {
     // Which tools mutate is read off the annotations they publish rather than
     // off a test fixture: that declaration is the same one a host reads to
     // decide whether a call changes anything.
+    //
+    // But an annotation is a tool's own claim about itself, so the sweep would
+    // be one copied line from covering nothing: a mutation that declared
+    // `readOnlyHint: true` would drop out of the loop below while still
+    // publishing `mode` and a selection, and nothing else here would notice —
+    // the completeness assertion reads only the spelling of selection
+    // properties, and the anchors at the end name only the tools that exist
+    // today, so a new tool has none to fail. Tying the claim to `mode` is what
+    // closes that: the plan/apply choice is a property only a write has, it is
+    // published in the schema rather than asserted beside it, and a tool cannot
+    // drop it to escape the sweep without ceasing to be reachable as a
+    // mutation at all.
+    const namesMode = (name: (typeof toolNames)[number]): boolean =>
+      collectDeclaredProperties(inputJsonSchema(name)).some(([property]) => property === "mode");
+    expect(
+      toolDefinitions
+        .filter((candidate) => candidate.annotations.readOnlyHint === false)
+        .map((candidate) => candidate.name)
+        .sort(),
+    ).toEqual(
+      toolDefinitions
+        .filter((candidate) => namesMode(candidate.name))
+        .map((candidate) => candidate.name)
+        .sort(),
+    );
+
     for (const definition of toolDefinitions.filter(
       (candidate) => candidate.annotations.readOnlyHint === false,
     )) {

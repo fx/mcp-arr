@@ -714,7 +714,7 @@ function resolvePlanApply(
   }
 
   const application = plan.applications[0];
-  if (application === undefined || plan.applications.length !== 1) {
+  if (application === undefined || plan.applications.length !== maxMutationApplications) {
     return {
       error: createToolError({
         code: "stale_plan",
