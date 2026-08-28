@@ -1,12 +1,22 @@
-export declare const approvedFixtureTuples: readonly [
-  { readonly application: "sonarr"; readonly apiVersion: "v3"; readonly version: "4.0.19.2979" },
-  { readonly application: "radarr"; readonly apiVersion: "v3"; readonly version: "6.3.0.10514" },
-  { readonly application: "prowlarr"; readonly apiVersion: "v1"; readonly version: "2.5.2.5491" },
-];
+/**
+ * The declared surface of `fixture-contract.mjs`.
+ *
+ * The approved tuples themselves live in that module and nowhere else. What is
+ * restated here is only which labels are possible, and the contract test
+ * asserts the whole inventory those labels produce — so a version raised in one
+ * file and not the other fails the suite rather than passing quietly.
+ */
+export type FixtureApplication = "sonarr" | "radarr" | "prowlarr";
+export type FixtureApiVersion = "v1" | "v3";
+export type FixtureVersion = "4.0.19.2979" | "6.3.0.10514" | "2.5.2.5491";
 
-export type FixtureApplication = (typeof approvedFixtureTuples)[number]["application"];
-export type FixtureApiVersion = (typeof approvedFixtureTuples)[number]["apiVersion"];
-export type FixtureVersion = (typeof approvedFixtureTuples)[number]["version"];
+export interface FixtureTuple {
+  readonly application: FixtureApplication;
+  readonly apiVersion: FixtureApiVersion;
+  readonly version: FixtureVersion;
+}
+
+export declare const approvedFixtureTuples: readonly FixtureTuple[];
 
 export interface FixtureMetadata {
   application: FixtureApplication;

@@ -3,6 +3,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { observeChildProcess } from "../scripts/child-process.mjs";
 
 /**
  * The capture procedure's refusals.
@@ -53,19 +54,13 @@ async function runCapture(
     environment.SONARR_URL = url;
     environment.SONARR_API_KEY = "capture-test-key";
   }
-  const child = spawn(process.execPath, [scriptPath, ...args], {
-    env: environment,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let stderr = "";
-  child.stderr.setEncoding("utf8");
-  child.stderr.on("data", (chunk: string) => {
-    stderr += chunk;
-  });
-  const code = await new Promise<number | null>((resolve) => {
-    child.on("close", (exitCode) => resolve(exitCode));
-  });
-  return { code, stderr };
+  const child = spawn(process.execPath, [scriptPath, ...args], { env: environment });
+  // Observed through the shared helper, which drains both streams and flushes
+  // them after the close tick: every assertion here reads stderr, and a
+  // hand-rolled listener loses the last chunk when the process exits first.
+  const observed = observeChildProcess(child);
+  const { code } = await observed.closed;
+  return { code, stderr: observed.stderr };
 }
 
 afterEach(async () => {
@@ -92,7 +87,7 @@ describe("fixture capture procedure", () => {
     ]);
 
     expect(code).toBe(1);
-    expect(stderr).toContain("answers /api/v3/config/downloadclient with 404");
+    expect(stderr).toContain("answers config/downloadclient with 404");
     expect(stderr).toContain("does not serve this route");
   });
 
@@ -117,7 +112,7 @@ describe("fixture capture procedure", () => {
     ]);
 
     expect(code).toBe(1);
-    expect(stderr).toContain("rather than JSON");
+    expect(stderr).toContain("a body that is not JSON");
     expect(stderr).toContain("does not resolve on this application");
   });
 

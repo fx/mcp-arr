@@ -8,10 +8,11 @@
  * it. See `docs/specs/architecture/#testing-contract`.
  *
  * It reuses the project's own modules rather than re-implementing them: the
- * built environment parser and URL joiner the server itself uses, and the
+ * built environment parser and upstream client the server itself uses, and the
  * fixture inventory and sanitizing screens the fixture contract test enforces.
- * A second copy of any of those would drift, and a screen this side did not
- * know about is exactly how an unsanitized value reaches a committed file.
+ * A second copy of any of those would drift — a captured body would answer a
+ * request no adapter sends, and a screen this side did not know about is
+ * exactly how an unsanitized value reaches a committed file.
  *
  * Usage:
  *   npm run build
@@ -46,12 +47,12 @@ function fail(message) {
  */
 async function loadServerModules() {
   try {
-    const [applications, environment, baseUrl] = await Promise.all([
+    const [applications, environment, client] = await Promise.all([
       import("../dist/applications.js"),
       import("../dist/config/environment.js"),
-      import("../dist/config/base-url.js"),
+      import("../dist/http/client.js"),
     ]);
-    return { applications, environment, baseUrl };
+    return { applications, environment, client };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     fail(`Run \`npm run build\` first: the capture reads the build output.\n${detail}`);
@@ -94,72 +95,54 @@ function parseArguments(argv) {
 }
 
 function parseQuery(pairs) {
-  const parameters = new URLSearchParams();
+  const parameters = {};
   for (const pair of pairs) {
     const separator = pair.indexOf("=");
     if (separator <= 0) {
       // The value is deliberately not echoed: a query parameter carries a path.
       fail("Each --query must be name=value");
     }
-    parameters.append(pair.slice(0, separator), pair.slice(separator + 1));
+    parameters[pair.slice(0, separator)] = pair.slice(separator + 1);
   }
   return parameters;
 }
 
 /**
- * Reads one upstream route.
+ * Reads one upstream route through the server's own client.
+ *
+ * Going through that client rather than a second request implementation is
+ * what makes a captured body the answer to the request the server actually
+ * sends: header, timeout and path composition all come from the one place the
+ * server composes them, so the fixture cannot record the answer to a request
+ * no adapter makes.
  *
  * A capture that cannot prove it read the route it names fails rather than
  * producing a fixture. A recorded body for a route the application answers
  * with 404 is the defect this procedure exists to prevent, and a 200 carrying
  * the web interface — which these applications serve for an unrecognized API
- * path — is the same defect wearing a success code.
+ * path — is the same defect wearing a success code; the client refuses that
+ * one too, because the page does not parse as JSON.
  */
-async function readRoute(instance, endpoint, parameters, joinUpstreamUrl) {
-  const joined = joinUpstreamUrl(instance.baseUrl, endpoint);
-  if (!joined.ok) {
-    fail(`Route ${endpoint} does not form a usable URL: ${joined.problem}`);
-  }
-  const url = new URL(joined.url);
-  url.search = parameters.toString();
-
-  let response;
+async function readRoute(client, route, query = {}) {
   try {
-    response = await fetch(url, {
-      headers: { "X-Api-Key": instance.apiKey, Accept: "application/json" },
-      signal: AbortSignal.timeout(requestTimeoutMs),
-    });
+    return await client.get(route, query);
   } catch (error) {
-    const detail = error instanceof Error ? error.name : "unknown error";
-    fail(`${instance.application} did not answer ${endpoint} (${detail})`);
-  }
-
-  if (response.status === 404) {
-    fail(
-      `${instance.application} answers ${endpoint} with 404. That application does ` +
-        "not serve this route, so no body it returns belongs under this name. " +
-        "Correct the approved route rather than recording a body for it.",
-    );
-  }
-  if (!response.ok) {
-    fail(`${instance.application} answered ${endpoint} with status ${response.status}`);
-  }
-
-  const contentType = response.headers.get("content-type") ?? "";
-  const body = await response.text();
-  if (!contentType.toLowerCase().includes("json")) {
-    fail(
-      `${instance.application} answered ${endpoint} with ` +
-        `${contentType === "" ? "no content type" : contentType} rather than JSON. ` +
-        "An unrecognized API path is served the web interface, so this route " +
-        "does not resolve on this application.",
-    );
-  }
-
-  try {
-    return JSON.parse(body);
-  } catch {
-    fail(`${instance.application} answered ${endpoint} with a body that is not JSON`);
+    const kind = error instanceof Error ? Reflect.get(error, "kind") : undefined;
+    if (kind === "not-found") {
+      fail(
+        `${client.application} answers ${route} with 404. That application does ` +
+          "not serve this route, so no body it returns belongs under this name. " +
+          "Correct the approved route rather than recording a body for it.",
+      );
+    }
+    if (kind === "unexpected-response") {
+      fail(
+        `${client.application} answered ${route} with a body that is not JSON. ` +
+          "An unrecognized API path is served the web interface, so this route " +
+          "does not resolve on this application.",
+      );
+    }
+    fail(error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -234,7 +217,7 @@ function createSanitizer(screen) {
 
 async function main() {
   const options = parseArguments(process.argv.slice(2));
-  const { applications, environment, baseUrl } = await loadServerModules();
+  const { applications, environment, client: http } = await loadServerModules();
 
   if (!applications.applicationIds.includes(options.application)) {
     fail(`Unknown application: ${options.application}`);
@@ -266,15 +249,19 @@ async function main() {
     fail(`Set ${descriptor.urlVariable} and ${descriptor.apiKeyVariable} to capture this fixture`);
   }
 
+  const descriptor = applications.describeApplication(options.application);
+  const client = http.createUpstreamClient({
+    application: options.application,
+    baseUrl: instance.baseUrl,
+    apiBasePath: descriptor.apiBasePath,
+    apiKey: instance.apiKey,
+    timeoutMs: requestTimeoutMs,
+  });
+
   // The recorded version is part of a fixture's claim, so the instance has to
   // be the version the inventory approves before anything is read from it.
-  const descriptor = applications.describeApplication(options.application);
-  const status = await readRoute(
-    instance,
-    `${descriptor.apiBasePath}/system/status`,
-    new URLSearchParams(),
-    baseUrl.joinUpstreamUrl,
-  );
+  const statusRoute = "system/status";
+  const status = await readRoute(client, statusRoute);
   const reported = typeof status?.version === "string" ? status.version : "an unreported version";
   if (reported !== approved.version) {
     fail(
@@ -284,14 +271,14 @@ async function main() {
     );
   }
 
-  const body = await readRoute(
-    instance,
-    approved.endpoint,
-    parseQuery(options.query),
-    baseUrl.joinUpstreamUrl,
-  );
+  // The status route has already been read, and reading it twice would record
+  // the second answer while having checked the first.
+  const body =
+    approved.route === statusRoute
+      ? status
+      : await readRoute(client, approved.route, parseQuery(options.query));
   if (typeof body !== "object" || body === null) {
-    fail(`${approved.endpoint} answered with a ${typeof body} rather than an object or array`);
+    fail(`${approved.route} answered with a ${typeof body} rather than an object or array`);
   }
 
   const { sanitize, replacements } = createSanitizer(validateSanitizedValue);
