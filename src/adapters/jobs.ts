@@ -1,7 +1,11 @@
 import type { ApplicationId } from "../applications.js";
 import type { UpstreamClient } from "../http/client.js";
 import { isUpstreamError } from "../http/errors.js";
-import type { UpstreamCommandObservation } from "../state/jobs.js";
+import {
+  isTerminalJobStatus,
+  normalizeJobStatus,
+  type UpstreamCommandObservation,
+} from "../state/jobs.js";
 import { readAcceptedCommand, searchCommandRoutes } from "./acquisition/commands.js";
 import type { UpstreamFailure } from "./registry.js";
 
@@ -51,11 +55,14 @@ export const commandGoneWarning = "the application no longer holds this command 
  *
  * `unreachable` is an outage: down, slow, throttling, or answering something
  * this server cannot read. Waiting is the remedy, and the next poll may well
- * succeed. `refused` is not an outage. The instance rejected the credential or
- * the request, or this server could not compose the request at all, and no
- * amount of polling changes that — somebody has to fix something. Collapsing
- * the two is how an operator who rotated an API key mid-job would poll forever
- * behind a warning that reads like a transient blip.
+ * succeed. `refused` is not an outage: the instance rejected the credential or
+ * the request, and no amount of polling changes that — somebody has to fix
+ * something. Collapsing the two is how an operator who rotated an API key
+ * mid-job would poll forever behind a warning that reads like a transient blip.
+ *
+ * A request this server could not compose is neither, and is not modelled here
+ * at all: it is a defect in this process, and {@link readCommandRecord} raises
+ * it rather than describing an application that did nothing wrong.
  */
 export type CommandRefresh =
   | { readonly status: "observed"; readonly observation: UpstreamCommandObservation }
@@ -63,17 +70,46 @@ export type CommandRefresh =
   | { readonly status: "refused"; readonly failure: UpstreamFailure };
 
 /**
- * The half of a command reading a refresh keeps: what the command is doing.
+ * Whether this reading is the one that should carry the command's own sentence.
  *
- * Written as an omission rather than as a copy of the fields it keeps, so a
- * value added to the observation later travels without this module having to be
- * remembered, and the single field a refresh drops stays named in one place.
+ * Only a reading that ends the job badly keeps it. That happens at most once —
+ * a terminal job is never refreshed again — and on a `failed`, `aborted`, or
+ * `cancelled` command the instance's sentence is the only account of *why* it
+ * ended that way, on the single reading that will ever see it.
+ *
+ * Every other reading drops it. A job is refreshed on every read, so a command
+ * that narrates itself would otherwise file one line of prose per poll into a
+ * channel that means something needs attention, walk the projection's warning
+ * cap, and evict the warnings that do. A successful ending drops it too, and
+ * that is not an oversight: a live Radarr `RssSync` ends `completed /
+ * successful` with "RSS Sync Completed. Reports found: 100, Reports grabbed:
+ * 0", and a caller told a job succeeded needs no warning attached to it.
  */
-function withoutCommandMessage(
+function explainsAnEnding(observation: UpstreamCommandObservation): boolean {
+  const status = normalizeJobStatus(observation.state, observation.result);
+  return isTerminalJobStatus(status) && status !== "completed";
+}
+
+/**
+ * The reading a refresh publishes, with the command's narration left behind
+ * unless this is the reading that explains an ending.
+ *
+ * The message is filtered by value rather than by dropping `warnings` whole.
+ * That channel is shared: anything the command reader gains later — a
+ * truncation notice, a redaction notice — has to keep reaching the caller from
+ * a refresh, and only the one sentence named here is this path's to discard.
+ */
+export function refreshObservation(
   observation: UpstreamCommandObservation,
+  message: string | undefined,
 ): UpstreamCommandObservation {
-  const { warnings: _message, ...state } = observation;
-  return state;
+  if (message === undefined || explainsAnEnding(observation)) {
+    return observation;
+  }
+  return {
+    ...observation,
+    warnings: (observation.warnings ?? []).filter((warning) => warning !== message),
+  };
 }
 
 /**
@@ -85,6 +121,11 @@ function withoutCommandMessage(
  * must keep answering with the instance switched off — the caller decides what
  * a failed refresh means for the projection it already holds, rather than
  * having the read fail underneath it and take the locally held state with it.
+ *
+ * The exceptions are the two failures no instance caused: a request this server
+ * could not compose, and anything that is not an upstream failure at all. Both
+ * are defects here, and dressing one up as something an operator could resolve
+ * would send them to look at an application that is working perfectly.
  */
 export async function readCommandRecord(
   client: UpstreamClient,
@@ -94,14 +135,10 @@ export async function readCommandRecord(
   const route = commandRecordRoute(upstreamId);
   try {
     const accepted = readAcceptedCommand(await client.get(route), application, route);
-    // The command's own message is deliberately left behind. It is the sentence
-    // an instance writes about its progress — "Processing file 1 of 1" — and a
-    // job is refreshed on every read, so carrying it would file one line of
-    // prose per poll under a channel that means "something needs attention",
-    // walk the projection's warning cap, and evict the warnings that do. The
-    // start path carries one message because it reads the command once; that is
-    // not licence for a path that reads it repeatedly.
-    return { status: "observed", observation: withoutCommandMessage(accepted.observation) };
+    return {
+      status: "observed",
+      observation: refreshObservation(accepted.observation, accepted.message),
+    };
   } catch (error) {
     if (!isUpstreamError(error)) {
       // Not an instance this server could not reach. Every failure the upstream
@@ -126,15 +163,21 @@ export async function readCommandRecord(
       case "unexpected-response":
         return { status: "unreachable", failure: { kind: error.kind, message: error.message } };
 
-      // A refused API key, a request the instance called invalid, and a request
-      // this server could not compose at all. The read learned nothing either,
-      // so the held projection is still the answer — but polling will not
-      // improve it, and the caller has to be told that rather than being left
-      // to read the same stale state indefinitely.
+      // A refused API key and a request the instance called invalid. The read
+      // learned nothing either, so the held projection is still the answer —
+      // but polling will not improve it, and the caller has to be told that
+      // rather than being left to read the same stale state indefinitely.
       case "authentication":
       case "validation":
-      case "invalid-request":
         return { status: "refused", failure: { kind: error.kind, message: error.message } };
+
+      // Not an instance condition at all: the request was never sent, because
+      // this server could not compose its path or serialize its body. Reporting
+      // it beside the two above would tell an operator to go and resolve
+      // something on an application that did nothing wrong. It is a defect in
+      // this process, and it fails the way the non-upstream defect above does.
+      case "invalid-request":
+        throw error;
     }
   }
 }

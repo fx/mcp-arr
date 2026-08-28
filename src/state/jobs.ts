@@ -95,6 +95,14 @@ export function normalizeJobStatus(
     case "failed":
       return "failed";
     case "aborted":
+    // An orphaned command was queued or running when its application restarted,
+    // and the application marks it orphaned on the way back up precisely
+    // because it will not be resumed. That is an abort, and saying so settles
+    // the job. Left unrecognized it would fall through to `unknown`, which is
+    // not terminal, so every later read would ask the instance about a command
+    // that is never going to move again — until the record is trimmed and the
+    // job is pinned at `unknown` for the life of the process.
+    case "orphaned":
       return "aborted";
     case "cancelled":
     case "canceled":

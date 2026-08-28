@@ -252,25 +252,35 @@ export interface StartedCommand {
  * once. What comes back is the upstream id and an observation; the command
  * *name* is deliberately not among them, because the name a job publishes is
  * the constant this project sent rather than the instance's echo of it.
+ *
+ * The sanitized message is handed back beside the observation as well as
+ * inside it. A caller that reads one command once wants it; a caller that
+ * re-reads the same command on every poll does not want all of them, and
+ * naming it here is what lets that caller drop the sentence *specifically*
+ * rather than discarding the whole warning channel it happens to travel in.
  */
 export function readAcceptedCommand(
   body: unknown,
   application: ApplicationId,
   route: string,
-): { readonly upstreamId: string; readonly observation: UpstreamCommandObservation } {
+): {
+  readonly upstreamId: string;
+  readonly observation: UpstreamCommandObservation;
+  readonly message: string | undefined;
+} {
   const accepted = parseUpstream(acceptedCommandSchema, body, application, route);
+  // Sanitized rather than passed through: the message is the one field on this
+  // response an instance composes for itself, so it is the one place the values
+  // kept off the model-facing contract can still appear.
+  const message = commandMessage(accepted.message);
   return {
     upstreamId: String(accepted.id),
     observation: {
       state: text(accepted.status),
       result: text(accepted.result),
-      // Sanitized rather than passed through: the message is the one field on
-      // this response an instance composes for itself, so it is the one place
-      // the values kept off the model-facing contract can still appear.
-      warnings: [commandMessage(accepted.message)].filter(
-        (warning): warning is string => warning !== undefined,
-      ),
+      warnings: message === undefined ? [] : [message],
     },
+    message,
   };
 }
 

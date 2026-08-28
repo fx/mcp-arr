@@ -437,6 +437,40 @@ describe("arr_job_get", () => {
     });
   });
 
+  it("keeps the reason a command failed, on the one reading that will ever see it", async () => {
+    // The reading that ends a job badly is the only one that carries the
+    // instance's sentence, and it happens once: the job is terminal afterwards,
+    // so no later read asks again. If it were dropped here it would be gone.
+    const { context, state, requested } = harness([
+      {
+        record: commandRecord({
+          status: "failed",
+          result: "unsuccessful",
+          message: "Search failed: no indexer answered",
+        }),
+      },
+    ]);
+    const record = state.jobs.project({
+      application: "sonarr",
+      command,
+      observation: { state: "started" },
+      cancellation: { supported: false },
+    });
+
+    const failed = await callTool(context, "arr_job_get", { job: record.reference });
+    const again = await callTool(context, "arr_job_get", { job: record.reference });
+
+    expect(projectionOf(failed)).toMatchObject({
+      status: "failed",
+      terminal: { status: "failed", result: "failed" },
+    });
+    expect(failed.applications[0]?.warnings).toContain("Search failed: no indexer answered");
+    // Held on the record rather than only on the call, so the read after it
+    // still explains the failure without asking the instance a second time.
+    expect(again.applications[0]?.warnings).toContain("Search failed: no indexer answered");
+    expect(requested).toEqual([commandRoute("sonarr")]);
+  });
+
   it("still answers from the terminal snapshot after the instance goes away", async () => {
     const { context, state, requested, clock } = harness();
     const record = state.jobs.project({

@@ -198,11 +198,15 @@ interface OperationBlueprint<TId extends string> {
    * answerable with the instance switched off. Probing first would turn that
    * local read into an `unavailable_application` error and hide the terminal
    * snapshot the caller asked for. A job that has not ended is still refreshed
-   * from its upstream command, but every way that read can fail — an outage, a
-   * refused key, a command record the application has discarded — answers from
-   * the held record and discloses what happened as a warning. That is exactly
-   * the difference this flag names: the operation may contact the instance
-   * without depending on it.
+   * from its upstream command, but every way an *instance* can fail that read —
+   * an outage, a refused key, a rejected request, a command record it has
+   * discarded — answers from the held record and discloses what happened as a
+   * warning. That is exactly the difference this flag names: the operation may
+   * contact the instance without depending on it.
+   *
+   * The one exception is not an instance condition: a request this server could
+   * not compose, which is a defect in this process and fails loudly rather than
+   * being reported as something an operator could resolve.
    */
   readonly upstream: OperationUpstreamNeed;
   readonly handler: OperationHandler;

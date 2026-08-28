@@ -15,7 +15,6 @@
       "started": "2026-08-27T08:00:01Z",
       "ended": "2026-08-27T08:00:09Z",
       "trigger": "scheduled",
-      "message": "Completed",
       "body": {
         "name": "ApplicationIndexerSync",
         "trigger": "scheduled",

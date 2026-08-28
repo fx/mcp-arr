@@ -4,6 +4,7 @@ import {
   commandGoneWarning,
   commandRecordRoute,
   readCommandRecord,
+  refreshObservation,
 } from "../src/adapters/jobs.js";
 import type { ApplicationId } from "../src/applications.js";
 import { normalizeJobStatus, type UpstreamCommandObservation } from "../src/state/jobs.js";
@@ -157,26 +158,81 @@ describe("readCommandRecord", () => {
     // dropped rather than one that was never there.
     expect(command.body?.name).toBe("RefreshSeries");
     expect(command.trigger).toBe("manual");
-    expect(Object.keys(observation).sort()).toEqual(["result", "state"]);
+    expect(Object.keys(observation).sort()).toEqual(["result", "state", "warnings"]);
     expect(JSON.stringify(observation)).not.toContain("manual");
     expect(JSON.stringify(observation)).not.toContain("updateScheduledTask");
   });
 
-  it("reads a command whose only progress signal is a sentence without carrying the sentence", async () => {
+  it("reads a running command whose only progress signal is a sentence without carrying the sentence", async () => {
     // The one progress signal any of the three was observed to send is this
     // free-text message. Nothing parses "1 of 1" out of it into the published
-    // `{completed, total}` pair — and nothing files it as a warning either. A
-    // job is refreshed on every read, so a message that changes per poll would
-    // otherwise accumulate one line of prose at a time under a channel that
-    // means something needs attention.
+    // `{completed, total}` pair — and on a command that is still running,
+    // nothing files it as a warning either. A job is refreshed on every read,
+    // so a message that changes per poll would otherwise accumulate one line of
+    // prose at a time under a channel that means something needs attention.
     const command = { ...commandOf("sonarr"), message: "Processing file 1 of 1" };
     const instance = serving("sonarr", () => jsonResponse(command));
 
     const observation = observationOf(await instance.read(String(command.id)));
 
+    expect(command.status).toBe("started");
     expect(observation.progress).toBeUndefined();
-    expect(observation.warnings).toBeUndefined();
+    expect(observation.warnings).toEqual([]);
     expect(JSON.stringify(observation)).not.toContain("Processing file");
+  });
+
+  it("keeps the sentence that explains why a command ended badly", async () => {
+    // A terminal reading happens once — a job that has ended is never
+    // refreshed again — and on a failed command the instance's own sentence is
+    // the only account of why. Dropping it there would leave `failed` with no
+    // explanation attached, permanently, which is the one place the message is
+    // worth more than the noise it costs.
+    const command = {
+      ...commandOf("sonarr", 1),
+      status: "failed",
+      result: "unsuccessful",
+      message: "Search failed: no indexer answered",
+    };
+    const instance = serving("sonarr", () => jsonResponse(command));
+
+    const observation = observationOf(await instance.read(String(command.id)));
+
+    expect(normalizeJobStatus(observation.state, observation.result)).toBe("failed");
+    expect(observation.warnings).toEqual(["Search failed: no indexer answered"]);
+  });
+
+  it("attaches no sentence to a command that ended successfully", async () => {
+    // Live Radarr answers exactly this: `completed / successful` carrying "RSS
+    // Sync Completed. Reports found: 100, Reports grabbed: 0". A caller told
+    // the job succeeded does not also need a warning about it.
+    const command = {
+      ...commandOf("radarr"),
+      status: "completed",
+      result: "successful",
+      message: "RSS Sync Completed. Reports found: 100, Reports grabbed: 0",
+    };
+    const instance = serving("radarr", () => jsonResponse(command));
+
+    const observation = observationOf(await instance.read(String(command.id)));
+
+    expect(normalizeJobStatus(observation.state, observation.result)).toBe("completed");
+    expect(observation.warnings).toEqual([]);
+    expect(JSON.stringify(observation)).not.toContain("Reports found");
+  });
+
+  it("drops the command's sentence by value, not the channel it travels in", () => {
+    // The shared command reader emits only the message today, so this is the
+    // guard for the day it emits something else as well: a truncation or
+    // redaction notice reaching a caller from a search start but vanishing on
+    // every job read would be a difference nothing else here would catch.
+    const observation = {
+      state: "started",
+      warnings: ["Processing file 1 of 1", "a notice this reader gained later"],
+    } as const;
+
+    expect(refreshObservation(observation, "Processing file 1 of 1").warnings).toEqual([
+      "a notice this reader gained later",
+    ]);
   });
 
   it("treats a command the application no longer holds as an observation, not a failure", async () => {
