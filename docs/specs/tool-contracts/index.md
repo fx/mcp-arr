@@ -137,6 +137,9 @@ This parity is about the argument schema only. Cross-property correlations discl
 - Applying a plan reference MUST re-read every effect-relevant precondition and MUST fail with `stale_plan` when material state changed.
 - Direct apply MUST validate current state immediately before sending the mutation upstream.
 - The server MUST NOT interpret plan mode as authorization or require a user-interface confirmation.
+- A mutation MUST target exactly one application, because the mutation envelope carries one plan reference, one job reference, and one receipt.
+- Where a mutation tool's input names the applications it targets, its published schema MUST NOT admit a selection the server refuses for naming more than one, and a schema whose default resolves to more than one MUST NOT publish that default as accepted.
+- A mutation tool's published output schema MUST admit the envelope its own plan mode returns, so planning a mutation cannot fail against the tool's own declared output.
 
 No tool currently accepts a transient secret. The requirements governing one — resupply on apply, and a plan that retains names and presence fingerprints rather than values — are owned by [Transient Secret Inputs](../configuration-reconciliation/#transient-secret-inputs) in the withdrawn write surface, and bind again if any tool reintroduces one.
 
@@ -151,6 +154,18 @@ No tool currently accepts a transient secret. The requirements governing one —
 - **GIVEN** a caller creates a plan and an effect-relevant upstream resource changes
 - **WHEN** the caller applies the plan reference
 - **THEN** no mutation is sent and `stale_plan` is returned
+
+#### Scenario: Plan a mutation whose apply result carries more
+
+- **GIVEN** a mutation tool whose applied result carries a field its planned result cannot yet have
+- **WHEN** the caller plans that mutation
+- **THEN** the planned result validates against the tool's published output schema and is returned
+
+#### Scenario: Discover that a mutation targets one application
+
+- **GIVEN** a mutation variant whose input names the applications it targets
+- **WHEN** a caller reads that tool's published schema and its generated documentation
+- **THEN** the single-application constraint is stated there, and no admitted value or published default resolves to a selection the server refuses
 
 ### Opaque References
 
@@ -183,12 +198,26 @@ No tool currently accepts a transient secret. The requirements governing one —
 - `arr_job_get` MUST expose normalized status, progress when known, upstream command identity, terminal result, and per-item outcomes.
 - `arr_job_cancel` MUST distinguish cancelled, cancellation requested, uncancellable, completed, and unknown outcomes.
 - Job state MUST be process-local and MUST degrade safely when the upstream command record expires or the server restarts.
+- Reading a job that has not reached a terminal state MUST refresh its projection from the upstream command record, so a projection never reports a state the command has already left.
+- A terminal status and result, once observed, MUST NOT be replaced by a later, less definite reading of the same command.
 
 #### Scenario: Started command cannot be cancelled
 
 - **GIVEN** an upstream command has started and does not permit cancellation
 - **WHEN** `arr_job_cancel` is invoked
 - **THEN** the job is reported uncancellable without pretending cancellation succeeded
+
+#### Scenario: A command finishes after the job was started
+
+- **GIVEN** a job reference was returned while its upstream command was queued, and the command has since finished
+- **WHEN** the caller reads that job
+- **THEN** the terminal status and result are reported rather than the state the command held when the reference was minted
+
+#### Scenario: The instance stops reporting a finished command's result
+
+- **GIVEN** a job's terminal result was observed and the instance later answers for that same command without one
+- **WHEN** the caller reads the job again
+- **THEN** the previously observed result is still reported rather than degraded to unknown
 
 ## Design
 
@@ -235,3 +264,6 @@ None.
 | 2026-08-28 | Collection queries required to accept a caller-supplied result projection | [0019-selected-result-fields](../../changes/0019-selected-result-fields.md) |
 | 2026-08-28 | Published input schemas barred from declaring string length bounds and unconditionally refused intents | [0017-grammar-compilable-input-schemas](../../changes/0017-grammar-compilable-input-schemas.md) |
 | 2026-08-28 | `arr_config_reconcile` withdrawn; transient-secret requirements relocated to the withdrawn surface | [0020-withdraw-configuration-writes](../../changes/0020-withdraw-configuration-writes.md) |
+| 2026-08-28 | Job projections required to refresh from the upstream command and to keep an observed terminal result | [0025-job-projection-refresh](../../changes/0025-job-projection-refresh.md) |
+| 2026-08-28 | Mutation output schemas required to admit their own plan-mode envelope | [0026-plan-mode-mutation-envelopes](../../changes/0026-plan-mode-mutation-envelopes.md) |
+| 2026-08-28 | Single-application mutation scope stated and required to be discoverable from the published schema | [0027-single-application-mutation-scope](../../changes/0027-single-application-mutation-scope.md) |

@@ -1,0 +1,110 @@
+# 0021: Live-Verified Fixtures
+
+## Summary
+
+Make the recorded upstream fixtures correspond to what the named instances genuinely return, and give the project a repeatable way to recapture them. Three fixtures are demonstrably counterfactual today, which is why 1034 passing tests reported a healthy server while six tool paths were broken against the real applications. The [Architecture spec](../specs/architecture/#testing-contract) now states the rule.
+
+**Spec:** [Architecture](../specs/architecture/)
+**Status:** draft
+**Depends On:** —
+
+## Motivation
+
+Sweeping all fourteen tools against the live stack — Sonarr 4.0.19.2979, Radarr 6.3.0.10514, Prowlarr 2.5.2.5491, the exact versions [Architecture](../specs/architecture/#version-compatibility) records as the supported minimums — found six defects. The full gate was green for every one of them: 77 test files, 1034 tests, type check, lint, and package verification all passed.
+
+The fixtures are not missing and not unversioned. They are stored per application, per API version, per exact version number, they carry an `endpoint` in their metadata, and a contract test validates the whole inventory. The mechanism is sound. The bodies are wrong:
+
+| Fixture | Records | The named instance actually returns |
+|---|---|---|
+| `sonarr/v3/4.0.19.2979/release.json` | `indexerFlags: ["G_Freeleech"]` | `indexerFlags: 0` on all 144 rows |
+| `sonarr/v3/4.0.19.2979/manualimport.json` | `indexerFlags: ["freeleech"]` | `indexerFlags: 0` |
+| `radarr/v3/6.3.0.10514/manualimport.json` | `indexerFlags: []` | `indexerFlags: 0` |
+| `radarr/v3/6.3.0.10514/importlistexclusion.json` | a body for `/api/v3/importlistexclusion` | `404` — Radarr serves `/api/v3/exclusions` |
+
+The last one is the clearest tell: a fixture records a response from a route that does not exist on the application it names. These bodies were authored to the shape the adapter expected rather than captured from an instance, so every fixture-backed test confirmed the adapter against its own assumption. That is a closed loop, and it will keep producing defects of exactly this kind — it already has once before, when a provider field's absent `value` key broke `arr_config_observe` against every real instance while the fixtures passed.
+
+The fix is not more tests. It is making the recorded contract answerable to the instance it claims to describe.
+
+## Requirements
+
+### Testing Requirements
+
+This change MUST satisfy the project's standing testing rules (see [Architecture — Testing Contract](../specs/architecture/#testing-contract)). CI enforces these as merge gates:
+
+- Exported behavior MUST have automated tests at the narrowest practical level.
+- Adapter tests MUST use sanitized, version-labelled fixtures rather than personal live instances.
+- Stdio integration tests MUST verify protocol framing and stdout cleanliness.
+- Build, type check, lint, and tests MUST pass without focused or skipped tests.
+
+Skipping or weakening any of these rules to land the PR MUST be treated as a bug in the PR, not in the rule.
+
+Additionally, because this change is about the fixtures themselves:
+
+- The capture procedure MUST NOT become a test. Running the suite MUST NOT require an instance, a network, or credentials.
+- Recaptured bodies MUST pass the existing fixture contract test, including its secret and identifying-value screens, without weakening any of those screens to accommodate a captured value.
+
+### Functional requirements
+
+The [Architecture spec](../specs/architecture/#testing-contract) owns the fixture-fidelity rule and its scenario — this change's acceptance criteria, not restated here. What implementing them requires of this change:
+
+- The four fixtures named in the Motivation MUST be corrected to the shapes their named instances return, including the Radarr exclusions route.
+- A capture procedure MUST exist that an operator can run against a configured instance to produce or refresh a fixture, and MUST sanitize secrets, identifying values, and canonical paths before writing.
+- The captured metadata MUST record the application, API version, exact instance version, and route, so a later reader can re-verify the body against the same source.
+- A fixture whose route the named application does not serve MUST be detectable, so a recorded route that 404s cannot survive as a passing fixture.
+- Correcting a fixture MUST NOT quietly relax the adapter that reads it; where a corrected fixture reveals an adapter defect, that defect is owned by its own change document and MUST NOT be repaired here.
+
+#### Scenario: Recapture reveals an adapter defect
+
+- **GIVEN** a fixture is recaptured and its real shape is one the adapter refuses
+- **WHEN** the suite runs
+- **THEN** the adapter's test fails, naming the shape the instance sends, rather than the fixture being edited back toward what the adapter accepts
+
+## Design
+
+### Approach
+
+- Add an operator-run capture script, outside the test suite, that reads a route from a configured instance and writes a sanitized fixture with full metadata.
+- Reuse the existing sanitizing and validation helpers so a captured fixture is held to the same screens a hand-written one is.
+- Recapture the four counterfactual fixtures and let the resulting failures stand as the evidence that the point-fix changes are needed.
+- Record the capture command and its expectations in the project documentation so a future contributor refreshes rather than authors.
+
+### Decisions
+
+- **Decision:** Capture is an operator-run script, not a test.
+  - **Why:** [Architecture](../specs/architecture/#testing-contract) forbids committed tests that depend on live personal instances, and that rule is right — CI has no instances and must stay offline. The fidelity guarantee comes from the captured artifact being committed, not from the suite reaching an instance.
+  - **Alternatives considered:** An opt-in integration suite gated on environment variables, rejected because a suite that is skipped in CI provides no gate and drifts exactly as the fixtures did.
+- **Decision:** Correct the fixtures here and leave the adapter defects to their own changes.
+  - **Why:** The corrected fixture is the failing test for each point fix. Landing both together would hide which change is load-bearing and make the regression un-demonstrable.
+  - **Alternatives considered:** One change fixing fixtures and adapters together, rejected because it produces a large PR in which no individual defect can be shown to have been caught.
+- **Decision:** Record the route in metadata and verify it resolves at capture time.
+  - **Why:** The Radarr exclusions fixture proves a wrong route can otherwise be recorded, validated, and depended on indefinitely. A route that 404s must fail at capture rather than become a fixture.
+- **Decision:** Do not raise the recorded minimum versions.
+  - **Why:** The observed instances are already at the recorded minimums. Nothing here depends on newer behavior, and [Architecture](../specs/architecture/#version-compatibility) allows raising the minimum only when the implementation knowingly requires it.
+
+### Non-Goals
+
+- Fixing any adapter defect the corrected fixtures reveal — each is owned by 0022 through 0025.
+- Capturing routes the server does not currently read.
+- Testing against live instances in CI.
+- Changing the fixture storage layout, metadata schema, or contract test beyond adding route verification.
+
+## Tasks
+
+- [ ] Add the operator-run fixture capture procedure
+  - [ ] Write a capture script that reads a route from a configured instance and emits a fixture with application, API version, exact version, and route metadata
+  - [ ] Sanitize secrets, identifying values, and canonical paths through the existing helpers, and fail the capture rather than write a body that would not pass the contract test
+  - [ ] Fail the capture when the named route does not resolve on the named application
+  - [ ] Document the procedure so fixtures are refreshed rather than authored
+- [ ] Recapture the counterfactual fixtures
+  - [ ] Correct the Sonarr and Radarr `manualimport` fixtures and the Sonarr `release` fixture to the shapes their instances return
+  - [ ] Replace the Radarr exclusions fixture with one recorded from the route Radarr actually serves
+  - [ ] Confirm the resulting adapter failures reproduce the defects 0022 through 0025 describe, and leave them failing for those changes
+
+## Open Questions
+
+None.
+
+## References
+
+- Spec: [Architecture](../specs/architecture/)
+- Related changes: [0022-upstream-field-shape-tolerance](./0022-upstream-field-shape-tolerance.md), [0023-radarr-exclusion-route](./0023-radarr-exclusion-route.md), [0024-manual-import-request-shape](./0024-manual-import-request-shape.md), [0025-job-projection-refresh](./0025-job-projection-refresh.md)

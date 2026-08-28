@@ -173,3 +173,52 @@ changes:
     spec: configuration-reconciliation
     status: complete
     depends_on: []
+  - id: "0021"
+    name: live-verified-fixtures
+    path: changes/0021-live-verified-fixtures.md
+    description: Correct the counterfactual upstream fixtures and add a repeatable operator-run capture procedure
+    spec: architecture
+    status: draft
+    depends_on: []
+  - id: "0022"
+    name: upstream-field-shape-tolerance
+    path: changes/0022-upstream-field-shape-tolerance.md
+    description: Stop refusing a whole release search because an advisory field arrived in an unmodelled shape
+    spec: architecture
+    status: draft
+    depends_on: []
+  - id: "0023"
+    name: radarr-exclusion-route
+    path: changes/0023-radarr-exclusion-route.md
+    description: Read Radarr import-list exclusions from the route Radarr serves and stop reporting the 404 as a stale reference
+    spec: configuration-reconciliation
+    status: draft
+    depends_on: []
+  - id: "0024"
+    name: manual-import-request-shape
+    path: changes/0024-manual-import-request-shape.md
+    description: Send the manual-import validation request as the bare list of flat resources both applications accept
+    spec: acquisition-and-import
+    status: draft
+    depends_on: []
+  - id: "0025"
+    name: job-projection-refresh
+    path: changes/0025-job-projection-refresh.md
+    description: Refresh a non-terminal job from the upstream command on read and never degrade an observed terminal result
+    spec: tool-contracts
+    status: draft
+    depends_on: []
+  - id: "0026"
+    name: plan-mode-mutation-envelopes
+    path: changes/0026-plan-mode-mutation-envelopes.md
+    description: Make every mutation tool's published output schema admit its own plan-mode envelope
+    spec: tool-contracts
+    status: draft
+    depends_on: []
+  - id: "0027"
+    name: single-application-mutation-scope
+    path: changes/0027-single-application-mutation-scope.md
+    description: Stop publishing a wanted-search application selection the server always refuses
+    spec: tool-contracts
+    status: draft
+    depends_on: []
