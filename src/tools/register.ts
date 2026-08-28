@@ -77,9 +77,9 @@ export function registerTools(server: McpServer, context: ToolContext): void {
         description: definition.description,
         inputSchema: definition.inputSchema,
         // Broadened for publication only. The tool's own schema keeps
-        // validating every envelope above, and is what `data`'s published path
-        // inventory is generated from.
-        outputSchema: publishedResultSchema,
+        // validating every envelope above, and is what the payload's published
+        // path inventory is generated from.
+        outputSchema: publishedResultSchema(definition.outputSchema),
         annotations: definition.annotations,
       },
       (input: unknown) => runTool(definition, context, input),

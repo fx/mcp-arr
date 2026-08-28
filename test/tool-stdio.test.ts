@@ -2,6 +2,7 @@ import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
 import { findToolDefinition } from "../src/tools/definitions.js";
 import { type ToolName, toolNames } from "../src/tools/names.js";
+import { describePayloadPaths, payloadInventory } from "../src/tools/schemas/publish-results.js";
 import {
   assertWellFormed,
   declaredPropertyValues,
@@ -31,7 +32,7 @@ interface PublishedTool {
   name: string;
   description?: string;
   inputSchema?: Record<string, unknown>;
-  outputSchema?: { type?: string };
+  outputSchema?: Record<string, unknown>;
   annotations?: Record<string, unknown>;
 }
 
@@ -120,11 +121,11 @@ const propertyKeyPattern = /^[a-zA-Z0-9_.-]{1,64}$/u;
  * Every session pays this before making a single call, so its size is part of
  * the contract rather than an implementation detail. The number is a recorded
  * measurement rounded up, not a budget somebody chose: it was read off a
- * spawned server at 165,873 bytes. Raising it is a deliberate act, which is the
+ * spawned server at 57,966 bytes. Raising it is a deliberate act, which is the
  * point — a change that reintroduces bulk fails here rather than merely being
  * regrettable.
  */
-const listingByteCeiling = 166_000;
+const listingByteCeiling = 59_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -246,6 +247,38 @@ describe("built stdio tool surface", () => {
     const { bytes } = await publishedTools();
 
     expect(bytes, `tools/list is ${bytes} bytes`).toBeLessThanOrEqual(listingByteCeiling);
+  });
+
+  it("publishes a broadened envelope carrying each payload's generated paths", async () => {
+    const { tools } = await publishedTools();
+
+    for (const tool of tools) {
+      const schema = tool.outputSchema ?? {};
+      assertWellFormed(schema, `${tool.name} output`);
+      // Open at the root, so `mutation` — which every mutation tool returns
+      // and this schema does not declare — stays valid for a host that checks
+      // structured content against what was published.
+      expect(schema.additionalProperties, `${tool.name} closed output root`).not.toBe(false);
+
+      const outcomes = isRecord(schema.properties) ? schema.properties.applications : undefined;
+      const outcome = isRecord(outcomes) && isRecord(outcomes.items) ? outcomes.items : {};
+      const declared = isRecord(outcome.properties) ? outcome.properties : {};
+      // Where `data` sits is the one thing below the root that is published,
+      // because a path into a payload is written relative to it.
+      expect(Object.keys(declared), `${tool.name} outcome`).toEqual(["data"]);
+      // And nothing below it: the payload's fields are the generated prose.
+      expect(declared.data, `${tool.name} data`).toEqual({});
+
+      // The inventory a caller reads is the one this process generates, so
+      // what is advertised and what a projection will resolve cannot be two
+      // different things.
+      const definition = findToolDefinition(tool.name as ToolName);
+      const inventory =
+        definition === undefined ? undefined : payloadInventory(definition.outputSchema);
+      expect(schema.description, `${tool.name} inventory`).toBe(
+        inventory === undefined ? undefined : describePayloadPaths(inventory),
+      );
+    }
   });
 
   it("publishes a schema that admits every variant each tool accepts and refuses what it rejects", async () => {
