@@ -439,6 +439,14 @@ describe("the projection argument", () => {
     // trip for the listing.
     expect(warning).toContain("items.title");
     expect(warning).toContain("items.year");
+    // One step past where it stopped, not every leaf beneath it: an interior
+    // path is itself projectable, so a caller can copy `items.radarr` and read
+    // further from the inventory the listing already carries — and a wrong
+    // guess against a wide payload does not answer with kilobytes of warning
+    // inside a change whose purpose is fewer bytes.
+    expect(warning).toContain("items.radarr");
+    expect(warning).not.toContain("items.radarr.tmdbId");
+    expect(warning.length).toBeLessThan(600);
     // The text half counts it too, so both halves describe the same call.
     expect(answered.summary).toContain(`${warnings.length} warning(s)`);
 
@@ -454,5 +462,48 @@ describe("the projection argument", () => {
     // the projection kept, because a caller pages on them.
     const continuation = outcomesOf(answered.structured)[0]?.continuation;
     expect(isRecord(continuation) ? continuation.returned : undefined).toBe(items.length);
+  }, 30_000);
+
+  it("writes nothing where a published path names a field a record does not carry", async () => {
+    // The ordinary case a projection chosen from what a payload happens to
+    // contain never reaches. Every library record publishes `items.detail.*`
+    // and only `detail: "full"` fills it in, and a movie without a collection
+    // title publishes `items.radarr.collection.title` and carries neither —
+    // both are legitimate paths naming something that is not there. Nothing
+    // about them is wrong, so there is nothing to warn about; there is also
+    // nothing to write, and an object standing in for the absent field would be
+    // a value the unprojected call never returned.
+    const answered = await callTool("arr_library_query", context, {
+      view: "movies",
+      projection: ["items.detail.overview", "items.radarr.collection.title"],
+    });
+
+    expect(answered.isError).toBe(false);
+    expect(answered.structured.warnings).toEqual(answered.envelope.warnings);
+
+    const source = outcomesOf(answered.envelope)[0]?.data;
+    const carried = presentPaths(isRecord(source) ? source : {});
+    // The premise, from the same call: the payload really does carry no detail
+    // at all, and a title on some of its records but not all of them.
+    expect(carried.filter((path) => path.startsWith("items.detail."))).toEqual([]);
+    expect(carried).toContain("items.radarr.collection.title");
+
+    const data = payloadOutcomes(answered.structured)[0]?.[1]?.data;
+    const items = isRecord(data) && Array.isArray(data.items) ? data.items : [];
+    const returned = items.filter((item) => isRecord(item) && Object.keys(item).length > 0);
+    // The rows all survive — a projection selects fields and never rows — and
+    // the ones with nothing selected are empty rather than carrying a `detail`
+    // or a `collection` nobody returned.
+    expect(items.length).toBe(
+      isRecord(source) && Array.isArray(source.items) ? source.items.length : -1,
+    );
+    expect(returned.length, "records carrying a selected value").toBeGreaterThan(0);
+    expect(returned.length, "records carrying every selected value").toBeLessThan(items.length);
+    expect(returned).toEqual(
+      returned.map(() => ({ radarr: { collection: { title: expect.any(String) } } })),
+    );
+    expect(items.filter((item) => isRecord(item) && Object.keys(item).length === 0).length).toBe(
+      items.length - returned.length,
+    );
   }, 30_000);
 });

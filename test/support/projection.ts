@@ -95,6 +95,12 @@ export function payloadOutcomes(envelope: Payload): ReadonlyArray<readonly [numb
  * each other, and an empty object contributes nothing — which is what a record
  * none of the named fields is present on reduces to, and there is no value in it
  * to compare.
+ *
+ * An `undefined` contributes nothing either, because a host receives JSON and
+ * JSON has none. Several adapters build an optional field as an explicit
+ * `undefined`, which survives parsing as a key and disappears on serialization,
+ * so counting it as a value present would have this call a field returned that
+ * nothing on the wire carries.
  */
 export function leafValues(
   value: unknown,
@@ -113,7 +119,7 @@ export function leafValues(
     }
     return into;
   }
-  if (path !== "") {
+  if (path !== "" && value !== undefined) {
     into.set(path, value);
   }
   return into;

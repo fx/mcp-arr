@@ -11,7 +11,14 @@ import {
 } from "./support/configuration.js";
 import { instanceEnvironment, startFixtureInstance } from "./support/instance-server.js";
 import { fixtureBody, jsonResponse } from "./support/library.js";
-import { callTool, leafValues, outcomesOf, payloadOutcomes } from "./support/projection.js";
+import {
+  callTool,
+  isRecord,
+  leafValues,
+  outcomesOf,
+  payloadOutcomes,
+  presentPaths,
+} from "./support/projection.js";
 import { createTestToolContext, testApiKeys } from "./support/tool-context.js";
 
 /**
@@ -265,8 +272,10 @@ describe("a projection is not a second way past the observation allowlist", () =
       // Named, so this cannot pass by selecting nothing credential-adjacent at
       // all: the secrets and the safe field values both really came back, and
       // it is those the comparison below is about.
-      const named = new Set([...returned.keys()].map((path) => path.replace(/\[\d+\]/gu, "")));
-      expect([...named].sort(), "credential-adjacent paths returned").toEqual([
+      expect(
+        [...presentPaths(isRecord(outcome?.[1]?.data) ? outcome[1].data : {})].sort(),
+        "credential-adjacent paths returned",
+      ).toEqual([
         "family",
         "records.configContract",
         "records.fields.name",
@@ -307,14 +316,14 @@ describe("a projection is not a second way past the observation allowlist", () =
         projection: [...withheld, "records.name"],
       });
 
-      const returned = [...leafValues(payloadOutcomes(projected.structured)[0]?.[1]?.data).keys()];
-      const named = new Set(returned.map((path) => path.replace(/\[\d+\]/gu, "")));
+      const data = payloadOutcomes(projected.structured)[0]?.[1]?.data;
+      const named = presentPaths(isRecord(data) ? data : {});
       for (const path of withheld) {
-        expect([...named], path).not.toContain(path);
+        expect(named, path).not.toContain(path);
       }
       // The matched half still came back, and the miss is reported rather than
       // being indistinguishable from a record that has no such value.
-      expect([...named]).toContain("records.name");
+      expect(named).toContain("records.name");
       const warnings = Array.isArray(projected.structured.warnings)
         ? projected.structured.warnings
         : [];

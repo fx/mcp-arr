@@ -128,11 +128,30 @@ function stoppedAt(available: readonly string[], path: string): string {
   return "";
 }
 
-/** Every path the payload offers below one such stopping point. */
+/**
+ * What the payload offers one step past a stopping point.
+ *
+ * One step rather than every leaf beneath it, because the whole list is both
+ * more than a caller needs to fix a wrong segment and, on a wide payload,
+ * several kilobytes of warning inside a change whose purpose is fewer bytes.
+ * Each answer is itself a projectable path — an interior one selects everything
+ * below it — so a caller can correct the guess by copying one, and read further
+ * from the inventory the listing already carries.
+ */
 function offeredUnder(available: readonly string[], prefix: string): readonly string[] {
-  return prefix === ""
-    ? available
-    : available.filter((candidate) => candidate.startsWith(`${prefix}.`));
+  const depth = prefix === "" ? 0 : prefix.split(".").length;
+  const under =
+    prefix === "" ? available : available.filter((path) => path.startsWith(`${prefix}.`));
+  return [
+    ...new Set(
+      under.map((path) =>
+        path
+          .split(".")
+          .slice(0, depth + 1)
+          .join("."),
+      ),
+    ),
+  ];
 }
 
 /**
@@ -173,27 +192,42 @@ function select(into: Selection, segments: readonly string[]): void {
  * record none of the named fields is present on stays in place as an empty
  * object and the page still reports what the query matched.
  *
- * A value with nothing below it answers with an empty object rather than with
- * itself. Reaching one means the selection asked for fields of something that
- * holds none, which a validated envelope cannot produce; answering `{}` says the
- * named fields are not here, where passing the value through would return
- * something nobody selected.
+ * A property that selected nothing is left out rather than written as an empty
+ * object, and this is the difference between narrowing a result and inventing
+ * one. The inventory publishes a path for every field the schema declares,
+ * optional ones and the ones only `detail: "full"` fills in included, so a
+ * legitimate projection routinely names a field a given record does not carry —
+ * and an object written where the record had nothing selected under it is a
+ * value the unprojected call would never have returned. Absence is answered as
+ * absence, at whichever depth it is found: a key missing from the source, a key
+ * whose value is the explicit `undefined` an optional field is built as, a
+ * nested object none of whose selected fields were there, and — unreachably,
+ * since the selection only ever holds inventory paths — a value with no fields
+ * below it at all.
+ *
+ * The one absence that is still written down is a row. An array element that
+ * selected nothing stays in place as an empty object, because a projection
+ * selects fields and never rows, and dropping the element would make a page
+ * disagree with the count beside it about how much the query matched.
  */
 function pick(source: unknown, selection: Selection): unknown {
   if (Array.isArray(source)) {
-    return source.map((element) => pick(element, selection));
+    return source.map((element) => pick(element, selection) ?? {});
   }
   if (!isRecord(source)) {
-    return {};
+    return undefined;
   }
   const projected: Record<string, unknown> = {};
   for (const [name, below] of selection) {
     if (!(name in source)) {
       continue;
     }
-    projected[name] = below === undefined ? source[name] : pick(source[name], below);
+    const value = below === undefined ? source[name] : pick(source[name], below);
+    if (value !== undefined) {
+      projected[name] = value;
+    }
   }
-  return projected;
+  return Object.keys(projected).length === 0 ? undefined : projected;
 }
 
 /**
@@ -265,9 +299,15 @@ export function projectEnvelope(
       }
       const prefix = stoppedAt(available, path);
       unmatched.add(path);
-      offered.set(prefix, offeredUnder(available, prefix));
+      if (!offered.has(prefix)) {
+        offered.set(prefix, offeredUnder(available, prefix));
+      }
     }
-    return { ...outcome, data: pick(outcome.data, selection) };
+    // An outcome that carried a payload still carries one, even where nothing
+    // in it was selected: `data` is part of what the outcome says about the
+    // call, and dropping it would report that the application answered without
+    // one.
+    return { ...outcome, data: pick(outcome.data, selection) ?? {} };
   });
 
   const warning = unmatched.size === 0 ? undefined : describeUnmatched([...unmatched], offered);

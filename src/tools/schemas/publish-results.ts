@@ -234,6 +234,30 @@ export interface PayloadInventory {
  * tool does not have.
  */
 export function payloadInventory(outputSchema: z.ZodType): PayloadInventory | undefined {
+  if (inventories.has(outputSchema)) {
+    return inventories.get(outputSchema);
+  }
+  const generated = generateInventory(outputSchema);
+  inventories.set(outputSchema, generated);
+  return generated;
+}
+
+/**
+ * Each envelope's inventory, beside the schema it was generated from.
+ *
+ * Generating one converts the whole payload union and walks it, and the answer
+ * is a pure function of a module-level schema — so it is computed once at
+ * registration and then read again on every call that projects a result. Weak
+ * because the key is the schema itself, exactly as `results.ts` keys its
+ * payloads: an envelope nothing holds any more takes its entry with it.
+ *
+ * Caching a refusal cannot hide one. Every throw below fires on the first
+ * generation, which happens while the tool is being registered, so a payload
+ * this walk cannot name still stops the server from starting.
+ */
+const inventories = new WeakMap<z.ZodType, PayloadInventory | undefined>();
+
+function generateInventory(outputSchema: z.ZodType): PayloadInventory | undefined {
   const payload = payloadSchemaOf(outputSchema);
   if (payload === undefined) {
     return undefined;
