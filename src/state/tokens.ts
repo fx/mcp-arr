@@ -123,32 +123,3 @@ const digestLength = 32;
 export function fingerprint(value: unknown): string {
   return createHash("sha256").update(canonicalJson(value)).digest("hex").slice(0, digestLength);
 }
-
-const presenceLength = 16;
-
-/**
- * Salts every secret presence fingerprint for this process only.
- *
- * A plan retains the fact that a secret was supplied, never the secret. Salting
- * with a value that exists only in this process's memory means the retained
- * fingerprint is not a dictionary-attackable hash of the secret and is
- * meaningless outside the process that produced it.
- */
-const presenceSalt = randomBytes(32);
-
-/**
- * A presence fingerprint for one named transient secret.
- *
- * The result records that a value was present and lets a later apply notice
- * that the resupplied value differs from the planned one. It is not a
- * credential, cannot be inverted, and is never compared across processes.
- */
-export function secretPresenceFingerprint(name: string, value: string): string {
-  // The name is length-prefixed so no pair of (name, value) inputs can be
-  // concatenated into the same string and fingerprint identically.
-  return createHash("sha256")
-    .update(presenceSalt)
-    .update(`${name.length}:${name}:${value}`)
-    .digest("hex")
-    .slice(0, presenceLength);
-}

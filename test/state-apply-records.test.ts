@@ -128,23 +128,6 @@ describe("apply intent keys", () => {
 
     expect(new Set([one, two, other]).size).toBe(3);
   });
-
-  it("ignores secret values so a receipt never depends on a credential", () => {
-    const withSecret = {
-      intent: "reconcile_provider",
-      mode: "apply",
-      secrets: [{ name: "apiKey", value: "first" }],
-    };
-    const rotated = { ...withSecret, secrets: [{ name: "apiKey", value: "second" }] };
-    const renamed = { ...withSecret, secrets: [{ name: "password", value: "first" }] };
-
-    expect(applyIntentKey({ ...begin, intent: withSecret })).toBe(
-      applyIntentKey({ ...begin, intent: rotated }),
-    );
-    expect(applyIntentKey({ ...begin, intent: withSecret })).not.toBe(
-      applyIntentKey({ ...begin, intent: renamed }),
-    );
-  });
 });
 
 describe("apply record store", () => {

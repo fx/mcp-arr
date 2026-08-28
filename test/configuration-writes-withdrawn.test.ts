@@ -47,28 +47,106 @@ interface ToolListResult {
   result?: { tools?: PublishedTool[] };
 }
 
+interface CallResult {
+  error?: { message?: string };
+  result?: {
+    isError?: boolean;
+    content?: Array<{ type: string; text?: string }>;
+  };
+}
+
 const configuredInstance = {
   SONARR_URL: "https://sonarr.example.invalid/sonarr",
   SONARR_API_KEY: "sonarr-secret-key",
 };
 
-/** The published names exactly as a host reads them off the wire. */
-async function readPublishedToolNames(): Promise<{
+interface WireSession {
   readonly names: readonly string[];
+  /** The refusal text for each call in {@link refusedCalls}, in order. */
+  readonly refusals: readonly string[];
   readonly stdout: string;
-}> {
-  const child = spawnBuiltServer(configuredInstance, 5_000);
+}
+
+/**
+ * The calls a caller reaching for the withdrawn surface would make.
+ *
+ * Every one of them must be refused, and refused before anything is sent: the
+ * server this file drives is configured against the reserved `.invalid` host,
+ * so a call that was not refused could not have succeeded either way.
+ */
+const refusedCalls: readonly { readonly name: string; readonly arguments: unknown }[] = [
+  // The tool itself, by the name a host that cached an older listing would use.
+  {
+    name: "arr_config_reconcile",
+    arguments: { intent: "reconcile_profile", mode: "plan", application: "sonarr" },
+  },
+  // The transient-secret channel, on the retained mutation tool whose intent is
+  // otherwise valid. No tool declares `secrets`, so the closed input schema is
+  // what refuses it.
+  {
+    name: "arr_library_change",
+    arguments: {
+      intent: "set_monitoring",
+      mode: "plan",
+      items: ["med_00000001"],
+      monitored: true,
+      secrets: [{ name: "apiKey", value: "supplied" }],
+    },
+  },
+  // And the same channel on the plan-apply form, which is where a secret used
+  // to be resupplied.
+  {
+    name: "arr_library_change",
+    arguments: {
+      mode: "apply",
+      plan: "pln_00000001",
+      secrets: [{ name: "apiKey", value: "resupplied" }],
+    },
+  },
+];
+
+/** One spawned server, asked everything this file needs to know. */
+async function readWireSession(): Promise<WireSession> {
+  const child = spawnBuiltServer(configuredInstance, 10_000);
   try {
     await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
     const listed = (await child.request(2, "tools/list")) as ToolListResult;
+    const refusals: string[] = [];
+    for (const [index, call] of refusedCalls.entries()) {
+      const called = (await child.request(3 + index, "tools/call", {
+        name: call.name,
+        arguments: call.arguments,
+      })) as CallResult;
+      if (called.error !== undefined) {
+        refusals.push(called.error.message ?? "");
+        continue;
+      }
+      if (called.result?.isError !== true) {
+        throw new Error(`${call.name} answered a call this server must refuse`);
+      }
+      refusals.push(called.result.content?.map((part) => part.text ?? "").join(" ") ?? "");
+    }
     await child.terminateGracefully();
     return {
       names: (listed.result?.tools ?? []).map((tool) => tool.name),
+      refusals,
       stdout: child.stdout,
     };
   } finally {
     await child.forceCleanup().catch(() => undefined);
   }
+}
+
+let session: Promise<WireSession> | undefined;
+
+/**
+ * Read once and shared: every assertion below asks the same server the same
+ * questions, and spawning it per assertion would only spend seconds proving the
+ * answers are stable.
+ */
+function wireSession(): Promise<WireSession> {
+  session ??= readWireSession();
+  return session;
 }
 
 let statusFixtures: ReadonlyMap<ApplicationId, VersionedFixture<Record<string, unknown>>>;
@@ -102,11 +180,30 @@ function projectedOperations(report: CapabilityReport): readonly ProjectedOperat
 
 describe("the withdrawn configuration write surface", () => {
   it("publishes exactly the fourteen remaining tools", async () => {
-    const { names, stdout } = await readPublishedToolNames();
+    const { names, stdout } = await wireSession();
 
     expect(names).toEqual([...publishedToolNames]);
     expect(names).not.toContain("arr_config_reconcile");
     assertCleanProtocolStdout(stdout);
+  });
+
+  it("refuses the withdrawn tool and the transient-secret channel over the wire", async () => {
+    const { refusals } = await wireSession();
+
+    expect(refusals).toHaveLength(refusedCalls.length);
+    for (const [index, refusal] of refusals.entries()) {
+      const name = refusedCalls[index]?.name ?? "";
+      // Named rather than merely non-empty: a refusal that did not name the
+      // tool could be any rejection at all, including one this file did not ask
+      // for.
+      expect(refusal, name).toContain(name);
+      // And a refusal that quoted the value back would defeat the point of
+      // withdrawing the channel that carried it.
+      expect(refusal, name).not.toContain("supplied");
+    }
+    // The withdrawn tool is gone rather than present and rejecting arguments,
+    // which the two remaining refusals cannot show.
+    expect(refusals[0]).toContain("not found");
   });
 
   it("reports no configuration write operation for any application", async () => {

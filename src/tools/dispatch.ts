@@ -2,13 +2,11 @@ import type { AdapterRegistry, ApplicationCapability } from "../adapters/registr
 import { type ApplicationId, applicationIds } from "../applications.js";
 import type { ApplyRecord, ApplySettlement } from "../state/apply-records.js";
 import {
-  checkResuppliedSecrets,
   compareReadSet,
   fingerprintReadSet,
   type PlanRecord,
   type ReadSetFingerprint,
   type ReadSetObservation,
-  readTransientSecrets,
 } from "../state/plans.js";
 import { type ReferenceStore, referenceKindForToken } from "../state/references.js";
 import type { WorkflowState } from "../state/workflow.js";
@@ -332,7 +330,6 @@ interface RunOptions {
   /** The effective intent: the caller's input, or a recorded plan's intent. */
   readonly input: unknown;
   readonly plan: PlanRecord | undefined;
-  readonly warnings: readonly string[];
 }
 
 async function invokeHandler(
@@ -369,7 +366,7 @@ async function runRead(
     applicationOutcome({
       application: options.application,
       status: "ok",
-      warnings: [...options.warnings, ...(outcome.warnings ?? [])],
+      warnings: outcome.warnings ?? [],
       data: outcome.data,
       items: outcome.items,
       continuation: outcome.continuation,
@@ -414,7 +411,6 @@ async function runPlan(
   }
 
   const warnings = [
-    ...options.warnings,
     ...preconditions.warnings,
     ...(outcome.warnings ?? []),
     ...(outcome.plan.warnings ?? []),
@@ -465,7 +461,6 @@ function replayReceipt(options: RunOptions, existing: ApplyRecord): OperationRun
       // suggest there is nothing left to do.
       status: existing.state === "outcome_unknown" ? "error" : "ok",
       warnings: [
-        ...options.warnings,
         "this exact mutation was already applied by this server; its existing receipt is returned and nothing was sent again",
       ],
       // Replayed rather than recomputed: a bulk mutation that partly failed
@@ -611,7 +606,7 @@ async function runApply(
       // agreeing. The per-item outcomes travel either way, because they are
       // what says which selections failed.
       status: failure === undefined ? "ok" : "error",
-      warnings: [...options.warnings, ...preconditions.warnings, ...(outcome.warnings ?? [])],
+      warnings: [...preconditions.warnings, ...(outcome.warnings ?? [])],
       data: outcome.data,
       items: outcome.items,
       error: failure,
@@ -682,17 +677,9 @@ interface ResolvedPlanApply {
   readonly plan: PlanRecord;
   readonly input: unknown;
   readonly application: ApplicationId;
-  readonly warnings: readonly string[];
 }
 
-/**
- * Turns a plan reference back into an intent this dispatcher can run.
- *
- * A plan retains no secret value, so a secret-bearing plan cannot be applied
- * until the caller resupplies each named secret; the resupplied values are
- * merged into the replayed intent for this request only and are never written
- * back into the plan.
- */
+/** Turns a plan reference back into an intent this dispatcher can run. */
 function resolvePlanApply(
   context: ToolContext,
   request: DispatchRequest,
@@ -733,33 +720,7 @@ function resolvePlanApply(
     };
   }
 
-  const supplied = readTransientSecrets(request.input);
-  const check = checkResuppliedSecrets(plan.requiredSecrets, supplied);
-  if (check.status === "missing") {
-    return {
-      error: createToolError({
-        code: "invalid_input",
-        message: `this plan requires the transient secret(s) to be supplied again: ${check.names.join(", ")}`,
-        application,
-      }),
-    };
-  }
-
-  const carriesSecrets = plan.requiredSecrets.length > 0 && isRecord(plan.intent);
-  const input = carriesSecrets ? { ...plan.intent, secrets: supplied } : plan.intent;
-  const warnings = carriesSecrets
-    ? check.warnings
-    : [
-        ...check.warnings,
-        // Said out loud rather than dropped in silence: a caller that thought a
-        // credential was needed here should learn that this plan does not use
-        // one, instead of assuming the value reached the application.
-        ...(supplied.length === 0
-          ? []
-          : ["this plan requires no transient secret; the supplied value(s) were not used"]),
-      ];
-
-  return { operation, plan, input, application, warnings };
+  return { operation, plan, input: plan.intent, application };
 }
 
 function mutationDetail(runs: readonly OperationRun[]): MutationDetail {
@@ -854,7 +815,6 @@ export async function dispatchOperation(
         application,
         input: planned?.input ?? request.input,
         plan: planned?.plan,
-        warnings: planned?.warnings ?? [],
       }),
     ),
   );
