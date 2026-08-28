@@ -5,6 +5,7 @@ import {
   downloadIdentity,
   maxMessageLength,
   optionalClosedWord,
+  safeLabel,
   safeText,
 } from "../src/adapters/activity/parse.js";
 import { runActivityQuery } from "../src/adapters/activity/service.js";
@@ -113,6 +114,64 @@ describe("upstream text sanitization", () => {
     );
     expect(safeText("missing \\\\server\\Share Folder\\secret.mkv here")).toBe(
       "missing [redacted path] [redacted path] here",
+    );
+  });
+
+  /**
+   * A label is a whole field value drawn from a slash-delimited taxonomy, so the
+   * residual-separator rule has to tell a name from a path there rather than
+   * taking everything that carries a separator. Both halves are pinned: nothing
+   * the prose sanitizer redacts may survive a label, and nothing a real
+   * taxonomy publishes may be lost by one.
+   */
+  it("still redacts every path shape from a label", () => {
+    for (const path of [
+      "/media/private/tv",
+      "/home/someone/downloads",
+      "C:\\Media\\file.mkv",
+      "\\\\server\\share\\file",
+      "some/dir/file.mkv",
+      "~/notes/private",
+      "d:/data/tv",
+      "example.com/path",
+      "//server/share",
+      // A segment longer than a name ever is. The joiners keep it from being
+      // one unbroken run, so it is the segment bound that takes it rather than
+      // the opaque-identifier rule.
+      "Ampersand&Ampersand&Ampersand&Amp/tv",
+      // A segment that opens with something other than a word.
+      "-hidden/tv",
+    ]) {
+      expect(safeLabel(path)).toBe("[redacted path]");
+    }
+    expect(safeLabel("https://tracker.example.invalid/rules?apikey=SECRET")).toBe("[redacted url]");
+    // A path embedded in prose is how one arrives in a rejection reason, and a
+    // label that carries a sentence is treated no more gently than the sentence
+    // would be.
+    expect(safeLabel("cannot import from /media/example/Example Series/S01E01.mkv here")).toBe(
+      "cannot import from [redacted path] [redacted path] here",
+    );
+  });
+
+  it("keeps a separator that joins two words of a label", () => {
+    for (const label of [
+      "TV/HD",
+      "TV/Foreign",
+      "TV/Anime",
+      "Movies/HD",
+      "Movies/UHD",
+      "Repack/Proper",
+      "Audio/Lossless",
+      "Console/Wii-U",
+      "PC/0day",
+    ]) {
+      expect(safeLabel(label)).toBe(label);
+    }
+    // Prose is unchanged by the label rule: `safeText` still takes any token
+    // carrying a separator, because there it is a fragment rather than a value.
+    expect(safeText("TV/HD")).toBe("[redacted path]");
+    expect(safeText("failed at /media/example/library/file.mkv now")).toBe(
+      "failed at [redacted path] now",
     );
   });
 

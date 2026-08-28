@@ -398,11 +398,28 @@ describe("protected release data", () => {
     const { items } = await run("sonarr", { ...episodeSearch, detail: "full" }, [
       {
         ...record,
-        indexerFlags: [`https://${trackerHost}/rules`, `/media/private/tv`, "and/or"],
+        indexerFlags: [`https://${trackerHost}/rules`, `/media/private/tv`],
       },
     ]);
 
     expect(items[0]?.release.detail?.indexerFlags).toBeUndefined();
+  });
+
+  /**
+   * A separator joining two ordinary words is not a path, and a label is a whole
+   * field value rather than a fragment of a sentence — an indexer flag, a custom
+   * format, a category. It survives beside the labels that really were paths.
+   */
+  it("keeps a label whose separator joins two words", async () => {
+    const [record] = releases.sonarr;
+    const { items } = await run("sonarr", { ...episodeSearch, detail: "full" }, [
+      {
+        ...record,
+        indexerFlags: ["and/or", "Repack/Proper", `/media/private/tv`],
+      },
+    ]);
+
+    expect(items[0]?.release.detail?.indexerFlags).toEqual(["and/or", "Repack/Proper"]);
   });
 
   it("keeps a release's own cache identity out of its indexer flags", async () => {

@@ -287,6 +287,50 @@ describe("prowlarr release normalization", () => {
     });
   });
 
+  /**
+   * Prowlarr's category taxonomy is slash-delimited by construction, and the
+   * subcategory is the half that carries the information: a live instance
+   * reports `TV` alongside `TV/HD`, and an indexer that reports only the leaf
+   * reports nothing else at all. Scrubbing that away empties the field the model
+   * documents as the indexer's category names, so the ordinary value is pinned
+   * here rather than left to the canary tests.
+   */
+  it("publishes a slash-delimited category name rather than scrubbing it away", async () => {
+    const categorized = fixtures.releases.map((release) => ({
+      ...release,
+      categories: [{ name: "TV" }, { name: "TV/HD" }],
+    }));
+
+    const ok = expectOk(
+      (
+        await run(
+          { statuses: [], search: () => jsonResponse(categorized) },
+          { ...aggregate, detail: "full" },
+        )
+      ).outcome,
+    );
+
+    expect(ok.data.items[0]?.release.detail?.categories).toEqual(["TV", "TV/HD"]);
+  });
+
+  it("keeps a leaf-only category list rather than emptying it", async () => {
+    const leafOnly = fixtures.releases.map((release) => ({
+      ...release,
+      categories: [{ name: "Movies/UHD" }],
+    }));
+
+    const ok = expectOk(
+      (
+        await run(
+          { statuses: [], search: () => jsonResponse(leafOnly) },
+          { ...aggregate, detail: "full" },
+        )
+      ).outcome,
+    );
+
+    expect(ok.data.items[0]?.release.detail?.categories).toEqual(["Movies/UHD"]);
+  });
+
   it("orders the merged result deterministically and pages it by whole pages", async () => {
     const instance: Instance = {
       statuses: [],

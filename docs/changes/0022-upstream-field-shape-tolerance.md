@@ -106,6 +106,7 @@ The [Architecture spec](../specs/architecture/#upstream-connection-handling) own
   - [x] Scrub the whole label class a search returns — indexer flags, custom formats, languages, indexer categories, the indexer, quality, and release-group names, and Radarr's edition — against the same literals the rejection reasons use, as the import adapter already does with its counterparts
   - [x] Drop a label only when it is entirely a redaction marker, so a name that merely contained a protected value keeps the words around it on both surfaces
   - [x] Plant the protected-data canary in every one of those fields, so the suite covers the class rather than the field a defect was demonstrated on
+  - [x] Keep a separator that joins two words of a label, so the slash-delimited taxonomies these fields are drawn from — Prowlarr's categories, a custom format named `Repack/Proper` — survive scrubbing while every path shape is still redacted
 
 ## Field Comparison Result
 
