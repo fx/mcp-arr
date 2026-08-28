@@ -256,40 +256,10 @@ describe("tool protocol surface", () => {
     ]);
   });
 
-  it("returns an envelope its tool's own output schema accepts and its published one admits", async () => {
+  it("accepts every published tool's minimal arguments and answers with its own envelope", async () => {
     const client = await connect(fixtureContext());
     const { tools } = await client.listTools();
     const published = new Map(tools.map((tool: Tool) => [tool.name, tool.outputSchema]));
-
-    for (const name of toolNames) {
-      const result = (await client.callTool({
-        name,
-        arguments: sampleToolInputs[name],
-      })) as CallToolResult;
-      const content = structured(result);
-
-      // `runTool` replaces an envelope its own schema rejects with a generic
-      // failure, and that substitute conforms too — so conformance on its own
-      // would pass whether or not the tool produced a valid result. Ruling out
-      // the substitution is what makes the assertion below about the real one.
-      expect(
-        (content.errors as Array<{ message?: string }>).map((error) => error.message),
-        name,
-      ).not.toContain(`${name}: produced a non-conforming result`);
-
-      // The internal schema is the authority, and it stays the authority: what
-      // the listing publishes may be broader, but it may never stop admitting
-      // an envelope this server actually returns.
-      const definition = findToolDefinition(name);
-      expect(definition?.outputSchema.safeParse(content).success, `${name} internal`).toBe(true);
-      const declared = (published.get(name) ?? {}) as Record<string, unknown>;
-      expect(schemaFailures(declared, content), `${name} published`).toEqual([]);
-    }
-  });
-
-  it("accepts every published tool's minimal arguments and answers with its own envelope", async () => {
-    const client = await connect(fixtureContext());
-    await client.listTools();
 
     for (const name of toolNames) {
       const result = (await client.callTool({
@@ -301,6 +271,24 @@ describe("tool protocol surface", () => {
       expect(["ok", "partial", "error"], name).toContain(content.status);
       expect(Array.isArray(content.applications), name).toBe(true);
       expect(JSON.stringify(result), name).not.toContain(testApiKeys.sonarr);
+
+      // `runTool` replaces an envelope its own schema rejects with a generic
+      // failure, and that substitute conforms too — so conformance on its own
+      // would pass whether or not the tool produced a valid result. Ruling out
+      // the substitution is what makes the two assertions below about the real
+      // one.
+      expect(
+        (content.errors as Array<{ message?: string }>).map((error) => error.message),
+        name,
+      ).not.toContain(`${name}: produced a non-conforming result`);
+
+      // The tool's own schema is the authority and stays the authority: what
+      // the listing publishes may be broader, but it may never stop admitting
+      // an envelope this server actually returns.
+      const definition = findToolDefinition(name);
+      expect(definition?.outputSchema.safeParse(content).success, `${name} internal`).toBe(true);
+      const declared = (published.get(name) ?? {}) as Record<string, unknown>;
+      expect(schemaFailures(declared, content), `${name} published`).toEqual([]);
     }
   });
 });

@@ -1,18 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { findToolDefinition } from "../src/tools/definitions.js";
-import { toolNames } from "../src/tools/names.js";
+import { findToolDefinition, type ToolDefinition } from "../src/tools/definitions.js";
+import { type ToolName, toolNames } from "../src/tools/names.js";
+import { payloadSchemaOf, toolResultSchema } from "../src/tools/results.js";
 import {
   describePayloadPaths,
   type PayloadInventory,
   payloadInventory,
   publishedResultSchema,
 } from "../src/tools/schemas/publish-results.js";
+import { declaredPropertyValues } from "./support/json-schema.js";
 
 type Schema = Record<string, unknown>;
 
-/** The tools whose result carries no per-application payload. */
-const payloadFreeTools = ["arr_queue_resolve", "arr_activity_change", "arr_library_change"];
+/**
+ * The tools whose result carries no per-application payload. Pinned by name
+ * rather than derived, because which tools have nothing to select is a fact
+ * about the surface that a change should have to state.
+ */
+const payloadFreeTools: readonly ToolName[] = [
+  "arr_queue_resolve",
+  "arr_activity_change",
+  "arr_library_change",
+];
 
 /** A path names fields and nothing else: no type, no bound, no annotation. */
 const pathPattern = /^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*$/u;
@@ -26,21 +36,32 @@ function alternativesOf(node: Schema): readonly Schema[] | undefined {
   return Array.isArray(alternatives) ? alternatives.filter(isRecord) : undefined;
 }
 
-/** One tool's payload node, as the converted schema declares it. */
-function payloadOf(name: string): Schema | undefined {
-  const definition = findToolDefinition(name as (typeof toolNames)[number]);
+function definitionOf(name: ToolName): ToolDefinition {
+  const definition = findToolDefinition(name);
   if (definition === undefined) {
     throw new Error(`No definition for ${name}`);
   }
-  const converted = z.toJSONSchema(definition.outputSchema, {
-    target: "draft-7",
-    io: "output",
-  }) as Schema;
-  const outcomes = isRecord(converted.properties) ? converted.properties.applications : undefined;
-  const item = isRecord(outcomes) && isRecord(outcomes.items) ? outcomes.items : undefined;
-  const declared =
-    item !== undefined && isRecord(item.properties) ? item.properties.data : undefined;
-  return isRecord(declared) ? declared : undefined;
+  return definition;
+}
+
+/**
+ * One tool's payload, converted. Converted once per tool: every assertion
+ * below asks the same question of the same module-level schemas, and the
+ * conversion is the expensive half of this file.
+ */
+const payloads = new Map<ToolName, Schema | undefined>();
+
+function payloadOf(name: ToolName): Schema | undefined {
+  if (!payloads.has(name)) {
+    const payload = payloadSchemaOf(definitionOf(name).outputSchema);
+    payloads.set(
+      name,
+      payload === undefined
+        ? undefined
+        : (z.toJSONSchema(payload, { target: "draft-7", io: "output" }) as Schema),
+    );
+  }
+  return payloads.get(name);
 }
 
 /** The payloads a tool can return, as one node each. */
@@ -114,18 +135,13 @@ function resolvePath(payload: Schema, path: string): readonly Schema[] {
   return reached;
 }
 
-function inventoryOf(name: string): PayloadInventory | undefined {
-  const definition = findToolDefinition(name as (typeof toolNames)[number]);
-  return definition === undefined ? undefined : payloadInventory(definition.outputSchema);
+function inventoryOf(name: ToolName): PayloadInventory | undefined {
+  return payloadInventory(definitionOf(name).outputSchema);
 }
 
 /** The root description the tool publishes, as a host reads it. */
-function publishedDescription(name: string): string | undefined {
-  const definition = findToolDefinition(name as (typeof toolNames)[number]);
-  if (definition === undefined) {
-    throw new Error(`No definition for ${name}`);
-  }
-  const converted = z.toJSONSchema(publishedResultSchema(definition.outputSchema), {
+function publishedDescription(name: ToolName): string | undefined {
+  const converted = z.toJSONSchema(publishedResultSchema(definitionOf(name).outputSchema), {
     target: "draft-7",
     io: "output",
   }) as Schema;
@@ -154,9 +170,6 @@ describe("published payload paths", () => {
         describePayloadPaths(inventory as PayloadInventory),
       );
     }
-    expect(payloadFreeTools.every((name) => (toolNames as readonly string[]).includes(name))).toBe(
-      true,
-    );
   });
 
   it("resolves every published path to a leaf of the schema it came from", () => {
@@ -227,9 +240,9 @@ describe("published payload paths", () => {
     // what grouping buys over a union of every field the tool can return.
     expect(movies?.paths).not.toContain("items.sonarr.tvdbId");
 
-    // Sixteen configuration domains answer with three payload shapes, so the
-    // property that names one payload is `family` and not the sixteen-value
-    // `domain` beside it.
+    // Sixteen configuration domains answer with three payload shapes, and the
+    // union declares that it is `family` rather than the sixteen-value `domain`
+    // beside it that says which one a result carries.
     expect(inventoryOf("arr_config_observe")?.discriminator).toBe("family");
 
     // Nothing distinguishes the three reconciliation payloads, so they are
@@ -244,6 +257,21 @@ describe("published payload paths", () => {
     ]);
   });
 
+  it("refuses a payload whose fields it cannot name", () => {
+    // A map keyed by a value and a tuple both hold fields this walk has no
+    // segment for. Publishing either as one leaf would quietly stop telling a
+    // caller about everything inside it, so registration fails instead.
+    const mapped = toolResultSchema({
+      data: z.record(z.string(), z.strictObject({ title: z.string() })),
+    });
+    const tupled = toolResultSchema({
+      data: z.strictObject({ pair: z.tuple([z.string(), z.number()]) }),
+    });
+
+    expect(() => payloadInventory(mapped)).toThrow(/bottom out at a value/u);
+    expect(() => payloadInventory(tupled)).toThrow(/bottom out at a value/u);
+  });
+
   it("names every value a discriminated payload can be selected by", () => {
     for (const name of toolNames) {
       const inventory = inventoryOf(name);
@@ -252,10 +280,7 @@ describe("published payload paths", () => {
         continue;
       }
       const branches = payloadBranches(payloadOf(name) ?? {});
-      const declared = branches.map((branch) => {
-        const node = isRecord(branch.properties) ? branch.properties[discriminator] : undefined;
-        return isRecord(node) && typeof node.const === "string" ? node.const : undefined;
-      });
+      const declared = branches.map((branch) => declaredPropertyValues(branch, discriminator)[0]);
 
       expect(
         inventory.payloads.map((payload) => payload.variant),

@@ -140,6 +140,26 @@ export interface ToolResultSchemaOptions {
 }
 
 /**
+ * Each envelope's payload, beside the envelope it was built into.
+ *
+ * Publication needs the per-application payload and nothing else — it is the
+ * only part of the envelope that differs between tools, and the only part whose
+ * fields a caller has to be told about. Recording it here rather than leaving a
+ * consumer to walk `applications[].data` back out of a converted envelope keeps
+ * this module the only place that knows where the payload sits, and keeps "this
+ * tool has no payload" a fact rather than a navigation that came up empty.
+ *
+ * Weak because the key is the schema itself: an envelope nothing holds any more
+ * takes its entry with it.
+ */
+const payloadSchemas = new WeakMap<z.ZodType, z.ZodType>();
+
+/** The per-application payload one tool's output schema carries, if any. */
+export function payloadSchemaOf(outputSchema: z.ZodType): z.ZodType | undefined {
+  return payloadSchemas.get(outputSchema);
+}
+
+/**
  * Builds one tool's declared output schema.
  *
  * The returned schema is intentionally typed as an opaque {@link z.ZodType}:
@@ -170,7 +190,11 @@ export function toolResultSchema(options: ToolResultSchemaOptions = {}): z.ZodTy
     resultShape.mutation = mutationDetailSchema.optional();
   }
 
-  return z.strictObject(resultShape);
+  const schema = z.strictObject(resultShape);
+  if (options.data !== undefined) {
+    payloadSchemas.set(schema, options.data);
+  }
+  return schema;
 }
 
 export interface ApplicationOutcomeInput<TData> {

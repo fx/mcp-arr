@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { toolResultStatuses } from "../results.js";
+import { payloadSchemaOf, toolResultStatuses } from "../results.js";
 
 /**
  * The envelope every tool publishes, in place of its own output schema.
@@ -48,8 +48,8 @@ function schemaAt(node: JsonSchema, key: string): JsonSchema | undefined {
 }
 
 /** The node one of a schema's properties declares, where it declares one. */
-function propertyAt(node: JsonSchema | undefined, name: string): JsonSchema | undefined {
-  const declared = node === undefined ? undefined : schemaAt(node, "properties")?.[name];
+function propertyAt(node: JsonSchema, name: string): JsonSchema | undefined {
+  const declared = schemaAt(node, "properties")?.[name];
   return isRecord(declared) ? declared : undefined;
 }
 
@@ -66,6 +66,9 @@ function fixedValues(node: JsonSchema): readonly string[] {
   }
   return Array.isArray(node.enum) ? node.enum.filter((value) => typeof value === "string") : [];
 }
+
+/** The types a path may bottom out at. Everything else still holds fields. */
+const leafTypes: ReadonlySet<string> = new Set(["string", "number", "integer", "boolean", "null"]);
 
 /**
  * Every dot-path from `node` down to a leaf, in declaration order.
@@ -85,6 +88,14 @@ function fixedValues(node: JsonSchema): readonly string[] {
  * their fields belong to the calendar view. Only the payload's own
  * discriminator groups, because that is the one a caller has already chosen by
  * the time a result exists.
+ *
+ * A node that still holds structure this walk cannot name — an object with no
+ * declared properties, a tuple, a map keyed by a value — throws rather than
+ * being published as a leaf, and it throws when the tool is registered. Naming
+ * it as a leaf would silently stop publishing everything inside it, which is
+ * the same failure `publish.ts` refuses on the input side and for the same
+ * reason: a field a caller is never told about is worse than a server that
+ * will not start.
  */
 function leafPaths(node: JsonSchema, prefix: string, into: string[]): string[] {
   const alternatives = alternativesOf(node);
@@ -107,48 +118,16 @@ function leafPaths(node: JsonSchema, prefix: string, into: string[]): string[] {
     }
     return into;
   }
+  if (typeof node.type === "string" && !leafTypes.has(node.type)) {
+    throw new Error(
+      `A payload field must bottom out at a value; found a ${node.type} declaring ` +
+        `neither properties nor items, at ${prefix === "" ? "the payload itself" : prefix}`,
+    );
+  }
   if (prefix !== "" && !into.includes(prefix)) {
     into.push(prefix);
   }
   return into;
-}
-
-/**
- * The property whose value says which payload a result carries.
- *
- * Inferred from the converted schema rather than declared beside it, so the
- * inventory cannot group by a property the payload does not actually
- * discriminate on. A property qualifies when every alternative declares it,
- * every one of them fixes it to a single value, and no two of those values are
- * the same — which is exactly what makes the value answer "which payload is
- * this". A property fixed to a *set* of values does not qualify: it does not
- * name one payload, and `arr_config_observe`'s `domain` is the case in point,
- * where sixteen domain values map onto three payload shapes that `family`
- * names outright.
- *
- * A tie resolves to the first qualifying property in the first alternative's
- * declaration order, which is deterministic for a given schema rather than
- * merely arbitrary.
- */
-function inferDiscriminator(alternatives: readonly JsonSchema[]): string | undefined {
-  const first = alternatives[0];
-  if (first === undefined) {
-    return undefined;
-  }
-  for (const name of Object.keys(schemaAt(first, "properties") ?? {})) {
-    const values = alternatives.map((alternative) => {
-      const declared = propertyAt(alternative, name);
-      return declared === undefined ? [] : fixedValues(declared);
-    });
-    if (!values.every((fixed) => fixed.length === 1)) {
-      continue;
-    }
-    const named = values.map(([value]) => value);
-    if (new Set(named).size === named.length) {
-      return name;
-    }
-  }
-  return undefined;
 }
 
 /** One payload a tool can return, and the paths that reach into it. */
@@ -186,22 +165,28 @@ export interface PayloadInventory {
  * tool does not have.
  */
 export function payloadInventory(outputSchema: z.ZodType): PayloadInventory | undefined {
-  const converted = z.toJSONSchema(outputSchema, { target: "draft-7", io: "output" }) as JsonSchema;
-  const outcomes = propertyAt(converted, "applications");
-  const data = propertyAt(outcomes === undefined ? undefined : schemaAt(outcomes, "items"), "data");
-  if (data === undefined) {
+  const payload = payloadSchemaOf(outputSchema);
+  if (payload === undefined) {
     return undefined;
   }
+  // The declared discriminator, not one inferred back out of the conversion: a
+  // discriminated union already records which property answers "which payload
+  // is this", and re-deriving it would mean guessing between properties that
+  // happen to look alike once converted. A plain union declares none, and its
+  // payloads are published as alternatives rather than labelled with a value no
+  // result carries.
+  const discriminator =
+    payload instanceof z.ZodDiscriminatedUnion ? payload.def.discriminator : undefined;
 
-  const alternatives = alternativesOf(data);
+  const converted = z.toJSONSchema(payload, { target: "draft-7", io: "output" }) as JsonSchema;
+  const alternatives = alternativesOf(converted);
   if (alternatives === undefined) {
     return {
       discriminator: undefined,
-      payloads: [{ variant: undefined, paths: leafPaths(data, "", []) }],
+      payloads: [{ variant: undefined, paths: leafPaths(converted, "", []) }],
     };
   }
 
-  const discriminator = inferDiscriminator(alternatives);
   const payloads = alternatives.map((alternative) => {
     const declared =
       discriminator === undefined ? undefined : propertyAt(alternative, discriminator);
@@ -231,14 +216,16 @@ export function describePayloadPaths(inventory: PayloadInventory): string {
     return `${inventoryHeader}\n${(payloads[0]?.paths ?? []).join(", ")}`;
   }
 
-  const grouped = new Map<string, { readonly variants: string[]; readonly paths: string }>();
+  // Keyed on the paths themselves, so payloads that read identically arrive at
+  // the same line and bring their own selecting value with them.
+  const grouped = new Map<string, string[]>();
   for (const payload of payloads) {
     const paths = payload.paths.join(", ");
-    const group = grouped.get(paths) ?? { variants: [], paths };
+    const variants = grouped.get(paths) ?? [];
     if (payload.variant !== undefined) {
-      group.variants.push(payload.variant);
+      variants.push(payload.variant);
     }
-    grouped.set(paths, group);
+    grouped.set(paths, variants);
   }
 
   const lead =
@@ -246,7 +233,7 @@ export function describePayloadPaths(inventory: PayloadInventory): string {
       ? `${inventoryHeader} Each line lists the fields of one alternative payload.`
       : `${inventoryHeader} Each line lists the fields of one payload, named by the ` +
         `data.${discriminator} value that selects it.`;
-  const lines = [...grouped.values()].map(({ variants, paths }) =>
+  const lines = [...grouped].map(([paths, variants]) =>
     variants.length === 0 ? `- ${paths}` : `- ${discriminator}=${variants.join("|")}: ${paths}`,
   );
   return [lead, ...lines].join("\n");
