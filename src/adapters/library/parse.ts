@@ -148,6 +148,42 @@ export function mediaInfo(value: z.infer<typeof mediaInfoSchema>) {
 export const customFormatList = z.array(z.object({ name: upstreamText })).nullish();
 
 /**
+ * Indexer flags exactly as an instance sends them, whatever that turns out to
+ * be.
+ *
+ * The field has shipped as a string list and as a numeric bitmask, and the two
+ * forms are live at once: Sonarr's release route answers with a bitmask where
+ * Radarr's answers with a list, and both manual-import routes answer with a
+ * bitmask. Nothing this server returns depends on the value — every reader
+ * keeps only the entries it can name and reports the rest as no flags — so
+ * constraining the shape could only refuse a whole result over an advisory
+ * field, and enumerating today's two forms would just defer that to the next
+ * one.
+ *
+ * It is declared once, here, so the acquisition and import adapters cannot
+ * disagree about one upstream concept.
+ */
+export const indexerFlagValue = z.unknown().nullish();
+
+/**
+ * The flag names an {@link indexerFlagValue} carried, if it carried any.
+ *
+ * A bitmask names nothing and yields no names: the bit-to-name mapping is an
+ * application's internal enum rather than a documented contract, so decoding
+ * one would publish a claim this project cannot keep true across versions.
+ * Reporting no flags is honest; reporting guessed flags is not.
+ *
+ * A shape that names nothing is answered with an empty list rather than a
+ * distinct absent value, because every caller passes the result through a list
+ * normalizer that already reports an empty list as absent.
+ */
+export function indexerFlagStrings(value: unknown): readonly string[] {
+  return Array.isArray(value)
+    ? value.filter((flagName): flagName is string => typeof flagName === "string")
+    : [];
+}
+
+/**
  * Adds a runtime to a start instant, which is how both calendars derive an end.
  * An unparsable instant or a non-positive runtime yields no end rather than an
  * invented one.

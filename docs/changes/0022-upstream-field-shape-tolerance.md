@@ -5,7 +5,7 @@
 Stop refusing an entire release search because one advisory field arrived as a number instead of a list. Sonarr 4.0.19.2979 sends `indexerFlags` as a numeric bitmask, the acquisition adapter declares it as an array, and every Sonarr interactive search therefore fails with `unexpected_response`. The [Architecture spec](../specs/architecture/#upstream-connection-handling) now states the rule.
 
 **Spec:** [Architecture](../specs/architecture/)
-**Status:** draft
+**Status:** complete
 **Depends On:** —
 
 ## Motivation
@@ -95,13 +95,13 @@ The [Architecture spec](../specs/architecture/#upstream-connection-handling) own
 
 ## Tasks
 
-- [ ] Tolerate the shapes both applications send for indexer flags
-  - [ ] Declare the field so neither an array nor a number is refused, matching the import adapter's existing form
-  - [ ] Confirm an unnameable value maps to no flags with every other field intact
-  - [ ] Assert that the tolerance does not spread: a release carrying no usable identity or title is still refused, so the schema has not been loosened beyond the advisory field
-  - [ ] Correct the Sonarr release fixture to the numeric shape, update the assertions written against its current flag arrays, and add a case for an unnameable value — confirming the fixture correction fails against the current declaration before the fix lands
-- [ ] Check the rest of the release schema against captured bodies
-  - [ ] Compare each declared field against the Sonarr and Radarr release bodies and report any further divergence rather than widening this change
+- [x] Tolerate the shapes both applications send for indexer flags
+  - [x] Declare the field so neither an array nor a number is refused, matching the import adapter's existing form
+  - [x] Confirm an unnameable value maps to no flags with every other field intact
+  - [x] Assert that the tolerance does not spread: a release carrying no usable identity or title is still refused, so the schema has not been loosened beyond the advisory field
+  - [x] Correct the Sonarr release fixture to the numeric shape, update the assertions written against its current flag arrays, and add a case for an unnameable value — confirming the fixture correction fails against the current declaration before the fix lands
+- [x] Check the rest of the release schema against captured bodies
+  - [x] Compare each declared field against the Sonarr and Radarr release bodies and report any further divergence rather than widening this change
 
 ## Open Questions
 

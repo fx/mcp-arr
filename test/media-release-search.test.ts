@@ -4,6 +4,7 @@ import type { ReleaseSearchRequest } from "../src/adapters/acquisition/requests.
 import { runReleaseSearch } from "../src/adapters/acquisition/service.js";
 import type { ApplicationId } from "../src/applications.js";
 import {
+  expectError,
   expectOk,
   jsonResponse,
   releasePaging,
@@ -136,14 +137,73 @@ describe("sonarr interactive search", () => {
     expect(items[0]?.release.detail).toEqual({
       customFormats: ["Example Custom Format"],
       customFormatScore: 25,
-      indexerFlags: ["G_Freeleech"],
     });
     // A score of zero is a real answer, so the record stays; the lists the
     // instance returned empty are absent rather than reported as empty.
     expect(items[1]?.release.detail).toMatchObject({ customFormatScore: 0 });
     expect(items[1]?.release.detail?.customFormats).toBeUndefined();
-    expect(items[1]?.release.detail?.indexerFlags).toBeUndefined();
-    expect(items[2]?.release.detail?.indexerFlags).toEqual(["G_Freeleech", "G_Halfleech"]);
+    // Every row of the recorded body carries the bitmask this version sends,
+    // which names nothing.
+    for (const item of items) {
+      expect(item.release.detail?.indexerFlags).toBeUndefined();
+    }
+  });
+
+  it("names the indexer flags of an instance that reports them as a list", async () => {
+    const [record] = releases.sonarr;
+    const { items } = await run("sonarr", { ...episodeSearch, detail: "full" }, [
+      { ...record, indexerFlags: ["G_Freeleech", 4, null, "G_Halfleech"] },
+    ]);
+
+    expect(items[0]?.release.detail?.indexerFlags).toEqual(["G_Freeleech", "G_Halfleech"]);
+  });
+});
+
+/**
+ * The advisory field an instance may describe in a shape this server never
+ * modelled. Nothing a caller receives depends on it, so an unmodelled shape
+ * costs the flags and nothing else — while a field the answer does depend on is
+ * still required, which is what keeps this tolerance from spreading.
+ */
+describe("an unmodelled indexer-flag shape", () => {
+  const unnameable = [0, 12, "G_Freeleech", { bits: 12 }, true];
+
+  it.each(unnameable)("returns the release with no flags when it is %o", async (flags) => {
+    const [record] = releases.sonarr;
+    const { items } = await run("sonarr", { ...episodeSearch, detail: "full" }, [
+      { ...record, indexerFlags: flags },
+    ]);
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.release.detail?.indexerFlags).toBeUndefined();
+  });
+
+  it("leaves every other mapped field of the release intact", async () => {
+    const [record] = releases.sonarr;
+    const request = { ...episodeSearch, detail: "full" } as const;
+    const { items: tolerated } = await run("sonarr", request, [{ ...record, indexerFlags: 12 }]);
+    const { items: listed } = await run("sonarr", request, [{ ...record, indexerFlags: [] }]);
+
+    expect(tolerated[0]?.release).toEqual(listed[0]?.release);
+    expect(tolerated[0]?.identity).toEqual(listed[0]?.identity);
+    expect(tolerated[0]?.release).toMatchObject({
+      title: "Example Series S01E01 1080p WEB-DL x264-EXAMPLEGRP",
+      indexer: { id: 1, name: "Example Indexer A" },
+      quality: { name: "WEBDL-1080p", source: "web", resolution: 1080 },
+      decision: { approved: true, rejections: [] },
+      sonarr: { seriesTitle: "Example Series", seasonNumber: 1 },
+    });
+  });
+
+  it("does not extend to a release with no usable identity or title", async () => {
+    const [record] = releases.sonarr;
+    const harness = searchHarness("sonarr", () =>
+      jsonResponse([{ ...record, guid: "", title: "" }]),
+    );
+
+    const error = expectError(await runReleaseSearch("sonarr", harness.client, episodeSearch));
+
+    expect(error.code).toBe("unexpected_response");
   });
 });
 

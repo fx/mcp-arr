@@ -4,6 +4,8 @@ import {
   count,
   customFormatList,
   flag,
+  indexerFlagStrings,
+  indexerFlagValue,
   languageList,
   languageNames,
   optionalUpstreamId,
@@ -64,13 +66,6 @@ const rejectionSchema = z.union([
   z.object({ reason: upstreamText, type: upstreamText }),
 ]);
 
-/**
- * Indexer flags, which have been a string list and a numeric bitmask across
- * releases. Neither is worth refusing a whole search over, so the element type
- * is left open and {@link flagNames} keeps only what it can name.
- */
-const indexerFlagList = z.array(z.unknown()).nullish();
-
 /** The half of `ReleaseResource` every application returns. */
 export const releaseSchema = z.object({
   guid: z.string().min(1),
@@ -94,14 +89,10 @@ export const releaseSchema = z.object({
   languages: languageList,
   customFormats: customFormatList,
   customFormatScore: upstreamNumber,
-  indexerFlags: indexerFlagList,
+  indexerFlags: indexerFlagValue,
 });
 
 export type UpstreamRelease = z.infer<typeof releaseSchema>;
-
-function flagNames(values: readonly unknown[] | null | undefined): readonly string[] | undefined {
-  return textList((values ?? []).filter((value): value is string => typeof value === "string"));
-}
 
 /**
  * What a free-form upstream sentence may not carry out.
@@ -327,7 +318,7 @@ function releaseDetail(
   return present({
     customFormats: textList((record.customFormats ?? []).map((format) => format.name)),
     customFormatScore: count(record.customFormatScore),
-    indexerFlags: flagNames(record.indexerFlags),
+    indexerFlags: textList(indexerFlagStrings(record.indexerFlags)),
     categories,
   });
 }

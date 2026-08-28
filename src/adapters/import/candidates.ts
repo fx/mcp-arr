@@ -11,6 +11,8 @@ import {
   count,
   customFormatList,
   flag,
+  indexerFlagStrings,
+  indexerFlagValue,
   optionalUpstreamId,
   parseUpstream,
   present,
@@ -124,7 +126,7 @@ const candidateSchema = z.object({
   qualityWeight: z.number().nullish(),
   customFormatScore: z.number().nullish(),
   customFormats: customFormatList,
-  indexerFlags: z.unknown().nullish(),
+  indexerFlags: indexerFlagValue,
   languages: z.array(z.object({ name: upstreamText })).nullish(),
   quality: z
     .object({
@@ -496,15 +498,6 @@ function safeLabelList(
   return cleaned.length === 0 ? undefined : cleaned;
 }
 
-function indexerFlagNames(value: unknown, known: readonly string[]): readonly string[] | undefined {
-  return Array.isArray(value)
-    ? safeLabelList(
-        value.filter((flagName): flagName is string => typeof flagName === "string"),
-        known,
-      )
-    : undefined;
-}
-
 /**
  * Maps one upstream candidate onto the model.
  *
@@ -601,7 +594,7 @@ export function mapCandidate(
       known,
     ),
     customFormatScore: count(record.customFormatScore),
-    indexerFlags: indexerFlagNames(record.indexerFlags, known),
+    indexerFlags: safeLabelList(indexerFlagStrings(record.indexerFlags), known),
     decision: { importable, rejections },
     // A candidate the instance already associates with a library file is a file
     // the library holds, not a new import. Both applications report that as the
