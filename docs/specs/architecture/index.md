@@ -70,6 +70,13 @@ The feature contracts are split across:
 - Every upstream request MUST send the configured API key in the `X-Api-Key` header.
 - API keys MUST NOT appear in tool results, diagnostics, or upstream error messages returned to the caller.
 - Upstream requests MUST use finite timeouts and MUST distinguish unavailable instances, authentication failures, validation failures, rate limits, and unexpected responses.
+- A result MUST NOT be refused because a value the answer does not depend on arrived in a shape this server does not model; the unusable value MUST be omitted and the rest of the result returned.
+
+#### Scenario: An advisory field changes shape
+
+- **GIVEN** a supported application sends an advisory field in a shape this server does not model
+- **WHEN** a query that does not depend on that field runs
+- **THEN** the query succeeds, the unusable value is absent from the result, and no other record is lost
 
 #### Scenario: Upstream authentication failure
 
@@ -112,6 +119,14 @@ The feature contracts are split across:
 - Mutations MUST have tests for direct apply, planned apply, stale plans, retries, partial failure, and redaction.
 - The full build, type check, lint, and test suite MUST run in CI and failures MUST block merge.
 - Committed tests MUST NOT be focused, skipped, or dependent on live personal *arr instances.
+- A recorded upstream fixture MUST correspond to a response the application it names genuinely produces at the version and route it names, and MUST NOT be authored from documentation or inferred from another application's shape.
+- Refreshing the recorded fixtures against a live instance MUST be a repeatable procedure that sanitizes what it captures, and MUST remain outside the test suite so that running the tests never requires an instance.
+
+#### Scenario: A recorded fixture contradicts the instance it names
+
+- **GIVEN** a recorded fixture declares an application, a version, and a route
+- **WHEN** that route is read from a real instance of that application at that version
+- **THEN** the recorded body carries the same field shapes the instance returns, so a shape the instance never sends cannot stand as the recorded contract
 
 #### Scenario: Protocol output remains clean
 
@@ -186,3 +201,5 @@ None.
 |------|--------|----------|
 | 2026-08-25 | Initial desired-state specification created | [0001-project-foundation](../../changes/0001-project-foundation.md) |
 | 2026-08-26 | Packaging and release contract added for npm distribution | [0011-npm-publishing](../../changes/0011-npm-publishing.md) |
+| 2026-08-28 | Recorded fixtures required to match the instance they name, with a repeatable capture procedure | [0021-live-verified-fixtures](../../changes/0021-live-verified-fixtures.md) |
+| 2026-08-28 | Unmodelled shapes in fields a result does not depend on required to be dropped rather than fail the result | [0022-upstream-field-shape-tolerance](../../changes/0022-upstream-field-shape-tolerance.md) |
