@@ -51,7 +51,9 @@
       "fields": [
         { "order": 0, "name": "baseUrl", "value": "example-paused-application" },
         { "order": 1, "name": "apiKey", "value": "********", "privacy": "apiKey" },
-        { "order": 2, "name": "syncCategories", "value": [5000] }
+        { "order": 2, "name": "authUsername", "privacy": "userName" },
+        { "order": 3, "name": "authPassword", "privacy": "password" },
+        { "order": 4, "name": "syncCategories", "value": [5000] }
       ]
     }
   ]

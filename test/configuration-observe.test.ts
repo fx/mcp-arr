@@ -85,7 +85,9 @@ describe("observing providers", () => {
       { name: "minimumSeeders", value: 2 },
       { name: "seedRatio", value: 1.5 },
     ]);
-    expect(torrent?.withheld).toEqual({ count: 1 });
+    // `baseUrl`, and an `additionalParameters` the instance sent with no value
+    // key at all — never allowlisted, so absent or not it is only counted.
+    expect(torrent?.withheld).toEqual({ count: 2 });
   });
 
   it("reads a Radarr download client's single enable switch and both credentials", async () => {
@@ -162,6 +164,40 @@ describe("observing providers", () => {
     expect(bare?.secrets).toEqual([]);
     expect(bare?.enabled).toBe(true);
     expect(records[3]?.enabled).toBe(false);
+  });
+
+  it("reads a provider whose unset field arrives with no value key", async () => {
+    const { outcome } = await observe(
+      "prowlarr",
+      observationRequest("applications"),
+      serving([
+        {
+          id: 1,
+          name: "Example Unconfigured Application",
+          implementation: "Sonarr",
+          implementationName: "Sonarr",
+          configContract: "SonarrSettings",
+          syncLevel: "fullSync",
+          tags: [],
+          fields: [
+            // An upstream optional nobody filled in omits the key entirely
+            // rather than sending a null, so this is the ordinary shape of an
+            // unconfigured field and not a payload to refuse.
+            { name: "authPassword", privacy: "password" },
+            { name: "syncCategories" },
+          ],
+        },
+      ]),
+    );
+    const application = firstRecord(providerRecords(outcome));
+
+    expect(application.secrets).toEqual([
+      { name: "authPassword", state: "unconfigured", masked: false },
+    ]);
+    expect(application.fields).toEqual([]);
+    // The allowlisted field has no value to report, so it is counted rather
+    // than published.
+    expect(application.withheld).toEqual({ count: 1 });
   });
 
   it("omits field values at summary detail while still reporting secret state", async () => {
