@@ -10,7 +10,9 @@ Remove `arr_config_reconcile` and everything that exists only to serve it. Confi
 
 ## Motivation
 
-`arr_config_reconcile` is the write half of the configuration surface, and it is the most expensive tool in the server by every measure that matters: the largest published input schema at 3,869 bytes, a 7,443-byte output schema, the only input schema that fails to compile into a decoding grammar, and the only tool whose input carries 4096-character bounds.
+**Baseline.** The figures below were measured against the tree as it stood when this document was written, before any of [0016](./0016-bounded-provider-schema-observation.md) through [0019](./0019-selected-result-fields.md) had landed. They size the tool being removed; they are not targets to reproduce. [0017](./0017-grammar-compilable-input-schemas.md) shrinks published input schemas and [0018](./0018-bounded-tool-listing.md) shrinks published output schemas, so either landing first makes the two schema sizes here read smaller without changing the argument, which rests on what the tool does rather than on how many bytes it publishes.
+
+`arr_config_reconcile` is the write half of the configuration surface, and at that baseline it is the most expensive tool in the server by every measure that matters: the largest published input schema at 3,869 bytes, a 7,443-byte output schema, the only input schema that fails to compile into a decoding grammar, and the only tool whose input carries 4096-character bounds.
 
 Asked live, the three configured instances report what it can actually do:
 

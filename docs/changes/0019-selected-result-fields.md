@@ -24,7 +24,7 @@ A default-detail movie record carries `kind`, `application`, `reference`, `id`, 
 
 The pressure is real rather than theoretical: harnesses driving this server write full tool outputs to disk and read them back rather than holding them in context, and pay for the round trip on every call. Cutting a records page by 80–85% is the difference between a query being a normal step and being something a harness works around.
 
-This is the third and smallest of the three size problems on this server, and deliberately the last of them. The first is a single unbounded payload ([0016](./0016-bounded-provider-schema-observation.md), 1,044,260 bytes on one call); the second is a fixed per-session cost ([0018](./0018-bounded-tool-listing.md), 165,839 bytes before any call). Projection only pays off once those are gone, and one of them is its prerequisite.
+This is the third and smallest of the three size problems on this server, and deliberately the last of them. The first is a single unbounded payload ([0016](./0016-bounded-provider-schema-observation.md), 1,044,260 bytes on one call); the second is a fixed per-session cost ([0018](./0018-bounded-tool-listing.md), 165,839 bytes before any call). Both of those figures are the baselines their own documents record, quoted here to rank the three problems rather than to be reproduced — by the time this change lands, at least 0018 has already reduced one of them. Projection only pays off once those are gone, and one of them is its prerequisite.
 
 ## Requirements
 

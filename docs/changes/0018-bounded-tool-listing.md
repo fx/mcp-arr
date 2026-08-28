@@ -2,7 +2,7 @@
 
 ## Summary
 
-Publish a loose output schema per tool and move each payload's selectable paths into generated documentation. `tools/list` is 165,839 bytes, of which 135,490 is output schemas — 59,302 of that being fifteen near-identical copies of the same result envelope. Every session pays the whole thing before making a single call. This does for output what [0015](./0015-flat-tool-input-schemas.md) did for input: publish the shape a host needs, and carry what publication cannot afford as prose generated from the same schemas that validate.
+Publish a loose output schema per tool and move each payload's selectable paths into generated documentation. At the baseline this change was measured against, `tools/list` is 165,839 bytes, of which 135,490 is output schemas — 59,302 of that being one near-identical copy of the same result envelope per tool. Every session pays the whole thing before making a single call. This does for output what [0015](./0015-flat-tool-input-schemas.md) did for input: publish the shape a host needs, and carry what publication cannot afford as prose generated from the same schemas that validate.
 
 **Spec:** [Tool Contracts](../specs/tool-contracts/)
 **Status:** draft
@@ -10,16 +10,18 @@ Publish a loose output schema per tool and move each payload's selectable paths 
 
 ## Motivation
 
-Read off the wire from a spawned server, `tools/list` is 165,839 bytes. Names, descriptions, and input schemas account for roughly 21,000 of that. The rest is output schemas, split as follows:
+**Baseline.** Every figure below was read off the wire from a spawned server against the tree as it stood when this document was written: fifteen tools, before any of [0016](./0016-bounded-provider-schema-observation.md), [0017](./0017-grammar-compilable-input-schemas.md), [0019](./0019-selected-result-fields.md), or [0020](./0020-withdraw-configuration-writes.md) had landed. They establish the size of the problem, not a target to reproduce. [0020](./0020-withdraw-configuration-writes.md) removes a tool, so a listing measured after it lands is smaller and the counts below read one lower — that is expected and does not invalidate the argument, which is about repetition per tool rather than about any total.
+
+At that baseline `tools/list` is 165,839 bytes. Names, descriptions, and input schemas account for roughly 21,000 of that. The rest is output schemas, split as follows:
 
 | | bytes | what it is |
 |---|---|---|
-| envelope | **59,302** | fifteen copies of `status` / `applications` / `warnings` / `errors`, at 3,186 bytes per read tool and 4,628 per mutation tool |
+| envelope | **59,302** | one near-identical copy per tool, at 3,186 bytes per read tool and 4,628 per mutation tool |
 | data | 76,188 | the per-application payload, of which **62,384** is on the five collection-query tools |
 
-Three of the fifteen tools declare no payload at all, so their entire 4,620-byte output schema is envelope. `arr_library_query`'s is the largest single item in the listing at 40,630 bytes, 37,444 of it a union of twelve view payloads.
+Three tools declare no payload at all, so their entire 4,620-byte output schema is envelope. `arr_library_query`'s is the largest single item in the listing at 40,630 bytes, 37,444 of it a union of twelve view payloads.
 
-The envelope half is pure repetition. It describes the same four top-level keys, the same per-application outcome, the same item outcome, the same continuation, and the same closed error vocabulary, fifteen times, and a caller learns it once. The data half is not repetition — it is the only place a caller can find out that a movie record has a `title` — but JSON Schema is an expensive way to carry a field list, and a twelve-view union is a poor way to answer "what fields does a movie have".
+The envelope half is pure repetition. It describes the same four top-level keys, the same per-application outcome, the same item outcome, the same continuation, and the same closed error vocabulary, once per tool, and a caller learns it once. The data half is not repetition — it is the only place a caller can find out that a movie record has a `title` — but JSON Schema is an expensive way to carry a field list, and a twelve-view union is a poor way to answer "what fields does a movie have".
 
 That second point is what ties this change to [0019](./0019-selected-result-fields.md). A projection is only writable by a caller that knows which paths exist, so the naive reading is that `select` needs the verbose output schemas kept. The opposite is true: what `select` needs is a *list of paths*, which is roughly 300 bytes per view against 37,444 for the schema that implies them. Generating that list is both the cheaper publication and the better discovery surface, and it is the same generator `select` resolves against — so the paths a caller is told about and the paths that resolve cannot come apart.
 
@@ -66,10 +68,10 @@ The [Tool Contracts spec](../specs/tool-contracts/#bounded-structured-results) o
 ### Decisions
 
 - **Decision:** Broaden the published output schema rather than omitting it.
-  - **Why:** `outputSchema` is optional in the protocol, and omitting it would be the largest single saving. But a host that keys structured-content handling off its presence would stop receiving structured content, and the saving over a broadened envelope is a few hundred bytes across fifteen tools. Publishing something small and true costs almost nothing and breaks nothing.
+  - **Why:** `outputSchema` is optional in the protocol, and omitting it would be the largest single saving. But a host that keys structured-content handling off its presence would stop receiving structured content, and the saving over a broadened envelope is a few hundred bytes across the whole listing. Publishing something small and true costs almost nothing and breaks nothing.
   - **Alternatives considered:** Omitting `outputSchema` entirely, rejected above. Keeping the precise schemas and accepting the size, rejected because the repetition is 59,302 bytes that teaches a caller nothing after the first tool.
 - **Decision:** Publish nothing in the envelope below `applications[].data`.
-  - **Why:** Everything under it has exactly one consumer, and that consumer is inside this process. The internal output schema validates every envelope before it leaves, so a published error-code enum, item-outcome shape, or continuation shape is not checking anything — it is fifteen restatements of a structure the Tool Contracts spec already owns and the tool descriptions already imply. The four top-level keys and the location of `data` are the exception, and they earn their place: a projection path is written relative to `data`, so a caller has to be able to see where `data` is.
+  - **Why:** Everything under it has exactly one consumer, and that consumer is inside this process. The internal output schema validates every envelope before it leaves, so a published error-code enum, item-outcome shape, or continuation shape is not checking anything — it is one restatement per tool of a structure the Tool Contracts spec already owns and the tool descriptions already imply. The four top-level keys and the location of `data` are the exception, and they earn their place: a projection path is written relative to `data`, so a caller has to be able to see where `data` is.
   - **Alternatives considered:** Publishing the per-application outcome's fields by name and type, rejected because naming `warnings`, `continuation`, and `error` without their shapes tells a caller only that they exist, which the spec says already. Publishing `{ "type": "object" }` and nothing else, rejected because it hides where `data` sits and makes the path convention unreadable from the schema alone.
 - **Decision:** The inventory names leaf paths and carries no types.
   - **Why:** A leaf path is directly usable — a caller copies `items.radarr.tmdbId` into a projection verbatim. Once every path bottoms out at a leaf, the structure is implicit in the paths themselves and a type annotation restates what the path already shows. Types would only be necessary if the inventory listed interior nodes, leaving the caller to guess what to descend into; listing leaves removes the question rather than answering it.
@@ -93,12 +95,12 @@ The [Tool Contracts spec](../specs/tool-contracts/#bounded-structured-results) o
 - Removing `outputSchema` from publication.
 - Adding the projection itself, which is [0019](./0019-selected-result-fields.md).
 - Reducing input schemas or tool descriptions, which together are the remaining ~21,000 bytes and are already proportionate.
-- Introducing cross-tool schema sharing; the protocol's listing has no mechanism for it, and `$ref` within one tool's schema would not deduplicate across fifteen.
+- Introducing cross-tool schema sharing; the protocol's listing has no mechanism for it, and `$ref` within one tool's schema would not deduplicate across the listing.
 
 ## Tasks
 
 - [ ] Pin the listing before changing it
-  - [ ] Add a wire test recording `tools/list` byte size and asserting a ceiling, confirmed against the current 165,839
+  - [ ] Add a wire test recording `tools/list` byte size and asserting a ceiling, taking the pre-change size by measurement at implementation time rather than from this document's baseline figure, which a differing landing order makes unreproducible
   - [ ] Add a test asserting every returned envelope validates against its tool's internal output schema, green today
 - [ ] Publish a broadened output schema
   - [ ] Derive the published envelope at registration, with `data` unconstrained, leaving internal schemas untouched
