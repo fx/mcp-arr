@@ -211,6 +211,32 @@ describe("radarr library reads", () => {
     expect(mediaItems(monitored.data).map((item) => item.ref.id)).toEqual(["21"]);
   });
 
+  it("counts the monitored members of a collection that reports them", async () => {
+    // Supplied rather than recorded: Radarr 6.3.0.10514 sends no `monitored` on
+    // a collection's member rows, so every recorded collection counts zero and
+    // the count itself would go untested. It still has to hold for a release
+    // that sends it.
+    const collections = body("collection") as Array<{ movies: Record<string, unknown>[] }>;
+    const [first, ...rest] = collections;
+    const withMonitoring = [
+      {
+        ...first,
+        movies: (first?.movies ?? []).map((movie, index) => ({ ...movie, monitored: index === 0 })),
+      },
+      ...rest,
+    ];
+
+    const { outcome } = await run(
+      { view: "collections", detail: "summary", paging: paging(25) },
+      () => jsonResponse(withMonitoring),
+    );
+
+    expect(mediaItems(expectOk(outcome).data)[0]?.monitoring).toMatchObject({
+      monitoredChildren: 1,
+      totalChildren: 2,
+    });
+  });
+
   it("maps movie files, including the edition and full-detail media info", async () => {
     const { outcome, calls } = await run(
       { view: "movie_files", detail: "summary", movieId: 8, paging: paging(25) },

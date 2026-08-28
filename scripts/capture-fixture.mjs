@@ -19,19 +19,22 @@
  *   node scripts/capture-fixture.mjs --application sonarr --route manualimport \
  *     --query folder=/downloads/complete/example
  *
- *   --application  sonarr | radarr | prowlarr
- *   --route        an approved route, for example `config/downloadclient`
- *   --query        repeatable `name=value` upstream query parameter
- *   --dry-run      report what would be written without writing it
+ *   --application   sonarr | radarr | prowlarr
+ *   --route         an approved route, for example `config/downloadclient`
+ *   --query         repeatable `name=value` upstream query parameter
+ *   --dry-run       report what would be written without writing it
+ *   --fixture-root  where to write, defaulting to this repository's fixtures.
+ *                   Only the tests of this procedure pass it, so they can
+ *                   observe a real write without overwriting a recorded one.
  */
 
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { approvedFixtures, validateFixture, validateSanitizedValue } from "./fixture-contract.mjs";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
-const fixtureRoot = path.join(projectRoot, "test", "fixtures");
+const defaultFixtureRoot = path.join(projectRoot, "test", "fixtures");
 const requestTimeoutMs = 120_000;
 
 /** Fails the run with a message and no stack trace. */
@@ -80,6 +83,9 @@ function parseArguments(argv) {
         break;
       case "--query":
         options.query.push(value());
+        break;
+      case "--fixture-root":
+        options.fixtureRoot = value();
         break;
       case "--dry-run":
         options.dryRun = true;
@@ -149,22 +155,26 @@ async function readRoute(client, route, query = {}) {
 /**
  * Replaces what the fixture screens refuse, keeping the shape intact.
  *
- * The screens decide; this only supplies the replacement. A refused key is
- * dropped rather than renamed, because a secret's field name is what makes it
- * findable and no fixture needs it. A refused string becomes a neutral
- * stand-in, distinct per original value so that two fields which carried the
- * same value still carry the same value afterwards — what a fixture owes is
- * its field shapes, not its text.
+ * The screens decide; this only supplies the replacement, and it takes the
+ * decision from the refusal they raise rather than from a second copy of their
+ * rules. A key the screens name as secret-bearing or identifying is dropped
+ * outright: a credential's field name is what makes it findable, and no fixture
+ * needs it. Anything else refused — a value, or a key whose own text is a path
+ * or a URL — becomes a neutral stand-in, distinct per original text so that two
+ * fields which carried the same text still carry the same text afterwards. What
+ * a fixture owes is its field shapes, not its text.
  */
 function createSanitizer(screen) {
   const replacements = new Map();
 
-  const refusesKey = (key) => {
+  /** `keep`, `drop` — the name itself is the disclosure — or `rename`. */
+  const keyDisposition = (key) => {
     try {
       screen({ [key]: 1 }, "value");
-      return false;
-    } catch {
-      return true;
+      return "keep";
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      return /^(?:Secret-bearing|Identifying) key/u.test(message) ? "drop" : "rename";
     }
   };
 
@@ -197,14 +207,23 @@ function createSanitizer(screen) {
       return value.map(sanitize);
     }
     if (typeof value === "object" && value !== null) {
-      const result = {};
+      const entries = [];
       for (const [key, child] of Object.entries(value)) {
-        if (refusesKey(key)) {
+        const disposition = keyDisposition(key);
+        if (disposition === "drop") {
           continue;
         }
-        result[key] = sanitize(child);
+        // A key is text the instance chose too. Where a payload is a dictionary
+        // its keys carry paths and URLs, and one held only to the name lists
+        // would be written verbatim — so such a key is replaced exactly as a
+        // value is rather than dropped, which would take its value with it and
+        // lose a field the shape has.
+        entries.push([disposition === "rename" ? replace(key) : key, sanitize(child)]);
       }
-      return result;
+      // Built as entries rather than assigned: `result.__proto__ = …` invokes
+      // the prototype setter, so an upstream key of that name would silently
+      // take its whole subtree out of the fixture.
+      return Object.fromEntries(entries);
     }
     if (typeof value === "string" && refusesValue(value)) {
       return replace(value);
@@ -305,6 +324,7 @@ async function main() {
     body: sanitize(body),
   };
 
+  const fixtureRoot = path.resolve(options.fixtureRoot ?? defaultFixtureRoot);
   const filePath = path.join(fixtureRoot, approved.relativePath);
   try {
     validateFixture(fixture, { filePath, fixtureRoot });
@@ -326,6 +346,7 @@ async function main() {
     return;
   }
 
+  await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, `${JSON.stringify(fixture, null, 2)}\n`, "utf8");
   process.stderr.write(`Wrote ${summary}\n`);
   process.stderr.write("Run `npx biome check --write` to format, then run the suite.\n");

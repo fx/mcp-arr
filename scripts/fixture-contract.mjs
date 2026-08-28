@@ -154,12 +154,26 @@ const identifyingKeyParts = ["host", "instance", "ipaddress", "localaddress", "u
 
 const identifyingKeys = new Set(["ip"]);
 
+/**
+ * What may precede an absolute path for it to read as one.
+ *
+ * A leading slash is what distinguishes an absolute path from the separator in
+ * a relative one — `Season 01/Example.mkv` is a file name, not a path to
+ * refuse — so the patterns below anchor on a boundary rather than on the slash
+ * alone. The boundary is not only whitespace: a path arrives embedded in
+ * upstream free text as `detail=/srv/private/data` just as readily, and one
+ * that hid behind an `=` would be written verbatim. The delimiters here are the
+ * ones that separate a value from what precedes it, never a character a path
+ * segment can end in, so a relative name is still not a path.
+ */
+const pathBoundary = "(?:^|[\\s=,;|])";
+
 const sensitiveValuePatterns = [
   ["email address", /\b[^\s@]+@[^\s@]+\.[^\s@]+\b/u],
   ["URL", /\b[a-z][a-z0-9+.-]*:\/\/[^\s]+/iu],
   ["home path", /(?:~\/|\/(?:home|users)\/[^/\s]+(?:\/|\b)|\/root(?:\/|\b))/iu],
-  ["workspace path", /(?:^|\s)\/workspace(?:\/|\b)[^\s]*/iu],
-  ["sensitive path", /(?:^|\s)\/(?!media\/example(?:\/|$))[^\s]+/iu],
+  ["workspace path", new RegExp(`${pathBoundary}\\/workspace(?:\\/|\\b)[^\\s]*`, "iu")],
+  ["sensitive path", new RegExp(`${pathBoundary}\\/(?!media\\/example(?:\\/|$))[^\\s]+`, "iu")],
   ["Windows path", /\b[a-z]:[\\/][^\s]*/iu],
   ["UNC path", /\\\\[^\\\s]+\\[^\\\s]+/u],
   [
@@ -355,6 +369,10 @@ export function validateSanitizedValue(value, location) {
       ) {
         throw new Error(`Identifying key is not allowed at ${location}.${key}`);
       }
+      // A key is text an instance chose as readily as a value is. Upstream
+      // keys a path or a URL where a payload is a dictionary of them, and a key
+      // held only to the name lists above would carry one through untouched.
+      screenText(key, `${location}.${key}`);
       validateSanitizedValue(child, `${location}.${key}`);
     }
     return;
@@ -363,10 +381,15 @@ export function validateSanitizedValue(value, location) {
     return;
   }
 
-  if (containsIpAddress(value)) {
+  screenText(value, location);
+}
+
+/** Refuses one piece of text, whether it arrived as a value or as a key. */
+function screenText(text, location) {
+  if (containsIpAddress(text)) {
     throw new Error(`Sensitive IP address is not allowed at ${location}`);
   }
-  const scanned = value.replaceAll(mediaFileExtensionPattern, "");
+  const scanned = text.replaceAll(mediaFileExtensionPattern, "");
   for (const [description, pattern] of sensitiveValuePatterns) {
     if (pattern.test(scanned)) {
       throw new Error(`Sensitive ${description} is not allowed at ${location}`);
