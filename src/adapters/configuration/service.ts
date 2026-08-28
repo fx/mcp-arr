@@ -66,9 +66,10 @@ export type ConfigurationObservationOutcome =
       readonly status: "ok";
       readonly data: ConfigurationView;
       /**
-       * The untouched upstream payloads behind this page. Internal: it holds
-       * the secret values the view exists to keep out, so it belongs to
-       * reconciliation and never to a tool result.
+       * The untouched upstream payloads behind this page. Internal and never
+       * part of a tool result: it holds the secret values the view exists to
+       * keep out. Nothing consumes it while configuration is read-only; it is
+       * what a reinstated write surface would rebuild a full resource from.
        */
       readonly resources: ConfigurationResourceSet;
       readonly continuation: Continuation;

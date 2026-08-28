@@ -53,9 +53,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Rewrites a value so nothing a caller chose about ordering can be seen.
  *
  * Every collection a mutation intent carries is a set in meaning — the queue
- * items to resolve, the releases to grab, the fields to reconcile, the secrets
- * to resupply — and none of the published schemas gives an array's order a
- * meaning. So naming the same two items in the other order is the same
+ * items to resolve, the releases to grab, the files to import — and none of the
+ * published schemas gives an array's order a meaning. So naming the same two items in the other order is the same
  * mutation, and it has to reach the same receipt; if it did not, the reordered
  * repeat would miss the record and be sent upstream a second time, which is
  * exactly the duplicate the receipt exists to prevent.
