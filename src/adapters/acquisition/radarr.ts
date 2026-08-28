@@ -1,16 +1,9 @@
 import { z } from "zod";
 import type { UpstreamClient } from "../../http/client.js";
 import { type AdapterPage, type PageWindow, projectPage } from "../library/paging.js";
-import {
-  count,
-  parseUpstream,
-  text,
-  textList,
-  upstreamNumber,
-  upstreamText,
-} from "../library/parse.js";
+import { count, parseUpstream, textList, upstreamNumber, upstreamText } from "../library/parse.js";
 import type { ReleaseCandidate, ReleaseSearchItem } from "./model.js";
-import { cacheIdentity, mapReleaseBase, releaseSchema } from "./parse.js";
+import { cacheIdentity, mapReleaseBase, releaseSchema, scrubLabel } from "./parse.js";
 import type { ReleaseDetailLevel, ReleaseRequestFor } from "./requests.js";
 
 /**
@@ -48,9 +41,14 @@ function mapRelease(record: RadarrRelease, detail: ReleaseDetailLevel): ReleaseC
     ...mapReleaseBase(record, { detail, decided: true }),
     application,
     radarr: {
+      // The matched movie's titles are Radarr's own library metadata and are
+      // passed through as every other adapter passes an application's title. The
+      // edition is not: Radarr parsed it out of the indexer's release name, so
+      // it is a label of the same provenance as the release group and is
+      // scrubbed with it.
       movieTitles: movieTitles(record),
       year: count(record.year),
-      edition: text(record.edition),
+      edition: scrubLabel(record.edition, [record.guid]),
     },
   };
 }

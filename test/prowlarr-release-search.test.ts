@@ -319,6 +319,12 @@ describe("prowlarr release normalization", () => {
     expect(second.continuation.hasMore).toBe(false);
   });
 
+  /**
+   * A category is a name the indexer publishes, exactly as a flag is, and it is
+   * the one label only this adapter maps — so the canary goes into it here, and
+   * the search runs at full detail, where the category list actually reaches a
+   * caller.
+   */
   it("never lets a protected URL from an indexer reach a mapped result", async () => {
     const canary = "CANARY-5c1d7e-DO-NOT-LEAK";
     const poisoned = fixtures.releases.map((release) => ({
@@ -326,16 +332,31 @@ describe("prowlarr release normalization", () => {
       downloadUrl: `https://tracker.example.invalid/dl?apikey=${canary}`,
       magnetUrl: `magnet:?xt=urn:btih:${canary}`,
       infoUrl: `https://tracker.example.invalid/info?id=${canary}`,
+      categories: [
+        { name: `TV, see https://tracker.example.invalid/cats?apikey=${canary}` },
+        { name: `/media/private/${canary}/tv` },
+      ],
     }));
 
     const ok = expectOk(
-      (await run({ statuses: [], search: () => jsonResponse(poisoned) })).outcome,
+      (
+        await run(
+          { statuses: [], search: () => jsonResponse(poisoned) },
+          {
+            ...aggregate,
+            detail: "full",
+          },
+        )
+      ).outcome,
     );
 
     const serialized = JSON.stringify(ok.data.items.map((item) => item.release));
     expect(serialized).not.toContain(canary);
     expect(serialized).not.toContain("://");
     expect(serialized).not.toContain("magnet:");
+    // What the category still said is kept; the one that was only a path is not
+    // published as a bare marker.
+    expect(ok.data.items[0]?.release.detail?.categories).toEqual(["TV, see [redacted]"]);
   });
 
   it("never lets an indexer's own credentials out of the indexer definition", async () => {
@@ -345,6 +366,10 @@ describe("prowlarr release normalization", () => {
     const canary = "CANARY-2b90af-DO-NOT-LEAK";
     const indexers = fixtures.indexers.map((indexer) => ({
       ...indexer,
+      // An operator names their own indexers, and naming one after the tracker
+      // it points at is an ordinary way to do it — so the name is a label like
+      // any other and is scrubbed rather than reported verbatim.
+      name: `Example Indexer, see https://tracker.example.invalid/${canary}`,
       fields: [
         { name: "apiKey", value: canary },
         { name: "baseUrl", value: `https://tracker.example.invalid/${canary}` },

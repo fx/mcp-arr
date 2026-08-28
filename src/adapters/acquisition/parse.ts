@@ -8,11 +8,9 @@ import {
   indexerFlagStrings,
   indexerFlagValue,
   languageList,
-  languageNames,
   optionalUpstreamId,
   present,
   text,
-  textList,
   upstreamFlag,
   upstreamNumber,
   upstreamText,
@@ -230,14 +228,36 @@ export function scrubLabel(
 }
 
 /**
+ * Every marker either sanitizer can leave behind.
+ *
+ * {@link safeReason} writes a bare `[redacted]`, and `safeLabel` writes kinded
+ * ones — `[redacted url]`, `[redacted path]`, `[redacted id]` — so the shape has
+ * to be matched rather than a single literal.
+ */
+const redactionMarker = /\[redacted[^\]]*\]/gu;
+
+/** Whether a scrubbed label has nothing left but the markers of what it lost. */
+function namesNothing(label: string): boolean {
+  return label.replaceAll(redactionMarker, "").trim() === "";
+}
+
+/**
  * A list of upstream labels, each sanitized rather than merely trimmed.
  *
  * `textList` normalizes; it does not scrub. Every member of these lists is a
  * name an operator or an indexer chose — a custom format, a language, an
- * indexer flag — so any of them can carry a path, a URL, or an identifier, and
- * on these surfaces that is the one thing that must not travel. A member that
- * is entirely redacted is dropped rather than returned as a marker, because a
- * label that says only "[redacted]" names nothing a caller can use.
+ * indexer flag, an indexer category — so any of them can carry a path, a URL,
+ * or an identifier, and on these surfaces that is the one thing that must not
+ * travel.
+ *
+ * A member that is *entirely* redacted is dropped rather than returned as a
+ * marker, because a label that says only "[redacted]" names nothing a caller
+ * can use. A member that is only partly redacted is kept: {@link scrubLabel}
+ * has already replaced the protected run, so the words around it disclose
+ * nothing and are the half that told the caller something. Where the sensitive
+ * substring happened to sit inside the name is not a reason to publish
+ * "Freeleech, see [redacted]" and discard "[redacted] Freeleech" — they carry
+ * the same information and now meet the same fate.
  */
 export function safeLabelList(
   values: readonly (string | null | undefined)[] | null | undefined,
@@ -248,7 +268,7 @@ export function safeLabelList(
   }
   const cleaned = values
     .map((value) => scrubLabel(value, known))
-    .filter((value): value is string => value !== undefined && !value.startsWith("[redacted"));
+    .filter((value): value is string => value !== undefined && !namesNothing(value));
   return cleaned.length === 0 ? undefined : cleaned;
 }
 
@@ -332,14 +352,17 @@ function releaseAgeMinutes(record: UpstreamRelease): number | undefined {
   return days === undefined ? undefined : Math.round(days * 1440);
 }
 
-function releaseQuality(quality: UpstreamRelease["quality"]): ReleaseQuality | undefined {
+function releaseQuality(
+  quality: UpstreamRelease["quality"],
+  known: readonly string[],
+): ReleaseQuality | undefined {
   if (quality === null || quality === undefined) {
     return undefined;
   }
   const version = count(quality.revision?.version);
   return present({
-    name: text(quality.quality?.name),
-    source: text(quality.quality?.source),
+    name: scrubLabel(quality.quality?.name, known),
+    source: scrubLabel(quality.quality?.source, known),
     resolution: count(quality.quality?.resolution),
     proper: version === undefined ? undefined : version > 1,
     repack: flag(quality.revision?.isRepack),
@@ -349,25 +372,32 @@ function releaseQuality(quality: UpstreamRelease["quality"]): ReleaseQuality | u
 /**
  * The advisory half of a release, which only a full-detail search asks for.
  *
- * An indexer flag is a name the indexer chose, so it can carry a tracker URL, a
- * credential, or a server path exactly as a rejection reason can, and it is
- * scrubbed on the way out for the same reason and against the same literals —
- * the release's own cache identity included. That is also what the import
- * adapter does with the same field, so one concept cannot be scrubbed on one
- * surface and published verbatim on the other.
+ * Every name here is one an operator or an indexer chose — a custom format an
+ * operator wrote, a flag an indexer declares, a category an indexer publishes —
+ * so any of them can carry a tracker URL, a credential, or a server path
+ * exactly as a rejection reason can, and all of them are scrubbed on the way
+ * out against the same literals, the release's own cache identity included.
+ * That is also what the import adapter does with the same fields, so one
+ * concept cannot be scrubbed on one surface and published verbatim on the
+ * other. The categories arrive already scrubbed because only Prowlarr reports
+ * them, and it is the adapter that declares them.
  */
 function releaseDetail(
   record: UpstreamRelease,
   detail: ReleaseDetailLevel,
   categories: readonly string[] | undefined,
+  known: readonly string[],
 ): ReleaseDetail | undefined {
   if (detail !== "full") {
     return undefined;
   }
   return present({
-    customFormats: textList((record.customFormats ?? []).map((format) => format.name)),
+    customFormats: safeLabelList(
+      (record.customFormats ?? []).map((format) => format.name),
+      known,
+    ),
     customFormatScore: count(record.customFormatScore),
-    indexerFlags: safeLabelList(indexerFlagStrings(record.indexerFlags), [record.guid]),
+    indexerFlags: safeLabelList(indexerFlagStrings(record.indexerFlags), known),
     categories,
   });
 }
@@ -383,25 +413,47 @@ export interface ReleaseBaseOptions {
   readonly categories?: readonly string[] | undefined;
 }
 
-/** Maps the half of a release every application describes the same way. */
+/**
+ * Maps the half of a release every application describes the same way.
+ *
+ * Every label on the result is scrubbed, and against the same literals the
+ * rejection reasons are — the release's own cache identity included. The
+ * indexer's name is the operator's own wording, the quality and the language
+ * are names an application publishes and an operator may rename, and the
+ * release group is a fragment the application parsed out of the indexer's
+ * title: none of them is prose this server composed, so each can carry a link,
+ * a credential, or a canonical path, and each is held to the same rule as the
+ * indexer flags and the custom formats. The activity and import adapters
+ * already scrub their counterparts of these fields; publishing one of them
+ * verbatim here is the divergence, not the scrubbing.
+ *
+ * The title is deliberately not among them. It is the release's identity — the
+ * one field a caller reads to choose between two offers, and the one this
+ * schema requires — and every other adapter in this project passes an
+ * application's own title through as it stands.
+ */
 export function mapReleaseBase(
   record: UpstreamRelease,
   options: ReleaseBaseOptions,
 ): ReleaseCandidateBase {
+  const known = [record.guid];
   return {
     title: record.title,
-    indexer: { id: count(record.indexerId), name: text(record.indexer) },
+    indexer: { id: count(record.indexerId), name: scrubLabel(record.indexer, known) },
     protocol: releaseProtocol(record.protocol),
-    quality: releaseQuality(record.quality),
-    languages: languageNames(record.languages),
+    quality: releaseQuality(record.quality, known),
+    languages: safeLabelList(
+      (record.languages ?? []).map((language) => language.name),
+      known,
+    ),
     sizeBytes: count(record.size),
     publishedAt: text(record.publishDate),
     ageMinutes: releaseAgeMinutes(record),
     seeders: count(record.seeders),
     leechers: count(record.leechers),
-    releaseGroup: text(record.releaseGroup),
+    releaseGroup: scrubLabel(record.releaseGroup, known),
     decision: options.decided ? releaseDecision(record) : undefined,
-    detail: releaseDetail(record, options.detail, options.categories),
+    detail: releaseDetail(record, options.detail, options.categories, known),
   };
 }
 

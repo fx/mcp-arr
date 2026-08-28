@@ -257,11 +257,19 @@ describe("protected release data", () => {
    * refuses to store one — so the canary is planted here instead, in exactly
    * the fields a real instance returns it in.
    *
-   * An indexer flag is one of them: the name is the indexer's own, so it can
-   * carry a link or a path exactly as a rejection reason can, and the flag list
-   * only reaches a caller at full detail. The canary is planted in both, and
-   * both detail levels are swept below, so a field that is mapped at only one
-   * of them cannot escape the check.
+   * Every label on a release is one of them, which is why the canary goes into
+   * all of them rather than into the field a defect was demonstrated on. A
+   * custom format is named by the operator, an indexer flag and a category by
+   * the indexer, and the quality, language, release group, and indexer name are
+   * names an application publishes and an operator may rewrite — so each can
+   * carry a link, a credential, or a canonical path, and none of them may carry
+   * one out. Two of these lists reach a caller only at full detail, so both
+   * detail levels are swept below and a field mapped at just one of them cannot
+   * escape the check.
+   *
+   * The title is deliberately left alone: it is the release's identity, it is
+   * passed through as every adapter here passes an application's own title, and
+   * poisoning it would assert a rule this server does not hold.
    */
   function poisoned(records: readonly ReleaseRecord[]): ReleaseRecord[] {
     return records.map((record) => ({
@@ -270,6 +278,24 @@ describe("protected release data", () => {
       magnetUrl: `magnet:?xt=urn:btih:${canary}`,
       infoUrl: `https://${trackerHost}/details?id=${canary}`,
       commentUrl: `https://${trackerHost}/comments?id=${canary}`,
+      indexer: `Example Indexer, see https://${trackerHost}/about?id=${canary}`,
+      releaseGroup: `EXAMPLEGRP https://${trackerHost}/group?id=${canary}`,
+      quality: {
+        quality: {
+          name: `WEBDL-1080p, see https://${trackerHost}/quality?id=${canary}`,
+          source: `/media/private/${canary}/web`,
+          resolution: 1080,
+        },
+        revision: { version: 1, real: 0, isRepack: false },
+      },
+      languages: [
+        { name: `English, see https://${trackerHost}/lang?apikey=${canary}` },
+        { name: `/media/private/${canary}/english` },
+      ],
+      customFormats: [
+        { name: `Freeleech, see https://${trackerHost}/formats?apikey=${canary}` },
+        { name: `/media/private/${canary}/formats` },
+      ],
       indexerFlags: [
         `Freeleech, see https://${trackerHost}/rules?apikey=${canary}`,
         `/media/private/${canary}/tv`,
@@ -316,6 +342,69 @@ describe("protected release data", () => {
     expect(items[0]?.release.detail?.indexerFlags).toEqual(["Freeleech, see [redacted]"]);
   });
 
+  /**
+   * The same rule, on the field the import adapter has always scrubbed. A
+   * custom format is named by the operator, so the two adapters must not
+   * disagree about whether that name is sanitized on the way out.
+   */
+  it("scrubs a custom format rather than dropping the whole list", async () => {
+    const { items } = await run(
+      "sonarr",
+      { ...episodeSearch, detail: "full" },
+      poisoned(releases.sonarr),
+    );
+
+    expect(items[0]?.release.detail?.customFormats).toEqual(["Freeleech, see [redacted]"]);
+  });
+
+  it("scrubs every other label a release carries", async () => {
+    const { items } = await run("sonarr", episodeSearch, poisoned(releases.sonarr));
+
+    expect(items[0]?.release).toMatchObject({
+      indexer: { name: "Example Indexer, see [redacted]" },
+      releaseGroup: "EXAMPLEGRP [redacted]",
+      quality: { name: "WEBDL-1080p, see [redacted]", source: "[redacted]" },
+      languages: ["English, see [redacted]"],
+    });
+  });
+
+  /**
+   * Where the protected run sat inside a label is not a reason to publish one
+   * name and discard another. Both of these carry the same thing — a word worth
+   * reading and a link that may not travel — so both keep the word; only a name
+   * that was nothing but the link is dropped, because it names nothing.
+   */
+  it("keeps what is left of a label whichever end the redaction landed on", async () => {
+    const [record] = releases.sonarr;
+    const { items } = await run("sonarr", { ...episodeSearch, detail: "full" }, [
+      {
+        ...record,
+        indexerFlags: [
+          `https://${trackerHost}/rules Freeleech`,
+          `Halfleech, see https://${trackerHost}/rules`,
+          `https://${trackerHost}/rules`,
+        ],
+      },
+    ]);
+
+    expect(items[0]?.release.detail?.indexerFlags).toEqual([
+      "[redacted] Freeleech",
+      "Halfleech, see [redacted]",
+    ]);
+  });
+
+  it("drops a label that is nothing but redaction markers", async () => {
+    const [record] = releases.sonarr;
+    const { items } = await run("sonarr", { ...episodeSearch, detail: "full" }, [
+      {
+        ...record,
+        indexerFlags: [`https://${trackerHost}/rules`, `/media/private/tv`, "and/or"],
+      },
+    ]);
+
+    expect(items[0]?.release.detail?.indexerFlags).toBeUndefined();
+  });
+
   it("keeps a release's own cache identity out of its indexer flags", async () => {
     const [record] = releases.sonarr;
     const { items } = await run("sonarr", { ...episodeSearch, detail: "full" }, [
@@ -323,6 +412,24 @@ describe("protected release data", () => {
     ]);
 
     expect(items[0]?.release.detail?.indexerFlags).toEqual(["Freeleech [redacted]"]);
+  });
+
+  /**
+   * Radarr's own half of a release. The edition is a fragment Radarr parsed out
+   * of the indexer's release name, so it is a label of the same provenance as
+   * the release group and is held to the same rule; the matched movie titles are
+   * Radarr's library metadata and are passed through as titles are everywhere
+   * else in this project.
+   */
+  it("scrubs the edition Radarr parsed out of a release name", async () => {
+    const [record] = releases.radarr;
+    const { items } = await run("radarr", movieSearch, [
+      { ...record, edition: `Director's Cut, see https://${trackerHost}/ed?id=${canary}` },
+    ]);
+
+    expect(items[0]?.release).toMatchObject({
+      radarr: { edition: "Director's Cut, see [redacted]" },
+    });
   });
 
   it("removes a link from a rejection rather than dropping the whole reason", async () => {

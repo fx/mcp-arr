@@ -102,6 +102,10 @@ The [Architecture spec](../specs/architecture/#upstream-connection-handling) own
   - [x] Correct the Sonarr release fixture to the numeric shape, update the assertions written against its current flag arrays, and add a case for an unnameable value — confirming the fixture correction fails against the current declaration before the fix lands
 - [x] Check the rest of the release schema against captured bodies
   - [x] Compare each declared field against the Sonarr and Radarr release bodies and report any further divergence rather than widening this change
+- [x] Make the two adapters agree on scrubbing the labels they both publish
+  - [x] Scrub the whole label class a search returns — indexer flags, custom formats, languages, indexer categories, the indexer, quality, and release-group names, and Radarr's edition — against the same literals the rejection reasons use, as the import adapter already does with its counterparts
+  - [x] Drop a label only when it is entirely a redaction marker, so a name that merely contained a protected value keeps the words around it on both surfaces
+  - [x] Plant the protected-data canary in every one of those fields, so the suite covers the class rather than the field a defect was demonstrated on
 
 ## Field Comparison Result
 
