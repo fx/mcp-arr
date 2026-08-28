@@ -136,9 +136,10 @@ export const jobCancelHandler: OperationHandler = async (invocation) => {
   const record = resolved.record;
 
   if (invocation.mode === "plan") {
+    const planned: JobCancellationProjection = { stage: "planned", ...projectJob(record) };
     return {
       status: "ok",
-      data: projectJob(record),
+      data: planned,
       plan: {
         requestedEffects: [cancellationEffect(record)],
         predictedEffects: record.cancellation.supported ? [cancellationEffect(record)] : [],
@@ -158,6 +159,7 @@ export const jobCancelHandler: OperationHandler = async (invocation) => {
   }
 
   const projection: JobCancellationProjection = {
+    stage: "applied",
     ...projectJob(cancellation.record),
     outcome: cancellation.outcome,
   };

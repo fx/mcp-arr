@@ -64,7 +64,21 @@ function harness(): JobHarness {
   return { context, state, requested, clock };
 }
 
-function callTool(context: ToolContext, name: "arr_job_get" | "arr_job_cancel", input: unknown) {
+/**
+ * Calls one job tool and holds its envelope to the tool's own published output
+ * schema.
+ *
+ * Asserting the return value alone would pass for an envelope the server then
+ * refuses to publish: `runTool` validates every result against this same schema
+ * before it leaves the process and replaces a non-conforming one with
+ * `unexpected_response`. Checking it here is what makes these tests evidence
+ * about what a caller receives rather than about what the handler returned.
+ */
+async function callTool(
+  context: ToolContext,
+  name: "arr_job_get" | "arr_job_cancel",
+  input: unknown,
+): Promise<ToolResult<unknown>> {
   const definition = findToolDefinition(name);
   if (definition === undefined) {
     throw new Error(`${name} must be registered`);
@@ -73,7 +87,9 @@ function callTool(context: ToolContext, name: "arr_job_get" | "arr_job_cancel", 
   if (!parsed.success) {
     throw new Error(`${name} rejected its own sample input`);
   }
-  return definition.handle(context, parsed.data);
+  const result = await definition.handle(context, parsed.data);
+  expect(definition.outputSchema.safeParse(result).success, name).toBe(true);
+  return result;
 }
 
 function projectionOf(result: ToolResult<unknown>): Record<string, unknown> {
@@ -236,6 +252,7 @@ describe("arr_job_cancel", () => {
       const result = await cancel(job.context, job.record.reference);
 
       expect(result.status, scenario.outcome).toBe(scenario.status);
+      expect(projectionOf(result).stage, scenario.outcome).toBe("applied");
       expect(projectionOf(result).outcome, scenario.outcome).toBe(scenario.outcome);
       expect(result.mutation?.receipt?.state, scenario.outcome).toBe(scenario.receipt);
     }
@@ -316,6 +333,10 @@ describe("arr_job_cancel", () => {
         summary: `request cancellation of ${command.name}`,
       },
     ]);
+    // The plan describes the job and reports no outcome, because nothing has
+    // been attempted; the stage is what says so.
+    expect(projectionOf(result)).toMatchObject({ stage: "planned", cancellable: true });
+    expect(projectionOf(result).outcome).toBeUndefined();
     expect(job.state.jobs.resolve(job.record.reference)).toMatchObject({
       ok: true,
       record: { status: "started" },
@@ -334,6 +355,11 @@ describe("arr_job_cancel", () => {
     expect(result.applications[0]?.warnings).toContain(
       "this job cannot be cancelled; applying the plan will report it as uncancellable",
     );
+    // A plan for a job that cannot be cancelled is still a plan: it carries the
+    // same planned stage and no outcome, rather than reporting `uncancellable`
+    // for a cancellation nobody has requested.
+    expect(projectionOf(result)).toMatchObject({ stage: "planned", cancellable: false });
+    expect(projectionOf(result).outcome).toBeUndefined();
   });
 
   it("fails a recorded cancellation plan as stale once the job has ended", async () => {

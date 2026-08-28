@@ -213,7 +213,7 @@ changes:
     path: changes/0026-plan-mode-mutation-envelopes.md
     description: Make every mutation tool's published output schema admit its own plan-mode envelope
     spec: tool-contracts
-    status: draft
+    status: complete
     depends_on: []
   - id: "0027"
     name: single-application-mutation-scope
