@@ -217,6 +217,9 @@ function createSanitizer(screen) {
 
 async function main() {
   const options = parseArguments(process.argv.slice(2));
+  // Parsed before anything is read, so a malformed argument fails without
+  // having contacted the instance.
+  const query = parseQuery(options.query);
   const { applications, environment, client: http } = await loadServerModules();
 
   if (!applications.applicationIds.includes(options.application)) {
@@ -258,10 +261,22 @@ async function main() {
     timeoutMs: requestTimeoutMs,
   });
 
-  // The recorded version is part of a fixture's claim, so the instance has to
-  // be the version the inventory approves before anything is read from it.
+  // A fixture claims an application at a version, so the instance has to be
+  // both before anything is read from it. The version alone is not enough: a
+  // misconfigured or proxied URL can put another application behind the
+  // variables this one names, and its answer would then be written under this
+  // application's name — which is the same falsehood as a body recorded for a
+  // route its application does not serve.
   const statusRoute = "system/status";
   const status = await readRoute(client, statusRoute);
+  const expectedAppName = `${approved.application[0].toUpperCase()}${approved.application.slice(1)}`;
+  if (status?.appName !== expectedAppName) {
+    fail(
+      `The instance ${descriptor.urlVariable} names calls itself ` +
+        `${typeof status?.appName === "string" ? status.appName : "nothing"}, not ` +
+        `${expectedAppName}. Point that variable at a ${expectedAppName} instance.`,
+    );
+  }
   const reported = typeof status?.version === "string" ? status.version : "an unreported version";
   if (reported !== approved.version) {
     fail(
@@ -274,9 +289,7 @@ async function main() {
   // The status route has already been read, and reading it twice would record
   // the second answer while having checked the first.
   const body =
-    approved.route === statusRoute
-      ? status
-      : await readRoute(client, approved.route, parseQuery(options.query));
+    approved.route === statusRoute ? status : await readRoute(client, approved.route, query);
   if (typeof body !== "object" || body === null) {
     fail(`${approved.route} answered with a ${typeof body} rather than an object or array`);
   }

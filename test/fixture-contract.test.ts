@@ -6,6 +6,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   approvedFixtureInventory,
   approvedFixtures,
+  approvedFixtureTuples,
+  type FixtureApiVersion,
+  type FixtureApplication,
+  type FixtureVersion,
   fixturePathFor,
   loadFixture,
   validateFixture,
@@ -149,6 +153,34 @@ describe("versioned fixture contract", () => {
       "sonarr/v3/4.0.19.2979/wanted-missing.json",
     );
     expect(() => fixturePathFor("prowlarr", "series")).toThrow("No approved fixture");
+  });
+
+  it("declares exactly the labels the approved tuples use", () => {
+    // The contract's rules run as JavaScript and are declared for TypeScript in
+    // a file beside them, so the two could disagree: a label added to the
+    // declaration alone would type-check while the runtime contract refused it.
+    // A `Record` keyed by each declared union is exhaustive in both directions —
+    // TypeScript refuses a missing key and an excess one — so these three maps
+    // are the declared labels, and comparing them against the tuples is what
+    // makes a one-sided edit fail rather than pass quietly.
+    const declaredApplications: Record<FixtureApplication, true> = {
+      sonarr: true,
+      radarr: true,
+      prowlarr: true,
+    };
+    const declaredApiVersions: Record<FixtureApiVersion, true> = { v1: true, v3: true };
+    const declaredVersions: Record<FixtureVersion, true> = {
+      "4.0.19.2979": true,
+      "6.3.0.10514": true,
+      "2.5.2.5491": true,
+    };
+
+    const labels = <TKey extends keyof (typeof approvedFixtureTuples)[number]>(key: TKey) =>
+      new Set(approvedFixtureTuples.map((tuple) => tuple[key]));
+
+    expect(labels("application")).toEqual(new Set(Object.keys(declaredApplications)));
+    expect(labels("apiVersion")).toEqual(new Set(Object.keys(declaredApiVersions)));
+    expect(labels("version")).toEqual(new Set(Object.keys(declaredVersions)));
   });
 
   it("rejects a fixture whose endpoint is not the one its file records", () => {

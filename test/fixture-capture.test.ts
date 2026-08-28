@@ -116,6 +116,29 @@ describe("fixture capture procedure", () => {
     expect(stderr).toContain("does not resolve on this application");
   });
 
+  it("refuses an instance that is not the application the fixture names", async () => {
+    // A proxy or a mistyped variable can put another application behind the
+    // ones this fixture's application is configured by, and its answer would
+    // then be recorded under this application's name.
+    const url = await startStub({
+      "/api/v3/system/status": {
+        body: JSON.stringify({ appName: "Radarr", version: "4.0.19.2979" }),
+      },
+      "/api/v3/tag": { body: "[]" },
+    });
+
+    const { code, stderr } = await runCapture(url, [
+      "--application",
+      "sonarr",
+      "--route",
+      "tag",
+      "--dry-run",
+    ]);
+
+    expect(code).toBe(1);
+    expect(stderr).toContain("calls itself Radarr, not Sonarr");
+  });
+
   it("refuses an instance that is not the version the fixtures name", async () => {
     const url = await startStub({
       "/api/v3/system/status": { body: JSON.stringify({ appName: "Sonarr", version: "4.1.0.1" }) },
