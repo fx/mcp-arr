@@ -322,9 +322,19 @@ async function reprocess(
     episodeIds.push(episode.value);
   }
 
+  // The retained episodes belong to the media this reference was bound to, so a
+  // correction that moves the file to a different one leaves them behind rather
+  // than taking them along: a caller who selected another series did not select
+  // this series' episode, and an element saying otherwise is one both this
+  // server and the instance would approve. Where the caller named episodes,
+  // those are the mapping; where it named none against a moved media, the
+  // element names none and the application answers with its own rejection.
+  const movedMedia = mediaId !== undefined && mediaId.value !== retained.mediaId;
+  const carriedEpisodeIds = movedMedia ? undefined : retained.episodeIds;
+
   const compiled = await compileCorrections(invocation.adapter.client, application, {
     mediaId: mediaId?.value ?? retained.mediaId,
-    episodeIds: episodeIds.length > 0 ? episodeIds : retained.episodeIds,
+    episodeIds: episodeIds.length > 0 ? episodeIds : carriedEpisodeIds,
     quality: mapping.quality ?? retained.selected?.quality,
     languages: mapping.languages ?? retained.selected?.languages,
     releaseGroup: mapping.releaseGroup ?? retained.selected?.releaseGroup,

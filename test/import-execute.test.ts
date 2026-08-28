@@ -182,6 +182,25 @@ describe("submitting a manual import", () => {
     expect(file?.releaseGroup).toBe("CorrectedGroup");
   });
 
+  it("leaves the scan's episodes behind where the mapping moved to another media", async () => {
+    const sonarr = instance();
+
+    // The command is assembled from the recovered scan row a second time, so
+    // the mapping the validation approved has to survive that assembly. The row
+    // still maps this file to series 12 and episode 1001; the reference stands
+    // for series 33 and no episodes, and 1001 is not an episode of series 33.
+    await submitManualImport(
+      sonarr.client,
+      "sonarr",
+      [fileRequest(cleanFile, { patch: { mediaId: 33 } })],
+      "auto",
+    );
+
+    const [file] = commandFiles(sonarr.commands[0] ?? {});
+    expect(file?.seriesId).toBe(33);
+    expect(file).not.toHaveProperty("episodeIds");
+  });
+
   it("sends one command for several files rather than one command each", async () => {
     const sonarr = instance();
 

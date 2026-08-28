@@ -299,6 +299,10 @@ describe("arr_capabilities", () => {
     ).toBe(true);
   });
 
+  // The lists below are what says a wanted search stays individually callable on
+  // each library application: requiring one application per call narrows what a
+  // single call targets, not what an application can do, so both reports have to
+  // keep naming `arr_search_start/missing` and `arr_search_start/cutoff_unmet`.
   it("advertises exactly the operations that already have adapter behavior", async () => {
     const context = createTestToolContext({
       environment: allApplicationsEnvironment,

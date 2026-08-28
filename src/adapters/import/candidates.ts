@@ -3,14 +3,16 @@ import { z } from "zod";
 import type { UpstreamBody, UpstreamClient, UpstreamQuery } from "../../http/client.js";
 import { isUpstreamError } from "../../http/errors.js";
 import { createToolError, type ToolError } from "../../tools/errors.js";
-import { safeReason } from "../acquisition/parse.js";
-import { safeLabel, safeText } from "../activity/parse.js";
+import { safeLabelList, safeReason, safeTaxonomyList, scrubLabel } from "../acquisition/parse.js";
+import { safeText } from "../activity/parse.js";
 import { type MediaApplication, mediaRef } from "../library/model.js";
 import { type AdapterPage, type PageWindow, projectPage } from "../library/paging.js";
 import {
   count,
   customFormatList,
   flag,
+  indexerFlagStrings,
+  indexerFlagValue,
   optionalUpstreamId,
   parseUpstream,
   present,
@@ -124,7 +126,7 @@ const candidateSchema = z.object({
   qualityWeight: z.number().nullish(),
   customFormatScore: z.number().nullish(),
   customFormats: customFormatList,
-  indexerFlags: z.unknown().nullish(),
+  indexerFlags: indexerFlagValue,
   languages: z.array(z.object({ name: upstreamText })).nullish(),
   quality: z
     .object({
@@ -142,6 +144,12 @@ const candidateSchema = z.object({
     .nullish(),
   series: z.object({ id: optionalUpstreamId }).nullish(),
   movie: z.object({ id: optionalUpstreamId }).nullish(),
+  // The flat identifier a reprocess *answer* names its media by. A scan row
+  // carries the nested object above and never these, so reading both is what
+  // lets one schema describe both answers rather than two schemas that would
+  // then have to be kept in step.
+  seriesId: optionalUpstreamId,
+  movieId: optionalUpstreamId,
   episodes: z.array(z.object({ id: optionalUpstreamId })).nullish(),
   episodeFileId: optionalUpstreamId,
   movieFileId: optionalUpstreamId,
@@ -465,46 +473,6 @@ function knownLiterals(context: ImportScanContext, record: UpstreamCandidate): r
   ].filter((value): value is string => value !== undefined);
 }
 
-/** One upstream label, with this scan's own literals removed before the rest. */
-function scrubLabel(
-  value: string | null | undefined,
-  known: readonly string[],
-): string | undefined {
-  return safeLabel(safeReason(value, known));
-}
-
-/**
- * A list of upstream labels, each sanitized rather than merely trimmed.
- *
- * `textList` normalizes; it does not scrub. Every member of these lists is a
- * name an operator or an indexer chose — a custom format, a language, an
- * indexer flag — so any of them can carry a path, a URL, or an identifier, and
- * on this surface that is the one thing that must not travel. A member that is
- * entirely redacted is dropped rather than returned as a marker, because a
- * label that says only "[redacted path]" names nothing a caller can use.
- */
-function safeLabelList(
-  values: readonly (string | null | undefined)[] | null | undefined,
-  known: readonly string[],
-): readonly string[] | undefined {
-  if (!Array.isArray(values)) {
-    return undefined;
-  }
-  const cleaned = values
-    .map((value) => scrubLabel(value, known))
-    .filter((value): value is string => value !== undefined && !value.startsWith("[redacted"));
-  return cleaned.length === 0 ? undefined : cleaned;
-}
-
-function indexerFlagNames(value: unknown, known: readonly string[]): readonly string[] | undefined {
-  return Array.isArray(value)
-    ? safeLabelList(
-        value.filter((flagName): flagName is string => typeof flagName === "string"),
-        known,
-      )
-    : undefined;
-}
-
 /**
  * Maps one upstream candidate onto the model.
  *
@@ -596,12 +564,16 @@ export function mapCandidate(
     languages,
     releaseGroup,
     releaseType: scrubLabel(record.releaseType, known),
-    customFormats: safeLabelList(
+    // The same concept the acquisition surface publishes, and held to the same
+    // rule: a custom format is the one operator-authored name whose values carry
+    // a separator by design, so scrubbing it strictly here while publishing it
+    // there would be the divergence this adapter exists to avoid.
+    customFormats: safeTaxonomyList(
       (record.customFormats ?? []).map((format) => format.name),
       known,
     ),
     customFormatScore: count(record.customFormatScore),
-    indexerFlags: indexerFlagNames(record.indexerFlags, known),
+    indexerFlags: safeLabelList(indexerFlagStrings(record.indexerFlags), known),
     decision: { importable, rejections },
     // A candidate the instance already associates with a library file is a file
     // the library holds, not a new import. Both applications report that as the
@@ -923,11 +895,15 @@ export async function reprocessCandidate(
   if (found.status !== "ok") {
     return found;
   }
-  const { context, row } = found.recovered;
+  const { context, row, path } = found.recovered;
 
   const answered = parseUpstream(
     z.array(candidateSchema),
-    await client.post(manualImportRoute, { files: [correctedRow(context, row, patch)] }),
+    // The list itself, not an object holding one. Both applications declare this
+    // payload as the collection and answer an object wrapping it with a `400`
+    // naming the type they wanted, so the wrapper made every reprocess — and
+    // therefore every import, which revalidates through this — fail outright.
+    await client.post(manualImportRoute, [reprocessRow(context, row, path, patch)]),
     application,
     manualImportRoute,
   );
@@ -935,54 +911,210 @@ export async function reprocessCandidate(
   if (decided === undefined) {
     return { status: "absent", error: scanRefusal(application, "absent") };
   }
-  const candidate = mapCandidate(context, decided);
+  const candidate = mapCandidate(context, decidedRow(row, decided));
   return candidate === undefined
     ? { status: "absent", error: scanRefusal(application, "absent") }
     : { status: "ok", candidate };
 }
 
 /**
- * The one row a reprocess sends, built field by field.
+ * The re-decided row, read over the scan row it re-decides.
  *
- * The instance's own row is the base, so everything the application decided and
- * this project does not model travels back unchanged — and the corrections are
- * written over it one named property at a time. Nothing is spread in from a
- * caller: the patch's own type admits only identifiers and objects read from
- * the instance, and this function names each of them, so a field the published
- * schema does not accept has no route to the payload even if one were added to
- * the patch type later.
+ * The answer is a narrower resource than a scan row: it restates the
+ * *decision* — the mapping, the quality, the languages, the rejections — and
+ * says nothing about the file itself. It carries no size, no row identifier, no
+ * relative path and no existing-file identity, and Sonarr names its media flat
+ * where a scan names it nested.
+ *
+ * So the scan this same call just re-ran is the base, and only what the answer
+ * actually decided is written over it. That direction is the point: a field the
+ * answer does not state keeps the value the instance reported for it moments
+ * ago, rather than becoming absent because this list forgot to name it. The
+ * decision's own fields are closed by what the resource declares, and a
+ * decision the answer does state — including an empty rejection list — wins
+ * over the scan's, which is the whole reason for asking.
+ *
+ * Four fields the answer does state are deliberately not taken from it, because
+ * what it states for them is a default rather than a decision. Sonarr answers
+ * `releaseType: "unknown"` for a file its own scan called a single episode or a
+ * season pack, so that one is left out of the list below entirely; both
+ * applications answer `indexerFlags` as a numeric bitfield naming nothing a
+ * caller can read, so that one is listed but guarded, and only a list of names
+ * is taken from it. Either way the scan's value stands, because taking the
+ * answer's would replace something this server knows with something it does
+ * not — and reporting "unknown" for a value already in hand is exactly the
+ * untrue answer this surface must not give.
+ *
+ * `customFormats` and `customFormatScore` are the other two, held to the same
+ * rule and also left out of the list. Here the reason is a limit rather than a
+ * recording: on the instances this was verified against, no file matches any
+ * format either application defines, so both the scan and the answer report an
+ * empty list and a zero score, and whether the answer recomputes them or
+ * defaults them could not be established. The scan is preferred because the
+ * two readings are not equally costly — a default would blank the formats of
+ * every re-decided candidate, unconditionally, while a recomputation differs
+ * from the scan only where a correction changed it, and the scan's value is
+ * still one this instance reported for this file moments ago rather than one
+ * nobody gave.
+ *
+ * Nothing is weakened by this: the fingerprint comparison still runs against a
+ * scan performed now rather than against anything a reference remembered.
  */
-function correctedRow(
+function decidedRow(scanned: UpstreamCandidate, decided: UpstreamCandidate): UpstreamCandidate {
+  return {
+    ...scanned,
+    ...stated({
+      // The media the answer may name flat, put back in the shape the mapping
+      // reads. Sonarr sends only the flat identifier; Radarr sends both.
+      series: decided.series ?? identified(decided.seriesId),
+      movie: decided.movie ?? identified(decided.movieId),
+      seasonNumber: decided.seasonNumber,
+      episodes: decided.episodes,
+      quality: decided.quality,
+      languages: decided.languages,
+      releaseGroup: decided.releaseGroup,
+      rejections: decided.rejections,
+      // Both applications restate these as a numeric bitfield here, which names
+      // nothing a caller can read, so an answer that is not a list of names
+      // leaves the scan's names in place.
+      indexerFlags: Array.isArray(decided.indexerFlags) ? decided.indexerFlags : undefined,
+    }),
+  };
+}
+
+/** The members an answer actually stated, where `undefined` is "did not say". */
+function stated<TFields extends Record<string, unknown>>(fields: TFields): Partial<TFields> {
+  return Object.fromEntries(
+    Object.entries(fields).filter(([, value]) => value !== undefined),
+  ) as Partial<TFields>;
+}
+
+/** The nested media object a flat identifier stands for, where there is one. */
+function identified(id: number | null | undefined): { id: number } | undefined {
+  const value = count(id);
+  return value === undefined ? undefined : { id: value };
+}
+
+/**
+ * The one element a reprocess sends.
+ *
+ * It is the request-side half of {@link importFileFields}, and it carries the
+ * two things a validation needs beyond the mapping: which folder the file was
+ * found under, and which season it is being decided for.
+ *
+ * The season is the row's own, except where the correction moves the file to
+ * another media record without saying which episodes it lands on — see
+ * {@link movesMediaUnnamed}. A season number counts within one series, so
+ * sending the scanned one against a different series states a mapping the
+ * caller did not select, exactly as the scanned episodes would.
+ */
+function reprocessRow(
   context: ImportScanContext,
   row: UpstreamCandidate,
+  path: string,
   patch: UpstreamMappingPatch,
 ): UpstreamBody {
-  const mediaProperty = context.application === "sonarr" ? "series" : "movie";
-  const base: Record<string, unknown> = {
-    ...(row as Record<string, unknown>),
+  const folderName = text(row.folderName) ?? scannedFolderName(context);
+  const seasonNumber = movesMediaUnnamed(row, patch)
+    ? undefined
+    : (count(row.seasonNumber) ?? context.seasonNumber);
+  return {
+    ...importFileFields(context, row, path, patch),
+    ...(folderName === undefined ? {} : { folderName }),
+    ...(seasonNumber === undefined ? {} : { seasonNumber }),
+  };
+}
+
+/** The name of the folder this scan reached, where it reached one. */
+function scannedFolderName(context: ImportScanContext): string | undefined {
+  return context.folder === undefined ? undefined : folderNameOf(context.folder);
+}
+
+/**
+ * What a manual-import request says about one file, field by named field.
+ *
+ * Shared by the reprocess that validates a mapping and by the command that
+ * imports it, because the two have to agree: a validation that approved one
+ * mapping while the import submitted another would be a guarantee about
+ * something nobody sent. Both applications declare a flat media identifier on
+ * these resources rather than the nested object a scan answers with, and
+ * spreading the scan row is what put the nested one into a request that wanted
+ * the identifier — so every field here is named, and a property an instance
+ * adds to a scan answer cannot travel back by existing.
+ *
+ * The caller's corrections win where there are any and the instance's own
+ * decision fills the rest, which is what makes the mapping that is imported the
+ * mapping that was validated.
+ */
+export function importFileFields(
+  context: ImportScanContext,
+  row: UpstreamCandidate,
+  path: string,
+  patch: UpstreamMappingPatch,
+): UpstreamBody {
+  const mediaId = patch.mediaId ?? count(row.series?.id) ?? count(row.movie?.id);
+  const episodeIds = movesMediaUnnamed(row, patch)
+    ? []
+    : (patch.episodeIds ??
+      (row.episodes ?? []).flatMap((episode) => {
+        const id = count(episode.id);
+        return id === undefined ? [] : [id];
+      }));
+  const quality =
+    patch.quality === undefined
+      ? row.quality
+      : { ...(isRecord(row.quality) ? row.quality : {}), quality: patch.quality };
+  const languages = patch.languages ?? row.languages;
+  const releaseGroup = patch.releaseGroup ?? row.releaseGroup ?? undefined;
+
+  return {
+    path,
+    ...(mediaId === undefined
+      ? {}
+      : context.application === "sonarr"
+        ? { seriesId: mediaId }
+        : { movieId: mediaId }),
+    ...(episodeIds.length === 0 ? {} : { episodeIds: [...episodeIds] }),
+    ...(quality === undefined || quality === null ? {} : { quality }),
+    ...(languages === undefined || languages === null ? {} : { languages: [...languages] }),
+    ...(releaseGroup === undefined ? {} : { releaseGroup }),
     // The download identity is what ties an imported file back to the queue row
-    // it came from, and the instance drops it from a scan answer, so it is put
-    // back from the context this call re-derived rather than from the row.
+    // it came from, and a scan answer drops it, so it comes from the context
+    // this call re-derived rather than from the row.
     ...(context.downloadId === undefined ? {} : { downloadId: context.downloadId }),
   };
+}
 
-  if (patch.mediaId !== undefined) {
-    base[mediaProperty] = { id: patch.mediaId };
+/**
+ * Whether this patch moves the file to a media record the row is not mapped to
+ * without saying which episodes it lands on.
+ *
+ * The row's episodes and season describe the media the *scan* filed this file
+ * under, and a correction that names a different series does not carry them
+ * with it: an episode belongs to the series it is an episode of, whatever the
+ * mapping around it is renamed to. Sending them anyway builds an element that
+ * reads as coherent and is not — a file mapped to one series carrying another
+ * series' episode — and Sonarr accepts it: verified against 4.0.19.2979, the
+ * corrected series with the scanned series' episode returns `200` with no
+ * rejections at all, so nothing later in this path would stop the import.
+ *
+ * Carrying nothing instead is what lets the application answer for itself.
+ * Against the same instance, the same file and the same corrected series with
+ * neither episodes nor a season returns a **permanent** rejection, which the
+ * rejection guard already refuses an import on — and the episodes it names in
+ * that answer belong to the corrected series, so what a caller is shown is a
+ * mapping that is at least about the media it asked for.
+ *
+ * Where the caller did name episodes there is nothing to infer: that mapping is
+ * theirs, it is what the reference is fingerprinted from, and this stays out of
+ * the way of it. Radarr reaches this with no episodes and no season to drop, so
+ * it needs no case of its own and has none.
+ */
+function movesMediaUnnamed(row: UpstreamCandidate, patch: UpstreamMappingPatch): boolean {
+  if (patch.mediaId === undefined || patch.episodeIds !== undefined) {
+    return false;
   }
-  if (patch.episodeIds !== undefined) {
-    base.episodes = patch.episodeIds.map((id) => ({ id }));
-    base.episodeIds = [...patch.episodeIds];
-  }
-  if (patch.quality !== undefined) {
-    base.quality = { ...(isRecord(row.quality) ? row.quality : {}), quality: patch.quality };
-  }
-  if (patch.languages !== undefined) {
-    base.languages = [...patch.languages];
-  }
-  if (patch.releaseGroup !== undefined) {
-    base.releaseGroup = patch.releaseGroup;
-  }
-  return base;
+  return patch.mediaId !== (count(row.series?.id) ?? count(row.movie?.id));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

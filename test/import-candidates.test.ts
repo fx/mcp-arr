@@ -461,6 +461,80 @@ describe("candidate disclosure", () => {
     expect(scanned.scan.items[0]?.indexerFlags).toEqual(["freeleech"]);
   });
 
+  /**
+   * The list helper is shared with the acquisition adapter, so the rule it
+   * follows is pinned on both surfaces: a name that was nothing but a protected
+   * value is dropped, and a name that merely contained one keeps the words
+   * around it — whichever end of the name the removal happened to land on.
+   */
+  it("keeps what a partly redacted label still says, at either end", async () => {
+    const rows = await activityFixture<Array<Record<string, unknown>>>("sonarr", "manualimport");
+    const laced = rows.map((row, index) =>
+      index === 0
+        ? {
+            ...row,
+            customFormats: [
+              { id: 9, name: "/media/private/rules Freeleech" },
+              { id: 10, name: "Halfleech, see /media/private/rules" },
+              { id: 11, name: "/media/private/rules" },
+            ],
+          }
+        : row,
+    );
+    const queue = await activityFixture<unknown[]>("sonarr", "queue/details");
+    const harness = libraryHarness("sonarr", (call) =>
+      jsonResponse(call.url.pathname.endsWith("/manualimport") ? laced : queue),
+    );
+    const scanned = await scanTrackedDownload(harness.client, "sonarr", trackedRequest, {
+      offset: 0,
+      pageSize: 25,
+    });
+    if (scanned.status !== "ok") {
+      throw new Error(`Expected a scan, got ${scanned.status}`);
+    }
+
+    expect(scanned.scan.items[0]?.customFormats).toEqual([
+      "[redacted] Freeleech",
+      "Halfleech, see [redacted]",
+    ]);
+  });
+
+  /**
+   * A custom format is one concept, and this adapter publishes it beside the
+   * acquisition adapter's copy of the same field — so the two must agree about
+   * whether `Repack/Proper` survives. It does, on both, and a path planted in
+   * the same field does not, on either.
+   */
+  it("publishes a slash-delimited custom format and still takes a planted path", async () => {
+    const rows = await activityFixture<Array<Record<string, unknown>>>("sonarr", "manualimport");
+    const laced = rows.map((row, index) =>
+      index === 0
+        ? {
+            ...row,
+            customFormats: [
+              { id: 9, name: "Repack/Proper" },
+              { id: 10, name: "/media/private/tv" },
+              { id: 11, name: "\\\\server\\share\\Private" },
+              { id: 12, name: "server\\share" },
+            ],
+          }
+        : row,
+    );
+    const queue = await activityFixture<unknown[]>("sonarr", "queue/details");
+    const harness = libraryHarness("sonarr", (call) =>
+      jsonResponse(call.url.pathname.endsWith("/manualimport") ? laced : queue),
+    );
+    const scanned = await scanTrackedDownload(harness.client, "sonarr", trackedRequest, {
+      offset: 0,
+      pageSize: 25,
+    });
+    if (scanned.status !== "ok") {
+      throw new Error(`Expected a scan, got ${scanned.status}`);
+    }
+
+    expect(scanned.scan.items[0]?.customFormats).toEqual(["Repack/Proper"]);
+  });
+
   it("removes this scan's own literals from every mapped label", async () => {
     // The short download identifier and the bare folder component carry no
     // separator and are too short for the generic identifier rule, so nothing

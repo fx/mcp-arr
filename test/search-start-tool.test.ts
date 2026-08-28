@@ -287,7 +287,7 @@ describe("arr_search_start plan mode", () => {
     const result = await call(searchStartTool, contextFor(instance, state), {
       target: "missing",
       mode: "plan",
-      applications: ["radarr"],
+      application: "radarr",
       monitoredOnly: true,
     });
 
@@ -308,7 +308,7 @@ describe("arr_search_start plan mode", () => {
     const result = await call(searchStartTool, contextFor(instance, state), {
       target: "missing",
       mode: "plan",
-      applications: ["sonarr"],
+      application: "sonarr",
       monitoredOnly: false,
     });
 
@@ -521,19 +521,40 @@ describe("arr_search_start refusals", () => {
     expect(instance.requests).toEqual([]);
   });
 
-  it("names one application rather than fanning a wanted-list search across both", async () => {
+  it("runs a wanted-list search on the one application the caller named", async () => {
     const state = createWorkflowState();
     const instance = upstream();
 
     const result = await call(searchStartTool, contextFor(instance, state), {
       target: "cutoff_unmet",
       mode: "apply",
+      application: "radarr",
       monitoredOnly: true,
     });
 
-    // The published mutation envelope carries one job and one receipt, so a
-    // mutation that targets two instances is refused with the instruction
-    // rather than run twice.
+    expect(result.status).toBe("ok");
+    expect(dataFor(result, "radarr")).toMatchObject({ stage: "started" });
+    // The other library application was never asked, so the one job and the one
+    // receipt the envelope carries describe the whole of what happened.
+    expect(result.applications.map((outcome) => outcome.application)).toEqual(["radarr"]);
+    expect(instance.requests.map((request) => request.application)).not.toContain("sonarr");
+  });
+
+  it("still refuses at the dispatcher when nothing named the application", async () => {
+    const state = createWorkflowState();
+    const instance = upstream();
+
+    // Deliberately not through `call`: the published schema now requires the
+    // selection, so this argument object cannot come from a caller reading it.
+    // What is under test is the backstop beneath the schema — the rule holds
+    // for an internal caller, and for the next mutation to publish an
+    // application selection, whether or not its schema was written correctly.
+    const result = await searchStartTool.handle(contextFor(instance, state), {
+      target: "cutoff_unmet",
+      mode: "apply",
+      monitoredOnly: true,
+    });
+
     expect(result.status).toBe("error");
     expect(result.errors[0]?.code).toBe("invalid_input");
     expect(result.errors[0]?.message).toContain("name one application");
@@ -547,7 +568,7 @@ describe("arr_search_start refusals", () => {
     const result = await call(searchStartTool, contextFor(offline, state), {
       target: "missing",
       mode: "apply",
-      applications: ["sonarr"],
+      application: "sonarr",
       monitoredOnly: true,
     });
 

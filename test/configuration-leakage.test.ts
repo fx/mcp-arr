@@ -178,7 +178,9 @@ describe("upstream failures carry no upstream content", () => {
     for (const [status, code] of [
       [400, "upstream_rejection"],
       [401, "upstream_authentication"],
-      [404, "stale_reference"],
+      // An observation carries no caller-supplied reference: its route is this
+      // server's own, so a miss is a composition fault, not a stale reference.
+      [404, "unexpected_response"],
       [429, "rate_limit"],
       [500, "unexpected_response"],
     ] as const) {

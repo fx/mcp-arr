@@ -1,15 +1,16 @@
 import { z } from "zod";
 import type { ApplicationId } from "../../applications.js";
+import { safeLabel, safeTaxonomyLabel } from "../activity/parse.js";
 import {
   count,
   customFormatList,
   flag,
+  indexerFlagStrings,
+  indexerFlagValue,
   languageList,
-  languageNames,
   optionalUpstreamId,
   present,
   text,
-  textList,
   upstreamFlag,
   upstreamNumber,
   upstreamText,
@@ -64,13 +65,6 @@ const rejectionSchema = z.union([
   z.object({ reason: upstreamText, type: upstreamText }),
 ]);
 
-/**
- * Indexer flags, which have been a string list and a numeric bitmask across
- * releases. Neither is worth refusing a whole search over, so the element type
- * is left open and {@link flagNames} keeps only what it can name.
- */
-const indexerFlagList = z.array(z.unknown()).nullish();
-
 /** The half of `ReleaseResource` every application returns. */
 export const releaseSchema = z.object({
   guid: z.string().min(1),
@@ -94,14 +88,10 @@ export const releaseSchema = z.object({
   languages: languageList,
   customFormats: customFormatList,
   customFormatScore: upstreamNumber,
-  indexerFlags: indexerFlagList,
+  indexerFlags: indexerFlagValue,
 });
 
 export type UpstreamRelease = z.infer<typeof releaseSchema>;
-
-function flagNames(values: readonly unknown[] | null | undefined): readonly string[] | undefined {
-  return textList((values ?? []).filter((value): value is string => typeof value === "string"));
-}
 
 /**
  * What a free-form upstream sentence may not carry out.
@@ -222,6 +212,106 @@ export function safeReason(
     : scrubbed;
 }
 
+/**
+ * One upstream label, with the caller's own literals removed before the rest.
+ *
+ * Defined here, beside {@link safeReason}, because it is that sanitizer plus a
+ * label's length bound, and because both the acquisition and the import adapter
+ * need it: each of them publishes lists of names an operator or an indexer
+ * chose, and the two must not disagree about whether such a name is scrubbed.
+ */
+export function scrubLabel(
+  value: string | null | undefined,
+  known: readonly string[],
+): string | undefined {
+  return safeLabel(safeReason(value, known));
+}
+
+/**
+ * The same, for the two fields whose values carry a path separator by design.
+ *
+ * A Prowlarr category is `TV/HD` and a custom format can be `Repack/Proper`, so
+ * {@link scrubLabel} empties exactly the half of those fields that carries the
+ * information. This is the only sanitizer in the project that publishes a
+ * separator, and it is deliberately not the default: `safeTaxonomyLabel` cannot
+ * tell a two-word name from a two-part path fragment, so every field that has no
+ * documented separator in its values keeps {@link scrubLabel}.
+ */
+export function scrubTaxonomyLabel(
+  value: string | null | undefined,
+  known: readonly string[],
+): string | undefined {
+  return safeTaxonomyLabel(safeReason(value, known));
+}
+
+/**
+ * Every marker either sanitizer can leave behind.
+ *
+ * {@link safeReason} writes a bare `[redacted]`, and `safeLabel` writes kinded
+ * ones — `[redacted url]`, `[redacted path]`, `[redacted id]` — so the shape has
+ * to be matched rather than a single literal.
+ */
+const redactionMarker = /\[redacted[^\]]*\]/gu;
+
+/** Whether a scrubbed label has nothing left but the markers of what it lost. */
+function namesNothing(label: string): boolean {
+  return label.replaceAll(redactionMarker, "").trim() === "";
+}
+
+/**
+ * A list of upstream labels, each sanitized rather than merely trimmed.
+ *
+ * `textList` normalizes; it does not scrub. Every member of these lists is a
+ * name an operator or an indexer chose — a custom format, a language, an
+ * indexer flag, an indexer category — so any of them can carry a path, a URL,
+ * or an identifier, and on these surfaces that is the one thing that must not
+ * travel.
+ *
+ * A member that is *entirely* redacted is dropped rather than returned as a
+ * marker, because a label that says only "[redacted]" names nothing a caller
+ * can use. A member that is only partly redacted is kept: {@link scrubLabel}
+ * has already replaced the protected run, so the words around it disclose
+ * nothing and are the half that told the caller something. Where the sensitive
+ * substring happened to sit inside the name is not a reason to publish
+ * "Freeleech, see [redacted]" and discard "[redacted] Freeleech" — they carry
+ * the same information and now meet the same fate.
+ */
+export function safeLabelList(
+  values: readonly (string | null | undefined)[] | null | undefined,
+  known: readonly string[],
+): readonly string[] | undefined {
+  return scrubbedList(values, known, scrubLabel);
+}
+
+/**
+ * A list of labels drawn from a slash-delimited taxonomy.
+ *
+ * The two callers are the only fields in the project whose published values
+ * carry a path separator by construction: Prowlarr's indexer categories and the
+ * custom formats an operator configures. Every other list stays on
+ * {@link safeLabelList}, because tolerance that is not needed is only exposure.
+ */
+export function safeTaxonomyList(
+  values: readonly (string | null | undefined)[] | null | undefined,
+  known: readonly string[],
+): readonly string[] | undefined {
+  return scrubbedList(values, known, scrubTaxonomyLabel);
+}
+
+function scrubbedList(
+  values: readonly (string | null | undefined)[] | null | undefined,
+  known: readonly string[],
+  scrub: (value: string | null | undefined, known: readonly string[]) => string | undefined,
+): readonly string[] | undefined {
+  if (!Array.isArray(values)) {
+    return undefined;
+  }
+  const cleaned = values
+    .map((value) => scrub(value, known))
+    .filter((value): value is string => value !== undefined && !namesNothing(value));
+  return cleaned.length === 0 ? undefined : cleaned;
+}
+
 function rejectionType(value: string | null | undefined): ReleaseRejectionType {
   const name = text(value)?.toLowerCase();
   return name === "permanent" || name === "temporary" ? name : "unknown";
@@ -302,32 +392,56 @@ function releaseAgeMinutes(record: UpstreamRelease): number | undefined {
   return days === undefined ? undefined : Math.round(days * 1440);
 }
 
-function releaseQuality(quality: UpstreamRelease["quality"]): ReleaseQuality | undefined {
+function releaseQuality(
+  quality: UpstreamRelease["quality"],
+  known: readonly string[],
+): ReleaseQuality | undefined {
   if (quality === null || quality === undefined) {
     return undefined;
   }
   const version = count(quality.revision?.version);
   return present({
-    name: text(quality.quality?.name),
-    source: text(quality.quality?.source),
+    name: scrubLabel(quality.quality?.name, known),
+    source: scrubLabel(quality.quality?.source, known),
     resolution: count(quality.quality?.resolution),
     proper: version === undefined ? undefined : version > 1,
     repack: flag(quality.revision?.isRepack),
   });
 }
 
+/**
+ * The advisory half of a release, which only a full-detail search asks for.
+ *
+ * Every name here is one an operator or an indexer chose — a custom format an
+ * operator wrote, a flag an indexer declares, a category an indexer publishes —
+ * so any of them can carry a tracker URL, a credential, or a server path
+ * exactly as a rejection reason can, and all of them are scrubbed on the way
+ * out against the same literals, the release's own cache identity included.
+ * That is also what the import adapter does with the same fields, so one
+ * concept cannot be scrubbed on one surface and published verbatim on the
+ * other. The categories arrive already scrubbed because only Prowlarr reports
+ * them, and it is the adapter that declares them.
+ */
 function releaseDetail(
   record: UpstreamRelease,
   detail: ReleaseDetailLevel,
   categories: readonly string[] | undefined,
+  known: readonly string[],
 ): ReleaseDetail | undefined {
   if (detail !== "full") {
     return undefined;
   }
   return present({
-    customFormats: textList((record.customFormats ?? []).map((format) => format.name)),
+    // A custom format is the one operator-authored name with a documented
+    // separator in it — TRaSH Guides ships one called `Repack/Proper` — so it
+    // takes the taxonomy rule. An indexer flag has no such shape: `Freeleech`,
+    // `Internal`, `Scene`. It keeps the strict one.
+    customFormats: safeTaxonomyList(
+      (record.customFormats ?? []).map((format) => format.name),
+      known,
+    ),
     customFormatScore: count(record.customFormatScore),
-    indexerFlags: flagNames(record.indexerFlags),
+    indexerFlags: safeLabelList(indexerFlagStrings(record.indexerFlags), known),
     categories,
   });
 }
@@ -343,25 +457,47 @@ export interface ReleaseBaseOptions {
   readonly categories?: readonly string[] | undefined;
 }
 
-/** Maps the half of a release every application describes the same way. */
+/**
+ * Maps the half of a release every application describes the same way.
+ *
+ * Every label on the result is scrubbed, and against the same literals the
+ * rejection reasons are — the release's own cache identity included. The
+ * indexer's name is the operator's own wording, the quality and the language
+ * are names an application publishes and an operator may rename, and the
+ * release group is a fragment the application parsed out of the indexer's
+ * title: none of them is prose this server composed, so each can carry a link,
+ * a credential, or a canonical path, and each is held to the same rule as the
+ * indexer flags and the custom formats. The activity and import adapters
+ * already scrub their counterparts of these fields; publishing one of them
+ * verbatim here is the divergence, not the scrubbing.
+ *
+ * The title is deliberately not among them. It is the release's identity — the
+ * one field a caller reads to choose between two offers, and the one this
+ * schema requires — and every other adapter in this project passes an
+ * application's own title through as it stands.
+ */
 export function mapReleaseBase(
   record: UpstreamRelease,
   options: ReleaseBaseOptions,
 ): ReleaseCandidateBase {
+  const known = [record.guid];
   return {
     title: record.title,
-    indexer: { id: count(record.indexerId), name: text(record.indexer) },
+    indexer: { id: count(record.indexerId), name: scrubLabel(record.indexer, known) },
     protocol: releaseProtocol(record.protocol),
-    quality: releaseQuality(record.quality),
-    languages: languageNames(record.languages),
+    quality: releaseQuality(record.quality, known),
+    languages: safeLabelList(
+      (record.languages ?? []).map((language) => language.name),
+      known,
+    ),
     sizeBytes: count(record.size),
     publishedAt: text(record.publishDate),
     ageMinutes: releaseAgeMinutes(record),
     seeders: count(record.seeders),
     leechers: count(record.leechers),
-    releaseGroup: text(record.releaseGroup),
+    releaseGroup: scrubLabel(record.releaseGroup, known),
     decision: options.decided ? releaseDecision(record) : undefined,
-    detail: releaseDetail(record, options.detail, options.categories),
+    detail: releaseDetail(record, options.detail, options.categories, known),
   };
 }
 

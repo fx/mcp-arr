@@ -40,6 +40,16 @@ export type UpstreamQuery = Readonly<Record<string, UpstreamQueryValue | undefin
 export type UpstreamBody = Readonly<Record<string, unknown>>;
 
 /**
+ * Either shape a write may carry: the object above, or a list.
+ *
+ * A few upstream routes declare their payload as the collection itself, and
+ * refuse an object wrapping it with a `400` naming the type they wanted. The
+ * members of such a list are built exactly as every other body is, so what this
+ * widens is the JSON shape and nothing about where the values come from.
+ */
+export type UpstreamRequestBody = UpstreamBody | readonly UpstreamBody[];
+
+/**
  * One answer to a validating write: the status the instance chose, and whatever
  * body came with it.
  *
@@ -84,7 +94,7 @@ export interface UpstreamClient {
   readonly apiBaseUrl: string;
   get(path: string, query?: UpstreamQuery): Promise<unknown>;
   /** Creates an upstream resource. Only a mutation adapter may call this. */
-  post(path: string, body: UpstreamBody, query?: UpstreamQuery): Promise<unknown>;
+  post(path: string, body: UpstreamRequestBody, query?: UpstreamQuery): Promise<unknown>;
   /** Replaces an upstream resource. Only a mutation adapter may call this. */
   put(path: string, body: UpstreamBody, query?: UpstreamQuery): Promise<unknown>;
   /**
@@ -240,7 +250,7 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
     method: "GET" | "POST" | "PUT" | "DELETE",
     path: string,
     query: UpstreamQuery | undefined,
-    body: UpstreamBody | undefined,
+    body: UpstreamRequestBody | undefined,
     retainStatus = false,
   ): Promise<unknown> => {
     const joined = joinUpstreamUrl(apiBaseUrl, path);
@@ -401,7 +411,7 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
       return send("GET", path, query, undefined);
     },
 
-    post(path: string, body: UpstreamBody, query?: UpstreamQuery): Promise<unknown> {
+    post(path: string, body: UpstreamRequestBody, query?: UpstreamQuery): Promise<unknown> {
       return send("POST", path, query, body);
     },
 

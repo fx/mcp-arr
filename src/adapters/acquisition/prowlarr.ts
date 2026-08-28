@@ -8,7 +8,6 @@ import {
   flag,
   parseUpstream,
   text,
-  textList,
   upstreamFlag,
   upstreamId,
   upstreamNumber,
@@ -21,7 +20,14 @@ import type {
   ReleaseSearchItem,
   SearchCompleteness,
 } from "./model.js";
-import { cacheIdentity, mapReleaseBase, releaseSchema, safeReason } from "./parse.js";
+import {
+  cacheIdentity,
+  mapReleaseBase,
+  releaseSchema,
+  safeReason,
+  safeTaxonomyList,
+  scrubLabel,
+} from "./parse.js";
 import type { ReleaseDetailLevel, ReleaseRequestFor } from "./requests.js";
 
 /**
@@ -95,15 +101,31 @@ function mapRelease(record: ProwlarrRelease, detail: ReleaseDetailLevel): Releas
       // acceptance decision. Publishing an empty rejection list would read as
       // an approval nothing actually granted.
       decided: false,
-      categories: textList((record.categories ?? []).map((category) => category.name)),
+      // A category name is the indexer's own, exactly as a flag name is, so it
+      // is scrubbed against the same literals rather than merely normalized. It
+      // takes the taxonomy rule rather than the strict one because this taxonomy
+      // is slash-delimited by construction — `TV/HD`, `Movies/UHD` — and the
+      // subcategory is the half that carries the information.
+      categories: safeTaxonomyList(
+        (record.categories ?? []).map((category) => category.name),
+        [record.guid],
+      ),
     }),
     application,
     prowlarr: { grabs: count(record.grabs), files: count(record.files) },
   };
 }
 
+/**
+ * The indexer an outcome is about.
+ *
+ * The name is the operator's own wording for an indexer they configured, so it
+ * is scrubbed like every other label this surface returns — an indexer named
+ * after the tracker URL it points at is an ordinary way for one to be named,
+ * and that is the one thing the name may not carry out.
+ */
 function indexerOf(indexer: ProwlarrIndexer): ReleaseIndexer {
-  return { id: indexer.id, name: text(indexer.name) };
+  return { id: indexer.id, name: scrubLabel(indexer.name, []) };
 }
 
 /** Reads the configured indexers this search may query, newest identifier last. */

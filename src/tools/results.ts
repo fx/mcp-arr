@@ -96,6 +96,18 @@ export const mutationDetailSchema = z.strictObject({
 
 export type MutationDetail = z.infer<typeof mutationDetailSchema>;
 
+/**
+ * How many applications one mutation can target.
+ *
+ * It follows from the schema directly above: the mutation half of the envelope
+ * carries one plan reference, one job reference, and one receipt, each of which
+ * describes a single instance. A mutation that ran on two would produce records
+ * this shape cannot report, so the dispatcher refuses one that resolves to more
+ * — and a mutation intent that names the application it targets must not be
+ * able to name a second, or the schema advertises an intent always refused.
+ */
+export const maxMutationApplications = 1;
+
 export const itemOutcomeSchema = z.strictObject({
   reference: z.string().min(1).max(128),
   status: z.enum(itemOutcomeStatuses),

@@ -5,6 +5,8 @@ import {
   downloadIdentity,
   maxMessageLength,
   optionalClosedWord,
+  safeLabel,
+  safeTaxonomyLabel,
   safeText,
 } from "../src/adapters/activity/parse.js";
 import { runActivityQuery } from "../src/adapters/activity/service.js";
@@ -114,6 +116,143 @@ describe("upstream text sanitization", () => {
     expect(safeText("missing \\\\server\\Share Folder\\secret.mkv here")).toBe(
       "missing [redacted path] [redacted path] here",
     );
+  });
+
+  /**
+   * Every shape either sanitizer must take, whichever one is asked.
+   *
+   * The list is the union of three classes an adversarial reading found: a path
+   * whose head a prefix rule ate and whose tail was then re-tokenized, a
+   * secret-shaped token carrying exactly one separator, and a bare two-part
+   * shape that a prefix rule has already stripped down to. They are asserted
+   * against both sanitizers together, so a future tolerance added to one cannot
+   * quietly admit what the other refuses.
+   */
+  const alwaysRedacted: ReadonlyArray<readonly [string, string]> = [
+    // A path with a space in it. Each head rule is `[^\s"']`-bounded and stops
+    // at the first space, so the tail arrives at the residual rule as a token of
+    // its own. Neither sanitizer may publish it: the separator-joined pair is
+    // taken, and only the final bare word — which carries no separator and so
+    // names no directory level — survives, exactly as it does in prose.
+    ["\\\\NAS01\\media$\\Private Stash\\Home Movies", "[redacted path] [redacted path] Movies"],
+    ["C:\\Users\\someone\\My Documents\\Tax Returns", "[redacted path] [redacted path] Returns"],
+    ["~/Example Home/Private Notes", "[redacted path] [redacted path] Notes"],
+    ["/media/example/Example Series/S01E01.mkv", "[redacted path] [redacted path]"],
+    // A secret carrying exactly one separator. The plus is what made unpadded
+    // base64 survivable, and the taxonomy segment class no longer admits it.
+    ["ghp+16Cabcdefghij/klmnopqrstuvwxyz", "[redacted path]"],
+    ["sk-live+abcdefghijklmnop/qrstuvwxyz012345", "[redacted path]"],
+    ["YWJjZGVmZ2hpamtsbW5v+cHFyc3R1/dnd4eXoxMjM0", "[redacted path]"],
+    // A UNC share or a drive path a prefix rule has already stripped down to two
+    // bare parts. The taxonomy rule refuses these too, because it splits on a
+    // forward slash alone and no *arr taxonomy is written with a backslash.
+    ["server\\share", "[redacted path]"],
+    ["C\\Media", "[redacted path]"],
+    // The shapes the prefix rules were written for, unchanged.
+    ["/media/private/tv", "[redacted path]"],
+    ["/home/someone/downloads", "[redacted path]"],
+    ["C:\\Media\\file.mkv", "[redacted path]"],
+    ["\\\\server\\share\\file", "[redacted path]"],
+    ["some/dir/file.mkv", "[redacted path]"],
+    ["~/notes/private", "[redacted path]"],
+    ["d:/data/tv", "[redacted path]"],
+    ["example.com/path", "[redacted path]"],
+    ["//server/share", "[redacted path]"],
+    // A segment longer than a name ever is. The joiners keep it from being one
+    // unbroken run, so the opaque-identifier rule never sees it and the segment
+    // bound is what takes it.
+    ["Ampersand&Ampersand&Ampersand&Amp/tv", "[redacted path]"],
+    // A segment that opens with something other than a word.
+    ["-hidden/tv", "[redacted path]"],
+    ["https://tracker.example.invalid/rules?apikey=SECRET", "[redacted url]"],
+  ];
+
+  it("redacts every path and secret shape from a label, strict or taxonomy", () => {
+    for (const [value, expected] of alwaysRedacted) {
+      expect(safeLabel(value)).toBe(expected);
+      expect(safeTaxonomyLabel(value)).toBe(expected);
+    }
+    // A path embedded in prose is how one arrives in a rejection reason, and a
+    // label that carries a sentence is treated no more gently than the sentence
+    // would be.
+    expect(safeLabel("cannot import from /media/example/Example Series/S01E01.mkv here")).toBe(
+      "cannot import from [redacted path] [redacted path] here",
+    );
+  });
+
+  /**
+   * The whole of what the taxonomy rule costs, written down rather than implied.
+   *
+   * A bare `root/child` pair of short dotless words is what a two-level taxonomy
+   * looks like, and it is also what a path fragment looks like once a prefix
+   * rule has eaten everything that distinguished it. No test of shape can refuse
+   * `etc/passwd` and still publish `Movies/UHD`, so the tolerance is confined to
+   * the three fields whose values carry a separator by construction instead. The
+   * strict rule — every direct `safeLabel` caller, and `scrubLabel`, which is
+   * every other converted field — still takes all of them.
+   */
+  it("spares a bare two-part shape only on the taxonomy path, never the strict one", () => {
+    for (const value of [
+      "etc/passwd",
+      "home/someone",
+      "Users/someone",
+      "admin/hunter2",
+      "AKIAIOSFODNN7/wJalrXUtnFEMI",
+    ]) {
+      expect(safeLabel(value)).toBe("[redacted path]");
+      expect(safeTaxonomyLabel(value)).toBe(value);
+    }
+  });
+
+  /** The values the two taxonomy fields actually publish upstream. */
+  const taxonomyNames = [
+    "TV/HD",
+    "TV/SD",
+    "TV/Foreign",
+    "TV/Anime",
+    "Movies/HD",
+    "Movies/UHD",
+    "Audio/MP3",
+    "Audio/Lossless",
+    "Repack/Proper",
+    "Console/Wii-U",
+    "PC/0day",
+  ] as const;
+
+  it("keeps a separator that joins two words of a taxonomy label", () => {
+    for (const label of taxonomyNames) {
+      expect(safeTaxonomyLabel(label)).toBe(label);
+    }
+  });
+
+  /**
+   * The strict label rule is the prose rule under a label's length bound and
+   * nothing else, so a separator never survives it. This is pinned separately
+   * from the redaction list because it is the property the whole restructure
+   * rests on: a field gets tolerance by asking for it by name, never by default.
+   */
+  it("takes every separator out of a strict label, taxonomy-shaped or not", () => {
+    for (const label of taxonomyNames) {
+      expect(safeLabel(label)).toBe("[redacted path]");
+    }
+    expect(safeText("TV/HD")).toBe("[redacted path]");
+    expect(safeText("failed at /media/example/library/file.mkv now")).toBe(
+      "failed at [redacted path] now",
+    );
+  });
+
+  /**
+   * The tolerance is spent on a whole bare value and nothing else. A value that
+   * has already lost a head to a redaction marker is not a category name, so the
+   * surviving tail is refused however name-shaped it looks — which is what keeps
+   * the space-bearing paths above from disclosing two directory levels here.
+   */
+  it("refuses a taxonomy shape that is only what a redaction left behind", () => {
+    expect(safeTaxonomyLabel("\\\\server\\share$\\Private Stash\\Home Movies")).toBe(
+      "[redacted path] [redacted path] Movies",
+    );
+    expect(safeTaxonomyLabel("Genre TV/HD")).toBe("Genre [redacted path]");
+    expect(safeTaxonomyLabel("TV/HD TV/SD")).toBe("[redacted path] [redacted path]");
   });
 
   it("deletes hidden characters and collapses real whitespace to a space", () => {
