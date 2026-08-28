@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ApplicationId } from "../../applications.js";
+import { safeLabel } from "../activity/parse.js";
 import {
   count,
   customFormatList,
@@ -213,6 +214,44 @@ export function safeReason(
     : scrubbed;
 }
 
+/**
+ * One upstream label, with the caller's own literals removed before the rest.
+ *
+ * Defined here, beside {@link safeReason}, because it is that sanitizer plus a
+ * label's length bound, and because both the acquisition and the import adapter
+ * need it: each of them publishes lists of names an operator or an indexer
+ * chose, and the two must not disagree about whether such a name is scrubbed.
+ */
+export function scrubLabel(
+  value: string | null | undefined,
+  known: readonly string[],
+): string | undefined {
+  return safeLabel(safeReason(value, known));
+}
+
+/**
+ * A list of upstream labels, each sanitized rather than merely trimmed.
+ *
+ * `textList` normalizes; it does not scrub. Every member of these lists is a
+ * name an operator or an indexer chose — a custom format, a language, an
+ * indexer flag — so any of them can carry a path, a URL, or an identifier, and
+ * on these surfaces that is the one thing that must not travel. A member that
+ * is entirely redacted is dropped rather than returned as a marker, because a
+ * label that says only "[redacted]" names nothing a caller can use.
+ */
+export function safeLabelList(
+  values: readonly (string | null | undefined)[] | null | undefined,
+  known: readonly string[],
+): readonly string[] | undefined {
+  if (!Array.isArray(values)) {
+    return undefined;
+  }
+  const cleaned = values
+    .map((value) => scrubLabel(value, known))
+    .filter((value): value is string => value !== undefined && !value.startsWith("[redacted"));
+  return cleaned.length === 0 ? undefined : cleaned;
+}
+
 function rejectionType(value: string | null | undefined): ReleaseRejectionType {
   const name = text(value)?.toLowerCase();
   return name === "permanent" || name === "temporary" ? name : "unknown";
@@ -307,6 +346,16 @@ function releaseQuality(quality: UpstreamRelease["quality"]): ReleaseQuality | u
   });
 }
 
+/**
+ * The advisory half of a release, which only a full-detail search asks for.
+ *
+ * An indexer flag is a name the indexer chose, so it can carry a tracker URL, a
+ * credential, or a server path exactly as a rejection reason can, and it is
+ * scrubbed on the way out for the same reason and against the same literals —
+ * the release's own cache identity included. That is also what the import
+ * adapter does with the same field, so one concept cannot be scrubbed on one
+ * surface and published verbatim on the other.
+ */
 function releaseDetail(
   record: UpstreamRelease,
   detail: ReleaseDetailLevel,
@@ -318,7 +367,7 @@ function releaseDetail(
   return present({
     customFormats: textList((record.customFormats ?? []).map((format) => format.name)),
     customFormatScore: count(record.customFormatScore),
-    indexerFlags: textList(indexerFlagStrings(record.indexerFlags)),
+    indexerFlags: safeLabelList(indexerFlagStrings(record.indexerFlags), [record.guid]),
     categories,
   });
 }

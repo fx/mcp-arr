@@ -256,6 +256,12 @@ describe("protected release data", () => {
    * The recorded fixtures cannot carry a protected URL — the fixture contract
    * refuses to store one — so the canary is planted here instead, in exactly
    * the fields a real instance returns it in.
+   *
+   * An indexer flag is one of them: the name is the indexer's own, so it can
+   * carry a link or a path exactly as a rejection reason can, and the flag list
+   * only reaches a caller at full detail. The canary is planted in both, and
+   * both detail levels are swept below, so a field that is mapped at only one
+   * of them cannot escape the check.
    */
   function poisoned(records: readonly ReleaseRecord[]): ReleaseRecord[] {
     return records.map((record) => ({
@@ -264,6 +270,10 @@ describe("protected release data", () => {
       magnetUrl: `magnet:?xt=urn:btih:${canary}`,
       infoUrl: `https://${trackerHost}/details?id=${canary}`,
       commentUrl: `https://${trackerHost}/comments?id=${canary}`,
+      indexerFlags: [
+        `Freeleech, see https://${trackerHost}/rules?apikey=${canary}`,
+        `/media/private/${canary}/tv`,
+      ],
       rejections: [
         {
           reason: `Blocked by the indexer, see https://${trackerHost}/rules?apikey=${canary}`,
@@ -273,15 +283,46 @@ describe("protected release data", () => {
     }));
   }
 
-  it("never lets a protected URL, magnet link, or key reach a mapped result", async () => {
-    const { items } = await run("sonarr", episodeSearch, poisoned(releases.sonarr));
+  it.each(["summary", "full"] as const)(
+    "never lets a protected URL, magnet link, or key reach a %s result",
+    async (detail) => {
+      const { items } = await run(
+        "sonarr",
+        { ...episodeSearch, detail },
+        poisoned(releases.sonarr),
+      );
 
-    const serialized = JSON.stringify(items);
-    expect(serialized).not.toContain(canary);
-    expect(serialized).not.toContain(trackerHost);
-    expect(serialized).not.toContain("magnet:");
-    expect(serialized).not.toContain("downloadUrl");
-    expect(serialized).not.toContain("://");
+      const serialized = JSON.stringify(items);
+      expect(serialized).not.toContain(canary);
+      expect(serialized).not.toContain(trackerHost);
+      expect(serialized).not.toContain("magnet:");
+      expect(serialized).not.toContain("downloadUrl");
+      expect(serialized).not.toContain("://");
+    },
+  );
+
+  /**
+   * The same rule the rejection reasons follow: what is left of the name is
+   * kept, and a name that was nothing but a protected value is dropped rather
+   * than published as a bare marker.
+   */
+  it("scrubs an indexer flag rather than dropping the whole list", async () => {
+    const { items } = await run(
+      "sonarr",
+      { ...episodeSearch, detail: "full" },
+      poisoned(releases.sonarr),
+    );
+
+    expect(items[0]?.release.detail?.indexerFlags).toEqual(["Freeleech, see [redacted]"]);
+  });
+
+  it("keeps a release's own cache identity out of its indexer flags", async () => {
+    const [record] = releases.sonarr;
+    const { items } = await run("sonarr", { ...episodeSearch, detail: "full" }, [
+      { ...record, indexerFlags: [`Freeleech ${record?.guid as string}`] },
+    ]);
+
+    expect(items[0]?.release.detail?.indexerFlags).toEqual(["Freeleech [redacted]"]);
   });
 
   it("removes a link from a rejection rather than dropping the whole reason", async () => {

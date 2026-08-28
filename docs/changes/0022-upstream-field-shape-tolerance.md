@@ -103,6 +103,16 @@ The [Architecture spec](../specs/architecture/#upstream-connection-handling) own
 - [x] Check the rest of the release schema against captured bodies
   - [x] Compare each declared field against the Sonarr and Radarr release bodies and report any further divergence rather than widening this change
 
+## Field Comparison Result
+
+Every declared field — the shared half, plus each application's own extension — was compared against release bodies read from the recorded minimum versions: 432 rows from Sonarr 4.0.19.2979 and 60 rows from Radarr 6.3.0.10514. Those counts differ from the Motivation section's because each search names a different target, not because a different instance answered. Nested shapes were compared too: `quality.quality.{name,source,resolution}`, `quality.revision.{version,real,isRepack}`, `languages[].name` and `customFormats[].name` all matched their declarations exactly on both applications.
+
+`indexerFlags` was the only type divergence, and it is what this change fixes. Three further observations were found, none of them a refused result and none of them widened here — every one is already tolerated by a `nullish()` declaration, so each is a fixture question rather than an adapter one and belongs to [0021](./0021-live-verified-fixtures.md):
+
+- `seeders` and `leechers` are absent from every row of both applications, while both release fixtures populate them.
+- Radarr 6.3.0.10514 sends neither `movieTitle` nor `year` on any row; it sends `movieTitles` only. So `year` is absent from every live Radarr release, while the Radarr fixture records both fields.
+- Every `rejections` entry on both applications is a bare string. The union still accepts the `{reason, type}` object form, but at these versions that branch is exercised only by the fixtures.
+
 ## Open Questions
 
 None.
