@@ -141,13 +141,27 @@ const applicationSelectionProperties = ["applications", "application"] as const;
  * admits every application there is; a single value admits one. A node that is
  * neither throws rather than answering, because a selection whose shape this
  * cannot count is one the assertion below would silently stop checking.
+ *
+ * A union answers with its widest alternative, and refuses a union it cannot
+ * read: an empty `anyOf` would otherwise reduce to `-Infinity` and an
+ * alternative that is not a schema object cannot be counted at all — either one
+ * compares as under any ceiling, so the guard would report success over a
+ * selection it never looked at.
  */
 function admittedApplications(node: Record<string, unknown>): number {
   if (Array.isArray(node.anyOf)) {
+    if (node.anyOf.length === 0) {
+      throw new Error("An application selection published as an empty anyOf cannot be counted");
+    }
     return Math.max(
-      ...node.anyOf.map((alternative) =>
-        admittedApplications(alternative as Record<string, unknown>),
-      ),
+      ...node.anyOf.map((alternative) => {
+        if (typeof alternative !== "object" || alternative === null || Array.isArray(alternative)) {
+          throw new Error(
+            `An anyOf alternative published as ${JSON.stringify(alternative)} cannot be counted`,
+          );
+        }
+        return admittedApplications(alternative as Record<string, unknown>);
+      }),
     );
   }
   if (node.type === "array") {
@@ -169,13 +183,26 @@ function admittedApplications(node: Record<string, unknown>): number {
  * shape constrains it: a property bounded at one application can still publish
  * a default naming two, and a caller that omits the argument then gets the
  * selection the schema said was accepted.
+ *
+ * Only the two shapes a selection takes can be counted — a list of application
+ * ids, or one id. Any other default throws rather than being read as a single
+ * application, because counting `null` or an object as one would report a
+ * default this cannot see as being within the ceiling.
  */
 function defaultApplications(node: Record<string, unknown>): number {
   const declared = node.default;
   if (declared === undefined) {
     return 0;
   }
-  return Array.isArray(declared) ? declared.length : 1;
+  if (Array.isArray(declared)) {
+    return declared.length;
+  }
+  if (typeof declared === "string") {
+    return 1;
+  }
+  throw new Error(
+    `An application selection defaulting to ${JSON.stringify(declared ?? null)} cannot be counted`,
+  );
 }
 
 /**
@@ -421,6 +448,69 @@ describe("published tool surface", () => {
     expect(swept).toContain("arr_search_start.application required");
     expect(swept).toContain("arr_library_change.application");
     expect(swept).toContain("arr_library_change.application required");
+  });
+
+  it("refuses to count an application selection it cannot read", () => {
+    // What keeps the sweep above from passing over a selection it never
+    // understood. Both counters answer with a number the sweep compares against
+    // a ceiling, so any shape they cannot read has to throw rather than return
+    // one: a sentinel that happens to compare as under the ceiling reports
+    // success over exactly the defect the sweep exists to catch.
+    // Each message is asserted rather than only the throw, so a refusal has to
+    // come from the reason under test and not from a later one it fell through
+    // to — or from a bare TypeError on the way.
+    expect(() => admittedApplications({ anyOf: [] })).toThrow(/empty anyOf cannot be counted/);
+    expect(() => admittedApplications({ anyOf: ["sonarr"] })).toThrow(
+      /anyOf alternative published as "sonarr"/,
+    );
+    expect(() => admittedApplications({ anyOf: [null] })).toThrow(
+      /anyOf alternative published as null/,
+    );
+    expect(() => admittedApplications({ type: "object" })).toThrow(
+      /selection published as "object" cannot be counted/,
+    );
+
+    expect(() => defaultApplications({ default: null })).toThrow(/cannot be counted/);
+    expect(() => defaultApplications({ default: {} })).toThrow(/cannot be counted/);
+    expect(() => defaultApplications({ default: 1 })).toThrow(/cannot be counted/);
+
+    // And the shapes a selection really does take still count, so refusing
+    // above has not cost the sweep the readings it is made of.
+    expect(admittedApplications({ type: "string" })).toBe(1);
+    expect(admittedApplications({ type: "array", maxItems: 2 })).toBe(2);
+    expect(admittedApplications({ type: "array" })).toBe(Number.POSITIVE_INFINITY);
+    expect(
+      admittedApplications({ anyOf: [{ type: "string" }, { type: "array", maxItems: 3 }] }),
+    ).toBe(3);
+    expect(defaultApplications({})).toBe(0);
+    expect(defaultApplications({ default: "sonarr" })).toBe(1);
+    expect(defaultApplications({ default: ["sonarr", "radarr"] })).toBe(2);
+  });
+
+  it("counts every published application selection without refusing one", () => {
+    // The counters throw on what they cannot read, so this says the published
+    // surface is entirely readable to them today: every selection any tool
+    // publishes — read tools included, since a read tool's selection is a
+    // mutation's one rename away — answers with a real count rather than
+    // tripping the refusals above.
+    const counted: string[] = [];
+    for (const definition of toolDefinitions) {
+      for (const [property, node] of collectDeclaredProperties(inputJsonSchema(definition.name))) {
+        if (!(applicationSelectionProperties as readonly string[]).includes(property)) {
+          continue;
+        }
+        const admitted = admittedApplications(node);
+        expect(admitted, `${definition.name} publishes ${property}`).toBeGreaterThanOrEqual(1);
+        expect(Number.isNaN(admitted), `${definition.name} publishes ${property}`).toBe(false);
+        expect(
+          defaultApplications(node),
+          `${definition.name} defaults ${property}`,
+        ).toBeGreaterThanOrEqual(0);
+        counted.push(`${definition.name}.${property}`);
+      }
+    }
+
+    expect(counted.length).toBeGreaterThan(0);
   });
 
   it("names an application selection nothing but applications or application", () => {
