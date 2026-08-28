@@ -237,6 +237,50 @@ describe("fixture capture procedure", () => {
     expect(Object.values(record)).toContainEqual({ retained: true });
   });
 
+  it("redacts a credential a provider field names beside it", async () => {
+    // These applications describe a provider's settings as a list of
+    // `{ name, value }` pairs, so a credential arrives under the property name
+    // `value` with `apiKey` as a sibling. Screening the property name alone
+    // sees `value`, objects to nothing, and writes the real credential.
+    const fixtureRoot = await temporaryFixtureRoot();
+    const url = await startStub({
+      "/api/v3/system/status": sonarrStatus,
+      "/api/v3/indexer": {
+        body: JSON.stringify([
+          {
+            id: 3,
+            name: "Example Indexer",
+            fields: [
+              { order: 0, name: "baseUrl", value: "example-indexer" },
+              { order: 1, name: "apiKey", value: "CANARY-PROVIDER-FIELD-SECRET" },
+              { order: 2, name: "password", value: ["CANARY-NESTED-SECRET"] },
+            ],
+          },
+        ]),
+      },
+    });
+
+    const { code } = await runCapture(url, [
+      "--application",
+      "sonarr",
+      "--route",
+      "indexer",
+      "--fixture-root",
+      fixtureRoot,
+    ]);
+
+    expect(code).toBe(0);
+    const written = await readFile(
+      path.join(fixtureRoot, "sonarr/v3/4.0.19.2979/indexer.json"),
+      "utf8",
+    );
+    expect(written).not.toContain("CANARY-PROVIDER-FIELD-SECRET");
+    expect(written).not.toContain("CANARY-NESTED-SECRET");
+    // The field itself survives, so the recorded shape still has it.
+    expect(written).toContain('"name": "apiKey"');
+    expect(written).toContain("example-indexer");
+  });
+
   it("writes nothing when the sanitized body still fails a fixture screen", async () => {
     const fixtureRoot = await temporaryFixtureRoot();
     const url = await startStub({

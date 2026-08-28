@@ -202,11 +202,36 @@ function createSanitizer(screen) {
     return fresh;
   };
 
+  /** Replaces every string inside a value, however it is nested. */
+  const redact = (value) => {
+    if (Array.isArray(value)) {
+      return value.map(redact);
+    }
+    if (typeof value === "object" && value !== null) {
+      return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, redact(child)]));
+    }
+    return typeof value === "string" ? replace(value) : value;
+  };
+
+  /**
+   * Whether this object is a provider field naming a credential.
+   *
+   * These applications describe a provider's settings dynamically, as a list of
+   * `{ name, value }` pairs, so a credential arrives under the property name
+   * `value` with `apiKey` or `password` as a sibling. Screening the property
+   * name alone sees `value`, finds nothing to object to, and writes the real
+   * credential — the one shape where what a field holds is stated beside it
+   * rather than by the key it is under.
+   */
+  const namesACredential = (value) =>
+    typeof value.name === "string" && keyDisposition(value.name) === "drop";
+
   const sanitize = (value) => {
     if (Array.isArray(value)) {
       return value.map(sanitize);
     }
     if (typeof value === "object" && value !== null) {
+      const redactSiblingValue = namesACredential(value);
       const entries = [];
       for (const [key, child] of Object.entries(value)) {
         const disposition = keyDisposition(key);
@@ -218,7 +243,18 @@ function createSanitizer(screen) {
         // would be written verbatim — so such a key is replaced exactly as a
         // value is rather than dropped, which would take its value with it and
         // lose a field the shape has.
-        entries.push([disposition === "rename" ? replace(key) : key, sanitize(child)]);
+        const sanitizedKey = disposition === "rename" ? replace(key) : key;
+        entries.push([
+          sanitizedKey,
+          redactSiblingValue && key === "value" ? redact(child) : sanitize(child),
+        ]);
+      }
+      // A replaced key could land on one the object already has, and building
+      // the object would then drop a field rather than record it. This tool
+      // refuses rather than writing something the instance did not answer.
+      const keys = entries.map(([key]) => key);
+      if (new Set(keys).size !== keys.length) {
+        fail("A sanitized key collided with another. Nothing was written.");
       }
       // Built as entries rather than assigned: `result.__proto__ = …` invokes
       // the prototype setter, so an upstream key of that name would silently

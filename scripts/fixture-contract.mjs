@@ -160,13 +160,16 @@ const identifyingKeys = new Set(["ip"]);
  * A leading slash is what distinguishes an absolute path from the separator in
  * a relative one — `Season 01/Example.mkv` is a file name, not a path to
  * refuse — so the patterns below anchor on a boundary rather than on the slash
- * alone. The boundary is not only whitespace: a path arrives embedded in
- * upstream free text as `detail=/srv/private/data` just as readily, and one
- * that hid behind an `=` would be written verbatim. The delimiters here are the
- * ones that separate a value from what precedes it, never a character a path
- * segment can end in, so a relative name is still not a path.
+ * alone. The boundary is stated as everything a path segment cannot end in,
+ * rather than as a list of the delimiters seen so far: a path arrives embedded
+ * in upstream free text as `detail=/srv/private/data`, `detail:/srv/…` or
+ * `detail(/srv/…` just as readily, and a list has to be extended once per
+ * punctuation mark somebody thinks of. Inverting it closes them all at once
+ * while leaving a relative name a name.
  */
-const pathBoundary = "(?:^|[\\s=:,;|])";
+const pathSegmentEnd = "A-Za-z0-9._~)\\]}%+&$#@!'-";
+
+const pathBoundary = `(?:^|[^${pathSegmentEnd}])`;
 
 const sensitiveValuePatterns = [
   ["email address", /\b[^\s@]+@[^\s@]+\.[^\s@]+\b/u],

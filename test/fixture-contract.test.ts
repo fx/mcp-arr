@@ -7,8 +7,8 @@ import {
   approvedFixtureInventory,
   approvedFixtures,
   approvedFixtureTuples,
-  type FixtureApplication,
   type FixtureTuple,
+  type FixtureVersion,
   fixturePathFor,
   loadFixture,
   validateFixture,
@@ -158,15 +158,16 @@ describe("versioned fixture contract", () => {
     // The contract's rules run as JavaScript and are declared for TypeScript in
     // a file beside them, so the two could disagree: a tuple added to the
     // declaration alone would type-check while the runtime contract refused it.
-    // Keying by application makes the map exhaustive in both directions —
-    // TypeScript refuses a missing key and an excess one — and each value has
-    // to satisfy the declared tuple union, so a version or an API label that
+    // Keying by version makes the map exhaustive in both directions —
+    // TypeScript refuses a missing key and an excess one, and a version is what
+    // distinguishes one declared tuple from another — while each value has to
+    // satisfy the declared tuple union, so an application or API label that
     // drifted there fails to compile. Comparing the map against the runtime
     // list is what catches drift the other way.
-    const declared: Record<FixtureApplication, FixtureTuple> = {
-      sonarr: { application: "sonarr", apiVersion: "v3", version: "4.0.19.2979" },
-      radarr: { application: "radarr", apiVersion: "v3", version: "6.3.0.10514" },
-      prowlarr: { application: "prowlarr", apiVersion: "v1", version: "2.5.2.5491" },
+    const declared: Record<FixtureVersion, FixtureTuple> = {
+      "4.0.19.2979": { application: "sonarr", apiVersion: "v3", version: "4.0.19.2979" },
+      "6.3.0.10514": { application: "radarr", apiVersion: "v3", version: "6.3.0.10514" },
+      "2.5.2.5491": { application: "prowlarr", apiVersion: "v1", version: "2.5.2.5491" },
     };
 
     expect(new Set(approvedFixtureTuples)).toEqual(new Set(Object.values(declared)));
