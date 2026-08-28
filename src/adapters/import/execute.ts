@@ -5,6 +5,7 @@ import type { MediaApplication } from "../library/model.js";
 import {
   type CandidateOrigin,
   type ImportScanContext,
+  importFileFields,
   recoverCandidateRow,
   type UpstreamCandidate,
   type UpstreamMappingPatch,
@@ -82,32 +83,15 @@ export type ImportSubmission =
   | { readonly status: "absent"; readonly identity: string; readonly error: ToolError }
   | { readonly status: "unmapped"; readonly identity: string; readonly error: ToolError };
 
-function mediaEntry(
-  context: ImportScanContext,
-  row: UpstreamCandidate,
-  patch: UpstreamMappingPatch,
-) {
-  const mediaId = patch.mediaId ?? row.series?.id ?? row.movie?.id;
-  if (mediaId === undefined) {
-    return {};
-  }
-  return context.application === "sonarr" ? { seriesId: mediaId } : { movieId: mediaId };
-}
-
-function episodeEntry(row: UpstreamCandidate, patch: UpstreamMappingPatch) {
-  const episodeIds =
-    patch.episodeIds ??
-    (row.episodes ?? []).flatMap((episode) => (episode.id === undefined ? [] : [episode.id]));
-  return episodeIds.length === 0 ? {} : { episodeIds: [...episodeIds] };
-}
-
 /**
  * Builds one file's entry, field by named field.
  *
- * The corrected values win where the caller supplied them and the instance's
- * own decision fills the rest, which is the same precedence the reprocess that
- * validated this file used — so what is imported is what the validation
- * approved rather than a second assembly of it.
+ * The mapping, the quality, the languages, the release group and the download
+ * identity come from {@link importFileFields}, which is the same assembly the
+ * reprocess that validated this file used — so what is imported is what the
+ * validation approved rather than a second assembly of it that could drift from
+ * the first. The indexer flags are added here because a command carries them
+ * and a reprocess does not.
  */
 function prepareFile(
   context: ImportScanContext,
@@ -116,35 +100,15 @@ function prepareFile(
   patch: UpstreamMappingPatch,
   identity: string,
 ): PreparedFile {
-  const quality =
-    patch.quality === undefined
-      ? row.quality
-      : { ...(isRecord(row.quality) ? row.quality : {}), quality: patch.quality };
-  const languages = patch.languages ?? row.languages;
-  const releaseGroup = patch.releaseGroup ?? row.releaseGroup ?? undefined;
-
   return {
     identity,
     entry: {
-      path,
-      ...mediaEntry(context, row, patch),
-      ...episodeEntry(row, patch),
-      ...(quality === undefined || quality === null ? {} : { quality }),
-      ...(languages === undefined || languages === null ? {} : { languages: [...languages] }),
-      ...(releaseGroup === undefined ? {} : { releaseGroup }),
-      // The download identity is what ties an imported file back to the queue
-      // row it came from, and a scan answer drops it, so it comes from the
-      // context this submission re-derived rather than from the row.
-      ...(context.downloadId === undefined ? {} : { downloadId: context.downloadId }),
+      ...importFileFields(context, row, path, patch),
       ...(row.indexerFlags === undefined || row.indexerFlags === null
         ? {}
         : { indexerFlags: row.indexerFlags }),
     },
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**

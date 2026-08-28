@@ -172,6 +172,71 @@ describe("arr_import_execute over stdio", () => {
     }
   });
 
+  it("revalidates upstream and only then submits the command", async () => {
+    const sonarr = await instance();
+    const child = spawnBuiltServer(instanceEnvironment([sonarr]), 10_000);
+
+    try {
+      await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
+      const inspected = await inspect(child, 2, {
+        source: "queue_item",
+        queue: await queueReference(child, 90),
+        applications: ["sonarr"],
+      });
+      const importable = candidatesOf(inspected.structured).find(
+        (candidate) => candidate.decision?.importable === true,
+      );
+      if (importable === undefined) {
+        throw new Error("Expected an importable candidate in the recorded scan");
+      }
+
+      const applied = await execute(child, 3, {
+        mode: "apply",
+        candidates: [importable.reference],
+        importMode: "auto",
+      });
+      expect(applied.isError).toBe(false);
+
+      // The two tools share one dependency, and this is it: the reprocess the
+      // instance accepts ran, and the command went out after it. An instance
+      // that refuses the reprocess — as both did while it was sent wrapped and
+      // nested — stops the import here, so a green command is evidence about
+      // the request shape as much as about the ordering.
+      expect(sonarr.reprocessed).toHaveLength(1);
+      const validated = sonarr.reprocessed[0] ?? {};
+      expect(sonarr.requests.lastIndexOf("manualimport")).toBeLessThan(
+        sonarr.requests.indexOf("command"),
+      );
+
+      // And what was submitted is what was validated, field for field, rather
+      // than a second assembly of the same mapping.
+      const submitted = (sonarr.commands[0]?.body as { files?: Record<string, unknown>[] })
+        .files?.[0];
+      expect(submitted?.path).toBe(validated.path);
+      expect(submitted?.seriesId).toBe(validated.seriesId);
+      expect(submitted?.episodeIds).toEqual(validated.episodeIds);
+      expect(submitted?.downloadId).toBe(validated.downloadId);
+      expect(submitted?.quality).toEqual(validated.quality);
+      expect(submitted?.languages).toEqual(validated.languages);
+
+      // And neither tool's result carries what those requests needed: not the
+      // path, not the download identity. The control is the command body,
+      // where both do appear — so the absences above are evidence rather than
+      // a spelling accident.
+      const identity = String(validated.downloadId);
+      expect(identity).not.toBe("undefined");
+      const published = `${JSON.stringify(inspected.structured)}${JSON.stringify(applied.envelope)}`;
+      expect(published).not.toContain("/media/example/downloads");
+      expect(published).not.toContain(identity);
+      expect(JSON.stringify(sonarr.commands[0]?.body)).toContain(identity);
+
+      await child.terminateGracefully();
+      assertCleanProtocolStdout(child.stdout);
+    } finally {
+      await child.forceCleanup().catch(() => undefined);
+    }
+  });
+
   it("imports a candidate named twice exactly once", async () => {
     const sonarr = await instance();
     const child = spawnBuiltServer(instanceEnvironment([sonarr]), 10_000);

@@ -5,7 +5,7 @@
 Send the manual-import validation request in the shape both applications accept. The reprocess call wraps its row in a `files` object and sends the scan row unchanged; both applications require a bare array of a flat resource, so every reprocess returns 400. Because execution revalidates through the same call, the entire manual-import surface is unreachable on both applications.
 
 **Spec:** [Acquisition and Import](../specs/acquisition-and-import/)
-**Status:** draft
+**Status:** complete
 **Depends On:** —
 
 ## Motivation
@@ -131,6 +131,9 @@ The [Acquisition and Import spec](../specs/acquisition-and-import/#candidate-rep
   - **Why:** The command shape was verified accepted as it stands. Changing it would be an unverified edit to the one part of this path that is known good.
 - **Decision:** Assert the outgoing request, not only the parsed response.
   - **Why:** Every existing test on this path passes while the request is malformed, because the fixtures describe responses. A request defect is invisible to a response fixture, and this is the second such defect on this surface.
+- **Decision:** Read the reprocess *answer* as the narrower resource it is, completing the file's own facts from the scan the same call just ran.
+  - **Why:** Found once the call succeeded and it could be read at all: the answer restates the decision and says nothing about the file, so it carries no size, no row identifier, no relative path and no existing-file identity, and Sonarr names its media flat where the scan names it nested. Mapping it as though it were a scan row leaves the candidate with no media and no size, which the fingerprint comparison reads as two facts having moved and the free-space check reads as a size it cannot verify — so every import would still be refused, and the change would not have restored anything. The scan is re-run inside this same call, milliseconds earlier and against the same folder, so it is both the freshest thing the instance says about the file and the only thing that says it.
+  - **Alternatives considered:** Comparing fewer retained facts, rejected because that is the guard this change is required not to weaken.
 - **Decision:** Treat this as a defect fix rather than a contract change.
   - **Why:** Both tools have never succeeded against a real instance, so no caller can depend on current behavior.
 
@@ -143,14 +146,14 @@ The [Acquisition and Import spec](../specs/acquisition-and-import/#candidate-rep
 
 ## Tasks
 
-- [ ] Send the reprocess request in the accepted shape
-  - [ ] Send the body as the bare list the endpoint accepts on both applications
-  - [ ] Build each element from named fields, carrying the flat media identifier, the download identity, and the caller's corrections in their current precedence
-  - [ ] Add tests asserting the outgoing body for both applications, confirming they fail against the wrapped, nested form
-- [ ] Restore manual import end to end
-  - [ ] Confirm reprocessing returns a re-decided candidate and imports nothing
-  - [ ] Confirm execution revalidates and then submits the import command, and still stops on a blocking rejection or a changed fingerprint
-  - [ ] Confirm no path, download identifier, or other internal value appears in either tool's result
+- [x] Send the reprocess request in the accepted shape
+  - [x] Send the body as the bare list the endpoint accepts on both applications
+  - [x] Build each element from named fields, carrying the flat media identifier, the download identity, and the caller's corrections in their current precedence
+  - [x] Add tests asserting the outgoing body for both applications, confirming they fail against the wrapped, nested form
+- [x] Restore manual import end to end
+  - [x] Confirm reprocessing returns a re-decided candidate and imports nothing
+  - [x] Confirm execution revalidates and then submits the import command, and still stops on a blocking rejection or a changed fingerprint
+  - [x] Confirm no path, download identifier, or other internal value appears in either tool's result
 
 ## Open Questions
 

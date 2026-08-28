@@ -199,7 +199,7 @@ changes:
     path: changes/0024-manual-import-request-shape.md
     description: Send the manual-import validation request as the bare list of flat resources both applications accept
     spec: acquisition-and-import
-    status: draft
+    status: complete
     depends_on: []
   - id: "0025"
     name: job-projection-refresh

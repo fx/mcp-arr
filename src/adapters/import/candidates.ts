@@ -142,6 +142,12 @@ const candidateSchema = z.object({
     .nullish(),
   series: z.object({ id: optionalUpstreamId }).nullish(),
   movie: z.object({ id: optionalUpstreamId }).nullish(),
+  // The flat identifier a reprocess *answer* names its media by. A scan row
+  // carries the nested object above and never these, so reading both is what
+  // lets one schema describe both answers rather than two schemas that would
+  // then have to be kept in step.
+  seriesId: optionalUpstreamId,
+  movieId: optionalUpstreamId,
   episodes: z.array(z.object({ id: optionalUpstreamId })).nullish(),
   episodeFileId: optionalUpstreamId,
   movieFileId: optionalUpstreamId,
@@ -923,11 +929,15 @@ export async function reprocessCandidate(
   if (found.status !== "ok") {
     return found;
   }
-  const { context, row } = found.recovered;
+  const { context, row, path } = found.recovered;
 
   const answered = parseUpstream(
     z.array(candidateSchema),
-    await client.post(manualImportRoute, { files: [correctedRow(context, row, patch)] }),
+    // The list itself, not an object holding one. Both applications declare this
+    // payload as the collection and answer an object wrapping it with a `400`
+    // naming the type they wanted, so the wrapper made every reprocess — and
+    // therefore every import, which revalidates through this — fail outright.
+    await client.post(manualImportRoute, [reprocessRow(context, row, path, patch)]),
     application,
     manualImportRoute,
   );
@@ -935,54 +945,134 @@ export async function reprocessCandidate(
   if (decided === undefined) {
     return { status: "absent", error: scanRefusal(application, "absent") };
   }
-  const candidate = mapCandidate(context, decided);
+  const candidate = mapCandidate(context, decidedRow(row, decided));
   return candidate === undefined
     ? { status: "absent", error: scanRefusal(application, "absent") }
     : { status: "ok", candidate };
 }
 
 /**
- * The one row a reprocess sends, built field by field.
+ * The decided row, completed with the facts a reprocess answer leaves out.
  *
- * The instance's own row is the base, so everything the application decided and
- * this project does not model travels back unchanged — and the corrections are
- * written over it one named property at a time. Nothing is spread in from a
- * caller: the patch's own type admits only identifiers and objects read from
- * the instance, and this function names each of them, so a field the published
- * schema does not accept has no route to the payload even if one were added to
- * the patch type later.
+ * The answer is a different resource from the scan row: it restates the
+ * *decision* — the mapping, the quality, the languages, the rejections — and
+ * says nothing about the file itself. It carries no size, no row identifier, no
+ * relative path, and no existing-file identity, and it names its media flat
+ * where the scan names it nested.
+ *
+ * So the file's own facts come from the scan this same call just re-ran, a few
+ * milliseconds earlier and against the same folder, which is the freshest thing
+ * the instance will say about them — and the decision's facts come from the
+ * answer, which is the whole point of asking. Nothing is weakened by that: the
+ * fingerprint comparison still runs against a scan performed now rather than
+ * against anything a reference remembered.
  */
-function correctedRow(
+function decidedRow(scanned: UpstreamCandidate, decided: UpstreamCandidate): UpstreamCandidate {
+  return {
+    ...decided,
+    // The media the answer names flat, put back in the shape the mapping reads.
+    // Sonarr sends only the flat identifier here; Radarr sends both.
+    series: decided.series ?? identified(decided.seriesId) ?? scanned.series,
+    movie: decided.movie ?? identified(decided.movieId) ?? scanned.movie,
+    // Facts of the file rather than of the decision, so the scan is what
+    // reports them and the answer never contradicts it.
+    id: decided.id ?? scanned.id,
+    size: decided.size ?? scanned.size,
+    relativePath: decided.relativePath ?? scanned.relativePath,
+    name: decided.name ?? scanned.name,
+    folderName: decided.folderName ?? scanned.folderName,
+    episodeFileId: decided.episodeFileId ?? scanned.episodeFileId,
+    movieFileId: decided.movieFileId ?? scanned.movieFileId,
+    // Both applications restate these as a numeric bitfield on this answer,
+    // which names nothing a caller can read, so the scan's names are kept.
+    indexerFlags: Array.isArray(decided.indexerFlags) ? decided.indexerFlags : scanned.indexerFlags,
+  };
+}
+
+/** The nested media object a flat identifier stands for, where there is one. */
+function identified(id: number | null | undefined): { id: number } | undefined {
+  const value = count(id);
+  return value === undefined ? undefined : { id: value };
+}
+
+/**
+ * The one element a reprocess sends.
+ *
+ * It is the request-side half of {@link importFileFields}, and it carries the
+ * two things a validation needs beyond the mapping: which folder the file was
+ * found under, and which season it is being decided for.
+ */
+function reprocessRow(
   context: ImportScanContext,
   row: UpstreamCandidate,
+  path: string,
   patch: UpstreamMappingPatch,
 ): UpstreamBody {
-  const mediaProperty = context.application === "sonarr" ? "series" : "movie";
-  const base: Record<string, unknown> = {
-    ...(row as Record<string, unknown>),
+  const folderName = text(row.folderName) ?? scannedFolderName(context);
+  const seasonNumber = count(row.seasonNumber) ?? context.seasonNumber;
+  return {
+    ...importFileFields(context, row, path, patch),
+    ...(folderName === undefined ? {} : { folderName }),
+    ...(seasonNumber === undefined ? {} : { seasonNumber }),
+  };
+}
+
+/** The name of the folder this scan reached, where it reached one. */
+function scannedFolderName(context: ImportScanContext): string | undefined {
+  return context.folder === undefined ? undefined : folderNameOf(context.folder);
+}
+
+/**
+ * What a manual-import request says about one file, field by named field.
+ *
+ * Shared by the reprocess that validates a mapping and by the command that
+ * imports it, because the two have to agree: a validation that approved one
+ * mapping while the import submitted another would be a guarantee about
+ * something nobody sent. Both applications declare a flat media identifier on
+ * these resources rather than the nested object a scan answers with, and
+ * spreading the scan row is what put the nested one into a request that wanted
+ * the identifier — so every field here is named, and a property an instance
+ * adds to a scan answer cannot travel back by existing.
+ *
+ * The caller's corrections win where there are any and the instance's own
+ * decision fills the rest, which is what makes the mapping that is imported the
+ * mapping that was validated.
+ */
+export function importFileFields(
+  context: ImportScanContext,
+  row: UpstreamCandidate,
+  path: string,
+  patch: UpstreamMappingPatch,
+): UpstreamBody {
+  const mediaId = patch.mediaId ?? row.series?.id ?? row.movie?.id ?? undefined;
+  const episodeIds =
+    patch.episodeIds ??
+    (row.episodes ?? []).flatMap((episode) =>
+      episode.id === undefined || episode.id === null ? [] : [episode.id],
+    );
+  const quality =
+    patch.quality === undefined
+      ? row.quality
+      : { ...(isRecord(row.quality) ? row.quality : {}), quality: patch.quality };
+  const languages = patch.languages ?? row.languages;
+  const releaseGroup = patch.releaseGroup ?? row.releaseGroup ?? undefined;
+
+  return {
+    path,
+    ...(mediaId === undefined
+      ? {}
+      : context.application === "sonarr"
+        ? { seriesId: mediaId }
+        : { movieId: mediaId }),
+    ...(episodeIds.length === 0 ? {} : { episodeIds: [...episodeIds] }),
+    ...(quality === undefined || quality === null ? {} : { quality }),
+    ...(languages === undefined || languages === null ? {} : { languages: [...languages] }),
+    ...(releaseGroup === undefined ? {} : { releaseGroup }),
     // The download identity is what ties an imported file back to the queue row
-    // it came from, and the instance drops it from a scan answer, so it is put
-    // back from the context this call re-derived rather than from the row.
+    // it came from, and a scan answer drops it, so it comes from the context
+    // this call re-derived rather than from the row.
     ...(context.downloadId === undefined ? {} : { downloadId: context.downloadId }),
   };
-
-  if (patch.mediaId !== undefined) {
-    base[mediaProperty] = { id: patch.mediaId };
-  }
-  if (patch.episodeIds !== undefined) {
-    base.episodes = patch.episodeIds.map((id) => ({ id }));
-    base.episodeIds = [...patch.episodeIds];
-  }
-  if (patch.quality !== undefined) {
-    base.quality = { ...(isRecord(row.quality) ? row.quality : {}), quality: patch.quality };
-  }
-  if (patch.languages !== undefined) {
-    base.languages = [...patch.languages];
-  }
-  if (patch.releaseGroup !== undefined) {
-    base.releaseGroup = patch.releaseGroup;
-  }
-  return base;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
