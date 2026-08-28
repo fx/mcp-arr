@@ -23,6 +23,8 @@ The fixtures are not missing and not unversioned. They are stored per applicatio
 | `radarr/v3/6.3.0.10514/manualimport.json` | `indexerFlags: []` | `indexerFlags: 0` |
 | `radarr/v3/6.3.0.10514/importlistexclusion.json` | a body for `/api/v3/importlistexclusion` | `404` — Radarr serves `/api/v3/exclusions` |
 
+[0023](./0023-radarr-exclusion-route.md) has since replaced that last file with `radarr/v3/6.3.0.10514/exclusions-paged.json`, recorded from the route Radarr does serve. The row stands as the finding that prompted this change rather than as a description of the tree today.
+
 The last one is the clearest tell: a fixture records a response from a route that does not exist on the application it names. These bodies were authored to the shape the adapter expected rather than captured from an instance, so every fixture-backed test confirmed the adapter against its own assumption. That is a closed loop, and it will keep producing defects of exactly this kind — it already has once before, when a provider field's absent `value` key broke `arr_config_observe` against every real instance while the fixtures passed.
 
 The fix is not more tests. It is making the recorded contract answerable to the instance it claims to describe.
@@ -119,16 +121,16 @@ The [Architecture spec](../specs/architecture/#testing-contract) owns the fixtur
 
 ## Tasks
 
-- [ ] Add the operator-run fixture capture procedure
-  - [ ] Write a capture script that reads a route from a configured instance and emits a fixture with application, API version, exact version, and route metadata
-  - [ ] Sanitize secrets, identifying values, and canonical paths through the existing helpers, and fail the capture rather than write a body that would not pass the contract test
-  - [ ] Fail the capture when the named route does not resolve on the named application
-  - [ ] Document the procedure so fixtures are refreshed rather than authored
-- [ ] Correct the fixtures no point fix owns
-  - [ ] Recapture the Sonarr and Radarr `manualimport` fixtures, and update the assertions written against their current bodies so the suite stays green
-  - [ ] Confirm the import adapter needs no change to read the recaptured bodies
+- [x] Add the operator-run fixture capture procedure
+  - [x] Write a capture script that reads a route from a configured instance and emits a fixture with application, API version, exact version, and route metadata
+  - [x] Sanitize secrets, identifying values, and canonical paths through the existing helpers, and fail the capture rather than write a body that would not pass the contract test
+  - [x] Fail the capture when the named route does not resolve on the named application
+  - [x] Document the procedure so fixtures are refreshed rather than authored
+- [x] Correct the fixtures no point fix owns
+  - [x] Recapture the Sonarr and Radarr `manualimport` fixtures, and update the assertions written against their current bodies so the suite stays green
+  - [x] Confirm the import adapter needs no change to read the recaptured bodies
 - [ ] Sweep the remaining fixtures
-  - [ ] Compare every other recorded fixture against its instance at the version it names
+  - [x] Compare every other recorded fixture against its instance at the version it names
   - [ ] For any divergence needing an adapter change, create that change, record it as a prerequisite of this one, and do not complete this change until it has landed and the fixture matches
   - [ ] Confirm at completion that no recorded fixture is known to contradict the instance it names
 
