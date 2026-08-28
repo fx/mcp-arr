@@ -49,12 +49,13 @@ interface PublishedListing {
 }
 
 /**
- * The bytes one response occupied on the wire.
+ * The bytes one response occupied on the wire, its newline delimiter included.
  *
  * Read off the raw stdout rather than re-serialized from the decoded message,
  * because the number this file pins is what a host actually receives. A
  * re-serialization would be measuring this test's own `JSON.stringify` instead
- * of the server's.
+ * of the server's, and dropping the delimiter would measure the payload rather
+ * than the message.
  */
 function responseBytes(stdout: string, id: number): number {
   const line = stdout
@@ -63,7 +64,7 @@ function responseBytes(stdout: string, id: number): number {
   if (line === undefined) {
     throw new Error(`The spawned server sent no response for request ${id}`);
   }
-  return Buffer.byteLength(line, "utf8");
+  return Buffer.byteLength(`${line}\n`, "utf8");
 }
 
 async function readPublishedTools(): Promise<PublishedListing> {
@@ -121,7 +122,7 @@ const propertyKeyPattern = /^[a-zA-Z0-9_.-]{1,64}$/u;
  * Every session pays this before making a single call, so its size is part of
  * the contract rather than an implementation detail. The number is a recorded
  * measurement rounded up, not a budget somebody chose: it was read off a
- * spawned server at 57,966 bytes. Raising it is a deliberate act, which is the
+ * spawned server at 57,967 bytes. Raising it is a deliberate act, which is the
  * point — a change that reintroduces bulk fails here rather than merely being
  * regrettable.
  */

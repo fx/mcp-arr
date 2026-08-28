@@ -133,10 +133,13 @@ function leafPaths(node: JsonSchema, prefix: string, into: string[]): string[] {
 /** One payload a tool can return, and the paths that reach into it. */
 export interface PayloadPaths {
   /**
-   * The value of the payload's discriminator that selects this payload, or
-   * `undefined` where the payload has no discriminator to select it by.
+   * Every discriminator value that selects this payload, in declaration order,
+   * and empty where the payload has no discriminator to select it by. Plural
+   * because a discriminated union admits an alternative that answers to a set
+   * of values rather than to one, and labelling such a payload with the first
+   * of them would leave the rest selecting a payload nothing describes.
    */
-  readonly variant: string | undefined;
+  readonly variants: readonly string[];
   /** Every dot-path from the payload down to one of its leaves. */
   readonly paths: readonly string[];
 }
@@ -183,7 +186,7 @@ export function payloadInventory(outputSchema: z.ZodType): PayloadInventory | un
   if (alternatives === undefined) {
     return {
       discriminator: undefined,
-      payloads: [{ variant: undefined, paths: leafPaths(converted, "", []) }],
+      payloads: [{ variants: [], paths: leafPaths(converted, "", []) }],
     };
   }
 
@@ -191,7 +194,7 @@ export function payloadInventory(outputSchema: z.ZodType): PayloadInventory | un
     const declared =
       discriminator === undefined ? undefined : propertyAt(alternative, discriminator);
     return {
-      variant: declared === undefined ? undefined : fixedValues(declared)[0],
+      variants: declared === undefined ? [] : fixedValues(declared),
       paths: leafPaths(alternative, "", []),
     };
   });
@@ -221,11 +224,7 @@ export function describePayloadPaths(inventory: PayloadInventory): string {
   const grouped = new Map<string, string[]>();
   for (const payload of payloads) {
     const paths = payload.paths.join(", ");
-    const variants = grouped.get(paths) ?? [];
-    if (payload.variant !== undefined) {
-      variants.push(payload.variant);
-    }
-    grouped.set(paths, variants);
+    grouped.set(paths, [...(grouped.get(paths) ?? []), ...payload.variants]);
   }
 
   const lead =

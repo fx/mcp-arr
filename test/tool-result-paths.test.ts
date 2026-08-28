@@ -70,29 +70,39 @@ function payloadBranches(payload: Schema): readonly Schema[] {
 }
 
 /**
- * Every field name a payload declares, at any depth.
+ * Every leaf of one payload, as a full dot-path.
  *
- * Collected as names rather than as paths, and deliberately not with the test
- * support's `publishedPropertyNames`: that one recurses through every value it
- * finds, which reads the schema of a field actually called `properties` — and
- * a reconciliation payload has one — as if it were a property map.
+ * The second opinion the coverage assertion rests on, so it is written the
+ * other way round from the generator: an explicit stack rather than recursion,
+ * and a path carried on the frame rather than threaded through a parameter.
+ * Comparing whole paths and not merely the names in them is the point — a name
+ * set stays equal when a leaf is dropped whose every segment still appears in
+ * some other path, which is most of them.
  */
-function declaredNames(node: Schema, into: Set<string>): Set<string> {
-  for (const alternative of alternativesOf(node) ?? []) {
-    declaredNames(alternative, into);
-  }
-  if (isRecord(node.items)) {
-    declaredNames(node.items, into);
-  }
-  if (isRecord(node.properties)) {
-    for (const [name, declared] of Object.entries(node.properties)) {
-      into.add(name);
-      if (isRecord(declared)) {
-        declaredNames(declared, into);
+function declaredLeafPaths(root: Schema): ReadonlySet<string> {
+  const leaves = new Set<string>();
+  const pending: Array<readonly [Schema, string]> = [[root, ""]];
+  for (let frame = pending.pop(); frame !== undefined; frame = pending.pop()) {
+    const [node, path] = frame;
+    const alternatives = alternativesOf(node);
+    const properties = isRecord(node.properties) ? node.properties : undefined;
+    if (alternatives !== undefined) {
+      for (const alternative of alternatives) {
+        pending.push([alternative, path]);
       }
+    } else if (isRecord(node.items)) {
+      pending.push([node.items, path]);
+    } else if (properties !== undefined) {
+      for (const [name, declared] of Object.entries(properties)) {
+        if (isRecord(declared)) {
+          pending.push([declared, path === "" ? name : `${path}.${name}`]);
+        }
+      }
+    } else if (path !== "") {
+      leaves.add(path);
     }
   }
-  return into;
+  return leaves;
 }
 
 /**
@@ -213,14 +223,14 @@ describe("published payload paths", () => {
       const branches = payloadBranches(payload);
 
       for (const [index, published] of inventory.payloads.entries()) {
-        // Every field the payload declares at any depth, collected without
-        // reference to a path — against every segment the published paths are
-        // built from. The two sets being equal is the whole claim: nothing the
-        // schema declares goes unnamed, and nothing is named that the schema
+        // Every leaf the payload declares, against every path the inventory
+        // publishes. The two sets being equal is the whole claim: no field the
+        // schema declares goes unnamed, and no path is named that the schema
         // does not declare.
-        const declared = declaredNames(branches[index] ?? {}, new Set());
-        const named = new Set(published.paths.flatMap((path) => path.split(".")));
-        expect([...named].sort(), `${name} payload ${index}`).toEqual([...declared].sort());
+        const declared = declaredLeafPaths(branches[index] ?? {});
+        expect([...published.paths].sort(), `${name} payload ${index}`).toEqual(
+          [...declared].sort(),
+        );
       }
     }
   });
@@ -229,7 +239,7 @@ describe("published payload paths", () => {
     const library = inventoryOf("arr_library_query");
     expect(library?.discriminator).toBe("view");
 
-    const movies = library?.payloads.find((payload) => payload.variant === "movies");
+    const movies = library?.payloads.find((payload) => payload.variants.includes("movies"));
     // The doc's own example, pinned: a caller copies this into a projection
     // verbatim, and finds it under the view it belongs to rather than in a
     // merged list belonging to no view.
@@ -250,11 +260,7 @@ describe("published payload paths", () => {
     // carries.
     const reconcile = inventoryOf("arr_config_reconcile");
     expect(reconcile?.discriminator).toBeUndefined();
-    expect(reconcile?.payloads.map((payload) => payload.variant)).toEqual([
-      undefined,
-      undefined,
-      undefined,
-    ]);
+    expect(reconcile?.payloads.map((payload) => payload.variants)).toEqual([[], [], []]);
   });
 
   it("refuses a payload whose fields it cannot name", () => {
@@ -280,30 +286,32 @@ describe("published payload paths", () => {
         continue;
       }
       const branches = payloadBranches(payloadOf(name) ?? {});
-      const declared = branches.map((branch) => declaredPropertyValues(branch, discriminator)[0]);
+      const declared = branches.map((branch) => declaredPropertyValues(branch, discriminator));
 
+      // Every value, not the first of them: an alternative may answer to a set,
+      // and a payload labelled with one of its values leaves the rest selecting
+      // a payload the inventory never describes.
       expect(
-        inventory.payloads.map((payload) => payload.variant),
+        inventory.payloads.map((payload) => [...payload.variants]),
         name,
-      ).toEqual(declared);
+      ).toEqual(declared.map((values) => [...values]));
       expect(
-        declared.filter((value) => value === undefined),
+        declared.filter((values) => values.length === 0),
         name,
       ).toEqual([]);
 
       // And every one of them survives into the prose, so a caller reading a
       // value in the wild can find the payload it goes with.
       const described = describePayloadPaths(inventory);
-      for (const value of declared) {
-        expect(described, `${name} ${String(value)}`).toContain(`${discriminator}=`);
+      for (const value of declared.flat()) {
         expect(
           described.split("\n").some((line) => {
             const label = line.startsWith(`- ${discriminator}=`)
               ? (line.slice(`- ${discriminator}=`.length).split(":")[0] ?? "")
               : "";
-            return label.split("|").includes(String(value));
+            return label.split("|").includes(value);
           }),
-          `${name} ${String(value)}`,
+          `${name} ${value}`,
         ).toBe(true);
       }
     }
