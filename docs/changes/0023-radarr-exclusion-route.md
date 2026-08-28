@@ -55,13 +55,7 @@ The [Configuration Reconciliation spec](../specs/configuration-reconciliation/#o
 - The exclusion domain MUST resolve to each application's own route rather than one shared name.
 - Both applications' exclusion records MUST be observable through the existing sanitized allowlist, which already names the fields each one contributes.
 - Where the domain's route offers a paged form, observation MUST use it, since the spec requires every part of an observation to be governed by the query's page bound.
-- A 404 from a route this server chose MUST NOT be reported as a stale reference when the request carried no reference.
-
-#### Scenario: A route this server chose does not exist
-
-- **GIVEN** an observation reaches a route the target application does not serve
-- **WHEN** the application answers 404
-- **THEN** the error identifies an unsupported or unexpected upstream response and does not advise repeating a query to refresh a reference the caller never supplied
+- The 404 this defect produced MUST be reported as the [Tool Contracts spec](../specs/tool-contracts/#error-contract) now requires — an unexpected response, not a stale reference — since the request carried no reference and the route was this server's own choice. That spec owns the rule and its scenario; this change is what makes the existing behaviour comply.
 
 ## Design
 
@@ -79,9 +73,9 @@ The [Configuration Reconciliation spec](../specs/configuration-reconciliation/#o
   - **Alternatives considered:** Trying one route and falling back to the other, rejected because it doubles the request count on the failing path and hides a wrong map behind a retry.
 - **Decision:** Prefer the paged form where the route offers one.
   - **Why:** The spec requires observation to be bounded by the query's page bound, and both applications serve a paged variant of this resource.
-- **Decision:** Narrow the 404 mapping rather than only rewording the remediation.
-  - **Why:** The code is what a caller branches on. A `stale_reference` on a referenceless request tells a caller to retry something it cannot retry, and rewording the sentence leaves that wrong signal in place.
-  - **Alternatives considered:** Keeping the code and changing only the text, rejected for the reason above.
+- **Decision:** Put the classification rule in the error contract rather than in this document, and cite it here.
+  - **Why:** Which stable code a failure carries is observable behaviour a caller branches on, so it belongs to the [Error Contract](../specs/tool-contracts/#error-contract), not to the one change that happened to trip over it. Left here, the rule would bind only this domain and the next adapter to pick a route the application does not serve would be free to choose differently.
+  - **Alternatives considered:** Stating the mapping in this document alone, rejected because it makes a change document the sole owner of an observable contract; leaving the code and rewording only the remediation, rejected because the code is what a caller branches on, so a better sentence leaves the wrong signal in place.
 
 ### Non-Goals
 
@@ -108,4 +102,5 @@ None.
 ## References
 
 - Spec: [Configuration Reconciliation](../specs/configuration-reconciliation/)
+- Also amends: [Tool Contracts — Error Contract](../specs/tool-contracts/#error-contract), which owns how the 404 is classified
 - Related changes: [0008-configuration-reconciliation](./0008-configuration-reconciliation.md), [0021-live-verified-fixtures](./0021-live-verified-fixtures.md)

@@ -115,6 +115,14 @@ This parity is about the argument schema only. Cross-property correlations discl
 - An error result's text summary MUST carry the stable error code and the remediation hint, because a caller may see only the summary when a call reports failure.
 - A text summary MUST NOT describe an outcome more favorably than the structured result it accompanies.
 - Raw upstream bodies, headers, URLs containing credentials, stack traces, and API keys MUST NOT be returned.
+- An error's remediation MUST describe an action available to the caller that made the request, so a failure no caller-supplied value caused MUST NOT be reported as a stale reference or a stale plan.
+- Where an upstream failure is attributable to a request this server composed, rather than to a value the caller supplied or to a condition with its own stable code, it MUST be reported as an unexpected response.
+
+#### Scenario: A request the server composed is refused
+
+- **GIVEN** an upstream request this server composed reaches a route the target application does not serve
+- **WHEN** the application refuses it and the caller supplied no reference
+- **THEN** the result reports an unexpected response, and its remediation does not advise refreshing a reference the caller never supplied
 
 #### Scenario: Read an error from the summary alone
 
@@ -267,3 +275,4 @@ None.
 | 2026-08-28 | Job projections required to refresh from the upstream command and to keep an observed terminal result | [0025-job-projection-refresh](../../changes/0025-job-projection-refresh.md) |
 | 2026-08-28 | Mutation output schemas required to admit their own plan-mode envelope | [0026-plan-mode-mutation-envelopes](../../changes/0026-plan-mode-mutation-envelopes.md) |
 | 2026-08-28 | Single-application mutation scope stated and required to be discoverable from the published schema | [0027-single-application-mutation-scope](../../changes/0027-single-application-mutation-scope.md) |
+| 2026-08-28 | Remediation required to be actionable by the caller; a failure in a request the server composed classified as an unexpected response | [0023-radarr-exclusion-route](../../changes/0023-radarr-exclusion-route.md) |
