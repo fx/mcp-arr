@@ -4,7 +4,7 @@ import {
   providerDomains,
   resourceDomains,
 } from "../../adapters/configuration/domains.js";
-import { applicationIdSchema, configurationReferenceSchema } from "./common.js";
+import { configurationReferenceSchema } from "./common.js";
 
 /**
  * The published payloads of the two configuration tools.
@@ -98,36 +98,18 @@ const resourceRecordSchema = z.strictObject({
 });
 
 /**
- * One dynamic field as the instance's schema describes it. A descriptor says
- * what a field is and never what it holds, so there is no value here to declare.
+ * One observed domain.
+ *
+ * A provider view declares its records and nothing else. The instance's
+ * template catalogue is not part of it: its size is set by the catalogue rather
+ * than by the query's page bound, and the only operation that needs a template
+ * reads the schema route itself.
  */
-const dynamicFieldSchema = z.strictObject({
-  name: z.string().min(1),
-  label: z.string().optional(),
-  type: z.string().optional(),
-  advanced: z.boolean().optional(),
-  secret: z.boolean(),
-});
-
-const providerTemplateSchema = z.strictObject({
-  implementation: z.string().min(1),
-  name: z.string().optional(),
-  configContract: z.string().optional(),
-  fields: z.array(dynamicFieldSchema),
-});
-
-const providerSchemaSchema = z.strictObject({
-  application: applicationIdSchema,
-  domain: providerDomainSchema,
-  templates: z.array(providerTemplateSchema),
-});
-
 export const configurationViewSchema = z.discriminatedUnion("family", [
   z.strictObject({
     family: z.literal("provider"),
     domain: providerDomainSchema,
     records: z.array(providerRecordSchema),
-    schema: providerSchemaSchema.optional(),
   }),
   z.strictObject({
     family: z.literal("profile"),

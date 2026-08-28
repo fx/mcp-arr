@@ -12,7 +12,6 @@ import {
   firstRecord,
   observationRequest,
   observe,
-  observedRecords,
   providerRecords,
 } from "./support/configuration.js";
 import { fixtureBody, jsonResponse } from "./support/library.js";
@@ -215,47 +214,24 @@ describe("observing providers", () => {
   });
 });
 
-describe("observing provider schemas", () => {
-  it("reads the instance's templates and describes fields without valuing them", async () => {
-    const [indexers, schema] = await Promise.all([
-      fixtureBody("sonarr", "indexer"),
-      fixtureBody("sonarr", "indexer/schema"),
-    ]);
-    const { outcome, calls } = await observe(
-      "sonarr",
-      observationRequest("indexers", { includeSchema: true }),
-      (call) => jsonResponse(call.url.pathname.endsWith("/schema") ? schema : indexers),
-    );
-    const view = expectObserved(outcome).data;
-
-    expect(calls.map((call) => call.url.pathname)).toEqual([
-      "/api/v3/indexer",
-      "/api/v3/indexer/schema",
-    ]);
-    if (view.family !== "provider") {
-      throw new Error("Expected a provider view");
-    }
-    expect(view.schema?.templates.map((template) => template.implementation)).toEqual([
-      "Newznab",
-      "Torznab",
-    ]);
-
-    const newznab = view.schema?.templates[0];
-    expect(newznab?.name).toBe("Newznab");
-    expect(newznab?.configContract).toBe("NewznabSettings");
-    expect(newznab?.fields).toEqual([
-      { name: "baseUrl", label: "URL", type: "textbox", advanced: false, secret: false },
-      { name: "apiPath", label: "API Path", type: "textbox", advanced: true, secret: false },
-      { name: "apiKey", label: "API Key", type: "textbox", advanced: false, secret: true },
-      { name: "categories", label: "Categories", type: "select", advanced: false, secret: false },
-    ]);
-  });
-
-  it("does not read a schema route the caller did not ask for", async () => {
+describe("what an observation does not read", () => {
+  /**
+   * The instance's template catalogue is not part of an observation at either
+   * detail level, so neither one reaches a schema route. The counterpart at the
+   * tool — that nothing asks for one — is in
+   * `configuration-observe-tool.test.ts`.
+   */
+  it("reads only the domain's own route, at either detail level", async () => {
     const body = await fixtureBody("sonarr", "indexer");
-    const { calls } = await observe("sonarr", observationRequest("indexers"), serving(body));
+    for (const detail of ["summary", "full"] as const) {
+      const { calls } = await observe(
+        "sonarr",
+        observationRequest("indexers", { detail }),
+        serving(body),
+      );
 
-    expect(calls.map((call) => call.url.pathname)).toEqual(["/api/v3/indexer"]);
+      expect(calls.map((call) => call.url.pathname)).toEqual(["/api/v3/indexer"]);
+    }
   });
 });
 
@@ -313,49 +289,23 @@ describe("bounding and continuing an observation", () => {
   });
 
   /**
-   * The cursor digest must key on what actually varies. `includeSchema` only
-   * reaches a schema route on a provider domain; everywhere else it is ignored,
-   * so digesting it there would make two identical observations mint cursors
-   * that reject each other.
+   * The cursor digest keys on every argument that changes the answer, and the
+   * detail level is one of them: a page continued at the other level would hand
+   * back records serialized differently from the ones the caller has.
    */
-  it("mints interchangeable cursors for a non-provider observation either way", async () => {
-    const tags = [
-      { id: 1, label: "example-one" },
-      { id: 2, label: "example-two" },
-    ];
-    const withSchema = await observe(
-      "sonarr",
-      observationRequest("tags", { paging: { pageSize: 1 }, includeSchema: true }),
-      serving(tags),
-    );
-    const cursor = expectObserved(withSchema.outcome).continuation.cursor;
-    expect(cursor).toBeDefined();
-
-    // The same observation, asked without the flag, continues that page.
-    const continued = await observe(
-      "sonarr",
-      observationRequest("tags", { paging: { pageSize: 1, cursor } }),
-      serving(tags),
-    );
-    expect(observedRecords(continued.outcome).map((record) => record.ref.id)).toEqual(["2"]);
-    // And no schema route was read for a domain that has none.
-    expect(withSchema.calls.map((call) => call.url.pathname)).toEqual(["/api/v3/tag"]);
-  });
-
-  it("still separates provider observations that differ only by includeSchema", async () => {
+  it("separates observations that differ only by detail level", async () => {
     const body = await fixtureBody("sonarr", "indexer");
-    const plain = await observe(
+    const summary = await observe(
       "sonarr",
-      observationRequest("indexers", { paging: { pageSize: 1 } }),
+      observationRequest("indexers", { detail: "summary", paging: { pageSize: 1 } }),
       serving(body),
     );
-    const cursor = expectObserved(plain.outcome).continuation.cursor;
+    const cursor = expectObserved(summary.outcome).continuation.cursor;
 
-    const schemaBody = await fixtureBody("sonarr", "indexer/schema");
     const mismatched = await observe(
       "sonarr",
-      observationRequest("indexers", { paging: { pageSize: 1, cursor }, includeSchema: true }),
-      (call) => jsonResponse(call.url.pathname.endsWith("/schema") ? schemaBody : body),
+      observationRequest("indexers", { detail: "full", paging: { pageSize: 1, cursor } }),
+      serving(body),
     );
 
     expect(expectObservationError(mismatched.outcome).message).toContain(

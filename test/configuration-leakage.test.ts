@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { UpstreamValue } from "../src/adapters/configuration/resources.js";
+import { serializeProviderTemplate } from "../src/adapters/configuration/serialize.js";
 import type { ApplicationId } from "../src/applications.js";
 import {
   expectObservationError,
@@ -78,22 +79,24 @@ describe("planted secrets never reach the model-facing output", () => {
   });
 
   it("keeps a schema endpoint's default value out of the descriptors it produces", async () => {
-    const [indexers, schema] = await Promise.all([
-      fixtureBody("sonarr", "indexer"),
-      fixtureBody("sonarr", "indexer/schema"),
-    ]);
-    const { outcome } = await observe(
+    const schema = await fixtureBody<readonly Record<string, unknown>[]>(
       "sonarr",
-      observationRequest("indexers", { includeSchema: true }),
-      (call) => jsonResponse(call.url.pathname.endsWith("/schema") ? schema : indexers),
+      "indexer/schema",
     );
-    const view = expectObserved(outcome).data;
+    const planted = canaries(schema);
+    expect(planted.length).toBeGreaterThan(0);
 
-    if (view.family !== "provider") {
-      throw new Error("Expected a provider view");
-    }
-    for (const marker of canaries(schema)) {
-      expect(JSON.stringify(view.schema)).not.toContain(marker);
+    // The catalogue reaches no result, so this is asserted where the templates
+    // are still built: the staleness check serializes one per reconciliation,
+    // and a default the serializer copied would be a current setting.
+    const templates = schema.map((raw) =>
+      serializeProviderTemplate(
+        { application: "sonarr", domain: "indexers", route: "indexer/schema", detail: "full" },
+        raw,
+      ),
+    );
+    for (const marker of planted) {
+      expect(JSON.stringify(templates)).not.toContain(marker);
     }
   });
 });
