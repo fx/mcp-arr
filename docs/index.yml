@@ -179,7 +179,7 @@ changes:
     description: Correct the counterfactual upstream fixtures and add a repeatable operator-run capture procedure
     spec: architecture
     status: draft
-    depends_on: ["0022", "0023"]
+    depends_on: ["0022", "0023", "0028"]
   - id: "0022"
     name: upstream-field-shape-tolerance
     path: changes/0022-upstream-field-shape-tolerance.md
