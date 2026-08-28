@@ -670,6 +670,67 @@ describe("arr_job_cancel", () => {
     expect(projectionOf(read)).toMatchObject({ status: "started", cancellable: false });
   });
 
+  it("answers the settled state when a cancellation lands while a refresh is in flight", async () => {
+    // The refresh captures the record before it awaits the upstream read.
+    // A failed refresh has nothing new to fold in and answers from what it
+    // held — but if a cancellation settles the job in the window the refresh
+    // was in flight, "what it held" must mean the store's current record, not
+    // the one the refresh captured before that cancellation happened. This
+    // covers only that direction: a cancellation racing ahead of a failed
+    // refresh, not the reverse.
+    const clock = createManualClock(0);
+    const state = createWorkflowState({ clock });
+    const requested: string[] = [];
+    let releaseRefresh: (() => void) | undefined;
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    let signalRefreshStarted: (() => void) | undefined;
+    const refreshStarted = new Promise<void>((resolve) => {
+      signalRefreshStarted = resolve;
+    });
+    const context = createTestToolContext({
+      environment: allApplicationsEnvironment,
+      state,
+      fetch: async (url) => {
+        requested.push(url);
+        if (!/\/command\/[^/]+$/u.test(url)) {
+          return jsonResponse({ appName: "Sonarr", version: "9.9.9.9" });
+        }
+        // Signal that the refresh's upstream read is underway, then hold it
+        // open until the test releases it, so the cancellation below settles
+        // the job while this refresh is still in flight.
+        signalRefreshStarted?.();
+        await refreshGate;
+        return jsonResponse({ message: "unavailable" }, 503);
+      },
+    });
+    const record = state.jobs.project({
+      application: "sonarr",
+      command,
+      observation: { state: "started" },
+      cancellation: acknowledging({ kind: "accepted" }),
+    });
+
+    const read = callTool(context, "arr_job_get", { job: record.reference });
+    await refreshStarted;
+
+    // The cancellation settles the job in the store while the refresh above
+    // is still awaiting its upstream response.
+    await cancel(context, record.reference);
+    releaseRefresh?.();
+    const result = await read;
+
+    expect(requested).toEqual([commandRoute("sonarr")]);
+    expect(projectionOf(result)).toMatchObject({
+      status: "cancelled",
+      terminal: { status: "cancelled", result: "cancelled" },
+      cancellable: false,
+    });
+    const warning = result.applications[0]?.warnings.join(" ") ?? "";
+    expect(warning).toContain("this projection is the state this server last observed");
+  });
+
   it("reports a job that never permitted cancellation as uncancellable", async () => {
     const job = running({ supported: false });
 

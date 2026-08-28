@@ -139,7 +139,17 @@ async function refreshJob(
     record.command.upstreamId,
   );
   if (refresh.status !== "observed") {
-    return { record, warnings: [describeFailedRefresh(refresh)] };
+    // A failed refresh learned nothing, so it answers from the held record —
+    // but the record captured before the `await` above can already be stale:
+    // a concurrent cancellation may have settled the job in the window this
+    // refresh was in flight. Re-resolving from the store answers from
+    // whatever is current now, falling back to the captured record only if
+    // the reference no longer resolves at all.
+    const current = invocation.state.jobs.resolve(record.reference);
+    return {
+      record: current.ok ? current.record : record,
+      warnings: [describeFailedRefresh(refresh)],
+    };
   }
 
   const observed = invocation.state.jobs.observe(record.reference, refresh.observation);
