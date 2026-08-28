@@ -75,18 +75,22 @@ interface ObservationRun {
   readonly routes: readonly string[];
 }
 
+/** Every upstream path the instance stub served, cleared at the start of a call. */
+const served: string[] = [];
+
+const context = createTestToolContext({
+  fetch: async (input) => {
+    const { pathname } = new URL(input);
+    if (pathname.endsWith("/system/status")) {
+      return jsonResponse(statusBody(applicationForUrl(input)));
+    }
+    served.push(pathname);
+    return jsonResponse(pathname.endsWith("/schema") ? providerTemplates : providerRecords);
+  },
+});
+
 async function observe(args: Record<string, unknown>): Promise<ObservationRun> {
-  const routes: string[] = [];
-  const context = createTestToolContext({
-    fetch: async (input) => {
-      const { pathname } = new URL(input);
-      if (pathname.endsWith("/system/status")) {
-        return jsonResponse(statusBody(applicationForUrl(input)));
-      }
-      routes.push(pathname);
-      return jsonResponse(pathname.endsWith("/schema") ? providerTemplates : providerRecords);
-    },
-  });
+  served.length = 0;
 
   const parsed = definition.inputSchema.safeParse(args);
   if (!parsed.success) {
@@ -94,7 +98,7 @@ async function observe(args: Record<string, unknown>): Promise<ObservationRun> {
   }
   const result = await definition.handle(context, parsed.data);
   expect(definition.outputSchema.safeParse(result).success).toBe(true);
-  return { result, routes };
+  return { result, routes: [...served] };
 }
 
 function onlyData(result: ToolResult<unknown>, label: string): Record<string, unknown> {

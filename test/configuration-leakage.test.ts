@@ -9,6 +9,7 @@ import {
   observationRequest,
   observe,
   providerRecords,
+  recordedSchemaContext,
 } from "./support/configuration.js";
 import { fixtureBody, jsonResponse } from "./support/library.js";
 import { testApiKeys } from "./support/tool-context.js";
@@ -89,12 +90,7 @@ describe("planted secrets never reach the model-facing output", () => {
     // The catalogue reaches no result, so this is asserted where the templates
     // are still built: the staleness check serializes one per reconciliation,
     // and a default the serializer copied would be a current setting.
-    const templates = schema.map((raw) =>
-      serializeProviderTemplate(
-        { application: "sonarr", domain: "indexers", route: "indexer/schema", detail: "full" },
-        raw,
-      ),
-    );
+    const templates = schema.map((raw) => serializeProviderTemplate(recordedSchemaContext, raw));
     for (const marker of planted) {
       expect(JSON.stringify(templates)).not.toContain(marker);
     }

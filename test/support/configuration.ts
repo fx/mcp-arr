@@ -8,6 +8,7 @@ import type {
   ConfigurationReconcileRequest,
 } from "../../src/adapters/configuration/reconcile.js";
 import { runConfigurationReconciliation } from "../../src/adapters/configuration/reconcile.js";
+import type { SerializationContext } from "../../src/adapters/configuration/serialize.js";
 import type {
   ConfigurationObservationOutcome,
   ConfigurationObservationRequest,
@@ -39,6 +40,20 @@ export function observationRequest(
 ): ConfigurationObservationRequest {
   return { domain, detail: "full", paging: { pageSize: 25 }, ...overrides };
 }
+
+/**
+ * The context the recorded Sonarr indexer schema route is serialized under.
+ *
+ * A template is built only by the staleness check now, so every test that
+ * examines one describes the same read: one provider domain's schema route, at
+ * the detail a fingerprint is taken at.
+ */
+export const recordedSchemaContext: SerializationContext = {
+  application: "sonarr",
+  domain: "indexers",
+  route: "indexer/schema",
+  detail: "full",
+};
 
 export interface ObservationRun {
   readonly outcome: ConfigurationObservationOutcome;

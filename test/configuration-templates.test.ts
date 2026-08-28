@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { serializeProviderTemplate } from "../src/adapters/configuration/serialize.js";
+import { recordedSchemaContext } from "./support/configuration.js";
 import { fixtureBody } from "./support/library.js";
 
 /**
@@ -11,20 +12,13 @@ import { fixtureBody } from "./support/library.js";
  * would show up there only as a hash that moved or failed to.
  */
 
-const context = {
-  application: "sonarr",
-  domain: "indexers",
-  route: "indexer/schema",
-  detail: "full",
-} as const;
-
 describe("serializing a provider template", () => {
   it("describes each field without valuing it", async () => {
     const schema = await fixtureBody<readonly Record<string, unknown>[]>(
       "sonarr",
       "indexer/schema",
     );
-    const templates = schema.map((raw) => serializeProviderTemplate(context, raw));
+    const templates = schema.map((raw) => serializeProviderTemplate(recordedSchemaContext, raw));
 
     expect(templates.map((template) => template?.implementation)).toEqual(["Newznab", "Torznab"]);
 
@@ -42,9 +36,11 @@ describe("serializing a provider template", () => {
   it("drops a template that names no implementation rather than inventing one", () => {
     // The implementation is what a template is matched by, so one without a
     // name describes nothing the staleness check could compare against.
-    expect(serializeProviderTemplate(context, { name: "Nameless", fields: [] })).toBeUndefined();
     expect(
-      serializeProviderTemplate(context, { implementation: "  ", fields: [] }),
+      serializeProviderTemplate(recordedSchemaContext, { name: "Nameless", fields: [] }),
+    ).toBeUndefined();
+    expect(
+      serializeProviderTemplate(recordedSchemaContext, { implementation: "  ", fields: [] }),
     ).toBeUndefined();
   });
 });
