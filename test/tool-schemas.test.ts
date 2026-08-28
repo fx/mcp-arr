@@ -402,6 +402,20 @@ const noAlternativeMatched = "Invalid input";
 /** A `strictObject` reporting a required string that was not supplied. */
 const missingRequiredString = "Invalid input: expected string, received undefined";
 
+/**
+ * Zod's own wording for a string longer than its schema allows.
+ *
+ * Captured by running the cases below against the implementation as it stood
+ * before the bound stopped being published, rather than written from what the
+ * sanitized publication was expected to produce. The whole promise of removing
+ * a length from the schema a host reads is that the refusal a caller reads is
+ * untouched, and an expectation derived from the new code would assert that
+ * promise against itself.
+ */
+function tooLong(maximum: number): string {
+  return `Too big: expected string to have <=${maximum} characters`;
+}
+
 /** `z.discriminatedUnion` reporting a value outside its declared set. */
 function discriminatorMismatch(variants: readonly string[]): string {
   return `Invalid discriminator value. Expected ${variants.map((variant) => `'${variant}'`).join(" | ")}`;
@@ -502,6 +516,45 @@ describe("input rejection messages", () => {
 
     for (const [name, input, expected] of cases) {
       expect(rejectionMessages(name, input), name).toEqual(expected);
+    }
+  });
+
+  it("words an over-length value by naming the maximum it exceeds", () => {
+    // Every bounded string in the corpus, at both depths it occurs at: a root
+    // property of a variant, and a property of a nested mapping object. These
+    // are the values whose bound the published schema no longer states, so
+    // they are the ones whose refusal has to be shown to be unchanged.
+    const cases: ReadonlyArray<
+      readonly [(typeof toolNames)[number], Record<string, unknown>, string]
+    > = [
+      ["arr_library_query", { view: "lookup", term: "x".repeat(201) }, tooLong(200)],
+      ["arr_library_query", { view: "series", cursor: "c".repeat(513) }, tooLong(512)],
+      ["arr_activity_query", { view: "history", cursor: "c".repeat(513) }, tooLong(512)],
+      ["arr_release_search", { target: "prowlarr_aggregate", term: "x".repeat(201) }, tooLong(200)],
+      ["arr_config_observe", { domain: "tags", cursor: "c".repeat(513) }, tooLong(512)],
+      [
+        "arr_import_inspect",
+        {
+          source: "candidate_reprocess",
+          candidate: sampleReferences.importCandidate,
+          mapping: { releaseGroup: "x".repeat(121) },
+        },
+        tooLong(120),
+      ],
+      [
+        "arr_library_change",
+        {
+          intent: "update_file_metadata",
+          mode: "plan",
+          files: [sampleReferences.mediaFile],
+          changes: { releaseGroup: "x".repeat(121) },
+        },
+        tooLong(120),
+      ],
+    ];
+
+    for (const [name, input, expected] of cases) {
+      expect(rejectionMessages(name, input), `${name} ${expected}`).toEqual([expected]);
     }
   });
 
