@@ -1035,6 +1035,12 @@ function identified(id: number | null | undefined): { id: number } | undefined {
  * It is the request-side half of {@link importFileFields}, and it carries the
  * two things a validation needs beyond the mapping: which folder the file was
  * found under, and which season it is being decided for.
+ *
+ * The season is the row's own, except where the correction moves the file to
+ * another media record without saying which episodes it lands on — see
+ * {@link movesMediaUnnamed}. A season number counts within one series, so
+ * sending the scanned one against a different series states a mapping the
+ * caller did not select, exactly as the scanned episodes would.
  */
 function reprocessRow(
   context: ImportScanContext,
@@ -1043,7 +1049,9 @@ function reprocessRow(
   patch: UpstreamMappingPatch,
 ): UpstreamBody {
   const folderName = text(row.folderName) ?? scannedFolderName(context);
-  const seasonNumber = count(row.seasonNumber) ?? context.seasonNumber;
+  const seasonNumber = movesMediaUnnamed(row, patch)
+    ? undefined
+    : (count(row.seasonNumber) ?? context.seasonNumber);
   return {
     ...importFileFields(context, row, path, patch),
     ...(folderName === undefined ? {} : { folderName }),
@@ -1079,12 +1087,13 @@ export function importFileFields(
   patch: UpstreamMappingPatch,
 ): UpstreamBody {
   const mediaId = patch.mediaId ?? count(row.series?.id) ?? count(row.movie?.id);
-  const episodeIds =
-    patch.episodeIds ??
-    (row.episodes ?? []).flatMap((episode) => {
-      const id = count(episode.id);
-      return id === undefined ? [] : [id];
-    });
+  const episodeIds = movesMediaUnnamed(row, patch)
+    ? []
+    : (patch.episodeIds ??
+      (row.episodes ?? []).flatMap((episode) => {
+        const id = count(episode.id);
+        return id === undefined ? [] : [id];
+      }));
   const quality =
     patch.quality === undefined
       ? row.quality
@@ -1108,6 +1117,38 @@ export function importFileFields(
     // this call re-derived rather than from the row.
     ...(context.downloadId === undefined ? {} : { downloadId: context.downloadId }),
   };
+}
+
+/**
+ * Whether this patch moves the file to a media record the row is not mapped to
+ * without saying which episodes it lands on.
+ *
+ * The row's episodes and season describe the media the *scan* filed this file
+ * under, and a correction that names a different series does not carry them
+ * with it: an episode belongs to the series it is an episode of, whatever the
+ * mapping around it is renamed to. Sending them anyway builds an element that
+ * reads as coherent and is not — a file mapped to one series carrying another
+ * series' episode — and Sonarr accepts it: verified against 4.0.19.2979, the
+ * corrected series with the scanned series' episode returns `200` with no
+ * rejections at all, so nothing later in this path would stop the import.
+ *
+ * Carrying nothing instead is what lets the application answer for itself.
+ * Against the same instance, the same file and the same corrected series with
+ * neither episodes nor a season returns a **permanent** rejection, which the
+ * rejection guard already refuses an import on — and the episodes it names in
+ * that answer belong to the corrected series, so what a caller is shown is a
+ * mapping that is at least about the media it asked for.
+ *
+ * Where the caller did name episodes there is nothing to infer: that mapping is
+ * theirs, it is what the reference is fingerprinted from, and this stays out of
+ * the way of it. Radarr reaches this with no episodes and no season to drop, so
+ * it needs no case of its own and has none.
+ */
+function movesMediaUnnamed(row: UpstreamCandidate, patch: UpstreamMappingPatch): boolean {
+  if (patch.mediaId === undefined || patch.episodeIds !== undefined) {
+    return false;
+  }
+  return patch.mediaId !== (count(row.series?.id) ?? count(row.movie?.id));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

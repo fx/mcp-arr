@@ -78,6 +78,15 @@ interface InstanceOptions {
   readonly scan?: Record<string, unknown>[] | undefined;
   /** Replaces what the reprocess POST answers, for a re-decided candidate. */
   readonly decided?: Record<string, unknown>[] | undefined;
+  /**
+   * Answers the reprocess from the element it was sent, as an instance does.
+   *
+   * A fixed answer cannot express a decision that depends on the request, and
+   * the mapping guard below is exactly that: the same file and the same
+   * corrected series are accepted or rejected according to which episodes the
+   * element named.
+   */
+  readonly decide?: ((element: Record<string, unknown>) => Record<string, unknown>) | undefined;
   readonly diskspace?: unknown[] | undefined;
 }
 
@@ -98,7 +107,11 @@ function instance(options: InstanceOptions = {}): Instance {
         const body: unknown = JSON.parse(String(call.init.body));
         // Read as the list the endpoint declares. A body of any other shape is
         // recorded as sending nothing, which is what it amounts to upstream.
-        posted.push(...(Array.isArray(body) ? (body as Record<string, unknown>[]) : []));
+        const elements = Array.isArray(body) ? (body as Record<string, unknown>[]) : [];
+        posted.push(...elements);
+        if (options.decide !== undefined) {
+          return jsonResponse(elements.map(options.decide));
+        }
         return jsonResponse(options.decided ?? [sonarr.candidates[0]]);
       }
       return jsonResponse(options.scan ?? sonarr.candidates);
@@ -355,6 +368,60 @@ describe("reprocessing a correction", () => {
     // The download identity is put back from the re-derived context: it is what
     // ties an import to the queue row, and a scan answer drops it.
     expect(sent?.downloadId).toBe("b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1");
+  });
+
+  it("leaves the scan's episodes and season behind when a correction moves the media", async () => {
+    const running = instance();
+    // A media-only correction: the caller says this file belongs to another
+    // series and names no episodes at all.
+    await reprocessCandidate(
+      running.client,
+      "sonarr",
+      { sourceKind: "tracked_download", queueItemId: 502, mediaId: 12 },
+      fileIdentity(cleanFile),
+      (await compiled({ mediaId: 13 })).patch,
+    );
+
+    // The scan mapped this file to series 12, season 1, episode 1001. None of
+    // that describes series 13: an episode belongs to the series it is an
+    // episode of, and a season counts within one series. Sending them anyway
+    // builds an element that reads as coherent and is not — and Sonarr answers
+    // that one with no rejections at all, so it would be imported.
+    const sent = running.posted[0];
+    expect(sent?.seriesId).toBe(13);
+    expect(sent).not.toHaveProperty("episodeIds");
+    expect(sent).not.toHaveProperty("seasonNumber");
+    // The control: only the two fields the moved media invalidates are left
+    // behind. Everything else the reprocess needs still travels.
+    expect(sent).toMatchObject({
+      path: cleanFile,
+      languages: [{ name: "English" }],
+      releaseGroup: "ExampleGroup",
+      downloadId: "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1",
+    });
+  });
+
+  it.each([
+    { named: "corrects nothing about the media", corrections: { quality: "WEBDL-720p" } },
+    { named: "names the media the scan already found", corrections: { mediaId: 12 } },
+  ])("sends the scan's own episodes where the correction $named", async ({ corrections }) => {
+    const running = instance();
+    await reprocessCandidate(
+      running.client,
+      "sonarr",
+      { sourceKind: "tracked_download", queueItemId: 502, mediaId: 12 },
+      fileIdentity(cleanFile),
+      (await compiled(corrections)).patch,
+    );
+
+    // Nothing moved, so nothing is dropped: what is re-decided is the mapping
+    // the instance itself found, and a guard that fired here would blank the
+    // episodes of every ordinary reprocess.
+    expect(running.posted[0]).toMatchObject({
+      seriesId: 12,
+      episodeIds: [1001],
+      seasonNumber: 1,
+    });
   });
 
   it("reports a file that is no longer in the folder as absent", async () => {
@@ -858,6 +925,66 @@ describe("validating immediately before an import", () => {
     expect(result.validation.candidate.decision.importable).toBe(true);
     expect(result.validation.space.status).toBe("sufficient");
     expect(running.posted).toHaveLength(1);
+  });
+
+  /**
+   * A reprocess answered the way Sonarr 4.0.19.2979 answers one.
+   *
+   * The decision depends on the element: the same file and the same corrected
+   * series come back importable when the element names episodes and carry a
+   * **permanent** rejection when it names none. That asymmetry is the whole
+   * upstream guard this path relies on, so the double states it rather than
+   * answering the same thing whatever it is sent.
+   */
+  function decidedFromElement(element: Record<string, unknown>): Record<string, unknown> {
+    const named = Array.isArray(element.episodeIds) ? element.episodeIds : [];
+    return reprocessAnswer(
+      element,
+      named.length === 0 ? [{ reason: "Episodes not selected", type: "permanent" }] : [],
+    );
+  }
+
+  it("refuses a mapping moved to another media rather than importing it there", async () => {
+    const running = instance({ decide: decidedFromElement });
+
+    // The reference stands for a file the caller moved to another series and
+    // named no episodes for, which is what a media-only correction leaves: the
+    // episodes the scan found belong to the series the file was moved off.
+    const result = await validateForImport(running.client, "sonarr", {
+      retained: retainedFor({ mediaId: 13, episodeIds: undefined, importable: false }),
+      patch: { mediaId: 13 },
+      destination: "/media/example/series",
+    });
+
+    // The element carried the corrected series and neither the scan's episodes
+    // nor its season, so the instance answered with its own permanent rejection
+    // — and the rejection guard stopped there. Nothing was submitted: this is
+    // the gate every import passes through before a command is built.
+    const sent = running.posted[0];
+    expect(sent?.seriesId).toBe(13);
+    expect(sent).not.toHaveProperty("episodeIds");
+    expect(sent).not.toHaveProperty("seasonNumber");
+    expect(result).toMatchObject({ status: "refused", refusal: { kind: "rejected" } });
+    if (result.status === "refused" && result.refusal.kind === "rejected") {
+      expect(result.refusal.rejections.map((rejection) => rejection.reason)).toEqual([
+        "Episodes not selected",
+      ]);
+    }
+  });
+
+  it("passes the same moved mapping once the caller names episodes for it", async () => {
+    // The control, on the same double: the guard is about a mapping nobody
+    // completed rather than about correcting the media, which stays allowed.
+    const running = instance({ decide: decidedFromElement });
+
+    const result = await validateForImport(running.client, "sonarr", {
+      retained: retainedFor({ mediaId: 13, episodeIds: [2002], seasonNumber: 1 }),
+      patch: { mediaId: 13, episodeIds: [2002] },
+      destination: "/media/example/series",
+    });
+
+    expect(running.posted[0]).toMatchObject({ seriesId: 13, episodeIds: [2002], seasonNumber: 1 });
+    expect(result.status).toBe("ok");
   });
 
   it("refuses a candidate whose file changed underneath it", async () => {
