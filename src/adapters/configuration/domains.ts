@@ -117,19 +117,3 @@ export function routeFor(
 export function applicationsForDomain(domain: ConfigurationDomain): readonly ApplicationId[] {
   return Object.keys(configurationRoutes[domain]) as readonly ApplicationId[];
 }
-
-/**
- * The schema endpoint a provider domain's templates are read from.
- *
- * Provider field lists are version specific, so the templates a caller may
- * configure are taken from the instance rather than from a table compiled into
- * this server. Only provider domains have one; a profile or resource has a
- * fixed shape and no schema route to read.
- */
-export function providerSchemaRouteFor(
-  domain: ProviderDomain,
-  application: ApplicationId,
-): string | undefined {
-  const route = routeFor(domain, application);
-  return route === undefined ? undefined : `${route}/schema`;
-}

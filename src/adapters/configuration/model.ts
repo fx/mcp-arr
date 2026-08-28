@@ -136,36 +136,6 @@ export interface ResourceRecord extends ConfigurationRecordBase {
 export type ConfigurationRecord = ProviderRecord | ProfileRecord | ResourceRecord;
 
 /**
- * One dynamic provider field as the instance's schema describes it.
- *
- * A descriptor never carries a value, not even the default the schema offers:
- * the schema for an already-configured template can echo the current setting,
- * and the point of this type is to say what a field *is*, not what it holds.
- */
-export interface DynamicFieldDescriptor {
-  readonly name: string;
-  readonly label?: string | undefined;
-  readonly type?: string | undefined;
-  readonly advanced?: boolean | undefined;
-  /** Whether supplying this field means supplying a secret. */
-  readonly secret: boolean;
-}
-
-/**
- * One provider template the instance offers for a domain.
- *
- * Internal to the operation that reads a schema route: the instance's
- * catalogue is not something an observation returns, so this describes what a
- * staleness check digests rather than anything a caller receives.
- */
-export interface ProviderTemplate {
-  readonly implementation: string;
-  readonly name?: string | undefined;
-  readonly configContract?: string | undefined;
-  readonly fields: readonly DynamicFieldDescriptor[];
-}
-
-/**
  * One domain's observation, discriminated by family so a consumer that knows
  * which domain it asked for also knows which record type it is holding.
  */

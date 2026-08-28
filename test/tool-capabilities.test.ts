@@ -55,10 +55,11 @@ function operationKey(operation: { tool: string; variant?: string | undefined })
  * the claims about that list are made against a registry that declares one
  * rather than against an inventory that currently has none to show.
  */
-const withOneUnimplemented: readonly OperationDefinition[] = operationDefinitions.map((operation) =>
-  operation.tool === "arr_library_query" && operation.variant === "lookup"
-    ? { ...operation, handler: unsupportedOperationHandler }
-    : operation,
+const withOneUnimplemented: readonly OperationDefinition[] = operationDefinitions.map(
+  (operation) =>
+    operation.tool === "arr_library_query" && operation.variant === "lookup"
+      ? { ...operation, handler: unsupportedOperationHandler }
+      : operation,
 );
 
 /** Every operation a report projects onto its application, however it is grouped. */

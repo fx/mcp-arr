@@ -11,11 +11,9 @@ import {
 import {
   type ConfiguredSecret,
   configurationRef,
-  type DynamicFieldDescriptor,
   type ProfileEntry,
   type ProfileRecord,
   type ProviderRecord,
-  type ProviderTemplate,
   type ResourceRecord,
   type SafeField,
 } from "./model.js";
@@ -25,7 +23,6 @@ import {
   isUpstreamId,
   parseConfiguration,
   providerResourceSchema,
-  providerTemplateSchema,
   qualityProfileSchema,
 } from "./parse.js";
 
@@ -86,14 +83,6 @@ function number(value: number | null | undefined): number | undefined {
 
 function flag(value: boolean | null | undefined): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
-}
-
-function isSecretPrivacy(privacy: string | null | undefined): boolean {
-  if (typeof privacy !== "string") {
-    return false;
-  }
-  const normalized = privacy.toLowerCase().replaceAll(/[^a-z0-9]/gu, "");
-  return normalized === "password" || normalized === "apikey" || normalized === "username";
 }
 
 /**
@@ -389,44 +378,5 @@ export function serializeResource(
     withheld: {
       count: countWithheldProperties(raw, [...identityKeys, ...mapped.surfaced]),
     },
-  };
-}
-
-/**
- * Maps one provider template from the instance's schema endpoint.
- *
- * A descriptor says what a field is; it never carries what a field holds. The
- * schema endpoint returns a `value` for every field, and for an
- * already-configured template that value is the current setting — so the
- * property is simply never read here.
- */
-export function serializeProviderTemplate(
-  context: SerializationContext,
-  raw: Record<string, unknown>,
-): ProviderTemplate | undefined {
-  const template = parseConfiguration(
-    providerTemplateSchema,
-    raw,
-    context.application,
-    context.route,
-  );
-  const implementation = text(template.implementation) ?? text(template.implementationName);
-  if (implementation === undefined) {
-    return undefined;
-  }
-
-  return {
-    implementation,
-    name: text(template.name) ?? text(template.implementationName),
-    configContract: text(template.configContract),
-    fields: (template.fields ?? []).map(
-      (field): DynamicFieldDescriptor => ({
-        name: field.name,
-        label: text(field.label),
-        type: text(field.type),
-        advanced: flag(field.advanced),
-        secret: isSecretFieldName(field.name) || isSecretPrivacy(field.privacy),
-      }),
-    ),
   };
 }
