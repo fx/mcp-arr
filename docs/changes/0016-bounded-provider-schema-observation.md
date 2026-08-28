@@ -5,7 +5,7 @@
 Stop returning the instance's provider template catalogue from `arr_config_observe`. Observing Prowlarr's `indexers` domain at `detail: "full"` returns 1,044,260 bytes, of which 1,043,460 is a `schema.templates` list of 624 Cardigann definitions sitting outside the page bound, while the records the caller asked for are 1,366 bytes. Nothing reads it: reconciliation re-reads the schema route itself, and the only caller-facing use it was built for is provider creation, which the server refuses.
 
 **Spec:** [Configuration Reconciliation](../specs/configuration-reconciliation/)
-**Status:** draft
+**Status:** complete
 **Depends On:** —
 
 ## Motivation
@@ -102,17 +102,17 @@ Neither order makes this change unimplementable, and neither leaves the catalogu
 
 ## Tasks
 
-- [ ] Pin the bound before removing anything
-  - [ ] Add a test asserting that a provider-domain observation carries no template catalogue at any detail level, across every provider domain, and confirm it fails against the unmodified implementation
-  - [ ] Add a test asserting a full-detail provider observation issues one upstream request rather than two
-- [ ] Remove the catalogue from observation
-  - [ ] Drop `includeSchema` from the observation request type and the tool's call site, and remove the population branch in the observation service
-  - [ ] Remove the template member from the provider view and from the published configuration result schema, with the template and provider-schema shapes if they become unreferenced
-  - [ ] Confirm `readSchemaFingerprint` still compiles against its own template serialization and that the stale-plan suite passes unedited
-- [ ] Settle the fixtures and the record
-  - [ ] Remove recorded schema-route fixtures that only fed the removed path, keeping those the fingerprint path reads
-  - [ ] Amend the Configuration Reconciliation spec's observation and provider-schema sections with a changelog row
-  - [ ] Tick these tasks and set the status in this document, `docs/index.yml`, and `docs/index.md`
+- [x] Pin the bound before removing anything
+  - [x] Add a test asserting that a provider-domain observation carries no template catalogue at any detail level, across every provider domain, and confirm it fails against the unmodified implementation
+  - [x] Add a test asserting a full-detail provider observation issues one upstream request rather than two
+- [x] Remove the catalogue from observation
+  - [x] Drop `includeSchema` from the observation request type and the tool's call site, and remove the population branch in the observation service
+  - [x] Remove the template member from the provider view and from the published configuration result schema, with the template and provider-schema shapes if they become unreferenced
+  - [x] Confirm `readSchemaFingerprint` still compiles against its own template serialization and that the stale-plan suite passes unedited
+- [x] Settle the fixtures and the record
+  - [x] Remove recorded schema-route fixtures that only fed the removed path, keeping those the fingerprint path reads
+  - [x] Amend the Configuration Reconciliation spec's observation and provider-schema sections with a changelog row
+  - [x] Tick these tasks and set the status in this document, `docs/index.yml`, and `docs/index.md`
 
 ## Open Questions
 
