@@ -21,6 +21,7 @@ import {
   declaredPropertyValues,
   fixedValues,
   publishedPropertyNames,
+  variantLines,
 } from "./support/json-schema.js";
 import { sampleReferences, sampleToolInputs } from "./support/tool-context.js";
 
@@ -158,6 +159,23 @@ function admittedApplications(node: Record<string, unknown>): number {
   throw new Error(
     `An application selection published as ${JSON.stringify(node.type ?? null)} cannot be counted`,
   );
+}
+
+/**
+ * How many applications a published node's own default names, or none where it
+ * publishes no default.
+ *
+ * A default is caller data rather than a schema, so nothing about the node's
+ * shape constrains it: a property bounded at one application can still publish
+ * a default naming two, and a caller that omits the argument then gets the
+ * selection the schema said was accepted.
+ */
+function defaultApplications(node: Record<string, unknown>): number {
+  const declared = node.default;
+  if (declared === undefined) {
+    return 0;
+  }
+  return Array.isArray(declared) ? declared.length : 1;
 }
 
 /**
@@ -335,7 +353,7 @@ describe("published tool surface", () => {
     ).toBe(false);
   });
 
-  it("admits no application selection larger than a mutation can target", () => {
+  it("admits no application selection a mutation could not target", () => {
     // The class rather than the two variants that prompted it: a published
     // schema that advertises a selection the dispatcher refuses for naming more
     // than one instance is the defect, and naming the tools it is known to
@@ -343,15 +361,27 @@ describe("published tool surface", () => {
     // it. Read tools are deliberately absent — fanning a query across instances
     // is correct, and only a mutation carries the one plan, job, and receipt
     // that make a second target unreportable.
+    //
+    // Two halves, because the spec rule has two: a selection must not admit more
+    // than one application, and a schema whose default resolves to more than one
+    // must not publish that default as accepted. Checking the ceiling alone
+    // would pass a selection capped at one but left optional — which is half of
+    // the very defect this guard exists for, since omitting it falls through to
+    // every application the operation declares.
     const swept: string[] = [];
+    const isSelection = (name: string): boolean =>
+      (applicationSelectionProperties as readonly string[]).includes(name);
+
     // Which tools mutate is read off the annotations they publish rather than
     // off a test fixture: that declaration is the same one a host reads to
     // decide whether a call changes anything.
     for (const definition of toolDefinitions.filter(
       (candidate) => candidate.annotations.readOnlyHint === false,
     )) {
-      for (const [property, node] of collectDeclaredProperties(inputJsonSchema(definition.name))) {
-        if (!(applicationSelectionProperties as readonly string[]).includes(property)) {
+      const schema = inputJsonSchema(definition.name);
+
+      for (const [property, node] of collectDeclaredProperties(schema)) {
+        if (!isSelection(property)) {
           continue;
         }
         swept.push(`${definition.name}.${property}`);
@@ -359,13 +389,38 @@ describe("published tool surface", () => {
           admittedApplications(node),
           `${definition.name} publishes ${property}`,
         ).toBeLessThanOrEqual(maxMutationApplications);
+        // A default is a value rather than a schema, so the ceiling above says
+        // nothing about it: a property capped at one could still publish a
+        // default naming both.
+        expect(
+          defaultApplications(node),
+          `${definition.name} defaults ${property}`,
+        ).toBeLessThanOrEqual(maxMutationApplications);
+      }
+
+      // The other half, read from the generated documentation, because a flat
+      // published root cannot say it: its `required` list is the intersection
+      // across forms, so a property required by one form and absent from
+      // another is optional at the root. Which form requires what survives only
+      // in the prose generated from the same union that validates.
+      for (const line of variantLines(schema, definition.discriminator)) {
+        for (const property of [...line.names].filter(isSelection)) {
+          swept.push(`${definition.name}.${property} required`);
+          expect(
+            line.required.has(property),
+            `${definition.name} form ${line.values.join("|")} leaves ${property} optional`,
+          ).toBe(true);
+        }
       }
     }
 
-    // The sweep found the selections it is meant to be checking. Without this
-    // the assertion above would pass just as happily over nothing at all.
+    // The sweep found the selections it is meant to be checking, in both halves.
+    // Without this the assertions above would pass just as happily over nothing
+    // at all.
     expect(swept).toContain("arr_search_start.application");
+    expect(swept).toContain("arr_search_start.application required");
     expect(swept).toContain("arr_library_change.application");
+    expect(swept).toContain("arr_library_change.application required");
   });
 
   it("names an application selection nothing but applications or application", () => {

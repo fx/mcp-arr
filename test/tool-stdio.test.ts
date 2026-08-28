@@ -11,6 +11,7 @@ import {
   declaredPropertyValues,
   publishedPropertyNames,
   schemaFailures,
+  variantLines,
 } from "./support/json-schema.js";
 import { assertCleanProtocolStdout, spawnBuiltServer } from "./support/spawned-stdio.js";
 import { sampleBranchInputs } from "./support/tool-context.js";
@@ -146,53 +147,6 @@ const listingByteCeiling = 55_400;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-interface VariantLine {
-  /** The discriminator values this form's label lists, empty when it has none. */
-  readonly values: readonly string[];
-  /** The arguments the form requires, its own discriminator value included. */
-  readonly required: ReadonlySet<string>;
-  /** Every argument the form names, required or optional. */
-  readonly names: ReadonlySet<string>;
-}
-
-/** The argument names one comma-separated part names, annotations stripped. */
-function argumentNames(part: string): string[] {
-  return part
-    .split(",")
-    .map((argument) => argument.trim().split("=")[0]?.trim() ?? "")
-    .filter((name) => name !== "");
-}
-
-/**
- * Reads one generated variant line back into the form it describes.
- *
- * The grammar is fixed: an optional `<discriminator>=<value>|<value>` label,
- * the required arguments after `: `, the optional ones after `; optional `, and
- * any argument may carry an `=<narrowing>` annotation. Parsing it is what keeps
- * the expectations below derived from what the server published — matching
- * literal text would restate the variant list this whole mechanism exists to
- * stop maintaining by hand.
- */
-function parseVariantLine(line: string, discriminator: string | undefined): VariantLine {
-  const [head = "", optional = ""] = line.slice(2).split("; optional ");
-  let label = "";
-  let requiredPart = head;
-  if (discriminator !== undefined && head.startsWith(`${discriminator}=`)) {
-    const separator = head.indexOf(": ");
-    label = separator === -1 ? head : head.slice(0, separator);
-    requiredPart = separator === -1 ? "" : head.slice(separator + 2);
-  }
-  const required = new Set(argumentNames(requiredPart));
-  if (label !== "" && discriminator !== undefined) {
-    required.add(discriminator);
-  }
-  return {
-    values: label === "" ? [] : label.slice(label.indexOf("=") + 1).split("|"),
-    required,
-    names: new Set([...required, ...argumentNames(optional)]),
-  };
 }
 
 interface ToolCallResult {
@@ -556,10 +510,7 @@ describe("built stdio tool surface", () => {
         "Supply exactly one of these forms in full; do not combine properties from two forms.",
       );
 
-      const lines = description
-        .split("\n")
-        .filter((line) => line.startsWith("- "))
-        .map((line) => parseVariantLine(line, discriminator));
+      const lines = variantLines(schema ?? {}, discriminator);
       expect(lines.length, `${name} documented forms`).toBeGreaterThan(0);
 
       if (discriminator !== undefined) {
@@ -630,10 +581,7 @@ describe("built stdio tool surface", () => {
   it("documents the wanted search as naming the one application it mutates", async () => {
     const published = await publishedInputSchemas();
     const schema = published.get("arr_search_start") ?? {};
-    const lines = String(schema.description ?? "")
-      .split("\n")
-      .filter((line) => line.startsWith("- "))
-      .map((line) => parseVariantLine(line, "target"));
+    const lines = variantLines(schema, "target");
 
     // The two wanted targets take the same arguments, so they document as one
     // form; finding it by discriminator value rather than by position is what
