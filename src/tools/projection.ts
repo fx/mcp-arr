@@ -287,11 +287,8 @@ export function projectEnvelope(
   const unmatched = new Set<string>();
   const offered = new Map<string, readonly string[]>();
 
-  const projected = outcomes.map((outcome) => {
-    if (!isRecord(outcome) || !isRecord(outcome.data)) {
-      return outcome;
-    }
-    const available = availablePaths(inventory, outcome.data);
+  /** The fields to copy from one set of published paths, recording the misses. */
+  const resolve = (available: readonly string[]): Selection => {
     const selection: Selection = new Map();
     if (inventory.discriminator !== undefined) {
       selection.set(inventory.discriminator, undefined);
@@ -307,12 +304,32 @@ export function projectEnvelope(
         offered.set(prefix, offeredUnder(available, prefix));
       }
     }
+    return selection;
+  };
+
+  let answered = false;
+  const projected = outcomes.map((outcome) => {
+    if (!isRecord(outcome) || !isRecord(outcome.data)) {
+      return outcome;
+    }
+    answered = true;
+    const selection = resolve(availablePaths(inventory, outcome.data));
     // An outcome that carried a payload still carries one, even where nothing
     // in it was selected: `data` is part of what the outcome says about the
     // call, and dropping it would report that the application answered without
     // one.
     return { ...outcome, data: pick(outcome.data, selection) ?? {} };
   });
+
+  // A call every application failed still has to say that a path named nothing,
+  // or the one projection a caller will retry with is the one that was already
+  // wrong. Which payload it would have been is unknowable with none in hand, so
+  // it is read against the union of every payload the tool publishes: a path is
+  // reported unmatched only where no payload of this tool names it, which is
+  // the strongest thing that can honestly be said here.
+  if (!answered) {
+    resolve(availablePaths(inventory, {}));
+  }
 
   const warning = unmatched.size === 0 ? undefined : describeUnmatched([...unmatched], offered);
   const warnings = Array.isArray(content.warnings) ? content.warnings : [];

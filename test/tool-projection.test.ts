@@ -464,6 +464,40 @@ describe("the projection argument", () => {
     expect(isRecord(continuation) ? continuation.returned : undefined).toBe(items.length);
   }, 30_000);
 
+  it("still says a path named nothing when no application answered with a payload", async () => {
+    // `movies` is a Radarr view, so naming Sonarr produces an outcome with no
+    // payload at all and nothing for a projection to be read against. The
+    // projection is still wrong, and a caller told only that the application
+    // was unsupported would retry with the same wrong projection.
+    const answered = await callTool("arr_library_query", context, {
+      view: "movies",
+      applications: ["sonarr"],
+      projection: ["no_such_field"],
+    });
+
+    expect(payloadOutcomes(answered.envelope), "an outcome carrying a payload").toEqual([]);
+    const warnings = Array.isArray(answered.structured.warnings)
+      ? answered.structured.warnings
+      : [];
+    expect(warnings.length).toBe(
+      (Array.isArray(answered.envelope.warnings) ? answered.envelope.warnings : []).length + 1,
+    );
+    expect(String(warnings.at(-1))).toContain("no_such_field");
+    // The outcome itself is untouched — the failure it reports is what the
+    // caller acts on first.
+    expect(outcomesOf(answered.structured)).toEqual(outcomesOf(answered.envelope));
+
+    // And a path some payload of this tool really publishes is not reported as
+    // unmatched merely because nothing answered: with no payload in hand there
+    // is no variant to hold it against.
+    const valid = await callTool("arr_library_query", context, {
+      view: "movies",
+      applications: ["sonarr"],
+      projection: ["items.title"],
+    });
+    expect(valid.structured.warnings).toEqual(valid.envelope.warnings);
+  }, 30_000);
+
   it("writes nothing where a published path names a field a record does not carry", async () => {
     // The ordinary case a projection chosen from what a payload happens to
     // contain never reaches. Every library record publishes `items.detail.*`
