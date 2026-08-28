@@ -138,3 +138,38 @@ changes:
     spec: tool-contracts
     status: complete
     depends_on: ["0012"]
+  - id: "0016"
+    name: bounded-provider-schema-observation
+    path: changes/0016-bounded-provider-schema-observation.md
+    description: Stop returning the instance's provider template catalogue from configuration observation
+    spec: configuration-reconciliation
+    status: draft
+    depends_on: []
+  - id: "0017"
+    name: grammar-compilable-input-schemas
+    path: changes/0017-grammar-compilable-input-schemas.md
+    description: Drop string length bounds from published input schemas and guard against publishing a refused intent
+    spec: tool-contracts
+    status: draft
+    depends_on: ["0015", "0020"]
+  - id: "0018"
+    name: bounded-tool-listing
+    path: changes/0018-bounded-tool-listing.md
+    description: Broaden published output schemas and generate each payload's selectable paths as documentation
+    spec: tool-contracts
+    status: draft
+    depends_on: ["0015"]
+  - id: "0019"
+    name: selected-result-fields
+    path: changes/0019-selected-result-fields.md
+    description: Let a collection query name which parts of each per-application payload to return
+    spec: tool-contracts
+    status: draft
+    depends_on: ["0017", "0018"]
+  - id: "0020"
+    name: withdraw-configuration-writes
+    path: changes/0020-withdraw-configuration-writes.md
+    description: Remove arr_config_reconcile and everything serving it, leaving configuration read-only
+    spec: configuration-reconciliation
+    status: draft
+    depends_on: []
