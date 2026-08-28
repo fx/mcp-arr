@@ -179,7 +179,7 @@ changes:
     description: Correct the counterfactual upstream fixtures and add a repeatable operator-run capture procedure
     spec: architecture
     status: draft
-    depends_on: ["0022", "0023"]
+    depends_on: ["0022", "0023", "0028"]
   - id: "0022"
     name: upstream-field-shape-tolerance
     path: changes/0022-upstream-field-shape-tolerance.md
@@ -220,5 +220,12 @@ changes:
     path: changes/0027-single-application-mutation-scope.md
     description: Stop publishing a wanted-search application selection the server always refuses
     spec: tool-contracts
+    status: complete
+    depends_on: []
+  - id: "0028"
+    name: prowlarr-indexer-status-shape
+    path: changes/0028-prowlarr-indexer-status-shape.md
+    description: Stop requiring an indexer-status member Prowlarr does not send, and record the member set it does
+    spec: architecture
     status: complete
     depends_on: []

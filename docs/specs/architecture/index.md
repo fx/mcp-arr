@@ -71,12 +71,19 @@ The feature contracts are split across:
 - API keys MUST NOT appear in tool results, diagnostics, or upstream error messages returned to the caller.
 - Upstream requests MUST use finite timeouts and MUST distinguish unavailable instances, authentication failures, validation failures, rate limits, and unexpected responses.
 - A result MUST NOT be refused because a value the answer does not depend on arrived in a shape this server does not model; the unusable value MUST be omitted and the rest of the result returned.
+- An upstream payload MUST NOT be required to carry a member the result does not read.
 
 #### Scenario: An advisory field changes shape
 
 - **GIVEN** a supported application sends an advisory field in a shape this server does not model
 - **WHEN** a query that does not depend on that field runs
 - **THEN** the query succeeds, the unusable value is absent from the result, and no other record is lost
+
+#### Scenario: An unread member is absent
+
+- **GIVEN** a supported application omits a member no mapped result reads
+- **WHEN** a query over that payload runs
+- **THEN** the query succeeds and every record is returned
 
 #### Scenario: Upstream authentication failure
 
@@ -203,3 +210,4 @@ None.
 | 2026-08-26 | Packaging and release contract added for npm distribution | [0011-npm-publishing](../../changes/0011-npm-publishing.md) |
 | 2026-08-28 | Recorded fixtures required to match the instance they name, with a repeatable capture procedure | [0021-live-verified-fixtures](../../changes/0021-live-verified-fixtures.md) |
 | 2026-08-28 | Unmodelled shapes in fields a result does not depend on required to be dropped rather than fail the result | [0022-upstream-field-shape-tolerance](../../changes/0022-upstream-field-shape-tolerance.md) |
+| 2026-08-28 | Upstream payloads barred from being required to carry a member no result reads | [0028-prowlarr-indexer-status-shape](../../changes/0028-prowlarr-indexer-status-shape.md) |

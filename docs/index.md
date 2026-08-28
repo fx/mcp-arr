@@ -15,9 +15,9 @@
 
 Changes 0011 through 0014 were scheduled ahead of the lower-numbered domain changes that were still outstanding at the time. 0011 establishes distribution; 0012 through 0014 correct defects found testing the merged server against live Sonarr, Radarr, and Prowlarr instances. 0012 in particular was worth landing before any further domain change, because every one of them adds tools onto the same broken publication path. Which changes are still outstanding is the table's answer rather than this note's.
 
-Changes 0021 through 0027 come from sweeping all fourteen tools against live instances at the recorded minimum versions, which found six defects the full green test suite did not. 0022 through 0027 are those defects, and each is independent of the others. 0021 is the reason they were invisible: several recorded fixtures describe responses their named instances do not produce, so fixture-backed tests confirmed each adapter against its own assumption.
+Changes 0021 through 0028 come from sweeping all fourteen tools against live instances at the recorded minimum versions, which found seven defects the full green test suite did not. 0022 through 0028 are those defects, and each is independent of the others. 0021 is the reason they were invisible: several recorded fixtures describe responses their named instances do not produce, so fixture-backed tests confirmed each adapter against its own assumption.
 
-A corrected fixture is the failing test for the defect it exposes, so each change corrects the fixtures it needs and lands green on its own: 0022 corrects the Sonarr `release` fixture, 0023 both exclusion fixtures. 0021 owns the capture procedure, the fixtures no point fix needs, and a sweep across the rest — which is why it is the one change here with prerequisites, landing after 0022 and 0023 so that sweep can reach their fixtures once each is correct. No change lands with a failing gate.
+A corrected fixture is the failing test for the defect it exposes, so each change corrects the fixtures it needs and lands green on its own: 0022 corrects the Sonarr `release` fixture, 0023 both exclusion fixtures, 0028 the Prowlarr `indexerstatus` fixture. 0021 owns the capture procedure, the fixtures no point fix needs, and a sweep across the rest — which is why it is the one change here with prerequisites, landing after every change that corrects a fixture of its own so that sweep can reach each one once it is correct. No change lands with a failing gate.
 
 | # | Change | Spec | Status | Depends On |
 |---|--------|------|--------|------------|
@@ -41,10 +41,11 @@ A corrected fixture is the failing test for the defect it exposes, so each chang
 | 0018 | [Bounded Tool Listing](changes/0018-bounded-tool-listing.md) | [Tool Contracts](specs/tool-contracts/) | complete | 0015 |
 | 0019 | [Selected Result Fields](changes/0019-selected-result-fields.md) | [Tool Contracts](specs/tool-contracts/) | complete | 0017, 0018 |
 | 0020 | [Withdraw the Configuration Write Surface](changes/0020-withdraw-configuration-writes.md) | [Configuration Reconciliation](specs/configuration-reconciliation/) | complete | — |
-| 0021 | [Live-Verified Fixtures](changes/0021-live-verified-fixtures.md) | [Architecture](specs/architecture/) | draft | 0022, 0023 |
+| 0021 | [Live-Verified Fixtures](changes/0021-live-verified-fixtures.md) | [Architecture](specs/architecture/) | draft | 0022, 0023, 0028 |
 | 0022 | [Upstream Field Shape Tolerance](changes/0022-upstream-field-shape-tolerance.md) | [Architecture](specs/architecture/) | complete | — |
 | 0023 | [Radarr Exclusion Route](changes/0023-radarr-exclusion-route.md) | [Configuration Reconciliation](specs/configuration-reconciliation/) | complete | — |
 | 0024 | [Manual Import Request Shape](changes/0024-manual-import-request-shape.md) | [Acquisition and Import](specs/acquisition-and-import/) | complete | — |
 | 0025 | [Job Projection Refresh](changes/0025-job-projection-refresh.md) | [Tool Contracts](specs/tool-contracts/) | complete | — |
 | 0026 | [Plan-Mode Mutation Envelopes](changes/0026-plan-mode-mutation-envelopes.md) | [Tool Contracts](specs/tool-contracts/) | complete | — |
 | 0027 | [Single-Application Mutation Scope](changes/0027-single-application-mutation-scope.md) | [Tool Contracts](specs/tool-contracts/) | complete | — |
+| 0028 | [Prowlarr Indexer Status Shape](changes/0028-prowlarr-indexer-status-shape.md) | [Architecture](specs/architecture/) | complete | — |

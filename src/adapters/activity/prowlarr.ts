@@ -5,7 +5,6 @@ import {
   count,
   optionalUpstreamId,
   present,
-  upstreamId,
   upstreamNumber,
   upstreamText,
 } from "../library/parse.js";
@@ -52,8 +51,23 @@ export const prowlarrRoutes = {
   indexerStats: "indexerstats",
 } as const;
 
+/**
+ * One indexer's failure state, declared as exactly what the mapper reads.
+ *
+ * A row read from Prowlarr 2.5.2.5491 carries four members — the indexer, the
+ * two failure instants, and how long it is held down — and neither an `id` nor
+ * an `escalationLevel`. An earlier version of this declared a required `id` as
+ * well, which no result reads and that instance does not send, so every real
+ * indexer-status read was refused as an unexpected response. The row that hid
+ * it was in the recorded fixture, not in any instance.
+ *
+ * Nothing unread is declared here again. Declaring a member the mapper does not
+ * use can only ever refuse a row: it cannot improve a result, and a future
+ * version that renames it, drops it, or sends it in another shape then breaks a
+ * view that never wanted it. Unknown members are dropped, which is the whole of
+ * what `id` and Prowlarr's `escalationLevel` backoff counter need.
+ */
 const indexerStatusSchema = z.object({
-  id: upstreamId,
   indexerId: optionalUpstreamId,
   disabledTill: upstreamText,
   initialFailure: upstreamText,
