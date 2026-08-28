@@ -166,7 +166,7 @@ const identifyingKeys = new Set(["ip"]);
  * ones that separate a value from what precedes it, never a character a path
  * segment can end in, so a relative name is still not a path.
  */
-const pathBoundary = "(?:^|[\\s=,;|])";
+const pathBoundary = "(?:^|[\\s=:,;|])";
 
 const sensitiveValuePatterns = [
   ["email address", /\b[^\s@]+@[^\s@]+\.[^\s@]+\b/u],

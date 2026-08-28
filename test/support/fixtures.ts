@@ -13,6 +13,7 @@ export type {
   FixtureApiVersion,
   FixtureApplication,
   FixtureMetadata,
+  FixtureTuple,
   FixtureVersion,
   VersionedFixture,
 } from "../../scripts/fixture-contract.mjs";

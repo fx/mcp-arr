@@ -6,15 +6,20 @@
  * asserts the whole inventory those labels produce — so a version raised in one
  * file and not the other fails the suite rather than passing quietly.
  */
-export type FixtureApplication = "sonarr" | "radarr" | "prowlarr";
-export type FixtureApiVersion = "v1" | "v3";
-export type FixtureVersion = "4.0.19.2979" | "6.3.0.10514" | "2.5.2.5491";
+export type FixtureTuple =
+  | { readonly application: "sonarr"; readonly apiVersion: "v3"; readonly version: "4.0.19.2979" }
+  | { readonly application: "radarr"; readonly apiVersion: "v3"; readonly version: "6.3.0.10514" }
+  | {
+      readonly application: "prowlarr";
+      readonly apiVersion: "v1";
+      readonly version: "2.5.2.5491";
+    };
 
-export interface FixtureTuple {
-  readonly application: FixtureApplication;
-  readonly apiVersion: FixtureApiVersion;
-  readonly version: FixtureVersion;
-}
+// Derived from the one declared list above rather than restated, so a label
+// cannot exist here in a combination the inventory does not approve.
+export type FixtureApplication = FixtureTuple["application"];
+export type FixtureApiVersion = FixtureTuple["apiVersion"];
+export type FixtureVersion = FixtureTuple["version"];
 
 export declare const approvedFixtureTuples: readonly FixtureTuple[];
 
