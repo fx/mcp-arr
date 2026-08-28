@@ -534,10 +534,11 @@ describe("input rejection messages", () => {
   });
 
   it("words an over-length value by naming the maximum it exceeds", () => {
-    // Every bounded string in the corpus, at both depths it occurs at: a root
-    // property of a variant, and a property of a nested mapping object. These
-    // are the values whose bound the published schema no longer states, so
-    // they are the ones whose refusal has to be shown to be unchanged.
+    // Every bounded string in the corpus, at each depth and kind it occurs at:
+    // a root property of a variant, a property of a nested mapping object, and
+    // the elements of an array inside one. These are the values whose bound the
+    // published schema no longer states, so they are the ones whose refusal has
+    // to be shown to be unchanged.
     const cases: ReadonlyArray<
       readonly [(typeof toolNames)[number], Record<string, unknown>, string]
     > = [
@@ -556,6 +557,24 @@ describe("input rejection messages", () => {
         tooLong(120),
       ],
       [
+        "arr_import_inspect",
+        {
+          source: "candidate_reprocess",
+          candidate: sampleReferences.importCandidate,
+          mapping: { quality: "x".repeat(121) },
+        },
+        tooLong(120),
+      ],
+      [
+        "arr_import_inspect",
+        {
+          source: "candidate_reprocess",
+          candidate: sampleReferences.importCandidate,
+          mapping: { languages: ["x".repeat(61)] },
+        },
+        tooLong(60),
+      ],
+      [
         "arr_library_change",
         {
           intent: "update_file_metadata",
@@ -564,6 +583,26 @@ describe("input rejection messages", () => {
           changes: { releaseGroup: "x".repeat(121) },
         },
         tooLong(120),
+      ],
+      [
+        "arr_library_change",
+        {
+          intent: "update_file_metadata",
+          mode: "plan",
+          files: [sampleReferences.mediaFile],
+          changes: { quality: "x".repeat(121) },
+        },
+        tooLong(120),
+      ],
+      [
+        "arr_library_change",
+        {
+          intent: "update_file_metadata",
+          mode: "plan",
+          files: [sampleReferences.mediaFile],
+          changes: { languages: ["x".repeat(61)] },
+        },
+        tooLong(60),
       ],
     ];
 
@@ -730,8 +769,7 @@ describe("published length bounds", () => {
     // nothing else generated for it, so what a caller reads about the ceiling
     // is exactly this sentence or nothing at all.
     expect(published.description).toBe(
-      "Maximum lengths in characters, enforced but not published: token 64, tags 16. " +
-        "A bound named for an array property bounds each of its elements.",
+      "Maximum lengths in characters, enforced but not published: token 64, tags elements 16.",
     );
 
     // What the length is traded for stays published. A pattern or a minimum
@@ -767,12 +805,11 @@ describe("published length bounds", () => {
     );
   });
 
-  it("keeps the array half of a bound a later form applies to elements", () => {
-    // The scalar form comes first deliberately. One bound sighted twice is one
-    // bound to name, but the second sighting is the only one that says the
-    // length applies to each element rather than to the property — so dropping
-    // it as a duplicate would leave the description silent about exactly the
-    // form whose path needs explaining.
+  it("keeps the element half of a bound a later form applies to elements", () => {
+    // The scalar form comes first deliberately. Two forms bounding one property
+    // at the same length are still two things to say when one of them bounds
+    // the elements instead of the value, so collapsing them on path and length
+    // alone would leave the description silent about the second.
     const union = variantUnion(
       z.union([
         z.strictObject({ view: z.literal("one"), thing: z.string().max(5) }),
@@ -783,8 +820,7 @@ describe("published length bounds", () => {
 
     expect(declaredKeywordPaths(published, "maxLength")).toEqual([]);
     expect(String(published.description).split("\n").at(-1)).toBe(
-      "Maximum lengths in characters, enforced but not published: thing 5. " +
-        "A bound named for an array property bounds each of its elements.",
+      "Maximum lengths in characters, enforced but not published: thing 5, thing elements 5.",
     );
   });
 
@@ -805,9 +841,12 @@ describe("published length bounds", () => {
     const published = publishedInput(input);
 
     expect(declaredKeywordPaths(published, "maxLength")).toEqual([]);
+    // Each bound says what it bounds. A record's keys and its values are two
+    // separate ceilings against one property name, so two unlabelled numbers
+    // would leave a caller to guess which was which.
     expect(published.description).toBe(
-      "Maximum lengths in characters, enforced but not published: pair 5 or 9, rest 7 or 11, " +
-        "dict 6 or 12. A bound named for an array property bounds each of its elements.",
+      "Maximum lengths in characters, enforced but not published: pair elements 5 or 9, " +
+        "rest elements 7 or 11, dict keys 6, dict values 12.",
     );
     expect(input.safeParse({ pair: ["x".repeat(6), "y"], rest: ["z"], dict: {} }).success).toBe(
       false,

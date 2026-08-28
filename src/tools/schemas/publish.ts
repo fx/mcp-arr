@@ -62,11 +62,11 @@ const stringChoiceKeywords: ReadonlySet<string> = new Set(["type", "const", "enu
  *
  * Only such nodes collapse into one root `enum`. Anything carrying a further
  * constraint — a pattern, a default — would lose it in the collapse, so it is
- * published as an alternative instead. A length is not among them because it
- * is gone by the time the branches are merged, which is why two forms bounding
- * one property differently collapse rather than publishing two indistinguishable
- * alternatives. A `description` is not such a
- * constraint: it is an annotation, and counting it as one would mean that
+ * published as an alternative instead. A length is not among them, because it
+ * is gone by the time the branches are merged: that is what makes two forms
+ * bounding one property differently collapse into one shape rather than publish
+ * two alternatives nothing distinguishes. A `description` is not such a
+ * constraint either: it is an annotation, and counting it as one would mean that
  * describing a property on a single variant is enough to bury that property's
  * whole accepted set under a nested `anyOf` — which is the exact combinator a
  * host never inspects, reintroduced one property at a time.
@@ -407,24 +407,46 @@ function describeVariants(
 }
 
 /**
+ * What a bound applies to, where the named property's own value is not the
+ * answer.
+ *
+ * A path alone cannot say this. An array, a tuple and a map all publish their
+ * contents under a keyword rather than a property name, so the bound on those
+ * contents has nowhere of its own to be named and would otherwise read as a
+ * bound on the property — which for a map is doubly wrong, since its keys and
+ * its values are bounded separately and would arrive as two unlabelled numbers
+ * against one name.
+ */
+type BoundSubject = "elements" | "keys" | "values";
+
+/** The keyword each subject arrives under, in the converted schema. */
+const boundSubjects: ReadonlyMap<string, BoundSubject> = new Map([
+  ["items", "elements"],
+  ["additionalItems", "elements"],
+  ["propertyNames", "keys"],
+  ["additionalProperties", "values"],
+]);
+
+/**
  * One string length bound the publication drops, and where it was declared.
  *
- * The path is written the way the payload path inventory writes one: an array
- * contributes no segment, so a bound on an array's elements is named for the
- * array property itself.
+ * The path is written the way the payload path inventory writes one: neither an
+ * array nor a map contributes a segment, so what distinguishes a bound on the
+ * contents from a bound on the property is {@link subject} rather than a
+ * longer path.
  */
 interface LengthBound {
   readonly path: string;
   readonly maxLength: number;
-  /** Whether the bounded string is an array's element rather than the property. */
-  readonly inArray: boolean;
+  /** What it bounds, or `undefined` for the named property's own value. */
+  readonly subject: BoundSubject | undefined;
 }
 
-/** One nested schema, beside the path and array-ness it inherits. */
+/** One nested schema, beside the path and subject it inherits. */
 interface ChildSchema {
   readonly node: JsonSchema;
   readonly path: string;
-  readonly inArray: boolean;
+  readonly subject: BoundSubject | undefined;
 }
 
 /**
@@ -470,17 +492,25 @@ const schemaMapKeywords: ReadonlySet<string> = new Set([
  * because the keyword {@link takeLengthBounds} removes is one a property could
  * legitimately be called.
  */
-function childSchemas(node: JsonSchema, path: string, inArray: boolean): ChildSchema[] {
+function childSchemas(
+  node: JsonSchema,
+  path: string,
+  subject: BoundSubject | undefined,
+): ChildSchema[] {
   const children: ChildSchema[] = [];
-  const collect = (value: unknown, childPath: string, childInArray: boolean): void => {
+  const collect = (
+    value: unknown,
+    childPath: string,
+    childSubject: BoundSubject | undefined,
+  ): void => {
     if (isRecord(value)) {
-      children.push({ node: value, path: childPath, inArray: childInArray });
+      children.push({ node: value, path: childPath, subject: childSubject });
       return;
     }
     if (Array.isArray(value)) {
       for (const entry of value) {
         if (isRecord(entry)) {
-          children.push({ node: entry, path: childPath, inArray: childInArray });
+          children.push({ node: entry, path: childPath, subject: childSubject });
         }
       }
     }
@@ -494,18 +524,18 @@ function childSchemas(node: JsonSchema, path: string, inArray: boolean): ChildSc
       if (isRecord(value)) {
         for (const [name, declared] of Object.entries(value)) {
           if (keyword !== "properties") {
-            collect(declared, path, inArray);
+            collect(declared, path, subject);
             continue;
           }
-          collect(declared, path === "" ? name : `${path}.${name}`, inArray);
+          // A named property below a container answers for itself: the path now
+          // names it, exactly as a payload path names a field on every element,
+          // so the container's subject has been said and is not inherited.
+          collect(declared, path === "" ? name : `${path}.${name}`, undefined);
         }
       }
       continue;
     }
-    // `items` and its rest are the keywords whose subject is an element rather
-    // than the node itself, so what they hold is what an array's elements are
-    // bounded by.
-    collect(value, path, inArray || keyword === "items" || keyword === "additionalItems");
+    collect(value, path, boundSubjects.get(keyword) ?? subject);
   }
   return children;
 }
@@ -528,12 +558,12 @@ const lengthKeyword = "maxLength";
  * Each node is read before it is stripped, and the whole document before the
  * branches are merged, because the answer is the only record of the bounds
  * afterwards: a generator reading the stripped shape has nothing left to name.
- * The same path is recorded once per distinct value rather than once per
- * variant that declares it — thirteen views bounding `cursor` at 512 are one
- * bound a caller has to know about, not thirteen. A repeat sighting still
- * carries one thing the first may not have: a form that applies the bound to an
- * array's elements says something about how to read the path that a scalar form
- * does not, so it upgrades the record rather than being dropped.
+ * The same bound is recorded once rather than once per variant that declares
+ * it — thirteen views bounding `cursor` at 512 are one bound a caller has to
+ * know about, not thirteen. What makes two sightings the same is the path, the
+ * length and the subject together: a form bounding a property's own value and
+ * one bounding its elements at the same length are two different things to say,
+ * and collapsing them would lose whichever was seen second.
  *
  * `minLength`, `pattern`, `minItems`, and `maxItems` are deliberately retained.
  * A pattern constrains the admissible alphabet far more usefully than a length
@@ -542,32 +572,26 @@ const lengthKeyword = "maxLength";
 function takeLengthBounds(
   node: JsonSchema,
   path: string,
-  inArray: boolean,
+  subject: BoundSubject | undefined,
   into: LengthBound[],
 ): LengthBound[] {
   const declared = node[lengthKeyword];
-  if (typeof declared === "number") {
-    const seen = into.findIndex((known) => known.path === path && known.maxLength === declared);
-    if (seen === -1) {
-      into.push({ path, maxLength: declared, inArray });
-    } else if (inArray && into[seen]?.inArray === false) {
-      into[seen] = { path, maxLength: declared, inArray: true };
-    }
+  if (
+    typeof declared === "number" &&
+    !into.some(
+      (known) => known.path === path && known.maxLength === declared && known.subject === subject,
+    )
+  ) {
+    into.push({ path, maxLength: declared, subject });
   }
   delete node[lengthKeyword];
-  for (const child of childSchemas(node, path, inArray)) {
-    takeLengthBounds(child.node, child.path, child.inArray, into);
+  for (const child of childSchemas(node, path, subject)) {
+    takeLengthBounds(child.node, child.path, child.subject, into);
   }
   return into;
 }
 
 const lengthBoundHeader = "Maximum lengths in characters, enforced but not published:";
-
-/**
- * A bound that an array's elements carry rather than the property itself needs
- * one word of explanation, and only where such a bound exists.
- */
-const arrayElementNote = "A bound named for an array property bounds each of its elements.";
 
 /**
  * The bounds as the sentence the published root carries, or `undefined` for a
@@ -578,25 +602,31 @@ const arrayElementNote = "A bound named for an array property bounds each of its
  * being rejected. It is generated for every published root rather than folded
  * into the variant lines, because a plain-object input publishes no variant
  * documentation for it to join.
+ *
+ * Each entry names what it bounds where the property's own value is not it, so
+ * a reader is never left to infer from the shape which of two numbers against
+ * one name belongs to a map's keys and which to its values.
  */
 function describeLengthBounds(bounds: readonly LengthBound[]): string | undefined {
   if (bounds.length === 0) {
     return undefined;
   }
-  const byPath = new Map<string, number[]>();
+  const byLabel = new Map<string, number[]>();
   for (const bound of bounds) {
-    const values = byPath.get(bound.path);
+    const label = bound.subject === undefined ? bound.path : `${bound.path} ${bound.subject}`;
+    const values = byLabel.get(label);
     if (values === undefined) {
-      byPath.set(bound.path, [bound.maxLength]);
+      byLabel.set(label, [bound.maxLength]);
       continue;
     }
     values.push(bound.maxLength);
   }
   // "or" rather than one number, because two forms may bound one property
   // differently and naming only the first would understate the narrower one.
-  const listed = [...byPath].map(([path, values]) => `${path} ${values.join(" or ")}`).join(", ");
-  const note = bounds.some((bound) => bound.inArray) ? ` ${arrayElementNote}` : "";
-  return `${lengthBoundHeader} ${listed}.${note}`;
+  const listed = [...byLabel]
+    .map(([label, values]) => `${label} ${values.join(" or ")}`)
+    .join(", ");
+  return `${lengthBoundHeader} ${listed}.`;
 }
 
 /** The published root's description, from the parts that have something to say. */
@@ -625,7 +655,7 @@ function convertForPublication(schema: z.ZodType): {
   });
   return {
     converted: converted as JsonSchema,
-    bounds: takeLengthBounds(converted as JsonSchema, "", false, []),
+    bounds: takeLengthBounds(converted as JsonSchema, "", undefined, []),
   };
 }
 
@@ -675,7 +705,7 @@ export function objectInput<TSchema extends z.ZodType>(object: TSchema): TSchema
  * carried in the published root's own `description`.
  *
  * Every string length bound is dropped on the way, for the reason {@link
- * stripLengthBounds} gives, and restated in the same description.
+ * takeLengthBounds} gives, and restated in the same description.
  *
  * The published schema is therefore deliberately looser than what validates,
  * and that prose is what closes the gap. Validation itself is untouched: the
