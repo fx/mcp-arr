@@ -362,6 +362,50 @@ export function declaredPropertyValues(schema: Schema, name: string): readonly s
 }
 
 /**
+ * Every place a published schema declares one keyword, named by the property
+ * path that declares it.
+ *
+ * Walked structurally rather than over every key, because a property may be
+ * *named* after a keyword: a generic sweep of `properties` would report a
+ * property called `maxLength` as a declaration of one. Array items and
+ * alternatives contribute no segment of their own, so a bound on an array's
+ * elements is named for the array property, exactly as the published
+ * documentation names it.
+ */
+export function declaredKeywordPaths(
+  schema: Schema,
+  keyword: string,
+  path = "",
+  found: string[] = [],
+): readonly string[] {
+  if (keyword in schema) {
+    found.push(`${describe(path)} declares ${keyword} ${JSON.stringify(schema[keyword])}`);
+  }
+  if (isRecord(schema.properties)) {
+    for (const [name, declared] of Object.entries(schema.properties)) {
+      if (isRecord(declared)) {
+        declaredKeywordPaths(declared, keyword, child(path, name), found);
+      }
+    }
+  }
+  for (const nested of [schema.items, schema.additionalProperties]) {
+    if (isRecord(nested)) {
+      declaredKeywordPaths(nested, keyword, path, found);
+    }
+  }
+  for (const alternatives of [schema.anyOf, schema.oneOf, schema.allOf]) {
+    if (Array.isArray(alternatives)) {
+      for (const alternative of alternatives) {
+        if (isRecord(alternative)) {
+          declaredKeywordPaths(alternative, keyword, path, found);
+        }
+      }
+    }
+  }
+  return found;
+}
+
+/**
  * The argument names a published schema declares, gathered from its own
  * properties and from every alternative it offers. A schema that publishes no
  * argument yields an empty set, which is exactly the state this is used to

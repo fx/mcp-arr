@@ -3,6 +3,7 @@ import { projectedToolNames } from "../names.js";
 import { operationSideEffects } from "../operations.js";
 import { toolResultSchema } from "../results.js";
 import { applicationFilterSchema, detailLevelSchema } from "./common.js";
+import { objectInput } from "./publish.js";
 
 /**
  * The four states a capability report distinguishes. They are deliberately
@@ -73,20 +74,22 @@ export const capabilityReportSchema = z.strictObject({
 
 export type CapabilityReport = z.infer<typeof capabilityReportSchema>;
 
-export const capabilitiesInputSchema = z.strictObject({
-  /**
-   * Restricts the report to the named applications. Omitting it reports every
-   * application, including the ones that are not configured — reporting an
-   * unconfigured application never requires placeholder credentials.
-   */
-  applications: applicationFilterSchema.optional(),
-  /**
-   * How much of what an instance *cannot* do is enumerated. The report is
-   * bounded by default: `summary` counts the operations an instance cannot
-   * currently perform, and only `full` lists them. Orienting is the first call
-   * an agent makes, so the expensive shape is the one it has to ask for.
-   */
-  detail: detailLevelSchema.default("summary"),
-});
+export const capabilitiesInputSchema = objectInput(
+  z.strictObject({
+    /**
+     * Restricts the report to the named applications. Omitting it reports every
+     * application, including the ones that are not configured — reporting an
+     * unconfigured application never requires placeholder credentials.
+     */
+    applications: applicationFilterSchema.optional(),
+    /**
+     * How much of what an instance *cannot* do is enumerated. The report is
+     * bounded by default: `summary` counts the operations an instance cannot
+     * currently perform, and only `full` lists them. Orienting is the first call
+     * an agent makes, so the expensive shape is the one it has to ask for.
+     */
+    detail: detailLevelSchema.default("summary"),
+  }),
+);
 
 export const capabilitiesOutputSchema = toolResultSchema({ data: capabilityReportSchema });

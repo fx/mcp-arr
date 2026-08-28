@@ -404,6 +404,206 @@ function describeVariants(
 }
 
 /**
+ * One string length bound the publication drops, and where it was declared.
+ *
+ * The path is written the way the payload path inventory writes one: an array
+ * contributes no segment, so a bound on an array's elements is named for the
+ * array property itself.
+ */
+interface LengthBound {
+  readonly path: string;
+  readonly maxLength: number;
+  /** Whether the bounded string is an array's element rather than the property. */
+  readonly inArray: boolean;
+}
+
+/** One nested schema, beside the path and array-ness it inherits. */
+interface ChildSchema {
+  readonly node: JsonSchema;
+  readonly path: string;
+  readonly inArray: boolean;
+}
+
+/**
+ * Every schema nested inside one node, walked structurally rather than over
+ * every key it holds.
+ *
+ * A generic sweep would descend into `properties` itself and treat each
+ * property *name* as a keyword — which matters here because the keyword being
+ * collected and stripped is one a property could legitimately be called. Both
+ * the collection and the stripping below share this walk, so a nesting one of
+ * them reaches and the other does not cannot exist.
+ */
+function childSchemas(node: JsonSchema, path: string, inArray: boolean): ChildSchema[] {
+  const children: ChildSchema[] = [];
+  for (const [name, declared] of Object.entries(propertiesOf(node))) {
+    if (isRecord(declared)) {
+      children.push({ node: declared, path: path === "" ? name : `${path}.${name}`, inArray });
+    }
+  }
+  const additional = schemaAt(node, "additionalProperties");
+  if (additional !== undefined) {
+    children.push({ node: additional, path, inArray });
+  }
+  const items = schemaAt(node, "items");
+  if (items !== undefined) {
+    children.push({ node: items, path, inArray: true });
+  }
+  for (const keyword of ["anyOf", "oneOf", "allOf"] as const) {
+    const alternatives = node[keyword];
+    if (Array.isArray(alternatives)) {
+      for (const alternative of alternatives) {
+        if (isRecord(alternative)) {
+          children.push({ node: alternative, path, inArray });
+        }
+      }
+    }
+  }
+  return children;
+}
+
+/** The one keyword publication drops. */
+const lengthKeyword = "maxLength";
+
+/**
+ * Every length bound the converted schema declares, in declaration order.
+ *
+ * Taken before anything is stripped, because it is the only record of the
+ * bounds afterwards: a generator reading the stripped shape has nothing left to
+ * name. The same path is recorded once per distinct value rather than once per
+ * variant that declares it — thirteen views bounding `cursor` at 512 are one
+ * bound a caller has to know about, not thirteen.
+ */
+function collectLengthBounds(
+  node: JsonSchema,
+  path: string,
+  inArray: boolean,
+  into: LengthBound[],
+): LengthBound[] {
+  const declared = node[lengthKeyword];
+  if (
+    typeof declared === "number" &&
+    !into.some((known) => known.path === path && known.maxLength === declared)
+  ) {
+    into.push({ path, maxLength: declared, inArray });
+  }
+  for (const child of childSchemas(node, path, inArray)) {
+    collectLengthBounds(child.node, child.path, child.inArray, into);
+  }
+  return into;
+}
+
+/**
+ * Removes every length bound from the converted schema, at any depth.
+ *
+ * A host that compiles a published schema into a constrained-decoding grammar
+ * expands a bounded repeat once per admissible character, and a schema it
+ * cannot compile costs the caller the whole tool rather than the bound. The
+ * bound itself is untouched: this runs on the converted JSON Schema at the one
+ * publication site, so the Zod schema still refuses an over-length value with
+ * the message it always did, and a bound added to a future schema is handled
+ * without anyone remembering the rule.
+ *
+ * `minLength`, `pattern`, `minItems`, and `maxItems` are deliberately retained.
+ * A pattern constrains the admissible alphabet far more usefully than a length
+ * ever did, and the item counts are the half a caller acts on.
+ */
+function stripLengthBounds(node: JsonSchema): void {
+  delete node[lengthKeyword];
+  for (const child of childSchemas(node, "", false)) {
+    stripLengthBounds(child.node);
+  }
+}
+
+const lengthBoundHeader = "Maximum lengths in characters, enforced but not published:";
+
+/**
+ * A bound that an array's elements carry rather than the property itself needs
+ * one word of explanation, and only where such a bound exists.
+ */
+const arrayElementNote = "A bound named for an array property bounds each of its elements.";
+
+/**
+ * The bounds as the sentence the published root carries, or `undefined` for a
+ * schema that declared none.
+ *
+ * This is the same bargain the variant documentation strikes: what publication
+ * cannot carry, generated prose must, or a caller discovers the ceiling by
+ * being rejected. It is generated for every published root rather than folded
+ * into the variant lines, because a plain-object input publishes no variant
+ * documentation for it to join.
+ */
+function describeLengthBounds(bounds: readonly LengthBound[]): string | undefined {
+  if (bounds.length === 0) {
+    return undefined;
+  }
+  const byPath = new Map<string, number[]>();
+  for (const bound of bounds) {
+    byPath.set(bound.path, [...(byPath.get(bound.path) ?? []), bound.maxLength]);
+  }
+  // "or" rather than one number, because two forms may bound one property
+  // differently and naming only the first would understate the narrower one.
+  const listed = [...byPath].map(([path, values]) => `${path} ${values.join(" or ")}`).join(", ");
+  const note = bounds.some((bound) => bound.inArray) ? ` ${arrayElementNote}` : "";
+  return `${lengthBoundHeader} ${listed}.${note}`;
+}
+
+/** The published root's description, from the parts that have something to say. */
+function joinDescription(...parts: ReadonlyArray<string | undefined>): string | undefined {
+  const stated = parts.filter((part): part is string => part !== undefined && part !== "");
+  return stated.length === 0 ? undefined : stated.join("\n");
+}
+
+/**
+ * The schema as JSON Schema, with its bounds collected and then removed.
+ *
+ * In that order, and before anything else reads the shape: every publication
+ * path below builds what it publishes from the stripped schema, and the
+ * sentence naming the bounds from the collection.
+ */
+function convertForPublication(schema: z.ZodType): {
+  readonly converted: JsonSchema;
+  readonly bounds: readonly LengthBound[];
+} {
+  // The document keyword belongs to the published root, which the server SDK
+  // emits for the wrapper itself; carrying a second one in the metadata would
+  // only restate it.
+  const { $schema: _dialect, ...converted } = z.toJSONSchema(schema, {
+    target: "draft-7",
+    io: "input",
+  });
+  const bounds = collectLengthBounds(converted as JsonSchema, "", false, []);
+  stripLengthBounds(converted as JsonSchema);
+  return { converted: converted as JsonSchema, bounds };
+}
+
+/**
+ * Publishes a plain object input through the same site a union goes through.
+ *
+ * Two tools take a plain object rather than a variant union, and neither
+ * declares a length bound today. Routing them here is a guard against the next
+ * one rather than a fix for a present defect: the sanitizing belongs to
+ * publication, not to the shape of any one input, and a tool that publishes no
+ * variant documentation is exactly the one where a silently dropped bound would
+ * have nothing left stating it.
+ *
+ * Unlike a union, a plain object publishes as itself, so this attaches the
+ * sanitized shape as metadata rather than wrapping the schema. Validation is
+ * therefore not merely equivalent but literally the same schema.
+ */
+export function objectInput<TSchema extends z.ZodType>(object: TSchema): TSchema {
+  const { converted, bounds } = convertForPublication(object);
+  const description = joinDescription(
+    typeof converted.description === "string" ? converted.description : undefined,
+    describeLengthBounds(bounds),
+  );
+  return object.meta({
+    ...converted,
+    ...(description === undefined ? {} : { description }),
+  }) as TSchema;
+}
+
+/**
  * Publishes a variant union as the one flat object a host will accept.
  *
  * The protocol requires a published tool input schema to be an object at its
@@ -422,6 +622,9 @@ function describeVariants(
  * a variant narrows to — is regenerated as prose from the same converted union,
  * carried in the published root's own `description`.
  *
+ * Every string length bound is dropped on the way, for the reason {@link
+ * stripLengthBounds} gives, and restated in the same description.
+ *
  * The published schema is therefore deliberately looser than what validates,
  * and that prose is what closes the gap. Validation itself is untouched: the
  * wrapper still parses by handing the caller's object to the union and
@@ -431,15 +634,9 @@ function describeVariants(
  * parsed result, and every rejection message is exactly what it was before.
  */
 export function variantUnion<TSchema extends z.ZodType>(union: TSchema): TSchema {
-  // The document keyword belongs to the published root, which the server SDK
-  // emits for the wrapper itself; carrying a second one in the metadata would
-  // only restate it.
-  const { $schema: _dialect, ...converted } = z.toJSONSchema(union, {
-    target: "draft-7",
-    io: "input",
-  });
+  const { converted, bounds } = convertForPublication(union);
 
-  const branches = collectBranches(converted as JsonSchema, []);
+  const branches = collectBranches(converted, []);
   const merged = mergeBranches(branches);
   const discriminator = inferDiscriminator(branches, merged);
 
@@ -463,7 +660,10 @@ export function variantUnion<TSchema extends z.ZodType>(union: TSchema): TSchema
       properties: merged.properties,
       ...(merged.required.length === 0 ? {} : { required: [...merged.required] }),
       additionalProperties: false,
-      description: describeVariants(branches, merged, discriminator),
+      description: joinDescription(
+        describeVariants(branches, merged, discriminator),
+        describeLengthBounds(bounds),
+      ),
     });
 
   // The wrapper parses to whatever the union parses to, so it stands in for the

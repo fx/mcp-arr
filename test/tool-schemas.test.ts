@@ -13,8 +13,12 @@ import {
   referencePattern,
   referenceProperties,
 } from "../src/tools/schemas/common.js";
-import { variantUnion } from "../src/tools/schemas/publish.js";
-import { declaredPropertyValues, publishedPropertyNames } from "./support/json-schema.js";
+import { objectInput, variantUnion } from "../src/tools/schemas/publish.js";
+import {
+  declaredKeywordPaths,
+  declaredPropertyValues,
+  publishedPropertyNames,
+} from "./support/json-schema.js";
 import { sampleReferences, sampleToolInputs } from "./support/tool-context.js";
 
 function inputJsonSchema(name: (typeof toolNames)[number]): Record<string, unknown> {
@@ -692,6 +696,98 @@ describe("published variant merge", () => {
     ).toThrow(
       'Every variant of a published union must be a closed object; found "object" with ' +
         "additionalProperties null, on the variant declaring mode=apply, plan",
+    );
+  });
+});
+
+/**
+ * The sanitizing, over inputs written here rather than over a shipped tool.
+ *
+ * Two of the three questions it has to answer cannot be asked of the shipped
+ * corpus at all. No plain-object tool declares a length bound today, and that
+ * is the one publication path with no variant documentation for the sentence to
+ * join — so the mechanism is proven on a bound added here, which is also the
+ * form the regression would first take. Nor does any tool bound one property
+ * differently in two forms, which is what decides whether stripping before the
+ * merge or after it is the same thing.
+ */
+describe("published length bounds", () => {
+  function publishedOf(schema: z.ZodType): Record<string, unknown> {
+    return z4mini.toJSONSchema(schema as never, {
+      target: "draft-7",
+      io: "input",
+    }) as unknown as Record<string, unknown>;
+  }
+
+  it("names a bound stripped from a plain object, which publishes no variant prose", () => {
+    const input = objectInput(
+      z.strictObject({
+        token: z.string().min(4).max(64),
+        tags: z.array(z.string().max(16)).max(3),
+      }),
+    );
+    const published = publishedOf(input);
+
+    expect(declaredKeywordPaths(published, "maxLength")).toEqual([]);
+    // The whole of the description, not a fragment of it: a plain object has
+    // nothing else generated for it, so what a caller reads about the ceiling
+    // is exactly this sentence or nothing at all.
+    expect(published.description).toBe(
+      "Maximum lengths in characters, enforced but not published: token 64, tags 16. " +
+        "A bound named for an array property bounds each of its elements.",
+    );
+
+    // What the length is traded for stays published. A pattern or a minimum
+    // constrains the admissible alphabet far more usefully than a ceiling, and
+    // an item count is the half a caller acts on.
+    expect(declaredKeywordPaths(published, "minLength")).toEqual(["token declares minLength 4"]);
+    expect(declaredKeywordPaths(published, "maxItems")).toEqual(["tags declares maxItems 3"]);
+
+    // And the bound still refuses what it always refused. Removing it from
+    // publication is the whole change; removing it from validation would be a
+    // different one.
+    expect(input.safeParse({ token: "x".repeat(65), tags: [] }).success).toBe(false);
+    expect(input.safeParse({ token: "x".repeat(64), tags: ["short"] }).success).toBe(true);
+    expect(input.safeParse({ token: "abcd", tags: ["x".repeat(17)] }).success).toBe(false);
+  });
+
+  it("names a bound stripped from a variant union beneath its variant prose", () => {
+    const union = variantUnion(
+      z.union([
+        z.strictObject({ view: z.literal("search"), term: z.string().max(200) }),
+        z.strictObject({ view: z.literal("page"), cursor: z.string().max(512) }),
+      ]),
+    );
+    const published = publishedOf(union);
+
+    expect(declaredKeywordPaths(published, "maxLength")).toEqual([]);
+    const description = String(published.description);
+    expect(description).toContain("Supply exactly one of these forms in full");
+    // Last, so the variant lines stay a contiguous block a reader — and the
+    // wire test's line parser — can read as one list.
+    expect(description.split("\n").at(-1)).toBe(
+      "Maximum lengths in characters, enforced but not published: term 200, cursor 512.",
+    );
+  });
+
+  it("collapses two forms that bound one property differently, and names both bounds", () => {
+    const union = variantUnion(
+      z.union([
+        z.strictObject({ view: z.literal("short"), term: z.string().max(20) }),
+        z.strictObject({ view: z.literal("long"), term: z.string().max(200) }),
+      ]),
+    );
+    const published = publishedOf(union);
+    const properties = published.properties as Record<string, unknown>;
+
+    // This is why the stripping runs before the branches are merged. Merged
+    // first, the two shapes differ only in the bound and would be published as
+    // a nested `anyOf` of two strings — the one combinator a host never
+    // inspects — and stripping it afterwards would leave two identical
+    // alternatives behind. Stripped first, they are one shape.
+    expect(properties.term).toEqual({ type: "string" });
+    expect(String(published.description).split("\n").at(-1)).toBe(
+      "Maximum lengths in characters, enforced but not published: term 20 or 200.",
     );
   });
 });
