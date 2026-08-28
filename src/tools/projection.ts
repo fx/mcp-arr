@@ -199,7 +199,7 @@ function select(into: Selection, segments: readonly string[]): void {
  * legitimate projection routinely names a field a given record does not carry —
  * and an object written where the record had nothing selected under it is a
  * value the unprojected call would never have returned. Absence is answered as
- * absence, at whichever depth it is found: a key missing from the source, a key
+ * absence, at whichever depth it is found: a key the source does not have of its own, a key
  * whose value is the explicit `undefined` an optional field is built as, a
  * nested object none of whose selected fields were there, and — unreachably,
  * since the selection only ever holds inventory paths — a value with no fields
@@ -219,7 +219,11 @@ function pick(source: unknown, selection: Selection): unknown {
   }
   const projected: Record<string, unknown> = {};
   for (const [name, below] of selection) {
-    if (!(name in source)) {
+    // Own keys only. A payload's fields are its own, so `in` would differ from
+    // this in exactly one direction: it answers true for a name inherited from
+    // `Object.prototype`, and copying one of those would put a value in the
+    // result that the payload never held.
+    if (!Object.hasOwn(source, name)) {
       continue;
     }
     const value = below === undefined ? source[name] : pick(source[name], below);
