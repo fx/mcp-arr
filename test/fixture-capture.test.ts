@@ -86,19 +86,36 @@ afterEach(async () => {
   ]);
 });
 
+/**
+ * Runs a capture that is expected to be refused, into a throwaway root.
+ *
+ * No refusal case passes `--dry-run`: what is under test is that the refusal
+ * leaves no fixture behind, and a run that returns before the write path could
+ * not show that.
+ */
+async function expectRefusal(
+  url: string | undefined,
+  args: readonly string[],
+  route: string,
+): Promise<string> {
+  const fixtureRoot = await temporaryFixtureRoot();
+  const { code, stderr } = await runCapture(url, [...args, "--fixture-root", fixtureRoot]);
+
+  expect(code).toBe(1);
+  await expect(access(path.join(fixtureRoot, route))).rejects.toThrow();
+  return stderr;
+}
+
 describe("fixture capture procedure", () => {
   it("refuses a route the named application answers with 404", async () => {
     const url = await startStub({ "/api/v3/system/status": sonarrStatus });
 
-    const { code, stderr } = await runCapture(url, [
-      "--application",
-      "sonarr",
-      "--route",
-      "config/downloadclient",
-      "--dry-run",
-    ]);
+    const stderr = await expectRefusal(
+      url,
+      ["--application", "sonarr", "--route", "config/downloadclient"],
+      "sonarr/v3/4.0.19.2979/config-downloadclient.json",
+    );
 
-    expect(code).toBe(1);
     expect(stderr).toContain("answers config/downloadclient with 404");
     expect(stderr).toContain("does not serve this route");
   });
@@ -115,15 +132,12 @@ describe("fixture capture procedure", () => {
       },
     });
 
-    const { code, stderr } = await runCapture(url, [
-      "--application",
-      "sonarr",
-      "--route",
-      "config/downloadclient",
-      "--dry-run",
-    ]);
+    const stderr = await expectRefusal(
+      url,
+      ["--application", "sonarr", "--route", "config/downloadclient"],
+      "sonarr/v3/4.0.19.2979/config-downloadclient.json",
+    );
 
-    expect(code).toBe(1);
     expect(stderr).toContain("a body that is not JSON");
     expect(stderr).toContain("does not resolve on this application");
   });
@@ -139,15 +153,12 @@ describe("fixture capture procedure", () => {
       "/api/v3/tag": { body: "[]" },
     });
 
-    const { code, stderr } = await runCapture(url, [
-      "--application",
-      "sonarr",
-      "--route",
-      "tag",
-      "--dry-run",
-    ]);
+    const stderr = await expectRefusal(
+      url,
+      ["--application", "sonarr", "--route", "tag"],
+      "sonarr/v3/4.0.19.2979/tag.json",
+    );
 
-    expect(code).toBe(1);
     expect(stderr).toContain("calls itself Radarr, not Sonarr");
   });
 
@@ -157,15 +168,12 @@ describe("fixture capture procedure", () => {
       "/api/v3/tag": { body: "[]" },
     });
 
-    const { code, stderr } = await runCapture(url, [
-      "--application",
-      "sonarr",
-      "--route",
-      "tag",
-      "--dry-run",
-    ]);
+    const stderr = await expectRefusal(
+      url,
+      ["--application", "sonarr", "--route", "tag"],
+      "sonarr/v3/4.0.19.2979/tag.json",
+    );
 
-    expect(code).toBe(1);
     expect(stderr).toContain("reports 4.1.0.1");
     expect(stderr).toContain("4.0.19.2979");
   });
@@ -173,15 +181,12 @@ describe("fixture capture procedure", () => {
   it("refuses a route the inventory does not approve, before reading anything", async () => {
     const url = await startStub({ "/api/v3/system/status": sonarrStatus });
 
-    const { code, stderr } = await runCapture(url, [
-      "--application",
-      "sonarr",
-      "--route",
-      "exclusions/paged",
-      "--dry-run",
-    ]);
+    const stderr = await expectRefusal(
+      url,
+      ["--application", "sonarr", "--route", "exclusions/paged"],
+      "sonarr/v3/4.0.19.2979/tag.json",
+    );
 
-    expect(code).toBe(1);
     expect(stderr).toContain("records no fixture for route exclusions/paged");
     expect(stderr).toContain("importlistexclusion/paged");
   });
@@ -235,6 +240,30 @@ describe("fixture capture procedure", () => {
     expect(record).toMatchObject({ id: 7, label: "Example Tag" });
     // The subtree under a prototype-named key is kept rather than silently lost.
     expect(Object.values(record)).toContainEqual({ retained: true });
+  });
+
+  it("reports what a dry run would write without writing it", async () => {
+    const fixtureRoot = await temporaryFixtureRoot();
+    const url = await startStub({
+      "/api/v3/system/status": sonarrStatus,
+      "/api/v3/tag": { body: JSON.stringify([{ id: 7, label: "Example Tag" }]) },
+    });
+
+    const { code, stderr } = await runCapture(url, [
+      "--application",
+      "sonarr",
+      "--route",
+      "tag",
+      "--fixture-root",
+      fixtureRoot,
+      "--dry-run",
+    ]);
+
+    expect(code).toBe(0);
+    expect(stderr).toContain("Would write sonarr/v3/4.0.19.2979/tag.json: 1 record");
+    await expect(
+      access(path.join(fixtureRoot, "sonarr/v3/4.0.19.2979/tag.json")),
+    ).rejects.toThrow();
   });
 
   it("redacts a credential a provider field names beside it", async () => {
@@ -308,15 +337,12 @@ describe("fixture capture procedure", () => {
   });
 
   it("names the environment variables an unconfigured application needs", async () => {
-    const { code, stderr } = await runCapture(undefined, [
-      "--application",
-      "sonarr",
-      "--route",
-      "tag",
-      "--dry-run",
-    ]);
+    const stderr = await expectRefusal(
+      undefined,
+      ["--application", "sonarr", "--route", "tag"],
+      "sonarr/v3/4.0.19.2979/tag.json",
+    );
 
-    expect(code).toBe(1);
     expect(stderr).toContain("SONARR_URL");
     expect(stderr).toContain("SONARR_API_KEY");
   });
