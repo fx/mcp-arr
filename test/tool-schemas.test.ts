@@ -767,6 +767,32 @@ describe("published length bounds", () => {
     );
   });
 
+  it("reaches every nesting a converted bound can sit in, not the ones in use today", () => {
+    // The three shapes a walk written from the current corpus misses. A tuple
+    // publishes its elements as an `items` *list* rather than one schema, a
+    // record publishes its keys under `propertyNames`, and a tuple rest under
+    // `additionalItems` — and a bound the walk never visits is one that reaches
+    // a host's grammar compiler while CI stays green, which is the whole
+    // failure this change exists to prevent.
+    const input = objectInput(
+      z.strictObject({
+        pair: z.tuple([z.string().max(5), z.string().max(9)]),
+        rest: z.tuple([z.string().max(7)], z.string().max(11)),
+        dict: z.record(z.string().max(6), z.string().max(12)),
+      }),
+    );
+    const published = publishedInput(input);
+
+    expect(declaredKeywordPaths(published, "maxLength")).toEqual([]);
+    expect(published.description).toBe(
+      "Maximum lengths in characters, enforced but not published: pair 5 or 9, rest 7 or 11, " +
+        "dict 6 or 12. A bound named for an array property bounds each of its elements.",
+    );
+    expect(input.safeParse({ pair: ["x".repeat(6), "y"], rest: ["z"], dict: {} }).success).toBe(
+      false,
+    );
+  });
+
   it("collapses two forms that bound one property differently, and names both bounds", () => {
     const union = variantUnion(
       z.union([

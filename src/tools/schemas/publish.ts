@@ -428,37 +428,84 @@ interface ChildSchema {
 }
 
 /**
- * Every schema nested inside one node, walked structurally rather than over
- * every key it holds.
+ * The keywords whose value is caller data rather than a nested schema.
  *
- * A generic sweep would descend into `properties` itself and treat each
- * property *name* as a keyword — which matters here because the keyword {@link
- * takeLengthBounds} removes is one a property could legitimately be called.
+ * They are the reason this walk cannot be entirely generic. A `default` or an
+ * `examples` entry may be an arbitrary object, and descending into one would
+ * treat a *value's* field names as schema keywords — so a default whose object
+ * happened to hold a field called `maxLength` would have it deleted.
+ */
+const dataKeywords: ReadonlySet<string> = new Set(["const", "default", "enum", "examples"]);
+
+/**
+ * The keywords whose value maps a name to a nested schema, rather than being
+ * one. Only `properties` names a path a caller can write, so it is the only one
+ * that extends the path; a pattern or a definition name reaches nothing a caller
+ * addresses.
+ */
+const schemaMapKeywords: ReadonlySet<string> = new Set([
+  "properties",
+  "patternProperties",
+  "dependencies",
+  "definitions",
+  "$defs",
+]);
+
+/**
+ * Every schema nested inside one node.
+ *
+ * Deliberately generic over keywords rather than a list of the ones this
+ * server's schemas happen to use today: the whole point of sanitizing at the
+ * publication site is that a bound written into a future schema is handled
+ * without anyone remembering the rule, and a walk that knows only about
+ * `properties`, `items` and the combinators fails exactly that promise. A
+ * tuple publishes its elements as an `items` *list*, a record publishes its
+ * keys under `propertyNames`, and a tuple rest publishes under
+ * `additionalItems` — three shapes a keyword list written from the current
+ * corpus would have missed.
+ *
+ * The two exceptions are what a generic sweep cannot get right on its own:
+ * {@link dataKeywords}, whose values are not schemas at all, and {@link
+ * schemaMapKeywords}, whose keys are names rather than keywords — which matters
+ * because the keyword {@link takeLengthBounds} removes is one a property could
+ * legitimately be called.
  */
 function childSchemas(node: JsonSchema, path: string, inArray: boolean): ChildSchema[] {
   const children: ChildSchema[] = [];
-  for (const [name, declared] of Object.entries(propertiesOf(node))) {
-    if (isRecord(declared)) {
-      children.push({ node: declared, path: path === "" ? name : `${path}.${name}`, inArray });
+  const collect = (value: unknown, childPath: string, childInArray: boolean): void => {
+    if (isRecord(value)) {
+      children.push({ node: value, path: childPath, inArray: childInArray });
+      return;
     }
-  }
-  const additional = schemaAt(node, "additionalProperties");
-  if (additional !== undefined) {
-    children.push({ node: additional, path, inArray });
-  }
-  const items = schemaAt(node, "items");
-  if (items !== undefined) {
-    children.push({ node: items, path, inArray: true });
-  }
-  for (const keyword of ["anyOf", "oneOf", "allOf"] as const) {
-    const alternatives = node[keyword];
-    if (Array.isArray(alternatives)) {
-      for (const alternative of alternatives) {
-        if (isRecord(alternative)) {
-          children.push({ node: alternative, path, inArray });
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        if (isRecord(entry)) {
+          children.push({ node: entry, path: childPath, inArray: childInArray });
         }
       }
     }
+  };
+
+  for (const [keyword, value] of Object.entries(node)) {
+    if (dataKeywords.has(keyword)) {
+      continue;
+    }
+    if (schemaMapKeywords.has(keyword)) {
+      if (isRecord(value)) {
+        for (const [name, declared] of Object.entries(value)) {
+          if (keyword !== "properties") {
+            collect(declared, path, inArray);
+            continue;
+          }
+          collect(declared, path === "" ? name : `${path}.${name}`, inArray);
+        }
+      }
+      continue;
+    }
+    // `items` and its rest are the keywords whose subject is an element rather
+    // than the node itself, so what they hold is what an array's elements are
+    // bounded by.
+    collect(value, path, inArray || keyword === "items" || keyword === "additionalItems");
   }
   return children;
 }

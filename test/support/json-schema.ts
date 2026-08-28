@@ -362,15 +362,40 @@ export function declaredPropertyValues(schema: Schema, name: string): readonly s
 }
 
 /**
+ * Keywords whose value is a caller's data rather than a nested schema. A
+ * `default` may be an arbitrary object, and reading its fields as keywords
+ * would report a defaulted value that happens to hold a `maxLength` field as a
+ * schema declaring one.
+ */
+const dataKeywords = new Set(["const", "default", "enum", "examples"]);
+
+/**
+ * Keywords whose value maps names to nested schemas rather than being one.
+ * Their keys are names, so descending into the map itself would read a property
+ * *called* `maxLength` as a declaration of the keyword.
+ */
+const schemaMapKeywords = new Set([
+  "properties",
+  "patternProperties",
+  "dependencies",
+  "definitions",
+  "$defs",
+]);
+
+/**
  * Every place a published schema declares one keyword, named by the property
  * path that declares it.
  *
- * Walked structurally rather than over every key, because a property may be
- * *named* after a keyword: a generic sweep of `properties` would report a
- * property called `maxLength` as a declaration of one. Array items and
- * alternatives contribute no segment of their own, so a bound on an array's
- * elements is named for the array property, exactly as the published
- * documentation names it.
+ * Generic over keywords rather than following the handful the current schemas
+ * use, because this is the guard: a nesting it does not know about is a place
+ * the barred keyword could sit while CI stayed green. A draft-7 tuple publishes
+ * its elements as an `items` *list*, a record its keys under `propertyNames`,
+ * and a tuple rest under `additionalItems` — none of which a walk written from
+ * today's corpus would visit.
+ *
+ * Only `properties` contributes a path segment. Array items and alternatives do
+ * not, so a bound on an array's elements is named for the array property,
+ * exactly as the published documentation names it.
  */
 export function declaredKeywordPaths(
   schema: Schema,
@@ -381,24 +406,32 @@ export function declaredKeywordPaths(
   if (keyword in schema) {
     found.push(`${describe(path)} declares ${keyword} ${JSON.stringify(schema[keyword])}`);
   }
-  if (isRecord(schema.properties)) {
-    for (const [name, declared] of Object.entries(schema.properties)) {
-      if (isRecord(declared)) {
-        declaredKeywordPaths(declared, keyword, child(path, name), found);
+
+  const descend = (value: unknown, childPath: string): void => {
+    if (isRecord(value)) {
+      declaredKeywordPaths(value, keyword, childPath, found);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        if (isRecord(entry)) {
+          declaredKeywordPaths(entry, keyword, childPath, found);
+        }
       }
     }
-  }
-  for (const nested of [schema.items, schema.additionalProperties]) {
-    if (isRecord(nested)) {
-      declaredKeywordPaths(nested, keyword, path, found);
+  };
+
+  for (const [declared, value] of Object.entries(schema)) {
+    if (dataKeywords.has(declared)) {
+      continue;
     }
-  }
-  for (const alternatives of [schema.anyOf, schema.oneOf, schema.allOf]) {
-    if (Array.isArray(alternatives)) {
-      for (const alternative of alternatives) {
-        if (isRecord(alternative)) {
-          declaredKeywordPaths(alternative, keyword, path, found);
-        }
+    if (!schemaMapKeywords.has(declared)) {
+      descend(value, path);
+      continue;
+    }
+    if (isRecord(value)) {
+      for (const [name, nested] of Object.entries(value)) {
+        descend(nested, declared === "properties" ? child(path, name) : path);
       }
     }
   }
