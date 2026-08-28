@@ -171,5 +171,5 @@ changes:
     path: changes/0020-withdraw-configuration-writes.md
     description: Remove arr_config_reconcile and everything serving it, leaving configuration read-only
     spec: configuration-reconciliation
-    status: draft
+    status: complete
     depends_on: []
