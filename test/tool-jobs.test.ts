@@ -186,30 +186,35 @@ describe("arr_job_get", () => {
 
   it("keeps the first, more definite reading when a later one has lost the result", async () => {
     // Observed on a live instance: the same command answered `completed /
-    // successful` and, minutes later, `completed / unknown`. The caller is
-    // entitled to the first reading, so the second is never asked for.
+    // successful` and, minutes later, `completed / unknown`. The instance here
+    // is ready to answer all three ways in turn; the caller is entitled to the
+    // definite reading, so the third answer is never asked for.
     const { context, state, requested } = harness([
+      { record: commandRecord({ status: "started" }) },
       { record: commandRecord({ status: "completed", result: "successful" }) },
       { record: commandRecord({ status: "completed", result: "unknown" }) },
     ]);
     const record = state.jobs.project({
       application: "sonarr",
       command,
-      observation: { state: "started" },
+      observation: { state: "queued" },
       cancellation: { supported: false },
     });
 
-    const first = await callTool(context, "arr_job_get", { job: record.reference });
-    const second = await callTool(context, "arr_job_get", { job: record.reference });
+    const running = await callTool(context, "arr_job_get", { job: record.reference });
+    const ended = await callTool(context, "arr_job_get", { job: record.reference });
+    const again = await callTool(context, "arr_job_get", { job: record.reference });
 
-    expect(projectionOf(first)).toMatchObject({
+    // Still running, so the read asked and the answer moved.
+    expect(projectionOf(running)).toMatchObject({ status: "started" });
+    expect(projectionOf(ended)).toMatchObject({
       status: "completed",
       terminal: { status: "completed", result: "succeeded" },
     });
-    expect(projectionOf(second)).toEqual(projectionOf(first));
-    // The second read never happened: a terminal snapshot cannot improve, and
-    // asking again is exactly what would have degraded it.
-    expect(requested).toEqual([commandRoute("sonarr")]);
+    expect(projectionOf(again)).toEqual(projectionOf(ended));
+    // Two reads reached the instance, not three: a terminal snapshot cannot
+    // improve, and asking again is exactly what would have degraded it.
+    expect(requested).toEqual([commandRoute("sonarr"), commandRoute("sonarr")]);
   });
 
   it("refuses a weaker reading even when one reaches the store", async () => {

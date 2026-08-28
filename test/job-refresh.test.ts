@@ -6,7 +6,7 @@ import {
   readCommandRecord,
 } from "../src/adapters/jobs.js";
 import type { ApplicationId } from "../src/applications.js";
-import { normalizeJobStatus } from "../src/state/jobs.js";
+import { normalizeJobStatus, type UpstreamCommandObservation } from "../src/state/jobs.js";
 import { activityFixture } from "./support/activity.js";
 import { jsonResponse, libraryHarness, type UpstreamCall } from "./support/library.js";
 import { testApiKeys } from "./support/tool-context.js";
@@ -61,6 +61,14 @@ function serving(application: ApplicationId, respond: (call: UpstreamCall) => Re
   };
 }
 
+/** Narrows a refresh to the observation it carried, failing the test if it did not. */
+function observationOf(refresh: CommandRefresh, label = ""): UpstreamCommandObservation {
+  if (refresh.status !== "observed") {
+    throw new Error(`Expected an observation${label === "" ? "" : ` from ${label}`}`);
+  }
+  return refresh.observation;
+}
+
 describe("commandRecordRoute", () => {
   it("names one command under the shared command route", () => {
     expect(commandRecordRoute("887726")).toBe("command/887726");
@@ -86,11 +94,12 @@ describe("readCommandRecord", () => {
       expect(instance.calls[0]?.url.pathname, application).toBe(
         `/api/${apiVersion}/command/${command.id}`,
       );
-      if (refresh.status !== "observed") {
-        throw new Error(`Expected ${application} to answer with an observation`);
-      }
-      expect(refresh.observation.state, application).toBe(command.status);
-      expect(refresh.observation.result, application).toBe(command.result);
+      const observation = observationOf(refresh, application);
+      expect(observation.state, application).toBe(command.status);
+      expect(observation.result, application).toBe(command.result);
+      // No application supplies a count, so nothing populates the published
+      // `{completed, total}` pair.
+      expect(observation.progress, application).toBeUndefined();
     }
   });
 
@@ -101,47 +110,25 @@ describe("readCommandRecord", () => {
     const command = commandOf("sonarr", 1);
     const instance = serving("sonarr", () => jsonResponse(command));
 
-    const refresh = await instance.read(String(command.id));
-    if (refresh.status !== "observed") {
-      throw new Error("Expected an observation");
-    }
+    const observation = observationOf(await instance.read(String(command.id)));
 
     expect(command.result).toBe("successful");
-    expect(normalizeJobStatus(refresh.observation.state, refresh.observation.result)).toBe(
-      "completed",
-    );
+    expect(normalizeJobStatus(observation.state, observation.result)).toBe("completed");
   });
 
   it("keeps the command's own payload, trigger, and identity out of the observation", async () => {
     const command = commandOf("sonarr");
     const instance = serving("sonarr", () => jsonResponse(command));
 
-    const refresh = await instance.read(String(command.id));
-    if (refresh.status !== "observed") {
-      throw new Error("Expected an observation");
-    }
+    const observation = observationOf(await instance.read(String(command.id)));
 
     // The recorded response really does carry both, so this is a value that was
     // dropped rather than one that was never there.
     expect(command.body?.name).toBe("RefreshSeries");
     expect(command.trigger).toBe("manual");
-    expect(Object.keys(refresh.observation).sort()).toEqual(["result", "state", "warnings"]);
-    expect(JSON.stringify(refresh.observation)).not.toContain("manual");
-    expect(JSON.stringify(refresh.observation)).not.toContain("updateScheduledTask");
-  });
-
-  it("reports no progress, because no application supplies a count", async () => {
-    for (const application of applications) {
-      const command = commandOf(application);
-      const instance = serving(application, () => jsonResponse(command));
-
-      const refresh = await instance.read(String(command.id));
-
-      if (refresh.status !== "observed") {
-        throw new Error(`Expected ${application} to answer with an observation`);
-      }
-      expect(refresh.observation.progress, application).toBeUndefined();
-    }
+    expect(Object.keys(observation).sort()).toEqual(["result", "state", "warnings"]);
+    expect(JSON.stringify(observation)).not.toContain("manual");
+    expect(JSON.stringify(observation)).not.toContain("updateScheduledTask");
   });
 
   it("reads a command whose only progress signal is a sentence without deriving counts", async () => {
@@ -151,29 +138,22 @@ describe("readCommandRecord", () => {
     const command = { ...commandOf("sonarr"), message: "Processing file 1 of 1" };
     const instance = serving("sonarr", () => jsonResponse(command));
 
-    const refresh = await instance.read(String(command.id));
+    const observation = observationOf(await instance.read(String(command.id)));
 
-    if (refresh.status !== "observed") {
-      throw new Error("Expected an observation");
-    }
-    expect(refresh.observation.progress).toBeUndefined();
-    expect(refresh.observation.warnings).toEqual(["Processing file 1 of 1"]);
+    expect(observation.progress).toBeUndefined();
+    expect(observation.warnings).toEqual(["Processing file 1 of 1"]);
   });
 
   it("treats a command the application no longer holds as an observation, not a failure", async () => {
     for (const application of applications) {
       const instance = serving(application, () => jsonResponse({ message: "not found" }, 404));
 
-      const refresh = await instance.read("999999999");
+      const observation = observationOf(await instance.read("999999999"), application);
 
-      expect(refresh.status, application).toBe("observed");
-      if (refresh.status !== "observed") {
-        throw new Error(`Expected ${application} to answer with an observation`);
-      }
       // No state at all, which the job store normalizes to `unknown`.
-      expect(refresh.observation.state, application).toBeUndefined();
-      expect(normalizeJobStatus(refresh.observation.state), application).toBe("unknown");
-      expect(refresh.observation.warnings, application).toEqual([commandGoneWarning]);
+      expect(observation.state, application).toBeUndefined();
+      expect(normalizeJobStatus(observation.state), application).toBe("unknown");
+      expect(observation.warnings, application).toEqual([commandGoneWarning]);
     }
   });
 

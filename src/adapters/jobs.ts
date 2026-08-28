@@ -72,13 +72,11 @@ export async function readCommandRecord(
     return { status: "observed", observation: accepted.observation };
   } catch (error) {
     if (!isUpstreamError(error)) {
-      return {
-        status: "unreachable",
-        failure: {
-          kind: "unexpected-response",
-          message: `${application}: reading the command behind this job failed unexpectedly`,
-        },
-      };
+      // Not an instance this server could not reach. Every failure the upstream
+      // boundary and the shared parser can produce is an `UpstreamError`, so
+      // anything else is a defect in this process, and dressing one up as an
+      // outage would freeze the job at its last state and say nothing.
+      throw error;
     }
     // Every one of the three applications answers an unknown or aged-out
     // command identifier with 404, which is the command record expiring rather
