@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applicationsForDomain,
   configurationDomains,
+  configurationReadFor,
   configurationRoutes,
   familyOf,
   isProviderDomain,
@@ -59,10 +60,45 @@ describe("the configuration domain table", () => {
     expect(routeFor("indexers", "sonarr")).toBe("indexer");
     expect(routeFor("download_clients", "prowlarr")).toBe("downloadclient");
     expect(routeFor("quality_profiles", "radarr")).toBe("qualityprofile");
+    // The two media applications name their exclusion list differently, and
+    // each answers the other's name with a 404.
     expect(routeFor("import_list_exclusions", "sonarr")).toBe("importlistexclusion");
+    expect(routeFor("import_list_exclusions", "radarr")).toBe("exclusions");
     // Prowlarr names two concepts differently from the media applications.
     expect(routeFor("applications", "prowlarr")).toBe("applications");
     expect(routeFor("app_profiles", "prowlarr")).toBe("appprofile");
+  });
+
+  it("reads a domain from its paged form wherever the application serves one", () => {
+    expect(configurationReadFor("import_list_exclusions", "sonarr")).toEqual({
+      route: "importlistexclusion/paged",
+      upstreamPaged: true,
+    });
+    expect(configurationReadFor("import_list_exclusions", "radarr")).toEqual({
+      route: "exclusions/paged",
+      upstreamPaged: true,
+    });
+    // Every other route returns its whole collection, which the service pages.
+    expect(configurationReadFor("tags", "prowlarr")).toEqual({
+      route: "tag",
+      upstreamPaged: false,
+    });
+    expect(configurationReadFor("app_profiles", "sonarr")).toBeUndefined();
+  });
+
+  it("derives every paged route from the collection its own application answers", () => {
+    for (const domain of configurationDomains) {
+      for (const application of applicationIds) {
+        const read = configurationReadFor(domain, application);
+        const route = routeFor(domain, application);
+
+        if (route === undefined) {
+          expect(read).toBeUndefined();
+          continue;
+        }
+        expect(read?.route).toBe(read?.upstreamPaged === true ? `${route}/paged` : route);
+      }
+    }
   });
 
   it("reports no route where an application does not model the domain", () => {

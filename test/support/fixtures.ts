@@ -62,7 +62,7 @@ const approvedRoutes: Readonly<Record<FixtureApplication, readonly string[]>> = 
     "indexer",
     "importlist",
     "config/downloadclient",
-    "importlistexclusion",
+    "importlistexclusion/paged",
   ],
   radarr: [
     "system/status",
@@ -93,7 +93,7 @@ const approvedRoutes: Readonly<Record<FixtureApplication, readonly string[]>> = 
     "downloadclient",
     "config/downloadclient",
     "customformat",
-    "importlistexclusion",
+    "exclusions/paged",
   ],
   prowlarr: [
     "system/status",

@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "application": "radarr",
+    "apiVersion": "v3",
+    "version": "6.3.0.10514",
+    "endpoint": "/api/v3/exclusions/paged"
+  },
+  "body": {
+    "page": 1,
+    "pageSize": 25,
+    "sortKey": "id",
+    "sortDirection": "descending",
+    "totalRecords": 1,
+    "records": [{ "id": 1, "tmdbId": 11, "movieTitle": "Example Movie", "movieYear": 2001 }]
+  }
+}

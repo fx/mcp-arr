@@ -8,10 +8,12 @@ import {
   decodePageCursor,
   encodePageCursor,
   type PageWindow,
+  pageNumberFor,
   projectPage,
   queryDigest,
+  upstreamPage,
 } from "../library/paging.js";
-import { type ConfigurationDomain, familyOf, routeFor } from "./domains.js";
+import { type ConfigurationDomain, configurationReadFor, familyOf } from "./domains.js";
 import type {
   ConfigurationRecord,
   ConfigurationView,
@@ -19,7 +21,12 @@ import type {
   ProviderRecord,
   ResourceRecord,
 } from "./model.js";
-import { isUpstreamRecord, parseCollection } from "./parse.js";
+import {
+  isUpstreamRecord,
+  pagedCollectionSchema,
+  parseCollection,
+  parseConfiguration,
+} from "./parse.js";
 import {
   ConfigurationResourceSet,
   captureUpstreamResource,
@@ -138,6 +145,49 @@ function mapRecord(context: SerializationContext, value: unknown): MappedRecord 
   }
 }
 
+/**
+ * Reads one page from a route that returns its whole collection, projecting the
+ * window here because the instance cannot apply it.
+ */
+async function readWholeCollection(
+  client: UpstreamClient,
+  context: SerializationContext,
+  window: PageWindow,
+): Promise<AdapterPage<MappedRecord>> {
+  const body = await client.get(context.route);
+  return projectPage<unknown, MappedRecord>({
+    source: parseCollection(body, context.application, context.route),
+    window,
+    map: (value) => mapRecord(context, value),
+  });
+}
+
+/**
+ * Reads one page from a route the instance pages itself, so the window is
+ * applied upstream and nothing outside it is fetched or mapped.
+ */
+async function readPagedCollection(
+  client: UpstreamClient,
+  context: SerializationContext,
+  window: PageWindow,
+): Promise<AdapterPage<MappedRecord>> {
+  const body = await client.get(context.route, {
+    page: pageNumberFor(window),
+    pageSize: window.pageSize,
+  });
+  const envelope = parseConfiguration(
+    pagedCollectionSchema,
+    body,
+    context.application,
+    context.route,
+  );
+  return upstreamPage(
+    envelope.records.map((value) => mapRecord(context, value)),
+    window,
+    envelope.totalRecords ?? undefined,
+  );
+}
+
 function viewOf(
   domain: ConfigurationDomain,
   records: readonly ConfigurationRecord[],
@@ -165,8 +215,8 @@ export async function runConfigurationObservation(
   client: UpstreamClient,
   request: ConfigurationObservationRequest,
 ): Promise<ConfigurationObservationOutcome> {
-  const route = routeFor(request.domain, application);
-  if (route === undefined) {
+  const read = configurationReadFor(request.domain, application);
+  if (read === undefined) {
     return { status: "error", error: unsupported(application, request.domain) };
   }
 
@@ -200,18 +250,15 @@ export async function runConfigurationObservation(
   const context: SerializationContext = {
     application,
     domain: request.domain,
-    route,
+    route: read.route,
     detail: request.detail,
   };
 
   let page: AdapterPage<MappedRecord>;
   try {
-    const body = await client.get(route);
-    page = projectPage<unknown, MappedRecord>({
-      source: parseCollection(body, application, route),
-      window,
-      map: (value) => mapRecord(context, value),
-    });
+    page = read.upstreamPaged
+      ? await readPagedCollection(client, context, window)
+      : await readWholeCollection(client, context, window);
   } catch (error) {
     return { status: "error", error: toolErrorForThrown(error, application) };
   }

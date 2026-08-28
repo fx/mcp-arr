@@ -103,8 +103,55 @@ export const configurationRoutes: Readonly<
   tags: { sonarr: "tag", radarr: "tag", prowlarr: "tag" },
   root_folders: { sonarr: "rootfolder", radarr: "rootfolder" },
   remote_path_mappings: { sonarr: "remotepathmapping", radarr: "remotepathmapping" },
-  import_list_exclusions: { sonarr: "importlistexclusion", radarr: "importlistexclusion" },
+  // Radarr names this resource `exclusions` and answers `importlistexclusion`
+  // with a 404; Sonarr does the reverse. Verified against both recorded
+  // minimum versions, in both the plain and the paged form.
+  import_list_exclusions: { sonarr: "importlistexclusion", radarr: "exclusions" },
 };
+
+/**
+ * Which applications serve an upstream-paged form of a domain's collection.
+ *
+ * The paged route is derived from the entry above rather than written out, so
+ * it can never name a collection the application does not answer the domain
+ * from. Only the exclusion domain offers one on either application; every other
+ * configuration route returns its whole collection at once, which the service
+ * pages itself.
+ */
+const upstreamPagedDomains: Readonly<
+  Partial<Record<ConfigurationDomain, readonly ApplicationId[]>>
+> = {
+  import_list_exclusions: ["sonarr", "radarr"],
+};
+
+/** How one application answers one domain, and which side applies the window. */
+export interface ConfigurationRead {
+  /** The route the observation sends. */
+  readonly route: string;
+  /** Whether the instance applies the page window rather than the service. */
+  readonly upstreamPaged: boolean;
+}
+
+/**
+ * The read an observation performs, which is the paged form wherever the
+ * application serves one.
+ *
+ * Preferring the paged form is what bounds an observation by the query's page
+ * bound upstream rather than after the fact, so a collection is never fetched
+ * whole to return one page of it.
+ */
+export function configurationReadFor(
+  domain: ConfigurationDomain,
+  application: ApplicationId,
+): ConfigurationRead | undefined {
+  const route = configurationRoutes[domain][application];
+  if (route === undefined) {
+    return undefined;
+  }
+  return upstreamPagedDomains[domain]?.includes(application) === true
+    ? { route: `${route}/paged`, upstreamPaged: true }
+    : { route, upstreamPaged: false };
+}
 
 export function routeFor(
   domain: ConfigurationDomain,

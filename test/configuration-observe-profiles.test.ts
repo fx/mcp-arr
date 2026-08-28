@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  expectObservationError,
+  expectObserved,
   firstRecord,
   observationRequest,
   observe,
@@ -285,15 +287,23 @@ describe("observing resources", () => {
     }
   });
 
-  it("reads an import-list exclusion", async () => {
-    const body = await fixtureBody("radarr", "importlistexclusion");
-    const { outcome } = await observe(
+  /**
+   * The same domain under two names: Radarr serves its exclusions from
+   * `exclusions` and answers `importlistexclusion` with a 404, while Sonarr does
+   * the reverse. Reading only one application is what let a route map that was
+   * half wrong pass, so both are read here, from the fixture recorded against
+   * each one's own route.
+   */
+  it("reads an import-list exclusion from the route Radarr serves", async () => {
+    const body = await fixtureBody("radarr", "exclusions/paged");
+    const { outcome, calls } = await observe(
       "radarr",
       observationRequest("import_list_exclusions"),
       serving(body),
     );
     const exclusion = firstRecord(observedRecords(outcome));
 
+    expect(calls[0]?.url.pathname).toBe("/api/v3/exclusions/paged");
     expect(exclusion.fields).toEqual([
       { name: "tmdbId", value: 11 },
       { name: "movieTitle", value: "Example Movie" },
@@ -308,9 +318,9 @@ describe("observing resources", () => {
    * only one application would leave the other half of it unexercised — and a
    * property dropped from it would still look correct.
    */
-  it("reads a Sonarr import-list exclusion, whose properties are its own", async () => {
-    const body = await fixtureBody("sonarr", "importlistexclusion");
-    const { outcome } = await observe(
+  it("reads a Sonarr import-list exclusion, whose route and properties are its own", async () => {
+    const body = await fixtureBody("sonarr", "importlistexclusion/paged");
+    const { outcome, calls } = await observe(
       "sonarr",
       observationRequest("import_list_exclusions"),
       serving(body),
@@ -318,6 +328,7 @@ describe("observing resources", () => {
     const records = observedRecords(outcome);
     const exclusion = firstRecord(records);
 
+    expect(calls[0]?.url.pathname).toBe("/api/v3/importlistexclusion/paged");
     expect(records.map((record) => record.ref.id)).toEqual(["1", "2"]);
     expect(exclusion.family).toBe("resource");
     expect(exclusion.fields).toEqual([
@@ -328,6 +339,61 @@ describe("observing resources", () => {
     // what it is named by is the allowlisted title property itself.
     expect(exclusion.name).toBeUndefined();
     expect(exclusion.withheld).toEqual({ count: 0 });
+  });
+
+  /**
+   * The instance applies the window for this domain, so the request has to carry
+   * it: without an explicit page size both applications answer with their own
+   * default of ten, which would make the query's page bound advisory.
+   */
+  it("asks the instance for the window rather than paging its whole collection", async () => {
+    for (const [application, pathname] of [
+      ["sonarr", "/api/v3/importlistexclusion/paged"],
+      ["radarr", "/api/v3/exclusions/paged"],
+    ] as const) {
+      const { outcome, calls } = await observe(
+        application,
+        observationRequest("import_list_exclusions", { paging: { pageSize: 2 } }),
+        serving({ page: 1, pageSize: 2, totalRecords: 5, records: [{ id: 1 }, { id: 2 }] }),
+      );
+      const query = calls[0]?.url.searchParams;
+
+      expect(calls[0]?.url.pathname).toBe(pathname);
+      expect(query?.get("page")).toBe("1");
+      expect(query?.get("pageSize")).toBe("2");
+      // The instance reported five, so the continuation says more remain even
+      // though nothing here counted the records it withheld.
+      expect(expectObserved(outcome).continuation).toMatchObject({ returned: 2, hasMore: true });
+    }
+  });
+
+  it("advances an exclusion page against the instance's own page number", async () => {
+    const first = await observe(
+      "radarr",
+      observationRequest("import_list_exclusions", { paging: { pageSize: 1 } }),
+      serving({ page: 1, pageSize: 1, totalRecords: 3, records: [{ id: 1 }] }),
+    );
+    const cursor = expectObserved(first.outcome).continuation.cursor;
+    expect(cursor).toBeDefined();
+
+    const second = await observe(
+      "radarr",
+      observationRequest("import_list_exclusions", { paging: { pageSize: 1, cursor } }),
+      serving({ page: 2, pageSize: 1, totalRecords: 3, records: [{ id: 2 }] }),
+    );
+
+    expect(second.calls[0]?.url.searchParams.get("page")).toBe("2");
+    expect(observedRecords(second.outcome).map((record) => record.ref.id)).toEqual(["2"]);
+  });
+
+  it("refuses an exclusion page the instance answered with something else", async () => {
+    const { outcome } = await observe(
+      "radarr",
+      observationRequest("import_list_exclusions"),
+      serving([{ id: 1, tmdbId: 11 }]),
+    );
+
+    expect(expectObservationError(outcome).code).toBe("unexpected_response");
   });
 
   it("withholds the machine a remote path mapping names, on either application", async () => {
