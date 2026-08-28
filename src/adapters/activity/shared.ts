@@ -72,7 +72,9 @@ export type HistoryDataBag = HistoryUpstream["data"];
  *
  * The bag is never copied wholesale: upstream fills it with download URLs,
  * dropped and imported canonical paths, and torrent info hashes, so a member is
- * only ever read by a name written in this repository.
+ * only ever read by a name written in this repository. What the key allowlists
+ * below leave out is the first line of defence here; `safeLabel` is the second.
+ * See {@link mediaHistoryData}.
  */
 export function dataText(data: HistoryDataBag, key: string): string | undefined {
   const value = data?.[key];
@@ -109,6 +111,18 @@ export function historyEventType(value: string | null | undefined): HistoryEvent
  * `importedPath` are all present upstream and all deliberately absent here: the
  * first two are outbound URLs, the third is the raw download identifier, and
  * the last two are canonical paths on the operator's disk.
+ *
+ * **This list is a security control, not a convenience.** It is what decides
+ * whether a canonical path is read at all, and adding a path-bearing key to it
+ * moves that path onto the published surface, where only the sanitizer stands
+ * between it and the caller. Today the sanitizer holds: every key here goes
+ * through `safeLabel`, which redacts any token carrying a path separator, so the
+ * allowlist is the outer of two independent defences rather than the only one.
+ * It stops being belt-and-braces the moment a value it admits is put through a
+ * tolerant sanitizer instead — `safeTaxonomyLabel` publishes a two-segment
+ * separator-joined name as it stands, and nothing here may use it. A contributor
+ * adding a key should assume the allowlist is the whole defence and add nothing
+ * that names a location on the operator's disk.
  */
 export function mediaHistoryData(data: HistoryDataBag): HistoryData | undefined {
   return present({

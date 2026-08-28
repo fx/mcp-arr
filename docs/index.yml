@@ -185,7 +185,7 @@ changes:
     path: changes/0022-upstream-field-shape-tolerance.md
     description: Stop refusing a whole release search because an advisory field arrived in an unmodelled shape
     spec: architecture
-    status: draft
+    status: complete
     depends_on: []
   - id: "0023"
     name: radarr-exclusion-route

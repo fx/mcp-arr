@@ -3,14 +3,16 @@ import { z } from "zod";
 import type { UpstreamBody, UpstreamClient, UpstreamQuery } from "../../http/client.js";
 import { isUpstreamError } from "../../http/errors.js";
 import { createToolError, type ToolError } from "../../tools/errors.js";
-import { safeReason } from "../acquisition/parse.js";
-import { safeLabel, safeText } from "../activity/parse.js";
+import { safeLabelList, safeReason, safeTaxonomyList, scrubLabel } from "../acquisition/parse.js";
+import { safeText } from "../activity/parse.js";
 import { type MediaApplication, mediaRef } from "../library/model.js";
 import { type AdapterPage, type PageWindow, projectPage } from "../library/paging.js";
 import {
   count,
   customFormatList,
   flag,
+  indexerFlagStrings,
+  indexerFlagValue,
   optionalUpstreamId,
   parseUpstream,
   present,
@@ -124,7 +126,7 @@ const candidateSchema = z.object({
   qualityWeight: z.number().nullish(),
   customFormatScore: z.number().nullish(),
   customFormats: customFormatList,
-  indexerFlags: z.unknown().nullish(),
+  indexerFlags: indexerFlagValue,
   languages: z.array(z.object({ name: upstreamText })).nullish(),
   quality: z
     .object({
@@ -471,46 +473,6 @@ function knownLiterals(context: ImportScanContext, record: UpstreamCandidate): r
   ].filter((value): value is string => value !== undefined);
 }
 
-/** One upstream label, with this scan's own literals removed before the rest. */
-function scrubLabel(
-  value: string | null | undefined,
-  known: readonly string[],
-): string | undefined {
-  return safeLabel(safeReason(value, known));
-}
-
-/**
- * A list of upstream labels, each sanitized rather than merely trimmed.
- *
- * `textList` normalizes; it does not scrub. Every member of these lists is a
- * name an operator or an indexer chose — a custom format, a language, an
- * indexer flag — so any of them can carry a path, a URL, or an identifier, and
- * on this surface that is the one thing that must not travel. A member that is
- * entirely redacted is dropped rather than returned as a marker, because a
- * label that says only "[redacted path]" names nothing a caller can use.
- */
-function safeLabelList(
-  values: readonly (string | null | undefined)[] | null | undefined,
-  known: readonly string[],
-): readonly string[] | undefined {
-  if (!Array.isArray(values)) {
-    return undefined;
-  }
-  const cleaned = values
-    .map((value) => scrubLabel(value, known))
-    .filter((value): value is string => value !== undefined && !value.startsWith("[redacted"));
-  return cleaned.length === 0 ? undefined : cleaned;
-}
-
-function indexerFlagNames(value: unknown, known: readonly string[]): readonly string[] | undefined {
-  return Array.isArray(value)
-    ? safeLabelList(
-        value.filter((flagName): flagName is string => typeof flagName === "string"),
-        known,
-      )
-    : undefined;
-}
-
 /**
  * Maps one upstream candidate onto the model.
  *
@@ -602,12 +564,16 @@ export function mapCandidate(
     languages,
     releaseGroup,
     releaseType: scrubLabel(record.releaseType, known),
-    customFormats: safeLabelList(
+    // The same concept the acquisition surface publishes, and held to the same
+    // rule: a custom format is the one operator-authored name whose values carry
+    // a separator by design, so scrubbing it strictly here while publishing it
+    // there would be the divergence this adapter exists to avoid.
+    customFormats: safeTaxonomyList(
       (record.customFormats ?? []).map((format) => format.name),
       known,
     ),
     customFormatScore: count(record.customFormatScore),
-    indexerFlags: indexerFlagNames(record.indexerFlags, known),
+    indexerFlags: safeLabelList(indexerFlagStrings(record.indexerFlags), known),
     decision: { importable, rejections },
     // A candidate the instance already associates with a library file is a file
     // the library holds, not a new import. Both applications report that as the

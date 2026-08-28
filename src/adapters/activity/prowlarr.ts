@@ -106,6 +106,11 @@ export function indexerRef(id: number | null | undefined, name?: string | undefi
  * went, and neither is read. The search term itself is not read either: it is
  * caller-authored text that adds nothing to a failure diagnosis the query type
  * and result count do not already say.
+ *
+ * As with the media allowlist this mirrors, the omissions are a security control
+ * rather than a convenience: `safeLabel` still redacts what a value carries, but
+ * that second defence only holds while every key here stays on the strict
+ * sanitizer. Nothing here may be moved onto the tolerant one.
  */
 function prowlarrHistoryData(data: HistoryDataBag): HistoryData | undefined {
   return present({

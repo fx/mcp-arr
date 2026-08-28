@@ -287,6 +287,109 @@ describe("prowlarr release normalization", () => {
     });
   });
 
+  /**
+   * Prowlarr's category taxonomy is slash-delimited by construction, and the
+   * subcategory is the half that carries the information: a live instance
+   * reports `TV` alongside `TV/HD`, and an indexer that reports only the leaf
+   * reports nothing else at all. Scrubbing that away empties the field the model
+   * documents as the indexer's category names, so the ordinary value is pinned
+   * here rather than left to the canary tests.
+   */
+  it("publishes a slash-delimited category name rather than scrubbing it away", async () => {
+    const categorized = fixtures.releases.map((release) => ({
+      ...release,
+      categories: [{ name: "TV" }, { name: "TV/HD" }],
+    }));
+
+    const ok = expectOk(
+      (
+        await run(
+          { statuses: [], search: () => jsonResponse(categorized) },
+          { ...aggregate, detail: "full" },
+        )
+      ).outcome,
+    );
+
+    expect(ok.data.items[0]?.release.detail?.categories).toEqual(["TV", "TV/HD"]);
+  });
+
+  it("keeps a leaf-only category list rather than emptying it", async () => {
+    const leafOnly = fixtures.releases.map((release) => ({
+      ...release,
+      categories: [{ name: "Movies/UHD" }],
+    }));
+
+    const ok = expectOk(
+      (
+        await run(
+          { statuses: [], search: () => jsonResponse(leafOnly) },
+          { ...aggregate, detail: "full" },
+        )
+      ).outcome,
+    );
+
+    expect(ok.data.items[0]?.release.detail?.categories).toEqual(["Movies/UHD"]);
+  });
+
+  /**
+   * The category field is one of only three that publish a separator at all, so
+   * it is the surface where a planted path would travel if the tolerance were
+   * wider than its own description. Each of these is a shape the taxonomy rule
+   * refuses for a different reason — a third segment, a UNC prefix, a drive
+   * letter, a dot, a backslash — and a category list that is nothing but markers
+   * is dropped rather than published.
+   */
+  it("still takes a path an indexer planted in a category name", async () => {
+    const planted = fixtures.releases.map((release) => ({
+      ...release,
+      categories: [
+        { name: "/media/private/tv" },
+        { name: "\\\\server\\share\\Private" },
+        { name: "C:\\Media\\tv" },
+        { name: "tracker.example.invalid/rss" },
+        { name: "server\\share" },
+        { name: "https://tracker.example.invalid/rules?apikey=SECRET" },
+      ],
+    }));
+
+    const ok = expectOk(
+      (
+        await run(
+          { statuses: [], search: () => jsonResponse(planted) },
+          { ...aggregate, detail: "full" },
+        )
+      ).outcome,
+    );
+
+    expect(ok.data.items[0]?.release.detail?.categories).toBeUndefined();
+  });
+
+  /**
+   * A path with a space in it is the shape a shape-only rule is worst at: every
+   * head rule stops at the first space, so the tail arrives as a fresh token
+   * that looks exactly like a two-level category. It is refused here because the
+   * taxonomy rule spares a token only when it is the whole value, and this one
+   * is what a redaction left behind. What survives is the final bare word, which
+   * carries no separator and so names no directory level.
+   */
+  it("refuses a category that is only the tail of a path a rule already cut", async () => {
+    const planted = fixtures.releases.map((release) => ({
+      ...release,
+      categories: [{ name: "\\\\server\\share$\\Private Stash\\Home Movies" }],
+    }));
+
+    const ok = expectOk(
+      (
+        await run(
+          { statuses: [], search: () => jsonResponse(planted) },
+          { ...aggregate, detail: "full" },
+        )
+      ).outcome,
+    );
+
+    expect(ok.data.items[0]?.release.detail?.categories).toEqual(["[redacted] Movies"]);
+  });
+
   it("orders the merged result deterministically and pages it by whole pages", async () => {
     const instance: Instance = {
       statuses: [],
@@ -319,6 +422,12 @@ describe("prowlarr release normalization", () => {
     expect(second.continuation.hasMore).toBe(false);
   });
 
+  /**
+   * A category is a name the indexer publishes, exactly as a flag is, and it is
+   * the one label only this adapter maps — so the canary goes into it here, and
+   * the search runs at full detail, where the category list actually reaches a
+   * caller.
+   */
   it("never lets a protected URL from an indexer reach a mapped result", async () => {
     const canary = "CANARY-5c1d7e-DO-NOT-LEAK";
     const poisoned = fixtures.releases.map((release) => ({
@@ -326,16 +435,31 @@ describe("prowlarr release normalization", () => {
       downloadUrl: `https://tracker.example.invalid/dl?apikey=${canary}`,
       magnetUrl: `magnet:?xt=urn:btih:${canary}`,
       infoUrl: `https://tracker.example.invalid/info?id=${canary}`,
+      categories: [
+        { name: `TV, see https://tracker.example.invalid/cats?apikey=${canary}` },
+        { name: `/media/private/${canary}/tv` },
+      ],
     }));
 
     const ok = expectOk(
-      (await run({ statuses: [], search: () => jsonResponse(poisoned) })).outcome,
+      (
+        await run(
+          { statuses: [], search: () => jsonResponse(poisoned) },
+          {
+            ...aggregate,
+            detail: "full",
+          },
+        )
+      ).outcome,
     );
 
     const serialized = JSON.stringify(ok.data.items.map((item) => item.release));
     expect(serialized).not.toContain(canary);
     expect(serialized).not.toContain("://");
     expect(serialized).not.toContain("magnet:");
+    // What the category still said is kept; the one that was only a path is not
+    // published as a bare marker.
+    expect(ok.data.items[0]?.release.detail?.categories).toEqual(["TV, see [redacted]"]);
   });
 
   it("never lets an indexer's own credentials out of the indexer definition", async () => {
@@ -345,6 +469,10 @@ describe("prowlarr release normalization", () => {
     const canary = "CANARY-2b90af-DO-NOT-LEAK";
     const indexers = fixtures.indexers.map((indexer) => ({
       ...indexer,
+      // An operator names their own indexers, and naming one after the tracker
+      // it points at is an ordinary way to do it — so the name is a label like
+      // any other and is scrubbed rather than reported verbatim.
+      name: `Example Indexer, see https://tracker.example.invalid/${canary}`,
       fields: [
         { name: "apiKey", value: canary },
         { name: "baseUrl", value: `https://tracker.example.invalid/${canary}` },
