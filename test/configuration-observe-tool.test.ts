@@ -118,15 +118,20 @@ describe("arr_config_observe publishes no provider template catalogue", () => {
       for (const application of applicationsForDomain(domain)) {
         for (const detail of ["summary", "full"] as const) {
           const label = `${application} ${domain} ${detail}`;
-          const { result } = await observe({ domain, detail, applications: [application] });
+          const { result, routes } = await observe({ domain, detail, applications: [application] });
           const data = onlyData(result, label);
 
           expect(data, label).not.toHaveProperty("schema");
+          // The whole key set, so a catalogue republished under another name is
+          // caught by the same assertion that catches it under this one.
           expect(Object.keys(data).sort(), label).toEqual(["domain", "family", "records"]);
-          // The member is gone by name; this is the same claim made of the
-          // payload, so a catalogue republished under another name is caught.
-          expect(JSON.stringify(data), label).not.toContain("templates");
-          expect(JSON.stringify(data), label).not.toContain("baseUrl");
+          // And the stronger claim, about the request rather than the payload:
+          // no catalogue can come back under any name, because the read that
+          // fetches one is never made.
+          expect(
+            routes.filter((route) => route.endsWith("/schema")),
+            label,
+          ).toEqual([]);
         }
       }
     }
