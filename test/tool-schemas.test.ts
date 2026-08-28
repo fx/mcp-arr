@@ -106,9 +106,9 @@ function collectReferencePropertyNames(node: unknown, found: Set<string>): void 
 }
 
 describe("published tool surface", () => {
-  it("publishes exactly the fifteen contracted tools", () => {
+  it("publishes exactly the fourteen contracted tools", () => {
     expect(toolDefinitions.map((definition) => definition.name)).toEqual([...toolNames]);
-    expect(toolNames).toHaveLength(15);
+    expect(toolNames).toHaveLength(14);
   });
 
   it("declares an object-rooted input schema and an output schema for every tool", () => {
@@ -333,7 +333,7 @@ describe("published tool surface", () => {
   it("accepts a plan reference in place of a restated intent on every mutation tool", () => {
     const planApply = { mode: "apply", plan: sampleReferences.plan };
     const mutationTools = toolNames.filter((name) => "mode" in sampleToolInputs[name]);
-    expect(mutationTools).toHaveLength(8);
+    expect(mutationTools).toHaveLength(7);
 
     for (const name of mutationTools) {
       expect(parseInput(name, planApply).success, name).toBe(true);
@@ -350,20 +350,15 @@ describe("published tool surface", () => {
       expect(parseInput(name, { mode: "apply", plan: sampleReferences.job }).success, name).toBe(
         false,
       );
+      // No tool accepts a transient secret any more, so the resupply form is
+      // refused on every one of them rather than on all but the one that used
+      // to declare it.
+      expect(
+        parseInput(name, { ...planApply, secrets: [{ name: "password", value: "resupplied" }] })
+          .success,
+        name,
+      ).toBe(false);
     }
-
-    expect(
-      parseInput("arr_config_reconcile", {
-        ...planApply,
-        secrets: [{ name: "password", value: "resupplied" }],
-      }).success,
-    ).toBe(true);
-    expect(
-      parseInput("arr_library_change", {
-        ...planApply,
-        secrets: [{ name: "password", value: "resupplied" }],
-      }).success,
-    ).toBe(false);
   });
 
   it("offers no plan-reference form on a read tool", () => {
@@ -502,11 +497,6 @@ describe("input rejection messages", () => {
         { intent: "set_monitoring", mode: "plan", items: [sampleReferences.media] },
         [noAlternativeMatched],
       ],
-      [
-        "arr_config_reconcile",
-        { intent: "reconcile_provider", mode: "plan", application: "sonarr", domain: "indexers" },
-        [noAlternativeMatched],
-      ],
       ["arr_job_cancel", { mode: "apply" }, [noAlternativeMatched]],
     ];
 
@@ -526,7 +516,7 @@ describe("input rejection messages", () => {
 
   it("words a plan reference restated alongside its intent", () => {
     const mutationTools = toolNames.filter(isPlanReferenceTool);
-    expect(mutationTools).toHaveLength(8);
+    expect(mutationTools).toHaveLength(7);
 
     for (const name of mutationTools) {
       const both = { ...sampleFor(name), mode: "apply", plan: sampleReferences.plan };

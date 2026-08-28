@@ -255,12 +255,23 @@ describe("published payload paths", () => {
     // beside it that says which one a result carries.
     expect(inventoryOf("arr_config_observe")?.discriminator).toBe("family");
 
-    // Nothing distinguishes the three reconciliation payloads, so they are
-    // published as alternatives rather than labelled with a value no result
-    // carries.
-    const reconcile = inventoryOf("arr_config_reconcile");
-    expect(reconcile?.discriminator).toBeUndefined();
-    expect(reconcile?.payloads.map((payload) => payload.variants)).toEqual([[], [], []]);
+    // A union whose members share no discriminating literal is published as
+    // alternatives rather than labelled with a value no result carries. Since
+    // the configuration write surface was withdrawn no tool returns one — its
+    // three reconciliation payloads were the last — so the claim is made
+    // against a schema built here rather than deleted with the tool that
+    // happened to carry the only instance of it.
+    const undistinguished = payloadInventory(
+      toolResultSchema({
+        data: z.union([
+          z.strictObject({ changes: z.array(z.strictObject({ path: z.string() })) }),
+          z.strictObject({ outcome: z.string() }),
+          z.strictObject({ mappings: z.array(z.strictObject({ name: z.string() })) }),
+        ]),
+      }),
+    );
+    expect(undistinguished?.discriminator).toBeUndefined();
+    expect(undistinguished?.payloads.map((payload) => payload.variants)).toEqual([[], [], []]);
   });
 
   it("refuses a payload whose fields it cannot name", () => {

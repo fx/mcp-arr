@@ -203,7 +203,7 @@ interface ToolCallResult {
 }
 
 describe("built stdio tool surface", () => {
-  it("publishes the fifteen tools with their schemas and keeps stdout clean", async () => {
+  it("publishes the fourteen tools with their schemas and keeps stdout clean", async () => {
     const { tools, stdout, stderr } = await publishedTools();
 
     expect(tools.map((tool) => tool.name)).toEqual([...toolNames]);
@@ -461,20 +461,9 @@ describe("built stdio tool surface", () => {
       }
     }
 
-    // Pinned by name, and the only expectations here that are: `intent`
-    // scoping `domain` is the largest correlation the merge discards, and a
-    // derived check cannot tell a description that recovers the scoping from
-    // one that lists all sixteen domains on every line. Provider intents reach
-    // the seven provider domains and no profile domain.
-    const reconcile = published.get("arr_config_reconcile");
-    const providerLine = String(reconcile?.description ?? "")
-      .split("\n")
-      .find((line) => line.startsWith("- intent=reconcile_provider"));
-    expect(providerLine).toContain("indexers");
-    expect(providerLine).not.toContain("quality_profiles");
-
-    // The narrowest form of the same claim, and the one no derived check above
-    // can make. `arr_activity_change`'s two intents name the same arguments and
+    // Pinned by name, and the only expectation here that is: the narrowest
+    // correlation the merge discards, and the one no derived check above can
+    // make. `arr_activity_change`'s two intents name the same arguments and
     // differ only in the kind of reference `records` takes, so the reference
     // annotation is the whole of what tells them apart. Lose it — by the
     // published pattern drifting out from under the reverse lookup that

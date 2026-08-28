@@ -90,7 +90,6 @@ const allowedFiles = [
   "dist/tools/activity-references.js",
   "dist/tools/activity.js",
   "dist/tools/capabilities.js",
-  "dist/tools/config-reconcile.js",
   "dist/tools/configuration.js",
   "dist/tools/definitions.js",
   "dist/tools/dispatch.js",

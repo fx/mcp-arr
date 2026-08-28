@@ -16,7 +16,6 @@ import {
 } from "./acquisition.js";
 import { activityQueryHandler } from "./activity.js";
 import { activityChangeHandler, activityChangePreconditions } from "./activity-change.js";
-import { configReconcileHandler, configReconcilePreconditions } from "./config-reconcile.js";
 import { configObserveHandler } from "./configuration.js";
 import { createToolError, type ToolError } from "./errors.js";
 import { importExecuteHandler, importExecutePreconditions } from "./import-execute.js";
@@ -276,23 +275,6 @@ const libraryQuery: DefineOptions = { handler: libraryQueryHandler };
  * discriminator, which the handler re-validates against the published schema.
  */
 const configObserve: DefineOptions = { handler: configObserveHandler };
-
-/**
- * Every implemented `arr_config_reconcile` intent runs the same handler behind
- * the same precondition reader, for the reason the library and activity
- * mutations do: pairing them here rather than per variant is what makes a
- * desired-state write unreachable without the reader that resolves its target,
- * validates every pointer it names, and builds the resource it would send.
- *
- * The three deletions carry neither. Deleting a referenced resource needs the
- * dependent-migration behaviour the spec describes, no task of this change
- * built it, and an intent registered with the handler and without that would
- * delete without the check that makes deleting safe.
- */
-const configReconcile: DefineOptions = {
-  handler: configReconcileHandler,
-  readPreconditions: configReconcilePreconditions,
-};
 
 /**
  * Every `arr_release_search` target runs the same handler, for the same reason
@@ -900,82 +882,6 @@ const definitions = [
     media,
     "destructive",
     libraryChange,
-  ),
-
-  // arr_config_reconcile
-  define(
-    "config.reconcile.reconcile_provider",
-    "arr_config_reconcile",
-    "reconcile_provider",
-    every,
-    "mutate",
-    configReconcile,
-  ),
-  define(
-    "config.reconcile.delete_provider",
-    "arr_config_reconcile",
-    "delete_provider",
-    every,
-    "destructive",
-  ),
-  define(
-    "config.reconcile.force_provider_save",
-    "arr_config_reconcile",
-    "force_provider_save",
-    every,
-    "mutate",
-    configReconcile,
-  ),
-  define(
-    "config.reconcile.test_provider",
-    "arr_config_reconcile",
-    "test_provider",
-    every,
-    "external",
-    configReconcile,
-  ),
-  define(
-    "config.reconcile.reconcile_profile",
-    "arr_config_reconcile",
-    "reconcile_profile",
-    every,
-    "mutate",
-    configReconcile,
-  ),
-  define(
-    "config.reconcile.delete_profile",
-    "arr_config_reconcile",
-    "delete_profile",
-    every,
-    "destructive",
-  ),
-  define(
-    "config.reconcile.reconcile_resource",
-    "arr_config_reconcile",
-    "reconcile_resource",
-    every,
-    "mutate",
-    configReconcile,
-  ),
-  define(
-    "config.reconcile.delete_resource",
-    "arr_config_reconcile",
-    "delete_resource",
-    every,
-    "destructive",
-  ),
-  // Destructive rather than mutating, because what this intent can do is what a
-  // caller has to be told: at full sync it deletes the indexers a mapping no
-  // longer selects on the other application. A call that cannot reach that says
-  // so in its own plan; the declaration is about the intent, and understating a
-  // deletion is the one direction this must not round in.
-  define(
-    "config.reconcile.reconcile_application_sync",
-    "arr_config_reconcile",
-    "reconcile_application_sync",
-    prowlarr,
-    "destructive",
-    configReconcile,
   ),
 
   // arr_job_cancel

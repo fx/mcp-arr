@@ -133,7 +133,6 @@ describe("internal operation registry", () => {
     expect(operationFor("arr_library_change", "delete_media").sideEffect).toBe("destructive");
     expect(operationFor("arr_library_change", "set_monitoring").sideEffect).toBe("mutate");
     expect(operationFor("arr_search_start", "sonarr_series").sideEffect).toBe("start_job");
-    expect(operationFor("arr_config_reconcile", "test_provider").sideEffect).toBe("external");
     expect(operationFor("arr_library_query", "series").sideEffect).toBe("read");
   });
 

@@ -4,7 +4,11 @@ import { capabilitySummary, reportCapabilities } from "../src/tools/capabilities
 import { findToolDefinition } from "../src/tools/definitions.js";
 import { capabilitiesToolName, projectedToolNames, toolNames } from "../src/tools/names.js";
 import type { OperationDefinition } from "../src/tools/operations.js";
-import { isImplementedOperation, operationDefinitions } from "../src/tools/operations.js";
+import {
+  isImplementedOperation,
+  operationDefinitions,
+  unsupportedOperationHandler,
+} from "../src/tools/operations.js";
 import { summarizeToolResult, type ToolResult } from "../src/tools/results.js";
 import {
   type CapabilityReport,
@@ -40,6 +44,22 @@ function fixtureBody(application: ApplicationId): Record<string, unknown> {
 function operationKey(operation: { tool: string; variant?: string | undefined }): string {
   return `${operation.tool}/${operation.variant ?? "-"}`;
 }
+
+/**
+ * The inventory with one operation declared but not implemented.
+ *
+ * Every operation this server ships now carries behavior, so the real inventory
+ * has nothing for the unimplemented list to hold. The contract that the list is
+ * counted by default and enumerated only at `full` detail did not expire with
+ * the last unimplemented operation — a later change may declare one again — so
+ * the claims about that list are made against a registry that declares one
+ * rather than against an inventory that currently has none to show.
+ */
+const withOneUnimplemented: readonly OperationDefinition[] = operationDefinitions.map((operation) =>
+  operation.tool === "arr_library_query" && operation.variant === "lookup"
+    ? { ...operation, handler: unsupportedOperationHandler }
+    : operation,
+);
 
 /** Every operation a report projects onto its application, however it is grouped. */
 function projectedKeys(report: CapabilityReport): string[] {
@@ -98,6 +118,7 @@ describe("arr_capabilities", () => {
     // receives the enumeration by accident on its first orienting call.
     const configured = createTestToolContext({
       environment: allApplicationsEnvironment,
+      operations: withOneUnimplemented,
       fetch: async (url) => {
         const application = applicationForUrl(url);
         if (application === "radarr") {
@@ -114,6 +135,7 @@ describe("arr_capabilities", () => {
         SONARR_URL: "https://sonarr.example.invalid/sonarr",
         SONARR_API_KEY: testApiKeys.sonarr,
       },
+      operations: withOneUnimplemented,
       fetch: async () => jsonResponse(fixtureBody("sonarr")),
     });
 
@@ -144,6 +166,7 @@ describe("arr_capabilities", () => {
   it("enumerates what an instance cannot do only at full detail", async () => {
     const context = createTestToolContext({
       environment: allApplicationsEnvironment,
+      operations: withOneUnimplemented,
       fetch: async (url) => jsonResponse(fixtureBody(applicationForUrl(url))),
     });
 
@@ -229,7 +252,7 @@ describe("arr_capabilities", () => {
 
     expect(result.status).toBe("ok");
     expect(reportFor(result, "sonarr").state).toBe("available");
-    expect(reportFor(result, "sonarr").unimplementedOperationCount).toBeGreaterThan(0);
+    expect(reportFor(result, "sonarr").supportedOperations.length).toBeGreaterThan(0);
     expect(reportFor(result, "radarr")).toMatchObject({
       state: "unavailable",
       supportedOperations: [],
@@ -246,6 +269,7 @@ describe("arr_capabilities", () => {
   it("projects only the operations the reported application declares", async () => {
     const context = createTestToolContext({
       environment: allApplicationsEnvironment,
+      operations: withOneUnimplemented,
       fetch: async (url) => jsonResponse(fixtureBody(applicationForUrl(url))),
     });
 
@@ -262,10 +286,11 @@ describe("arr_capabilities", () => {
     expect(prowlarrKeys).toContain("arr_activity_query/indexer_status");
     expect(prowlarrKeys).not.toContain("arr_library_query/series");
 
-    const expectedSonarr = operationDefinitions.filter(
+    const expectedSonarr = withOneUnimplemented.filter(
       (operation) =>
         operation.applications.includes("sonarr") && !isImplementedOperation(operation),
     ).length;
+    expect(expectedSonarr).toBeGreaterThan(0);
     expect(sonarr.unimplementedOperations).toHaveLength(expectedSonarr);
     expect(sonarr.unimplementedOperationCount).toBe(expectedSonarr);
     expect(
@@ -347,11 +372,6 @@ describe("arr_capabilities", () => {
       "arr_library_change/delete_file",
       "arr_library_change/rename",
       "arr_library_change/move_media",
-      "arr_config_reconcile/reconcile_provider",
-      "arr_config_reconcile/force_provider_save",
-      "arr_config_reconcile/test_provider",
-      "arr_config_reconcile/reconcile_profile",
-      "arr_config_reconcile/reconcile_resource",
       "arr_job_cancel/-",
     ]);
     expect(reportFor(result, "radarr").supportedOperations.map(operationKey)).toEqual([
@@ -410,11 +430,6 @@ describe("arr_capabilities", () => {
       "arr_library_change/delete_file",
       "arr_library_change/rename",
       "arr_library_change/move_media",
-      "arr_config_reconcile/reconcile_provider",
-      "arr_config_reconcile/force_provider_save",
-      "arr_config_reconcile/test_provider",
-      "arr_config_reconcile/reconcile_profile",
-      "arr_config_reconcile/reconcile_resource",
       "arr_job_cancel/-",
     ]);
     expect(reportFor(result, "prowlarr").supportedOperations.map(operationKey)).toEqual([
@@ -433,12 +448,6 @@ describe("arr_capabilities", () => {
       "arr_config_observe/tags",
       "arr_job_get/-",
       "arr_release_grab/-",
-      "arr_config_reconcile/reconcile_provider",
-      "arr_config_reconcile/force_provider_save",
-      "arr_config_reconcile/test_provider",
-      "arr_config_reconcile/reconcile_profile",
-      "arr_config_reconcile/reconcile_resource",
-      "arr_config_reconcile/reconcile_application_sync",
       "arr_job_cancel/-",
     ]);
 
@@ -629,6 +638,7 @@ describe("arr_capabilities", () => {
     }
     const context = createTestToolContext({
       environment: allApplicationsEnvironment,
+      operations: withOneUnimplemented,
       fetch: async (url) => jsonResponse(fixtureBody(applicationForUrl(url))),
     });
 
@@ -657,6 +667,7 @@ describe("arr_capabilities", () => {
     }
     const context = createTestToolContext({
       environment: allApplicationsEnvironment,
+      operations: withOneUnimplemented,
       fetch: async (url) => jsonResponse(fixtureBody(applicationForUrl(url))),
     });
 

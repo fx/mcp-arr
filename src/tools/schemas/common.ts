@@ -166,7 +166,6 @@ export const referenceProperties = [
   "add",
   "candidate",
   "candidates",
-  "dependentMigration",
   "episode",
   "episodes",
   "files",
@@ -185,8 +184,6 @@ export const referenceProperties = [
   "rootFolder",
   "series",
   "tags",
-  "target",
-  "targets",
 ] as const;
 
 const referencePropertySet: ReadonlySet<string> = new Set(referenceProperties);

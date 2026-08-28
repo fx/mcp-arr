@@ -29,7 +29,6 @@ export const mutationToolNames = [
   "arr_activity_change",
   "arr_import_execute",
   "arr_library_change",
-  "arr_config_reconcile",
   "arr_job_cancel",
 ] as const;
 
