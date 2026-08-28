@@ -554,7 +554,10 @@ export async function startFixtureInstance(
       const collection = record[1] ?? "";
       return (
         recordRoutes[application].includes(collection) ||
-        (collection === "blocklist" && answers("blocklist"))
+        // Neither is a record this instance rewrites, so neither belongs in
+        // `recordRoutes`; both are read back one at a time, and a command is
+        // what a job projection refreshes itself from.
+        ((collection === "blocklist" || collection === "command") && answers(collection))
       );
     }
     return historyFailedRoute.test(candidate) && answers("history");
@@ -826,6 +829,16 @@ export async function startFixtureInstance(
       send(response, answers("queue") ? 405 : 404, {
         message: answers("queue") ? "method not allowed" : "not found",
       });
+      return;
+    }
+
+    // One command, read back by identity, which every application answers and
+    // which is the read a job projection refreshes itself from. A double that
+    // only accepted commands would leave that read answering `404` and the
+    // refresh untested over the protocol.
+    if (collection === "command" && recordId !== undefined && answers("command")) {
+      const record = recordById(bodies.get("command"), recordId);
+      send(response, record === undefined ? 404 : 200, record ?? { message: "not found" });
       return;
     }
 

@@ -197,7 +197,22 @@ interface OperationBlueprint<TId extends string> {
    * observed — or reporting that its reference no longer resolves — is
    * answerable with the instance switched off. Probing first would turn that
    * local read into an `unavailable_application` error and hide the terminal
-   * snapshot the caller asked for.
+   * snapshot the caller asked for. A job that has not ended is still refreshed
+   * from its upstream command, but no way an *instance* can fail that read
+   * fails the call: an outage or a refused key answers from the held record and
+   * says what happened, and a command record the application has discarded is
+   * an observation rather than a failure — the projection learns the command is
+   * gone and reports `unknown`. That is exactly the difference this flag names:
+   * the operation may contact the instance without depending on it.
+   *
+   * The one thing that does fail the call is not an instance condition: a
+   * request this server could not compose. It is raised rather than reported,
+   * because no operator can resolve a defect in this process — and, being an
+   * upstream failure kind, the dispatcher's shared mapping then reports it to
+   * the caller as `invalid_input`, which names the wrong party. Unreachable
+   * today, since the only identifier this route interpolates is upstream-minted
+   * and percent-encoded; recorded in 0025 rather than fixed by bending the
+   * shared error taxonomy around a case nothing can currently produce.
    */
   readonly upstream: OperationUpstreamNeed;
   readonly handler: OperationHandler;

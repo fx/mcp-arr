@@ -266,7 +266,9 @@ describe("arr_search_start over stdio", () => {
       expect(started.result?.isError).toBe(false);
       const envelope = started.result?.structuredContent as {
         status: string;
-        applications: Array<{ data?: { stage: string; job?: { job: string; command?: unknown } } }>;
+        applications: Array<{
+          data?: { stage: string; job?: { job: string; command?: { upstreamId: string } } };
+        }>;
         mutation?: { job?: string; receipt?: { state: string } };
       };
       expect(envelope.status).toBe("ok");
@@ -278,17 +280,24 @@ describe("arr_search_start over stdio", () => {
       expect(sonarr.commands.map((entry) => entry.name)).toEqual(["SeriesSearch"]);
       expect(sonarr.commands[0]?.body).toEqual({ name: "SeriesSearch", seriesId: 12 });
 
-      // The job reference the mutation returned is one arr_job_get resolves.
+      // The job reference the mutation returned is one arr_job_get resolves,
+      // and reading it refreshes the projection from the instance's own record
+      // of the command rather than answering from what the start observed.
       const job = envelope.mutation?.job;
       const read = (await child.request(4, "tools/call", {
         name: "arr_job_get",
         arguments: { job },
       })) as CallResult;
       expect(read.result?.isError).toBe(false);
-      expect(
-        (read.result?.structuredContent as { applications: Array<{ data?: { job: string } }> })
-          .applications[0]?.data?.job,
-      ).toBe(job);
+      const projection = (
+        read.result?.structuredContent as {
+          applications: Array<{ data?: { job: string; status: string } }>;
+        }
+      ).applications[0]?.data;
+      expect(projection?.job).toBe(job);
+      expect(projection?.status).toBe("started");
+      const upstreamId = envelope.applications[0]?.data?.job?.command?.upstreamId;
+      expect(sonarr.requests).toContain(`command/${upstreamId}`);
 
       await child.terminateGracefully();
       assertCleanProtocolStdout(child.stdout);

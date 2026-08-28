@@ -45,6 +45,6 @@ A corrected fixture is the failing test for the defect it exposes, so each chang
 | 0022 | [Upstream Field Shape Tolerance](changes/0022-upstream-field-shape-tolerance.md) | [Architecture](specs/architecture/) | complete | — |
 | 0023 | [Radarr Exclusion Route](changes/0023-radarr-exclusion-route.md) | [Configuration Reconciliation](specs/configuration-reconciliation/) | complete | — |
 | 0024 | [Manual Import Request Shape](changes/0024-manual-import-request-shape.md) | [Acquisition and Import](specs/acquisition-and-import/) | complete | — |
-| 0025 | [Job Projection Refresh](changes/0025-job-projection-refresh.md) | [Tool Contracts](specs/tool-contracts/) | draft | — |
+| 0025 | [Job Projection Refresh](changes/0025-job-projection-refresh.md) | [Tool Contracts](specs/tool-contracts/) | complete | — |
 | 0026 | [Plan-Mode Mutation Envelopes](changes/0026-plan-mode-mutation-envelopes.md) | [Tool Contracts](specs/tool-contracts/) | complete | — |
 | 0027 | [Single-Application Mutation Scope](changes/0027-single-application-mutation-scope.md) | [Tool Contracts](specs/tool-contracts/) | complete | — |

@@ -284,8 +284,9 @@ export const toolDefinitions: readonly ToolDefinition[] = [
     title: "Read a job projection",
     description:
       "Read the normalized status, progress, upstream command identity, terminal result, and " +
-      "per-item outcomes of a job this server projected. Job references are process-local and " +
-      "do not survive a restart.",
+      "per-item outcomes of a job this server projected. A job that has not ended is refreshed " +
+      "from its upstream command first; one that has ended is answered from the snapshot this " +
+      "server kept. Job references are process-local and do not survive a restart.",
     inputSchema: jobGetInputSchema,
     outputSchema: jobGetOutputSchema,
     annotations: readOnly,

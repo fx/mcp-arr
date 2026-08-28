@@ -4,6 +4,7 @@ import {
   type CancellationAcknowledgement,
   createJobStore,
   droppedWarningNotice,
+  isTerminalJobStatus,
   type JobStore,
   jobCancelOutcomes,
   jobResultFor,
@@ -55,13 +56,41 @@ describe("job status normalization", () => {
   it("does not project an unsuccessful command as a successful one", () => {
     expect(normalizeJobStatus("completed", "unsuccessful")).toBe("failed");
     expect(normalizeJobStatus("completed", "successful")).toBe("completed");
-    expect(normalizeJobStatus("completed", "unknown")).toBe("completed");
+  });
+
+  it("separates a result an application never sends from one it declined to state", () => {
+    // Prowlarr sends no result field on any command it answers, so a completed
+    // command with no result is simply a completion.
+    expect(normalizeJobStatus("completed")).toBe("completed");
+    expect(normalizeJobStatus("completed", undefined)).toBe("completed");
+    expect(normalizeJobStatus("completed", "  ")).toBe("completed");
+
+    // A result that is present and indefinite is the opposite: the application
+    // was asked how the command ended and would not say. `completed` is
+    // terminal, so reading it as one would publish a success the application
+    // refused to state and nothing would ever revisit it.
+    expect(jobResultFor("completed")).toBe("succeeded");
+    expect(normalizeJobStatus("completed", "unknown")).toBe("unknown");
+    expect(normalizeJobStatus("completed", "Unknown")).toBe("unknown");
+    expect(normalizeJobStatus("completed", "partial")).toBe("unknown");
   });
 
   it("reports an unrecognized or absent state as unknown rather than guessing", () => {
     expect(normalizeJobStatus(undefined)).toBe("unknown");
     expect(normalizeJobStatus("")).toBe("unknown");
-    expect(normalizeJobStatus("orphaned")).toBe("unknown");
+    expect(normalizeJobStatus("marooned")).toBe("unknown");
+  });
+
+  it("settles an orphaned command instead of polling one that will never move", () => {
+    // `orphaned` is a real upstream command status — this project's own
+    // activity model lists it — and it means the command was queued or running
+    // when the application restarted and will not be resumed. Left
+    // unrecognized it normalizes to the non-terminal `unknown`, which since
+    // this change means a read that asks the instance again every single time.
+    expect(normalizeJobStatus("orphaned")).toBe("aborted");
+    expect(normalizeJobStatus("Orphaned")).toBe("aborted");
+    expect(isTerminalJobStatus(normalizeJobStatus("orphaned"))).toBe(true);
+    expect(jobResultFor("aborted")).toBe("aborted");
   });
 
   it("summarizes how each terminal status ended", () => {
@@ -127,6 +156,60 @@ describe("job projection", () => {
     expect(record.terminal?.items).toEqual(perItem);
     expect(record.terminal?.result).toBe("succeeded");
     expect(record.items.filter((item) => item.status === "error")).toHaveLength(1);
+  });
+
+  it("does not settle a job on a result the application declined to state", () => {
+    const { jobs, clock } = store(0);
+    const record = jobs.project({
+      application: "sonarr",
+      command,
+      observation: { state: "completed", result: "unknown" },
+      cancellation: { supported: false },
+    });
+
+    // No snapshot, so nothing published a success, and the job stays open to a
+    // later reading rather than being frozen on the non-answer.
+    expect(record.status).toBe("unknown");
+    expect(record.terminal).toBeUndefined();
+
+    clock.advance(1_000);
+    const later = jobs.observe(record.reference, {
+      state: "completed",
+      result: "successful",
+      items: perItem,
+    });
+
+    expect(later.ok && later.record.status).toBe("completed");
+    expect(later.ok && later.record.terminal).toEqual({
+      status: "completed",
+      result: "succeeded",
+      items: perItem,
+      at: 1_000,
+    });
+  });
+
+  it("settles a job whose command was orphaned by an application restart", () => {
+    const { jobs, clock } = store(0);
+    const record = jobs.project({
+      application: "sonarr",
+      command,
+      observation: { state: "queued" },
+      cancellation: acknowledging({ kind: "accepted" }),
+    });
+
+    clock.advance(500);
+    const orphaned = jobs.observe(record.reference, { state: "orphaned" });
+
+    // Terminal, so the read that follows is answered from the snapshot and
+    // nothing asks the instance about a command that will never run again.
+    expect(orphaned.ok && orphaned.record.status).toBe("aborted");
+    expect(orphaned.ok && orphaned.record.terminal).toEqual({
+      status: "aborted",
+      result: "aborted",
+      items: [],
+      at: 500,
+    });
+    expect(orphaned.ok && orphaned.record.cancellation.supported).toBe(false);
   });
 
   it("preserves the terminal snapshot after the upstream command record is gone", () => {
