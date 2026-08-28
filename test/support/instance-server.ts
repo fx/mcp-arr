@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { type ApplicationId, describeApplication } from "../../src/applications.js";
 import { fixturePathFor, loadFixture } from "./fixtures.js";
+import { reprocessAnswer } from "./manual-import.js";
 import { fixtureRoot } from "./tool-context.js";
 
 /**
@@ -294,13 +295,18 @@ function filtered(body: unknown, route: string, query: URLSearchParams): unknown
   }, body);
 }
 
-/** Reads the JSON object a write carried. Nothing here interprets it. */
-async function readPostedBody(request: IncomingMessage): Promise<Record<string, unknown>> {
+/** Reads the JSON a write carried, whatever shape it is. Nothing interprets it. */
+async function readPostedJson(request: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   for await (const chunk of request) {
     chunks.push(chunk as Buffer);
   }
-  const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+}
+
+/** Reads the JSON object a write carried. Nothing here interprets it. */
+async function readPostedBody(request: IncomingMessage): Promise<Record<string, unknown>> {
+  const parsed = await readPostedJson(request);
   if (!isRecord(parsed)) {
     throw new Error("A write must carry a JSON object");
   }
@@ -389,6 +395,26 @@ export async function startFixtureInstance(
   const send = (response: ServerResponse, status: number, body: unknown): void => {
     response.writeHead(status, { "Content-Type": "application/json" });
     response.end(JSON.stringify(body));
+  };
+
+  /**
+   * One re-decided row, in the shape a reprocess actually answers with.
+   *
+   * The shape itself is {@link reprocessAnswer}'s, shared with the adapter's
+   * own tests. What this adds is the decision: the rejections are the
+   * instance's own, looked up from the row it holds for that file, because
+   * re-running the decision engine is what this endpoint is for — a caller
+   * cannot suppress a rejection by declining to send one.
+   */
+  const decidedReprocessRow = (sent: Record<string, unknown>): Record<string, unknown> => {
+    const scan = bodies.get("manualimport");
+    const scanned = (Array.isArray(scan) ? scan : []).find(
+      (record) => isRecord(record) && record.path === sent.path,
+    );
+    return reprocessAnswer(
+      sent,
+      isRecord(scanned) && Array.isArray(scanned.rejections) ? scanned.rejections : [],
+    );
   };
 
   /**
@@ -646,12 +672,38 @@ export async function startFixtureInstance(
       // answers with the rows it was given, which is what an instance that
       // re-ran its decision engine and changed nothing does, so a test that
       // needs a different decision replaces the scan body instead.
+      //
+      // Both refusals below are the ones a real instance gives, recorded from
+      // Sonarr 4.0.19.2979 and Radarr 6.3.0.10514, because a double that
+      // accepted either shape would let a request defect through: the endpoint
+      // declares its payload as the list itself and its element as a flat
+      // resource, and this server refuses anything else for the same reasons.
       if (route === "manualimport" && answers(route)) {
-        readPostedBody(request).then(
+        readPostedJson(request).then(
           (body) => {
-            const sent = isRecord(body) && Array.isArray(body.files) ? body.files : [];
-            reprocessed.push(...(sent as Record<string, unknown>[]));
-            send(response, 200, sent);
+            if (!Array.isArray(body)) {
+              send(response, 400, {
+                title: "One or more validation errors occurred.",
+                status: 400,
+                errors: {
+                  $: [
+                    "The JSON value could not be converted to System.Collections.Generic.List`1[ManualImportReprocessResource]",
+                  ],
+                },
+              });
+              return;
+            }
+            const sent = body as Record<string, unknown>[];
+            const flat = application === "sonarr" ? "seriesId" : "movieId";
+            const named = sent.every((row) => isRecord(row) && typeof row[flat] === "number");
+            if (!named) {
+              send(response, 404, {
+                message: `${application === "sonarr" ? "Series" : "Movie"} with ID 0 does not exist`,
+              });
+              return;
+            }
+            reprocessed.push(...sent);
+            send(response, 200, sent.map(decidedReprocessRow));
           },
           () => send(response, 400, { message: "unreadable body" }),
         );

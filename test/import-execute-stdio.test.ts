@@ -107,6 +107,37 @@ function candidatesOf(structured: unknown): readonly InspectedCandidate[] {
   return envelope.applications?.[0]?.data?.candidates ?? [];
 }
 
+/**
+ * The recorded scan of the tracked download, and the candidate it may import.
+ *
+ * Every test here starts from a candidate the instance actually offered rather
+ * than from a reference this file wrote, so the preamble is shared: a wrong
+ * assumption about the recorded scan should fail once, here, and not four
+ * times in four different words.
+ */
+async function inspectedCandidate(
+  child: SpawnedStdioProcess,
+  importable: boolean,
+): Promise<{
+  inspected: { isError: boolean; structured: unknown };
+  candidate: InspectedCandidate;
+}> {
+  const inspected = await inspect(child, 2, {
+    source: "queue_item",
+    queue: await queueReference(child, 90),
+    applications: ["sonarr"],
+  });
+  const candidate = candidatesOf(inspected.structured).find(
+    (found) => found.decision?.importable === importable,
+  );
+  if (candidate === undefined) {
+    throw new Error(
+      `Expected a candidate the instance ${importable ? "accepts" : "refuses"} in the recorded scan`,
+    );
+  }
+  return { inspected, candidate };
+}
+
 describe("arr_import_execute over stdio", () => {
   it("plans an import without moving anything, then applies it as one command", async () => {
     const sonarr = await instance();
@@ -114,17 +145,7 @@ describe("arr_import_execute over stdio", () => {
 
     try {
       await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
-      const inspected = await inspect(child, 2, {
-        source: "queue_item",
-        queue: await queueReference(child, 90),
-        applications: ["sonarr"],
-      });
-      const importable = candidatesOf(inspected.structured).find(
-        (candidate) => candidate.decision?.importable === true,
-      );
-      if (importable === undefined) {
-        throw new Error("Expected an importable candidate in the recorded scan");
-      }
+      const { inspected, candidate: importable } = await inspectedCandidate(child, true);
       // A candidate is named by reference, and its file by name alone.
       expect(importable.reference).toMatch(/^imp_/u);
       expect(JSON.stringify(inspected.structured)).not.toContain("/media/example/downloads");
@@ -172,23 +193,68 @@ describe("arr_import_execute over stdio", () => {
     }
   });
 
+  it("revalidates upstream and only then submits the command", async () => {
+    const sonarr = await instance();
+    const child = spawnBuiltServer(instanceEnvironment([sonarr]), 10_000);
+
+    try {
+      await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
+      const { inspected, candidate: importable } = await inspectedCandidate(child, true);
+
+      const applied = await execute(child, 3, {
+        mode: "apply",
+        candidates: [importable.reference],
+        importMode: "auto",
+      });
+      expect(applied.isError).toBe(false);
+
+      // The two tools share one dependency, and this is it: the reprocess the
+      // instance accepts ran, and the command went out after it. An instance
+      // that refuses the reprocess — as both did while it was sent wrapped and
+      // nested — stops the import here, so a green command is evidence about
+      // the request shape as much as about the ordering.
+      expect(sonarr.reprocessed).toHaveLength(1);
+      const validated = sonarr.reprocessed[0] ?? {};
+      expect(sonarr.requests.lastIndexOf("manualimport")).toBeLessThan(
+        sonarr.requests.indexOf("command"),
+      );
+
+      // And what was submitted is what was validated, field for field, rather
+      // than a second assembly of the same mapping.
+      const submitted = (sonarr.commands[0]?.body as { files?: Record<string, unknown>[] })
+        .files?.[0];
+      expect(submitted?.path).toBe(validated.path);
+      expect(submitted?.seriesId).toBe(validated.seriesId);
+      expect(submitted?.episodeIds).toEqual(validated.episodeIds);
+      expect(submitted?.downloadId).toBe(validated.downloadId);
+      expect(submitted?.quality).toEqual(validated.quality);
+      expect(submitted?.languages).toEqual(validated.languages);
+
+      // And neither tool's result carries what those requests needed: not the
+      // path, not the download identity. The control is the command body,
+      // where both do appear — so the absences above are evidence rather than
+      // a spelling accident.
+      const identity = String(validated.downloadId);
+      expect(identity).not.toBe("undefined");
+      const published = `${JSON.stringify(inspected.structured)}${JSON.stringify(applied.envelope)}`;
+      expect(published).not.toContain("/media/example/downloads");
+      expect(published).not.toContain(identity);
+      expect(JSON.stringify(sonarr.commands[0]?.body)).toContain(identity);
+
+      await child.terminateGracefully();
+      assertCleanProtocolStdout(child.stdout);
+    } finally {
+      await child.forceCleanup().catch(() => undefined);
+    }
+  });
+
   it("imports a candidate named twice exactly once", async () => {
     const sonarr = await instance();
     const child = spawnBuiltServer(instanceEnvironment([sonarr]), 10_000);
 
     try {
       await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
-      const inspected = await inspect(child, 2, {
-        source: "queue_item",
-        queue: await queueReference(child, 90),
-        applications: ["sonarr"],
-      });
-      const importable = candidatesOf(inspected.structured).find(
-        (candidate) => candidate.decision?.importable === true,
-      );
-      if (importable === undefined) {
-        throw new Error("Expected an importable candidate in the recorded scan");
-      }
+      const { candidate: importable } = await inspectedCandidate(child, true);
 
       const applied = await execute(child, 3, {
         mode: "apply",
@@ -221,17 +287,7 @@ describe("arr_import_execute over stdio", () => {
 
     try {
       await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
-      const inspected = await inspect(child, 2, {
-        source: "queue_item",
-        queue: await queueReference(child, 90),
-        applications: ["sonarr"],
-      });
-      const blocked = candidatesOf(inspected.structured).find(
-        (candidate) => candidate.decision?.importable === false,
-      );
-      if (blocked === undefined) {
-        throw new Error("Expected a candidate the instance refuses");
-      }
+      const { candidate: blocked } = await inspectedCandidate(child, false);
 
       const applied = await execute(child, 3, {
         mode: "apply",
