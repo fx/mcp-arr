@@ -164,7 +164,7 @@ changes:
     path: changes/0019-selected-result-fields.md
     description: Let a collection query name which parts of each per-application payload to return
     spec: tool-contracts
-    status: draft
+    status: complete
     depends_on: ["0017", "0018"]
   - id: "0020"
     name: withdraw-configuration-writes

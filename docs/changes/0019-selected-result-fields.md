@@ -5,7 +5,7 @@
 Let a collection query name which parts of each per-application payload it wants back. A query for twenty-five movies returns 18,296 bytes at the default detail level, roughly 730 per record, when an agent asking what is in the library wants a title, a year, and a reference — about a hundred. The projection is a list of dot-paths resolved against the same generated inventory [0018](./0018-bounded-tool-listing.md) publishes, so a caller can write one from the tool listing without a preparatory call.
 
 **Spec:** [Tool Contracts](../specs/tool-contracts/)
-**Status:** draft
+**Status:** complete
 **Depends On:** [0017](./0017-grammar-compilable-input-schemas.md), [0018](./0018-bounded-tool-listing.md)
 
 ## Motivation
@@ -55,7 +55,7 @@ The [Tool Contracts spec](../specs/tool-contracts/#bounded-structured-results) o
 - Projection happens after the envelope has been validated against the internal output schema, so what is projected is always a subset of something already known to conform.
 - The projection argument is bounded in count and in path length, and both bounds are **derived from the inventory [0018](./0018-bounded-tool-listing.md) generates** rather than chosen: the count bound is at least the largest number of leaf paths any single payload publishes, and the path-length bound is at least the longest path in any inventory. A bound below either would refuse a projection naming exactly what the tool advertises.
 - Both bounds are asserted against the generated inventory by a test, so a payload that later grows a deeper or wider shape fails the assertion rather than silently making a published path unselectable.
-- Per [0017](./0017-grammar-compilable-input-schemas.md), both bounds validate without being published.
+- Per [0017](./0017-grammar-compilable-input-schemas.md), the path-length bound validates without being published and is restated in the published root's description. The count bound is published, because 0017 strips string lengths and deliberately retains item counts as the bound a caller acts on — see the Open Questions.
 - The text summary's record counts continue to describe what the query matched, not what the projection kept, because a caller uses them to decide whether to page.
 
 ## Design
@@ -96,27 +96,28 @@ The [Tool Contracts spec](../specs/tool-contracts/#bounded-structured-results) o
 
 ## Tasks
 
-- [ ] Pin the unprojected behavior
-  - [ ] Assert that omitting the projection returns byte-identical structured content today, for every tool that will accept one
-  - [ ] Extend redaction coverage with projected equivalents, green before projection exists by asserting the unprojected values they will be compared against
-- [ ] Accept and resolve a projection
-  - [ ] Add the bounded projection argument to `queryBaseShape` and confirm it publishes without a length bound per [0017](./0017-grammar-compilable-input-schemas.md)
-  - [ ] Derive the count and path-length bounds from the generated inventory, and assert both are at or above the widest and deepest payload it publishes
-  - [ ] Resolve paths against the payload after envelope validation, crossing arrays element-wise
-  - [ ] Always retain the envelope, the per-application outcome's own fields, and the payload discriminator
-- [ ] Report what did not match
-  - [ ] Emit one warning naming unmatched paths and the paths available where resolution stopped
-  - [ ] Assert the call still succeeds and still returns its matched selection
-- [ ] Cover every payload
-  - [ ] Compare projected against unprojected value by value for every payload variant of all five tools
-  - [ ] Assert no projection can remove the envelope, outcome fields, or discriminator, including by naming them or a prefix of them
-- [ ] Record the contract
-  - [ ] Amend the Tool Contracts spec for the projection argument and its guarantees, with a changelog row
-  - [ ] Tick these tasks and set the status in this document, `docs/index.yml`, and `docs/index.md`
+- [x] Pin the unprojected behavior
+  - [x] Assert that omitting the projection returns byte-identical structured content today, for every tool that will accept one
+  - [x] Extend redaction coverage with projected equivalents, green before projection exists by asserting the unprojected values they will be compared against
+- [x] Accept and resolve a projection
+  - [x] Add the bounded projection argument to `queryBaseShape` and confirm it publishes without a length bound per [0017](./0017-grammar-compilable-input-schemas.md)
+  - [x] Derive the count and path-length bounds from the generated inventory, and assert both are at or above the widest and deepest payload it publishes
+  - [x] Resolve paths against the payload after envelope validation, crossing arrays element-wise
+  - [x] Always retain the envelope, the per-application outcome's own fields, and the payload discriminator
+- [x] Report what did not match
+  - [x] Emit one warning naming unmatched paths and the paths available where resolution stopped
+  - [x] Assert the call still succeeds and still returns its matched selection
+- [x] Cover every payload
+  - [x] Compare projected against unprojected value by value for every payload variant of all five tools
+  - [x] Assert no projection can remove the envelope, outcome fields, or discriminator, including by naming them or a prefix of them
+- [x] Record the contract
+  - [x] Amend the Tool Contracts spec for the projection argument and its guarantees, with a changelog row
+  - [x] Tick these tasks and set the status in this document, `docs/index.yml`, and `docs/index.md`
 
 ## Open Questions
 
-- [ ] Should a projection be accepted on `arr_capabilities`? Its report is already bounded by its own detail level, so the case is weaker than for the five collection queries. Left out of scope here, which under [0018](./0018-bounded-tool-listing.md) also means it publishes no path inventory.
+- [x] Should a projection be accepted on `arr_capabilities`? **No, and it stays out.** Its report is already bounded by its own detail level, so the case is weaker than for the five collection queries, and under [0018](./0018-bounded-tool-listing.md) leaving it out also means it publishes no path inventory — which is what the projecting tools resolve against, so accepting one there would mean advertising a surface first. The argument is declared once on `queryBaseShape`, which `arr_capabilities` does not spread, so nothing has to be remembered to keep it out.
+- [x] Is the projection argument subject to [0017](./0017-grammar-compilable-input-schemas.md)'s length-bound rule automatically? **Half of it, and that is the correct half.** Both bounds pass through the single publication site, which strips `maxLength` and restates it — so the path-length bound is enforced, absent from the published schema, and named in the published root's description as `projection elements 64`, verified off the wire in `tool-stdio.test.ts`. The count bound is a `maxItems`, which 0017 deliberately retains ("an item count is the bound a caller acts on"), so it is published; the Tool Contracts spec requires that, and the Functional Requirement above was corrected to say so rather than claiming both bounds are withheld.
 
 ## References
 
