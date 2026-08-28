@@ -34,7 +34,9 @@ const publishedEnvelope = z.looseObject({
 /**
  * A converted JSON Schema node. Every node a tool's output schema produces is a
  * plain object with no `$ref` and no `$defs`, so a walk of it needs no
- * resolution step.
+ * resolution step — and {@link refuseReference} holds it to that rather than
+ * leaving it asserted here, because the walk's output is the only place a
+ * caller can read what a payload contains.
  */
 type JsonSchema = Record<string, unknown>;
 
@@ -53,10 +55,47 @@ function propertyAt(node: JsonSchema, name: string): JsonSchema | undefined {
   return isRecord(declared) ? declared : undefined;
 }
 
-/** The alternatives a node offers, or `undefined` where it offers none. */
+/**
+ * The alternatives a node offers, or `undefined` where it offers none.
+ *
+ * A node that declares alternatives and offers none usable is refused rather
+ * than reported as a union of nothing: a walk of an empty list names no field,
+ * so the payload would publish a line promising a caller its fields and listing
+ * none. `publish.ts` refuses the same shape on the input side.
+ */
 function alternativesOf(node: JsonSchema): readonly JsonSchema[] | undefined {
   const alternatives = node.anyOf ?? node.oneOf;
-  return Array.isArray(alternatives) ? alternatives.filter(isRecord) : undefined;
+  if (!Array.isArray(alternatives)) {
+    return undefined;
+  }
+  if (alternatives.length === 0 || !alternatives.every(isRecord)) {
+    throw new Error(
+      "A published payload union must offer object alternatives; found " +
+        `${JSON.stringify(alternatives).slice(0, 200)}`,
+    );
+  }
+  return alternatives;
+}
+
+/**
+ * The keywords that make a converted node a pointer at something else.
+ *
+ * `z.toJSONSchema` extracts a self-referential payload into `definitions` and
+ * leaves a `$ref` behind, and a `$ref` node declares no type, no properties and
+ * no alternatives — so every structural test this module makes passes it
+ * through as though it held nothing, and its whole subtree would disappear from
+ * the inventory without a word.
+ */
+const referenceKeywords = ["$ref", "$defs", "definitions"] as const;
+
+function refuseReference(node: JsonSchema, where: string): void {
+  const keyword = referenceKeywords.find((candidate) => node[candidate] !== undefined);
+  if (keyword !== undefined) {
+    throw new Error(
+      `A payload must convert to a self-contained schema; found ${keyword} at ${where}: ` +
+        `${JSON.stringify(node).slice(0, 200)}`,
+    );
+  }
 }
 
 /** The string values a node fixes itself to, empty where it fixes none. */
@@ -132,6 +171,7 @@ function refuseUnnamable(node: JsonSchema, prefix: string, holding: string): Err
 }
 
 function leafPaths(node: JsonSchema, prefix: string, into: string[]): string[] {
+  refuseReference(node, prefix === "" ? "the payload itself" : prefix);
   const alternatives = alternativesOf(node);
   if (alternatives !== undefined) {
     for (const alternative of alternatives) {
@@ -234,7 +274,7 @@ export function payloadInventory(outputSchema: z.ZodType): PayloadInventory | un
   // description promising a caller some fields and listing none. It means the
   // payload is a bare value, or a union whose alternatives this walk never
   // reached.
-  if (payloads.length === 0 || payloads.some((entry) => entry.paths.length === 0)) {
+  if (payloads.some((entry) => entry.paths.length === 0)) {
     throw new Error(
       "A published payload must name at least one field; found none in " +
         `${JSON.stringify(converted).slice(0, 200)}`,
