@@ -121,6 +121,9 @@ The [Tool Contracts spec](../specs/tool-contracts/#job-projection) owns job refr
 - [ ] Degrade safely when the command is gone
   - [ ] Map a 404 to unknown state and confirm the job stays resolvable
   - [ ] Confirm no command body, trigger, or other unpublished value reaches the caller
+- [ ] Report progress only where an application supplies counts
+  - [ ] Populate progress solely from numeric counts an application reports, and leave it absent otherwise
+  - [ ] Assert that a refresh of a command carrying a free-text progress message — "Processing file 1 of 1" — reports no progress, so counts cannot be parsed out of prose
 
 ## Open Questions
 

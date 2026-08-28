@@ -98,6 +98,7 @@ The [Architecture spec](../specs/architecture/#upstream-connection-handling) own
 - [ ] Tolerate the shapes both applications send for indexer flags
   - [ ] Declare the field so neither an array nor a number is refused, matching the import adapter's existing form
   - [ ] Confirm an unnameable value maps to no flags with every other field intact
+  - [ ] Assert that the tolerance does not spread: a release carrying no usable identity or title is still refused, so the schema has not been loosened beyond the advisory field
   - [ ] Correct the Sonarr release fixture to the numeric shape, update the assertions written against its current flag arrays, and add a case for an unnameable value — confirming the fixture correction fails against the current declaration before the fix lands
 - [ ] Check the rest of the release schema against captured bodies
   - [ ] Compare each declared field against the Sonarr and Radarr release bodies and report any further divergence rather than widening this change

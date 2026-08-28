@@ -42,6 +42,8 @@ The two this change corrects break no adapter, because the import adapter alread
 
 That split is why this change depends on [0022](./0022-upstream-field-shape-tolerance.md) and [0023](./0023-radarr-exclusion-route.md) and lands after both: until each has corrected its own fixture, a sweep here would either have to correct it for them — landing red, since the adapter fix is not in — or record that it deliberately left a known-counterfactual fixture in place. It has no ordering relationship to 0024 through 0027, which touch no fixture.
 
+The prerequisite list is therefore open at the point the sweep runs. Any divergence the sweep finds that needs an adapter change adds one: the [Architecture spec](../specs/architecture/#testing-contract) requires every recorded fixture to match the instance it names, so completing this change while knowingly leaving one that does not would violate the contract this change exists to establish. Filing a follow-up is not a substitute for that — a change nobody has landed leaves the fixture counterfactual just the same.
+
 ## Requirements
 
 ### Testing Requirements
@@ -68,14 +70,15 @@ The [Architecture spec](../specs/architecture/#testing-contract) owns the fixtur
 - The captured metadata MUST record the application, API version, exact instance version, and route, so a later reader can re-verify the body against the same source.
 - A fixture whose route the named application does not serve MUST be detectable, so a recorded route that 404s cannot survive as a passing fixture.
 - The two `manualimport` fixtures MUST be corrected to the shapes their instances return, together with the assertions written against their current bodies, so this change lands with a green gate.
-- Every remaining recorded fixture MUST be checked against its instance, and any further divergence MUST be reported rather than corrected here if correcting it would need an adapter change.
-- Correcting a fixture MUST NOT quietly relax the adapter that reads it; where a correction would require an adapter change, that change is owned by its own document.
+- Every remaining recorded fixture MUST be checked against its instance.
+- Where a divergence the sweep finds needs an adapter change, that change MUST be created and MUST become a prerequisite of this one, so this change cannot be completed while a fixture it knows to be counterfactual is still recorded.
+- Correcting a fixture MUST NOT quietly relax the adapter that reads it; the adapter fix belongs to the change created for it.
 
 #### Scenario: A correction would need an adapter change
 
 - **GIVEN** a fixture is recaptured and its real shape is one the adapter refuses
 - **WHEN** the divergence is found
-- **THEN** it is reported for its own change document rather than the fixture being edited back toward what the adapter accepts, and this change lands without it
+- **THEN** a change owning that adapter fix is created and recorded as a prerequisite of this one, the fixture is not edited back toward what the adapter accepts, and this change is not complete until that fixture matches its instance
 
 ## Design
 
@@ -98,6 +101,9 @@ The [Architecture spec](../specs/architecture/#testing-contract) owns the fixtur
 - **Decision:** Depend on 0022 and 0023, and land after both.
   - **Why:** The sweep this change runs has to reach every fixture, including the two those changes own. Running it before they land would force one of two bad outcomes: correct their fixtures here and land red, because neither adapter fix is in yet, or record a known-counterfactual fixture as acceptable, which is the habit this change exists to end. Waiting costs nothing, since neither point fix depends on anything here.
   - **Alternatives considered:** Landing first with the two fixtures excluded from the sweep, rejected because an excluded fixture is exactly what went unnoticed for six defects.
+- **Decision:** A divergence the sweep finds becomes a prerequisite, not a follow-up.
+  - **Why:** This change establishes the rule that a recorded fixture matches the instance it names. Completing it while knowingly leaving one that does not would break that rule at the moment it is written down, and a filed follow-up changes nothing about the fixture until someone lands it. Making the corrective change a prerequisite is what turns the rule into a gate.
+  - **Alternatives considered:** Filing a follow-up and completing anyway, rejected because it is the same "known-counterfactual fixture is acceptable for now" habit that produced all six defects; correcting the adapter here, rejected because it puts an unreviewed adapter fix inside a fixtures change.
 - **Decision:** Record the route in metadata and verify it resolves at capture time.
   - **Why:** The Radarr exclusions fixture proves a wrong route can otherwise be recorded, validated, and depended on indefinitely. A route that 404s must fail at capture rather than become a fixture.
 - **Decision:** Do not raise the recorded minimum versions.
@@ -123,7 +129,8 @@ The [Architecture spec](../specs/architecture/#testing-contract) owns the fixtur
   - [ ] Confirm the import adapter needs no change to read the recaptured bodies
 - [ ] Sweep the remaining fixtures
   - [ ] Compare every other recorded fixture against its instance at the version it names
-  - [ ] Report any further divergence for its own change document rather than correcting it here
+  - [ ] For any divergence needing an adapter change, create that change, record it as a prerequisite of this one, and do not complete this change until it has landed and the fixture matches
+  - [ ] Confirm at completion that no recorded fixture is known to contradict the instance it names
 
 ## Open Questions
 
