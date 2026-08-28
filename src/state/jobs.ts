@@ -49,8 +49,10 @@ export function isTerminalJobStatus(status: JobStatus): status is TerminalJobSta
  * command ended and declined to say. Reading that as a completion would publish
  * a definite success the application refused to state, and because a completion
  * is terminal the projection would never be revisited, so the invention would be
- * permanent. So it becomes `unknown`: the job stays open to a later reading, and
- * no caller reads a success out of a non-answer.
+ * permanent. So it becomes `unknown`, which is what this server actually knows:
+ * the job is left open rather than settled on a non-answer. A later reading may
+ * be definite and settle it; the degradation observed live was one-way, so a job
+ * whose result is never stated stays `unknown`, and that is the honest answer.
  */
 function completedCommandStatus(result: string | undefined): JobStatus {
   const reported = result?.trim().toLowerCase();
