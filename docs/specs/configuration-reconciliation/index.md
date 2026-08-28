@@ -2,7 +2,7 @@
 
 ## Overview
 
-This specification defines safe observation and reconciliation of configuration stored in the upstream *arr applications. It does not introduce MCP-local configuration persistence; the MCP's own connection settings remain environment-only as defined by [Architecture](../architecture/).
+This specification defines safe observation of configuration stored in the upstream *arr applications, and retains the design for reconciling it. It does not introduce MCP-local configuration persistence; the MCP's own connection settings remain environment-only as defined by [Architecture](../architecture/).
 
 The exposed surface is observation only. The write surface is withdrawn, and the requirements describing it are retained below as the design for any reinstatement rather than as a description of what the server does — see [Configuration Writes Are Not Exposed](#configuration-writes-are-not-exposed).
 
@@ -134,13 +134,19 @@ The requirements in this section describe a surface the server does not currentl
 
 ## Design
 
+Each subsection below separates the exposed surface from the withdrawn one, on the same terms as the requirements above: the first paragraph describes what the server does, and the second describes what a reinstated write surface would restore.
+
 ### Architecture
 
-A configuration service maps safe desired-state models to application-specific full resources. Output serialization and persistence serialization are separate: output is allowlisted, while internal updates preserve untouched unknown and masked fields.
+A configuration service reads application resources and serializes them through an output allowlist, so what reaches the calling agent is a deliberately narrower document than what the instance holds.
+
+Withdrawn: mapping safe desired-state models onto application-specific full resources, with persistence serialization kept separate from output serialization so an internal update preserves untouched unknown and masked fields.
 
 ### Data Models
 
-Models include provider summary, dynamic field descriptor, configured-secret state, desired-state patch, dependency, configuration diff, sync effect, and verification result.
+Models include provider summary, dynamic field descriptor, and configured-secret state.
+
+Withdrawn: desired-state patch, dependency, configuration diff, sync effect, and verification result.
 
 ### API Surface
 
@@ -148,7 +154,9 @@ Reads use `arr_config_observe`. No tool writes or tests configuration; the retai
 
 ### Business Logic
 
-Reconciliation reads current state, calculates a scoped diff, optionally returns a plan, rereads preconditions at apply, sends a complete upstream resource, and verifies the result. No local desired-state database exists.
+Observation reads current state and returns the allowlisted view of it, bounded by the query's page size. No local configuration database exists, and the upstream applications remain authoritative.
+
+Withdrawn: reading current state, calculating a scoped diff, optionally returning a plan, rereading preconditions at apply, sending a complete upstream resource, and verifying the result.
 
 ## Constraints
 

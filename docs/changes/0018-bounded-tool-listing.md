@@ -111,6 +111,7 @@ The [Tool Contracts spec](../specs/tool-contracts/#bounded-structured-results) o
   - [ ] Assert every generated path resolves to a leaf of the schema it came from, and that no payload leaf goes unnamed
 - [ ] Record the contract
   - [ ] Amend the Tool Contracts spec for broadened output schemas and the generated path inventory, with a changelog row
+  - [ ] Correct the README's claim that every tool "is published with their full output schemas", which this change makes false, and describe the path inventory as the discovery surface in its place
   - [ ] Tick these tasks and set the status in this document, `docs/index.yml`, and `docs/index.md`
 
 ## Open Questions
