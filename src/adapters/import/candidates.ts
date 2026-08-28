@@ -968,25 +968,28 @@ export async function reprocessCandidate(
  * decision the answer does state — including an empty rejection list — wins
  * over the scan's, which is the whole reason for asking.
  *
- * Four fields the answer does state are deliberately not among them, because
- * what it states is a default rather than a decision. Sonarr answers
+ * Four fields the answer does state are deliberately not taken from it, because
+ * what it states for them is a default rather than a decision. Sonarr answers
  * `releaseType: "unknown"` for a file its own scan called a single episode or a
- * season pack, and both applications answer `indexerFlags` as a numeric
- * bitfield naming nothing a caller can read. Taking either would replace
- * something this server knows with something it does not, and reporting
- * "unknown" for a value already in hand is exactly the untrue answer this
- * surface must not give.
+ * season pack, so that one is left out of the list below entirely; both
+ * applications answer `indexerFlags` as a numeric bitfield naming nothing a
+ * caller can read, so that one is listed but guarded, and only a list of names
+ * is taken from it. Either way the scan's value stands, because taking the
+ * answer's would replace something this server knows with something it does
+ * not — and reporting "unknown" for a value already in hand is exactly the
+ * untrue answer this surface must not give.
  *
- * `customFormats` and `customFormatScore` are held to the same rule, and here
- * the reason is a limit rather than a recording: on the instances this was
- * verified against, no file matches any format either application defines, so
- * both the scan and the answer report an empty list and a zero score and
- * whether the answer recomputes them or defaults them could not be
- * established. The scan is preferred because the two readings are not equally
- * costly — a default would blank the formats of every re-decided candidate,
- * unconditionally, while a recomputation differs from the scan only where a
- * correction changed it, and the scan's value is still one this instance
- * reported for this file moments ago rather than one nobody gave.
+ * `customFormats` and `customFormatScore` are the other two, held to the same
+ * rule and also left out of the list. Here the reason is a limit rather than a
+ * recording: on the instances this was verified against, no file matches any
+ * format either application defines, so both the scan and the answer report an
+ * empty list and a zero score, and whether the answer recomputes them or
+ * defaults them could not be established. The scan is preferred because the
+ * two readings are not equally costly — a default would blank the formats of
+ * every re-decided candidate, unconditionally, while a recomputation differs
+ * from the scan only where a correction changed it, and the scan's value is
+ * still one this instance reported for this file moments ago rather than one
+ * nobody gave.
  *
  * Nothing is weakened by this: the fingerprint comparison still runs against a
  * scan performed now rather than against anything a reference remembered.
