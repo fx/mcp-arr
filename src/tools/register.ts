@@ -4,6 +4,7 @@ import { type ToolDefinition, toolDefinitions } from "./definitions.js";
 import type { ToolContext } from "./dispatch.js";
 import { createToolError } from "./errors.js";
 import { buildToolResult, summarizeToolResult, type ToolResult } from "./results.js";
+import { publishedResultSchema } from "./schemas/publish-results.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -75,7 +76,10 @@ export function registerTools(server: McpServer, context: ToolContext): void {
         title: definition.title,
         description: definition.description,
         inputSchema: definition.inputSchema,
-        outputSchema: definition.outputSchema,
+        // Broadened for publication only. The tool's own schema keeps
+        // validating every envelope above, and is what `data`'s published path
+        // inventory is generated from.
+        outputSchema: publishedResultSchema,
         annotations: definition.annotations,
       },
       (input: unknown) => runTool(definition, context, input),
