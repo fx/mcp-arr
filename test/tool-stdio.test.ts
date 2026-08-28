@@ -41,8 +41,28 @@ interface ToolListResult {
 
 interface PublishedListing {
   readonly tools: readonly PublishedTool[];
+  /** What the listing cost on the wire, framing included. */
+  readonly bytes: number;
   readonly stdout: string;
   readonly stderr: string;
+}
+
+/**
+ * The bytes one response occupied on the wire.
+ *
+ * Read off the raw stdout rather than re-serialized from the decoded message,
+ * because the number this file pins is what a host actually receives. A
+ * re-serialization would be measuring this test's own `JSON.stringify` instead
+ * of the server's.
+ */
+function responseBytes(stdout: string, id: number): number {
+  const line = stdout
+    .split("\n")
+    .find((candidate) => candidate !== "" && (JSON.parse(candidate) as { id?: number }).id === id);
+  if (line === undefined) {
+    throw new Error(`The spawned server sent no response for request ${id}`);
+  }
+  return Buffer.byteLength(line, "utf8");
 }
 
 async function readPublishedTools(): Promise<PublishedListing> {
@@ -51,7 +71,12 @@ async function readPublishedTools(): Promise<PublishedListing> {
     await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
     const listed = (await child.request(2, "tools/list")) as ToolListResult;
     await child.terminateGracefully();
-    return { tools: listed.result?.tools ?? [], stdout: child.stdout, stderr: child.stderr };
+    return {
+      tools: listed.result?.tools ?? [],
+      bytes: responseBytes(child.stdout, 2),
+      stdout: child.stdout,
+      stderr: child.stderr,
+    };
   } finally {
     await child.forceCleanup().catch(() => undefined);
   }
@@ -88,6 +113,18 @@ const rootCombinators = ["anyOf", "oneOf", "allOf"] as const;
 
 /** The property-key shape a host requires of a published schema, at any depth. */
 const propertyKeyPattern = /^[a-zA-Z0-9_.-]{1,64}$/u;
+
+/**
+ * The most the published listing may cost on the wire, in bytes.
+ *
+ * Every session pays this before making a single call, so its size is part of
+ * the contract rather than an implementation detail. The number is a recorded
+ * measurement rounded up, not a budget somebody chose: it was read off a
+ * spawned server at 165,873 bytes. Raising it is a deliberate act, which is the
+ * point — a change that reintroduces bulk fails here rather than merely being
+ * regrettable.
+ */
+const listingByteCeiling = 166_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -203,6 +240,12 @@ describe("built stdio tool surface", () => {
 
     assertCleanProtocolStdout(stdout);
     expect(stderr).toBe("");
+  });
+
+  it("keeps the whole listing under its recorded byte ceiling", async () => {
+    const { bytes } = await publishedTools();
+
+    expect(bytes, `tools/list is ${bytes} bytes`).toBeLessThanOrEqual(listingByteCeiling);
   });
 
   it("publishes a schema that admits every variant each tool accepts and refuses what it rejects", async () => {
