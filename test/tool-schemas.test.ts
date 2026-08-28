@@ -21,15 +21,25 @@ import {
 } from "./support/json-schema.js";
 import { sampleReferences, sampleToolInputs } from "./support/tool-context.js";
 
+/**
+ * One schema as the JSON Schema a host receives, converted through the mini
+ * build the server SDK itself uses. Shared by every assertion here that reads a
+ * published input, so none of them can be measuring a different conversion than
+ * the others.
+ */
+function publishedInput(schema: z.ZodType): Record<string, unknown> {
+  return z4mini.toJSONSchema(schema as never, {
+    target: "draft-7",
+    io: "input",
+  }) as unknown as Record<string, unknown>;
+}
+
 function inputJsonSchema(name: (typeof toolNames)[number]): Record<string, unknown> {
   const definition = findToolDefinition(name);
   if (definition === undefined) {
     throw new Error(`Missing definition for ${name}`);
   }
-  return z4mini.toJSONSchema(definition.inputSchema as never, {
-    target: "draft-7",
-    io: "input",
-  }) as unknown as Record<string, unknown>;
+  return publishedInput(definition.inputSchema);
 }
 
 function parseInput(name: (typeof toolNames)[number], value: unknown) {
@@ -628,10 +638,7 @@ describe("published variant merge", () => {
       ]),
     );
 
-    const published = z4mini.toJSONSchema(union as never, {
-      target: "draft-7",
-      io: "input",
-    }) as unknown as Record<string, unknown>;
+    const published = publishedInput(union);
     const properties = published.properties as Record<string, unknown>;
 
     // A description asserts nothing about the value, so it cannot be the reason
@@ -665,10 +672,7 @@ describe("published variant merge", () => {
       ]),
     );
 
-    const published = z4mini.toJSONSchema(union as never, {
-      target: "draft-7",
-      io: "input",
-    }) as unknown as Record<string, unknown>;
+    const published = publishedInput(union);
     const properties = published.properties as Record<string, unknown>;
 
     // Distinct shapes are published verbatim as alternatives, so there is
@@ -712,13 +716,6 @@ describe("published variant merge", () => {
  * merge or after it is the same thing.
  */
 describe("published length bounds", () => {
-  function publishedOf(schema: z.ZodType): Record<string, unknown> {
-    return z4mini.toJSONSchema(schema as never, {
-      target: "draft-7",
-      io: "input",
-    }) as unknown as Record<string, unknown>;
-  }
-
   it("names a bound stripped from a plain object, which publishes no variant prose", () => {
     const input = objectInput(
       z.strictObject({
@@ -726,7 +723,7 @@ describe("published length bounds", () => {
         tags: z.array(z.string().max(16)).max(3),
       }),
     );
-    const published = publishedOf(input);
+    const published = publishedInput(input);
 
     expect(declaredKeywordPaths(published, "maxLength")).toEqual([]);
     // The whole of the description, not a fragment of it: a plain object has
@@ -758,7 +755,7 @@ describe("published length bounds", () => {
         z.strictObject({ view: z.literal("page"), cursor: z.string().max(512) }),
       ]),
     );
-    const published = publishedOf(union);
+    const published = publishedInput(union);
 
     expect(declaredKeywordPaths(published, "maxLength")).toEqual([]);
     const description = String(published.description);
@@ -777,7 +774,7 @@ describe("published length bounds", () => {
         z.strictObject({ view: z.literal("long"), term: z.string().max(200) }),
       ]),
     );
-    const published = publishedOf(union);
+    const published = publishedInput(union);
     const properties = published.properties as Record<string, unknown>;
 
     // This is why the stripping runs before the branches are merged. Merged

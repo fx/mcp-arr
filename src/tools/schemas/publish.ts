@@ -466,15 +466,29 @@ function childSchemas(node: JsonSchema, path: string, inArray: boolean): ChildSc
 const lengthKeyword = "maxLength";
 
 /**
- * Every length bound the converted schema declares, in declaration order.
+ * Removes every length bound from the converted schema, answering the bounds it
+ * removed in declaration order.
  *
- * Taken before anything is stripped, because it is the only record of the
- * bounds afterwards: a generator reading the stripped shape has nothing left to
- * name. The same path is recorded once per distinct value rather than once per
+ * A host that compiles a published schema into a constrained-decoding grammar
+ * expands a bounded repeat once per admissible character, and a schema it
+ * cannot compile costs the caller the whole tool rather than the bound. The
+ * bound itself is untouched: this runs on the converted JSON Schema at the one
+ * publication site, so the Zod schema still refuses an over-length value with
+ * the message it always did, and a bound added to a future schema is handled
+ * without anyone remembering the rule.
+ *
+ * Each node is read before it is stripped, and the whole document before the
+ * branches are merged, because the answer is the only record of the bounds
+ * afterwards: a generator reading the stripped shape has nothing left to name.
+ * The same path is recorded once per distinct value rather than once per
  * variant that declares it — thirteen views bounding `cursor` at 512 are one
  * bound a caller has to know about, not thirteen.
+ *
+ * `minLength`, `pattern`, `minItems`, and `maxItems` are deliberately retained.
+ * A pattern constrains the admissible alphabet far more usefully than a length
+ * ever did, and the item counts are the half a caller acts on.
  */
-function collectLengthBounds(
+function takeLengthBounds(
   node: JsonSchema,
   path: string,
   inArray: boolean,
@@ -487,32 +501,11 @@ function collectLengthBounds(
   ) {
     into.push({ path, maxLength: declared, inArray });
   }
+  delete node[lengthKeyword];
   for (const child of childSchemas(node, path, inArray)) {
-    collectLengthBounds(child.node, child.path, child.inArray, into);
+    takeLengthBounds(child.node, child.path, child.inArray, into);
   }
   return into;
-}
-
-/**
- * Removes every length bound from the converted schema, at any depth.
- *
- * A host that compiles a published schema into a constrained-decoding grammar
- * expands a bounded repeat once per admissible character, and a schema it
- * cannot compile costs the caller the whole tool rather than the bound. The
- * bound itself is untouched: this runs on the converted JSON Schema at the one
- * publication site, so the Zod schema still refuses an over-length value with
- * the message it always did, and a bound added to a future schema is handled
- * without anyone remembering the rule.
- *
- * `minLength`, `pattern`, `minItems`, and `maxItems` are deliberately retained.
- * A pattern constrains the admissible alphabet far more usefully than a length
- * ever did, and the item counts are the half a caller acts on.
- */
-function stripLengthBounds(node: JsonSchema): void {
-  delete node[lengthKeyword];
-  for (const child of childSchemas(node, "", false)) {
-    stripLengthBounds(child.node);
-  }
 }
 
 const lengthBoundHeader = "Maximum lengths in characters, enforced but not published:";
@@ -539,7 +532,12 @@ function describeLengthBounds(bounds: readonly LengthBound[]): string | undefine
   }
   const byPath = new Map<string, number[]>();
   for (const bound of bounds) {
-    byPath.set(bound.path, [...(byPath.get(bound.path) ?? []), bound.maxLength]);
+    const values = byPath.get(bound.path);
+    if (values === undefined) {
+      byPath.set(bound.path, [bound.maxLength]);
+      continue;
+    }
+    values.push(bound.maxLength);
   }
   // "or" rather than one number, because two forms may bound one property
   // differently and naming only the first would understate the narrower one.
@@ -555,11 +553,11 @@ function joinDescription(...parts: ReadonlyArray<string | undefined>): string | 
 }
 
 /**
- * The schema as JSON Schema, with its bounds collected and then removed.
+ * The schema as JSON Schema, with its length bounds taken out of it.
  *
- * In that order, and before anything else reads the shape: every publication
- * path below builds what it publishes from the stripped schema, and the
- * sentence naming the bounds from the collection.
+ * Before anything else reads the shape: every publication path below builds
+ * what it publishes from the stripped schema, and the sentence naming the
+ * bounds from what this answers.
  */
 function convertForPublication(schema: z.ZodType): {
   readonly converted: JsonSchema;
@@ -572,9 +570,10 @@ function convertForPublication(schema: z.ZodType): {
     target: "draft-7",
     io: "input",
   });
-  const bounds = collectLengthBounds(converted as JsonSchema, "", false, []);
-  stripLengthBounds(converted as JsonSchema);
-  return { converted: converted as JsonSchema, bounds };
+  return {
+    converted: converted as JsonSchema,
+    bounds: takeLengthBounds(converted as JsonSchema, "", false, []),
+  };
 }
 
 /**
