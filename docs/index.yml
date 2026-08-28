@@ -206,7 +206,7 @@ changes:
     path: changes/0025-job-projection-refresh.md
     description: Refresh a non-terminal job from the upstream command on read and never degrade an observed terminal result
     spec: tool-contracts
-    status: draft
+    status: complete
     depends_on: []
   - id: "0026"
     name: plan-mode-mutation-envelopes

@@ -49,6 +49,7 @@ const allowedFiles = [
   "dist/adapters/import/corrections.js",
   "dist/adapters/import/execute.js",
   "dist/adapters/import/model.js",
+  "dist/adapters/jobs.js",
   "dist/adapters/library/changes.js",
   "dist/adapters/library/files.js",
   "dist/adapters/library/model.js",

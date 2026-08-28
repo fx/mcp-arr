@@ -1,3 +1,4 @@
+import { readCommandRecord } from "../adapters/jobs.js";
 import type { JobRecord, JobStore } from "../state/jobs.js";
 import type { PreconditionRead } from "../state/plans.js";
 import { createToolError, type ToolError, toolErrorForReferenceFailure } from "./errors.js";
@@ -67,26 +68,85 @@ function resolveJob(store: JobStore, invocation: OperationInvocation): ResolvedJ
   return { ok: true, record: resolution.record };
 }
 
+/** A job read's answer: the record to publish, and anything only this call saw. */
+interface RefreshedJob {
+  readonly record: JobRecord;
+  /**
+   * Warnings about the refresh itself rather than about the job. They are not
+   * folded into the record, because "the instance was unreachable a moment ago"
+   * describes this one call and would otherwise outlive the outage for the rest
+   * of the process.
+   */
+  readonly warnings: readonly string[];
+}
+
+/**
+ * Brings a job projection up to date with the command behind it.
+ *
+ * A job that has ended is answered from its terminal snapshot and nothing is
+ * asked upstream. That is not an optimization: the snapshot cannot improve, and
+ * re-reading it is precisely what would downgrade an observed `successful` to
+ * an indefinite result once the command record ages out. Not asking is what
+ * keeps the answer true.
+ *
+ * Anything still running is read back and folded in through the job store's own
+ * observation path, so the normalization, the terminal snapshot, and the
+ * warning bounds are the ones every other observation goes through. An instance
+ * this server could not reach leaves the held record alone and says so, because
+ * a job read is answerable with the instance switched off and turning that into
+ * a failure would hide the state the caller asked for.
+ */
+async function refreshJob(
+  invocation: OperationInvocation,
+  record: JobRecord,
+): Promise<RefreshedJob> {
+  if (record.terminal !== undefined) {
+    return { record, warnings: [] };
+  }
+
+  // The adapter is the job's own application's: dispatch binds the target from
+  // the reference the input carried, so a job reference can only ever be run
+  // against the instance it was minted for.
+  const refresh = await readCommandRecord(
+    invocation.adapter.client,
+    record.application,
+    record.command.upstreamId,
+  );
+  if (refresh.status === "unreachable") {
+    return {
+      record,
+      warnings: [
+        `${refresh.failure.message}; this projection is the state this server last observed`,
+      ],
+    };
+  }
+
+  const observed = invocation.state.jobs.observe(record.reference, refresh.observation);
+  return { record: observed.ok ? observed.record : record, warnings: [] };
+}
+
 /**
  * Reads a job projection.
  *
- * Nothing here contacts the instance. The record is whatever this server last
- * observed, which is exactly why the read still answers after the upstream
- * command record has expired: the terminal snapshot outlives it.
+ * A job still running is refreshed from its upstream command first, so the read
+ * reports the state the command is in rather than the one it was in when the
+ * reference was minted. A job that has ended is answered from the record alone,
+ * which is why the read still answers after the upstream command record has
+ * expired: the terminal snapshot outlives it.
  */
-export const jobGetHandler: OperationHandler = (invocation) => {
+export const jobGetHandler: OperationHandler = async (invocation) => {
   const resolved = resolveJob(invocation.state.jobs, invocation);
   if (!resolved.ok) {
-    return Promise.resolve({ status: "error", error: resolved.error });
+    return { status: "error", error: resolved.error };
   }
 
-  const record = resolved.record;
-  return Promise.resolve({
+  const { record, warnings } = await refreshJob(invocation, resolved.record);
+  return {
     status: "ok",
     data: projectJob(record),
-    warnings: record.warnings,
+    warnings: [...record.warnings, ...warnings],
     items: record.terminal?.items ?? record.items,
-  });
+  };
 };
 
 /**

@@ -72,6 +72,9 @@ const singleRecordRoutes: Readonly<Record<string, string>> = {
   movie: "movie",
   moviefile: "moviefile",
   collection: "collection",
+  // A started command is read back one record at a time, which is how a job
+  // projection learns what the command it stands for is doing now.
+  command: "command",
 };
 
 interface RecordedRequest {

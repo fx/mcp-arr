@@ -5,7 +5,7 @@
 Refresh a job projection from the upstream command when it is read, and keep a terminal result once it has been seen. Nothing in the server ever refreshes a job today, so `arr_job_get` reports forever whatever status the job held when its reference was minted. The [Tool Contracts spec](../specs/tool-contracts/#job-projection) now states both rules.
 
 **Spec:** [Tool Contracts](../specs/tool-contracts/)
-**Status:** draft
+**Status:** complete
 **Depends On:** —
 
 ## Motivation
@@ -111,19 +111,19 @@ The [Tool Contracts spec](../specs/tool-contracts/#job-projection) owns job refr
 
 ## Tasks
 
-- [ ] Refresh a non-terminal job on read
-  - [ ] Consult the upstream command for the job's application on each of the three applications' command routes, feeding the reading through the existing observation path
-  - [ ] Answer a terminal job from its snapshot without an upstream read
-  - [ ] Assert the upstream read happens, since the current tests pass with no caller at all
-- [ ] Keep a terminal answer once observed
-  - [ ] Refuse to replace an observed terminal status or result with a less definite reading
-  - [ ] Cover a second read whose answer has lost the result, and a read after cancellation established an outcome
-- [ ] Degrade safely when the command is gone
-  - [ ] Map a 404 to unknown state and confirm the job stays resolvable
-  - [ ] Confirm no command body, trigger, or other unpublished value reaches the caller
-- [ ] Report progress only where an application supplies counts
-  - [ ] Populate progress solely from numeric counts an application reports, and leave it absent otherwise
-  - [ ] Assert that a refresh of a command carrying a free-text progress message — "Processing file 1 of 1" — reports no progress, so counts cannot be parsed out of prose
+- [x] Refresh a non-terminal job on read
+  - [x] Consult the upstream command for the job's application on each of the three applications' command routes, feeding the reading through the existing observation path
+  - [x] Answer a terminal job from its snapshot without an upstream read
+  - [x] Assert the upstream read happens, since the current tests pass with no caller at all
+- [x] Keep a terminal answer once observed
+  - [x] Refuse to replace an observed terminal status or result with a less definite reading
+  - [x] Cover a second read whose answer has lost the result, and a read after cancellation established an outcome
+- [x] Degrade safely when the command is gone
+  - [x] Map a 404 to unknown state and confirm the job stays resolvable
+  - [x] Confirm no command body, trigger, or other unpublished value reaches the caller
+- [x] Report progress only where an application supplies counts
+  - [x] Populate progress solely from numeric counts an application reports, and leave it absent otherwise
+  - [x] Assert that a refresh of a command carrying a free-text progress message — "Processing file 1 of 1" — reports no progress, so counts cannot be parsed out of prose
 
 ## Open Questions
 

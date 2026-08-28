@@ -49,19 +49,64 @@ interface JobHarness {
   readonly clock: ReturnType<typeof createManualClock>;
 }
 
-function harness(): JobHarness {
+/** One answer the fake instance gives when asked for the command behind a job. */
+type CommandAnswer = { readonly record: unknown } | { readonly status: number };
+
+/**
+ * A server with one fake instance whose command record a test describes.
+ *
+ * The answers are consumed in order and the last one repeats, so a test can
+ * describe an instance whose reply changes between two polls — which is the
+ * whole of the degradation this change exists to survive. A harness given no
+ * answer at all serves `404`, the way all three applications answer a command
+ * identifier they no longer hold.
+ */
+function harness(answers: readonly CommandAnswer[] = []): JobHarness {
   const clock = createManualClock(0);
   const state = createWorkflowState({ clock });
   const requested: string[] = [];
+  let reads = 0;
   const context = createTestToolContext({
     environment: allApplicationsEnvironment,
     state,
     fetch: async (url) => {
       requested.push(url);
-      return jsonResponse({ appName: "Sonarr", version: "9.9.9.9" });
+      if (!/\/command\/[^/]+$/u.test(url)) {
+        return jsonResponse({ appName: "Sonarr", version: "9.9.9.9" });
+      }
+      const answer = answers[Math.min(reads, answers.length - 1)];
+      reads += 1;
+      if (answer === undefined) {
+        return jsonResponse({ message: "not found" }, 404);
+      }
+      return "status" in answer
+        ? jsonResponse({ message: "unavailable" }, answer.status)
+        : jsonResponse(answer.record);
     },
   });
   return { context, state, requested, clock };
+}
+
+/** The command record an instance answers with, in the shape all three send. */
+function commandRecord(overrides: Record<string, unknown> = {}): unknown {
+  return {
+    id: Number(command.upstreamId),
+    name: command.name,
+    commandName: "Missing Episode Search",
+    status: "started",
+    trigger: "manual",
+    body: { name: command.name, trigger: "manual", updateScheduledTask: true },
+    ...overrides,
+  };
+}
+
+/** The upstream command route the refresh reads, for one application. */
+function commandRoute(application: "sonarr" | "radarr"): string {
+  const base =
+    application === "sonarr"
+      ? "https://sonarr.example.invalid/sonarr/api/v3"
+      : "https://radarr.example.invalid/api/v3";
+  return `${base}/command/${command.upstreamId}`;
 }
 
 function callTool(context: ToolContext, name: "arr_job_get" | "arr_job_cancel", input: unknown) {
@@ -86,7 +131,7 @@ function projectionOf(result: ToolResult<unknown>): Record<string, unknown> {
 
 describe("arr_job_get", () => {
   it("reports normalized status, progress, command identity, and per-item outcomes", async () => {
-    const { context, state, requested } = harness();
+    const { context, state, requested } = harness([{ record: commandRecord() }]);
     const record = state.jobs.project({
       application: "sonarr",
       command,
@@ -109,8 +154,172 @@ describe("arr_job_get", () => {
       cancellable: true,
     });
     expect(result.applications[0]?.items).toEqual(items);
-    // Job projection is process-local, so reading one contacts nothing.
-    expect(requested).toEqual([]);
+    // The projection is process-local, and reading a job that has not ended
+    // still asks the instance what its command is doing now.
+    expect(requested).toEqual([commandRoute("sonarr")]);
+  });
+
+  it("reports the state the command has reached rather than the one it was minted with", async () => {
+    // The defect this covers is an unreached code path, not a wrong one: with
+    // nothing calling the refresh, the job answers `queued` forever and this
+    // assertion is the one that fails.
+    const { context, state, requested } = harness([
+      { record: commandRecord({ status: "completed", result: "successful" }) },
+    ]);
+    const record = state.jobs.project({
+      application: "sonarr",
+      command,
+      observation: { state: "queued" },
+      cancellation: acknowledging({ kind: "accepted" }),
+    });
+
+    const result = await callTool(context, "arr_job_get", { job: record.reference });
+
+    expect(requested).toEqual([commandRoute("sonarr")]);
+    expect(projectionOf(result)).toMatchObject({
+      status: "completed",
+      terminal: { status: "completed", result: "succeeded" },
+      // Nothing that has ended can be cancelled.
+      cancellable: false,
+    });
+  });
+
+  it("keeps the first, more definite reading when a later one has lost the result", async () => {
+    // Observed on a live instance: the same command answered `completed /
+    // successful` and, minutes later, `completed / unknown`. The caller is
+    // entitled to the first reading, so the second is never asked for.
+    const { context, state, requested } = harness([
+      { record: commandRecord({ status: "completed", result: "successful" }) },
+      { record: commandRecord({ status: "completed", result: "unknown" }) },
+    ]);
+    const record = state.jobs.project({
+      application: "sonarr",
+      command,
+      observation: { state: "started" },
+      cancellation: { supported: false },
+    });
+
+    const first = await callTool(context, "arr_job_get", { job: record.reference });
+    const second = await callTool(context, "arr_job_get", { job: record.reference });
+
+    expect(projectionOf(first)).toMatchObject({
+      status: "completed",
+      terminal: { status: "completed", result: "succeeded" },
+    });
+    expect(projectionOf(second)).toEqual(projectionOf(first));
+    // The second read never happened: a terminal snapshot cannot improve, and
+    // asking again is exactly what would have degraded it.
+    expect(requested).toEqual([commandRoute("sonarr")]);
+  });
+
+  it("refuses a weaker reading even when one reaches the store", async () => {
+    // The handler does not ask a second time, but two reads that overlap both
+    // resolve a running job before either observes one, so the store's own
+    // guard is what settles which reading survives.
+    const { state } = harness();
+    const record = state.jobs.project({
+      application: "sonarr",
+      command,
+      observation: { state: "started" },
+      cancellation: { supported: false },
+    });
+
+    state.jobs.observe(record.reference, { state: "completed", result: "successful" });
+    const degraded = state.jobs.observe(record.reference, { state: "failed" });
+
+    expect(degraded).toMatchObject({
+      ok: true,
+      record: { status: "completed", terminal: { status: "completed", result: "succeeded" } },
+    });
+  });
+
+  it("reports a command the application no longer holds as unknown, without failing", async () => {
+    const { context, state, requested } = harness();
+    const record = state.jobs.project({
+      application: "radarr",
+      command,
+      observation: { state: "queued" },
+      cancellation: { supported: false },
+    });
+
+    const result = await callTool(context, "arr_job_get", { job: record.reference });
+
+    expect(requested).toEqual([commandRoute("radarr")]);
+    expect(result.status).toBe("ok");
+    expect(projectionOf(result)).toMatchObject({ job: record.reference, status: "unknown" });
+    expect(result.applications[0]?.warnings).toContain(
+      "the application no longer holds this command record",
+    );
+  });
+
+  it("answers from what it holds when the instance cannot be reached", async () => {
+    const { context, state } = harness([{ status: 503 }]);
+    const record = state.jobs.project({
+      application: "sonarr",
+      command,
+      observation: { state: "started" },
+      cancellation: { supported: false },
+    });
+
+    const result = await callTool(context, "arr_job_get", { job: record.reference });
+
+    expect(result.status).toBe("ok");
+    expect(projectionOf(result)).toMatchObject({ status: "started" });
+    expect(result.applications[0]?.warnings.join(" ")).toContain(
+      "this projection is the state this server last observed",
+    );
+    // A failure that learned nothing is not folded into the record, so it does
+    // not outlive the outage.
+    expect(state.jobs.resolve(record.reference)).toMatchObject({
+      ok: true,
+      record: { warnings: [] },
+    });
+  });
+
+  it("publishes nothing the upstream command carried beyond the projection", async () => {
+    const { context, state } = harness([
+      { record: commandRecord({ status: "started", duration: "00:00:10.32" }) },
+    ]);
+    const record = state.jobs.project({
+      application: "sonarr",
+      command,
+      observation: { state: "queued" },
+      cancellation: { supported: false },
+    });
+
+    const result = await callTool(context, "arr_job_get", { job: record.reference });
+
+    expect(Object.keys(projectionOf(result)).sort()).toEqual([
+      "application",
+      "cancellable",
+      "command",
+      "job",
+      "status",
+    ]);
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain("trigger");
+    expect(serialized).not.toContain("updateScheduledTask");
+    expect(serialized).not.toContain("00:00:10.32");
+    expect(serialized).not.toContain("Missing Episode Search");
+  });
+
+  it("reports no progress for a command whose only signal is a sentence", async () => {
+    const { context, state } = harness([
+      { record: commandRecord({ status: "started", message: "Processing file 1 of 1" }) },
+    ]);
+    const record = state.jobs.project({
+      application: "sonarr",
+      command,
+      observation: { state: "queued" },
+      cancellation: { supported: false },
+    });
+
+    const result = await callTool(context, "arr_job_get", { job: record.reference });
+
+    // The sentence is disclosed as a warning; the counts inside it are prose,
+    // not a contract, and nothing parses them into the published pair.
+    expect(result.applications[0]?.warnings).toContain("Processing file 1 of 1");
+    expect(projectionOf(result).progress).toBeUndefined();
   });
 
   it("still answers from the terminal snapshot after the instance goes away", async () => {
@@ -176,8 +385,8 @@ describe("arr_job_get", () => {
 });
 
 describe("arr_job_cancel", () => {
-  function running(cancellation: JobCancellationSupport) {
-    const context = harness();
+  function running(cancellation: JobCancellationSupport, answers: readonly CommandAnswer[] = []) {
+    const context = harness(answers);
     const record = context.state.jobs.project({
       application: "sonarr",
       command,
@@ -260,6 +469,39 @@ describe("arr_job_cancel", () => {
       ok: true,
       record: { state: "succeeded" },
     });
+  });
+
+  it("does not let a later read overwrite the outcome cancellation established", async () => {
+    // The instance would happily report this command as a plain success. The
+    // job was cancelled, and reading it again must keep saying so.
+    const job = running(acknowledging({ kind: "accepted" }), [
+      { record: commandRecord({ status: "completed", result: "successful" }) },
+    ]);
+
+    await cancel(job.context, job.record.reference);
+    const read = await callTool(job.context, "arr_job_get", { job: job.record.reference });
+
+    expect(projectionOf(read)).toMatchObject({
+      status: "cancelled",
+      terminal: { status: "cancelled", result: "cancelled" },
+      cancellable: false,
+    });
+    // Cancellation ended the job, so the read had nothing to ask about.
+    expect(job.requested).toEqual([]);
+  });
+
+  it("keeps a refused cancellation refused when the job is read again", async () => {
+    // A rejection is not an ending, so the read does refresh — and the refresh
+    // must not hand back a cancellability the application already denied.
+    const job = running(acknowledging({ kind: "rejected" }), [
+      { record: commandRecord({ status: "started" }) },
+    ]);
+
+    await cancel(job.context, job.record.reference);
+    const read = await callTool(job.context, "arr_job_get", { job: job.record.reference });
+
+    expect(job.requested).toEqual([commandRoute("sonarr")]);
+    expect(projectionOf(read)).toMatchObject({ status: "started", cancellable: false });
   });
 
   it("reports a job that never permitted cancellation as uncancellable", async () => {
@@ -398,7 +640,7 @@ describe("job tools over the MCP protocol", () => {
   }
 
   it("returns schema-conforming structured content for both job tools", async () => {
-    const context = harness();
+    const context = harness([{ record: commandRecord({ status: "started" }) }]);
     const record = context.state.jobs.project({
       application: "sonarr",
       command,
@@ -431,6 +673,8 @@ describe("job tools over the MCP protocol", () => {
     expect(content.status).toBe("ok");
     expect(content.applications[0]?.data.outcome).toBe("cancellation_requested");
     expect(content.mutation?.receipt?.reference.startsWith("apl_")).toBe(true);
-    expect(context.requested).toEqual([]);
+    // The read refreshed the running job; the cancellation contacted nothing of
+    // its own, because the request it sends is the one the job was minted with.
+    expect(context.requested).toEqual([commandRoute("sonarr")]);
   });
 });

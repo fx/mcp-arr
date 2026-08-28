@@ -197,7 +197,10 @@ interface OperationBlueprint<TId extends string> {
    * observed — or reporting that its reference no longer resolves — is
    * answerable with the instance switched off. Probing first would turn that
    * local read into an `unavailable_application` error and hide the terminal
-   * snapshot the caller asked for.
+   * snapshot the caller asked for. A job that has not ended is still refreshed
+   * from its upstream command, but that read degrades to the held record rather
+   * than failing, which is exactly the difference this flag names: the
+   * operation may contact the instance without depending on it.
    */
   readonly upstream: OperationUpstreamNeed;
   readonly handler: OperationHandler;
