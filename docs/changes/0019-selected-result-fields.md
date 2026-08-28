@@ -6,7 +6,7 @@ Let a collection query name which parts of each per-application payload it wants
 
 **Spec:** [Tool Contracts](../specs/tool-contracts/)
 **Status:** draft
-**Depends On:** [0018](./0018-bounded-tool-listing.md)
+**Depends On:** [0017](./0017-grammar-compilable-input-schemas.md), [0018](./0018-bounded-tool-listing.md)
 
 ## Motivation
 
@@ -53,7 +53,9 @@ The [Tool Contracts spec](../specs/tool-contracts/#bounded-structured-results) o
 - The projection argument is added to the shape every bounded collection query already shares, so the five query tools gain it from one definition rather than five.
 - Paths are resolved against the generated inventory from [0018](./0018-bounded-tool-listing.md), so the paths a caller is told about and the paths that resolve are the same list by construction.
 - Projection happens after the envelope has been validated against the internal output schema, so what is projected is always a subset of something already known to conform.
-- The projection argument is bounded in count and in path length, and — per [0017](./0017-grammar-compilable-input-schemas.md) — those bounds validate without being published.
+- The projection argument is bounded in count and in path length, and both bounds are **derived from the inventory [0018](./0018-bounded-tool-listing.md) generates** rather than chosen: the count bound is at least the largest number of leaf paths any single payload publishes, and the path-length bound is at least the longest path in any inventory. A bound below either would refuse a projection naming exactly what the tool advertises.
+- Both bounds are asserted against the generated inventory by a test, so a payload that later grows a deeper or wider shape fails the assertion rather than silently making a published path unselectable.
+- Per [0017](./0017-grammar-compilable-input-schemas.md), both bounds validate without being published.
 - The text summary's record counts continue to describe what the query matched, not what the projection kept, because a caller uses them to decide whether to page.
 
 ## Design
@@ -79,8 +81,9 @@ The [Tool Contracts spec](../specs/tool-contracts/#bounded-structured-results) o
   - **Why:** They are what makes a result interpretable — which application answered, whether it partly failed, whether more pages exist, and which of twelve payloads this is. They are also small and fixed, so nothing is gained by allowing their removal, and a caller that removed them by accident would get a result it could not read.
 - **Decision:** Do not project mutation results.
   - **Why:** A mutation's payload is a diff, a receipt, or a job projection — small, and every part of it is the answer. There is nothing to trim and a projected receipt is a hazard, not a saving.
-- **Decision:** Bound the projection array in validation, at a number chosen for consistency rather than for safety, and publish neither the bound nor a path-length bound.
-  - **Why:** A projection can only ever shrink a result, so an over-long one protects against nothing a caller could exploit — the work it causes is still bounded by the page size. What the bound is actually for is that every other array on this input surface is bounded, and an unbounded one would be the single exception a reader has to notice. Set it well above any real projection and it never binds. Publishing it is barred by [0017](./0017-grammar-compilable-input-schemas.md) anyway, so the number carries no discovery cost.
+- **Decision:** Derive both bounds from the generated path inventory rather than picking numbers.
+  - **Why:** A projection can only ever shrink a result, so an over-long one protects against nothing a caller could exploit — the work it causes is already bounded by the page size. The bound exists because every other array on this input surface is bounded and an unbounded one would be the single exception a reader has to stop at. But "a generous number" is not a contract: two implementers would pick differently, and either could pick one that refuses a projection naming exactly the paths the tool advertises. Deriving both from the inventory removes the choice — the floor is what the tool publishes, so the bound can never contradict the advertisement, and a test ties the two together so a later payload change cannot silently break it.
+  - **Alternatives considered:** A fixed count and path length stated here, rejected because any number written today is either below what a future payload publishes or arbitrary padding above it. Leaving the array unbounded, rejected because it makes this the only unbounded array on the input surface for no stated reason.
 
 ### Non-Goals
 
@@ -98,6 +101,7 @@ The [Tool Contracts spec](../specs/tool-contracts/#bounded-structured-results) o
   - [ ] Extend redaction coverage with projected equivalents, green before projection exists by asserting the unprojected values they will be compared against
 - [ ] Accept and resolve a projection
   - [ ] Add the bounded projection argument to `queryBaseShape` and confirm it publishes without a length bound per [0017](./0017-grammar-compilable-input-schemas.md)
+  - [ ] Derive the count and path-length bounds from the generated inventory, and assert both are at or above the widest and deepest payload it publishes
   - [ ] Resolve paths against the payload after envelope validation, crossing arrays element-wise
   - [ ] Always retain the envelope, the per-application outcome's own fields, and the payload discriminator
 - [ ] Report what did not match

@@ -52,6 +52,7 @@ Skipping or weakening any of these rules to land the PR MUST be treated as a bug
 Additionally, because this change loosens what is published while promising that what is accepted is unchanged:
 
 - The rejection message for an over-length value MUST be pinned to an exact string, captured by running the assertion against the pre-change implementation rather than written from what the new code is expected to produce.
+- A test MUST assert that a bound stripped from a plain-object input is still named in that tool's published description, using a temporarily-added bound if no tool declares one, so the mechanism is proven on the path that has no variant documentation to fall back on.
 - The guard barring `maxLength` MUST read every published input schema off the wire from a spawned server, and MUST fail against the pre-change implementation.
 - Every `safeParse`-based assertion in the existing suite MUST keep passing with no edit. An assertion that needs its expectation changed is evidence validation was weakened.
 - A test MUST assert that no published input schema admits a variant the operation registry reports as unimplemented, so the rule is checked against the registry rather than against a list someone maintains by hand.
@@ -63,7 +64,7 @@ The [Tool Contracts spec](../specs/tool-contracts/#stable-typed-surface) owns wh
 - The bound is removed from **publication only**. The Zod schemas keep every `min`, `max`, and `regex` they have, so an over-length value is refused with the message it is refused with today.
 - The stripping happens on the converted JSON Schema at the single publication site, not by editing the domain schemas, so a bound added to a future schema is handled without anyone remembering this rule.
 - Every published input schema is covered, including the two tools whose input is a plain object rather than a variant union and which therefore do not currently pass through that site.
-- Each removed bound is restated in the generated variant documentation, so what the schema no longer says the description does.
+- Each removed bound is restated in the published root's `description`, so what the schema no longer says the description does. The restatement is generated from the bounds as they stood **before** stripping — a generator reading the stripped shape has nothing left to name — and it reaches a plain-object input as well as a variant union, because a bound stripped from a tool that publishes no variant documentation would otherwise vanish with nothing stating it.
 - `minLength`, `pattern`, `minItems`, and `maxItems` are retained. `pattern` constrains the admissible alphabet far more usefully than a length ever did, and the largest `maxItems` in the corpus is 200 against a known-good tool at 885.
 - The unconditionally-refused-intent rule is enforced by a guard rather than by a removal, because after [0020](./0020-withdraw-configuration-writes.md) no tool declares one. The guard is the whole of this change's work on that rule.
 
@@ -71,9 +72,10 @@ The [Tool Contracts spec](../specs/tool-contracts/#stable-typed-surface) owns wh
 
 ### Approach
 
-- Add a recursive sanitization pass over the converted JSON Schema in `src/tools/schemas/publish.ts` that deletes `maxLength` wherever it appears, and run it before the branches are merged so the merged root and the per-variant documentation both see the sanitized shape.
+- Collect every `maxLength` from the converted JSON Schema **before** stripping any of them, keyed by the property path that declared it. That collection is the only record of the bounds once stripping has run, and it is what the documentation is generated from.
+- Strip `maxLength` recursively from the converted schema in `src/tools/schemas/publish.ts` after the collection is taken, so the merged root and the per-variant documentation are both built from the stripped shape while the sentence naming the bounds is built from the collection.
 - Extend the publication site to cover `arr_capabilities` and `arr_job_get`, whose inputs are plain objects today. Neither currently declares a `maxLength`, so this is a guard against the next one rather than a fix for a present defect — which is exactly why it belongs here rather than in a later change that would have to rediscover the rule.
-- Generate a sentence naming each bounded property and its accepted length, appended to the variant documentation the same generator already produces.
+- Emit the sentence naming each bounded property and its accepted length into the **published root's `description`**, for every tool. On a variant union it joins the variant documentation the same generator already produces; on a plain-object input it is the whole of the generated description. Attaching it to the root rather than to the variant documentation is what makes the two plain-object tools carry it as well.
 - Add a guard cross-checking every published input schema's declared variants against the operation registry, so a variant the registry reports as unimplemented cannot be published.
 
 ### Decisions
@@ -109,9 +111,9 @@ The [Tool Contracts spec](../specs/tool-contracts/#stable-typed-surface) owns wh
   - [ ] Add an over-length rejection-message test with the exact string captured against the unmodified implementation
   - [ ] Extend the wire-reading test to assert no published input schema declares `maxLength` at any depth, and confirm it fails against the pre-change implementation
 - [ ] Sanitize the published input schemas
-  - [ ] Add the recursive `maxLength` strip in `src/tools/schemas/publish.ts`, applied before branch merging
+  - [ ] Collect every `maxLength` with the property path that declared it, then strip them recursively in `src/tools/schemas/publish.ts`, in that order and before branch merging
   - [ ] Route `arr_capabilities` and `arr_job_get` through the same publication site
-  - [ ] Extend the generated variant documentation to name each bounded property and its accepted length
+  - [ ] Emit the bound restatement into every published root's `description`, from the collection rather than the stripped shape, and assert it appears for a plain-object input as well as a variant union
   - [ ] Confirm the wire guard is green and every `safeParse`-based assertion passes unedited
 - [ ] Guard against publishing a refused intent
   - [ ] Add the cross-check between each published schema's declared variants and the operation registry's unimplemented list

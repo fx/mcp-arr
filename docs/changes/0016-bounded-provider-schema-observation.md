@@ -52,7 +52,7 @@ Skipping or weakening any of these rules to land the PR MUST be treated as a bug
 Additionally, because this change removes a published field:
 
 - A regression test MUST assert that no observation payload carries a provider template catalogue at any detail level, for every provider domain, so the field cannot return unnoticed as a side effect of a later change.
-- The staleness behavior that depends on the schema route MUST keep its existing coverage unedited. If a stale-plan test needs its expectation changed, that is evidence reconciliation was reading the observation payload after all.
+- Where the schema-fingerprint staleness path still exists, its coverage MUST remain unedited: a stale-plan test needing its expectation changed is evidence reconciliation was reading the observation payload after all. [0020](./0020-withdraw-configuration-writes.md) deletes that path outright, so this requirement is discharged rather than violated if 0020 has already landed — see the ordering note below.
 
 ### Functional Requirements
 
@@ -72,6 +72,15 @@ The [Configuration Reconciliation spec](../specs/configuration-reconciliation/#o
 - Leave `readProviderTemplates` in place only if the fingerprint path shares it; otherwise remove it with its caller.
 - Keep `detail` as it is. It still selects whether a record's readable field values are serialized, which is a real distinction on the applications whose fields are not definition-driven.
 
+### Ordering against 0020
+
+This change and [0020](./0020-withdraw-configuration-writes.md) touch disjoint code — 0016 removes a member of the observation payload, 0020 removes the write surface — so neither depends on the other and either order works. What differs is what the schema-fingerprint staleness path means at the time:
+
+- **0016 first.** `readSchemaFingerprint` still exists, and the requirement above binds as written: its coverage must survive untouched, which is exactly the evidence that reconciliation never read the observation payload.
+- **0020 first.** `reconcile.ts` and `fingerprints.ts` are already gone, so there is no staleness path and no coverage to preserve. The requirement is discharged with nothing to check, and 0016's first motivating argument — that reconciliation re-reads the schema route itself — is superseded by the stronger fact that nothing reads the catalogue at all.
+
+Neither order makes this change unimplementable, and neither leaves the catalogue published. `arr_config_observe` and the observation service survive 0020 untouched, so the member this change removes is there to remove either way.
+
 ### Decisions
 
 - **Decision:** Remove the catalogue outright rather than gating it behind an explicit argument.
@@ -88,6 +97,7 @@ The [Configuration Reconciliation spec](../specs/configuration-reconciliation/#o
 - Changing what `detail` means for a record, or which fields the classifier allows out.
 - Changing the staleness contract, the schema fingerprint, or when a plan goes stale.
 - Reducing any other tool's result size — `select` is [0019](./0019-selected-result-fields.md) and the published listing is [0018](./0018-bounded-tool-listing.md).
+- Removing the reconciliation surface that reads the schema route, which is [0020](./0020-withdraw-configuration-writes.md). This change leaves every write path exactly as it finds it.
 - Removing the `withheld` count, which is what tells a caller values exist that it did not receive.
 
 ## Tasks

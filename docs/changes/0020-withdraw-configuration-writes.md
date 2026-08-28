@@ -50,7 +50,7 @@ Additionally, because this change removes a public tool and a large body of code
 
 - A wire test MUST assert the published tool list is exactly the fourteen remaining names, so the removal is verified against what a host sees rather than against a source constant.
 - Coverage of every retained tool MUST pass unedited. A retained tool whose test needs changing is evidence something shared was removed with the tool rather than only what belonged to it.
-- The observation path MUST keep its full existing coverage, including the schema-route reads the staleness path used to make, so nothing that survives loses its tests along with its only other caller.
+- The observation path MUST keep its full existing coverage, so nothing that survives loses its tests along with its only other caller. The schema-fingerprint staleness path is deleted with the write surface and its coverage goes with it; that is the one place a test is removed rather than kept, and [0016](./0016-bounded-provider-schema-observation.md)'s requirement to preserve it is discharged by this deletion rather than violated by it, in either landing order.
 - Deletion MUST NOT be verified by the absence of a test. Every removed capability MUST be covered by a test asserting the server refuses or no longer offers it, not merely by the removal of the test that used to exercise it.
 
 ### Functional Requirements

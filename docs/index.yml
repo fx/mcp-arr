@@ -165,7 +165,7 @@ changes:
     description: Let a collection query name which parts of each per-application payload to return
     spec: tool-contracts
     status: draft
-    depends_on: ["0018"]
+    depends_on: ["0017", "0018"]
   - id: "0020"
     name: withdraw-configuration-writes
     path: changes/0020-withdraw-configuration-writes.md
