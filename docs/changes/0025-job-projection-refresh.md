@@ -132,11 +132,12 @@ The [Tool Contracts spec](../specs/tool-contracts/#job-projection) owns job refr
   - [x] Cover a second read whose answer has lost the result, and a read after cancellation established an outcome
 - [x] Degrade safely when the command is gone
   - [x] Map a 404 to unknown state and confirm the job stays resolvable
-  - [x] Degrade only what an expired command record or an unreachable instance justifies, surfacing a refused API key or a rejected request as an error rather than as a stale answer
+  - [x] Answer every failed refresh from the held projection, while telling a refused API key or a rejected request apart from an outage in the warning it discloses
   - [x] Confirm no command body, trigger, or other unpublished value reaches the caller
 - [x] Report progress only where an application supplies counts
   - [x] Populate progress solely from numeric counts an application reports, and leave it absent otherwise
   - [x] Assert that a refresh of a command carrying a free-text progress message — "Processing file 1 of 1" — reports no progress, so counts cannot be parsed out of prose
+  - [x] Assert that the message itself does not travel either, so repeated polling of a narrating command cannot fill the projection's warning list with prose
 
 ## Open Questions
 
