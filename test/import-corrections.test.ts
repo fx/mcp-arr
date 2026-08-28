@@ -14,6 +14,7 @@ import { isRetainedLabel } from "../src/adapters/import/model.js";
 import type { MediaApplication } from "../src/adapters/library/model.js";
 import { activityFixture } from "./support/activity.js";
 import { fixtureBody, jsonResponse, libraryHarness, type UpstreamCall } from "./support/library.js";
+import { reprocessAnswer } from "./support/manual-import.js";
 
 /**
  * Manual-import corrections and the validation that precedes an import.
@@ -46,21 +47,29 @@ let sonarr: Fixtures;
 let recorded: Record<MediaApplication, { candidates: Record<string, unknown>[]; queue: unknown[] }>;
 
 beforeAll(async () => {
-  const [candidates, queue, records, diskspace, qualities, languages] = await Promise.all([
+  const [
+    candidates,
+    queue,
+    records,
+    diskspace,
+    qualities,
+    languages,
+    radarrCandidates,
+    radarrQueue,
+  ] = await Promise.all([
     activityFixture<Record<string, unknown>[]>("sonarr", "manualimport"),
     activityFixture<unknown[]>("sonarr", "queue/details"),
     activityFixture<Array<{ id: number }>>("sonarr", "series"),
     fixtureBody("sonarr", "diskspace") as Promise<unknown[]>,
     fixtureBody("sonarr", "qualitydefinition") as Promise<unknown[]>,
     fixtureBody("sonarr", "language") as Promise<unknown[]>,
+    activityFixture<Record<string, unknown>[]>("radarr", "manualimport"),
+    activityFixture<unknown[]>("radarr", "queue/details"),
   ]);
   sonarr = { candidates, queue, records, diskspace, qualities, languages };
   recorded = {
     sonarr: { candidates, queue },
-    radarr: {
-      candidates: await activityFixture<Record<string, unknown>[]>("radarr", "manualimport"),
-      queue: await activityFixture<unknown[]>("radarr", "queue/details"),
-    },
+    radarr: { candidates: radarrCandidates, queue: radarrQueue },
   };
 });
 
@@ -74,15 +83,12 @@ interface InstanceOptions {
 
 interface Instance {
   readonly calls: UpstreamCall[];
-  /** Each reprocess body exactly as it went out, before anything reads into it. */
-  readonly bodies: unknown[];
   readonly posted: Record<string, unknown>[];
   readonly client: Parameters<typeof reprocessCandidate>[0];
 }
 
 function instance(options: InstanceOptions = {}): Instance {
   const posted: Record<string, unknown>[] = [];
-  const bodies: unknown[] = [];
   const harness = libraryHarness("sonarr", (call) => {
     const path = call.url.pathname;
     const method = call.init.method ?? "GET";
@@ -90,7 +96,6 @@ function instance(options: InstanceOptions = {}): Instance {
     if (path.endsWith("/manualimport")) {
       if (method === "POST") {
         const body: unknown = JSON.parse(String(call.init.body));
-        bodies.push(body);
         // Read as the list the endpoint declares. A body of any other shape is
         // recorded as sending nothing, which is what it amounts to upstream.
         posted.push(...(Array.isArray(body) ? (body as Record<string, unknown>[]) : []));
@@ -117,7 +122,7 @@ function instance(options: InstanceOptions = {}): Instance {
     return jsonResponse({ message: "unexpected route" }, 404);
   });
 
-  return { calls: harness.calls, bodies, posted, client: harness.client };
+  return { calls: harness.calls, posted, client: harness.client };
 }
 
 /** The retained context of the recorded clean candidate, as a reference holds it. */
@@ -498,11 +503,11 @@ describe("the body a reprocess sends", () => {
     async ({ application, flat, nested }) => {
       const sent = await reprocessOn(application);
 
-      // The list itself. An object wrapping it is what both applications refuse
-      // with a `400` naming the type they wanted.
-      expect(Array.isArray(sent.body)).toBe(true);
+      // The list itself, holding one element. An object wrapping it is what
+      // both applications refuse with a `400` naming the type they wanted, and
+      // the wrapper's own name is nowhere in the body at all.
       expect(sent.body).toHaveLength(1);
-      expect((sent.body as Record<string, unknown>[])[0]).toBe(sent.element);
+      expect(JSON.stringify(sent.body)).not.toContain('"files"');
 
       // The flat identifier the resource declares, and not the nested object
       // the scan answers with — which the endpoint reads as media zero and
@@ -514,15 +519,8 @@ describe("the body a reprocess sends", () => {
       // the scan answer drops, which is what ties an import to its queue row.
       expect(sent.element.path).toBe(sent.row.path);
       expect(sent.element.downloadId).toEqual(expect.any(String));
-    },
-  );
 
-  it.each(["sonarr", "radarr"] as const)(
-    "keeps %s's request to the fields the resource declares",
-    async (application) => {
-      const sent = await reprocessOn(application);
-
-      // Nothing the scan reports about the file travels back into a request
+      // And nothing the scan reports about the file travels back into a request
       // that never declared it: the row identifier, the size, the relative
       // path, the name, the custom formats and the rejections are all answers,
       // not arguments.
@@ -539,38 +537,34 @@ describe("the body a reprocess sends", () => {
       ]) {
         expect(sent.element).not.toHaveProperty(field);
       }
-      // And the wrapper the endpoint refuses is nowhere in the body at all.
-      expect(JSON.stringify(sent.body)).not.toContain('"files"');
     },
   );
 });
 
 /**
- * The answer a reprocess gives, which is a narrower resource than a scan row.
+ * The answer this instance would give for the recorded clean candidate.
  *
- * Both applications restate the *decision* here and say nothing about the file:
- * there is no size, no row identifier, no relative path and no existing-file
- * identity in it, the media is named flat, and the indexer flags come back as
- * the numeric bitfield the resource declares. Recorded from Sonarr 4.0.19.2979
- * and Radarr 6.3.0.10514.
+ * The shape is {@link reprocessAnswer}'s, which is the narrower resource both
+ * applications actually answer a reprocess with — shared with the instance
+ * double so the two cannot describe different upstream shapes. What varies here
+ * is the decision: the rejections the instance raised on the re-decided
+ * mapping.
  */
-function reDecided(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function reDecided(rejections: readonly unknown[] = []): Record<string, unknown> {
   const row = sonarr.candidates[0] as Record<string, unknown>;
-  return {
-    path: row.path,
-    seriesId: (row.series as { id: number }).id,
-    seasonNumber: row.seasonNumber,
-    episodes: (row.episodes as { id: number }[]).map((episode) => ({ id: episode.id })),
-    quality: row.quality,
-    languages: row.languages,
-    releaseGroup: row.releaseGroup,
-    downloadId: "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1",
-    indexerFlags: 0,
-    customFormats: [],
-    customFormatScore: 0,
-    rejections: [],
-    ...overrides,
-  };
+  return reprocessAnswer(
+    {
+      path: row.path,
+      seriesId: (row.series as { id: number }).id,
+      seasonNumber: row.seasonNumber,
+      episodeIds: (row.episodes as { id: number }[]).map((episode) => episode.id),
+      quality: row.quality,
+      languages: row.languages,
+      releaseGroup: row.releaseGroup,
+      downloadId: "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1",
+    },
+    rejections,
+  );
 }
 
 describe("what a reprocess answer leaves out", () => {
@@ -599,38 +593,13 @@ describe("what a reprocess answer leaves out", () => {
     expect(result.candidate.indexerFlags).toEqual(["freeleech"]);
   });
 
-  it("still refuses a file whose size moved, though the answer never states one", async () => {
-    // The same file, and the folder now reports a different size for it. The
-    // answer carries no size at all, so the guard depends on the completion
-    // above reading the scan rather than on the answer restating it.
-    const running = instance({
-      scan: [{ ...(sonarr.candidates[0] as Record<string, unknown>), size: 17 }],
-      decided: [reDecided()],
-    });
-
-    const result = await validateForImport(running.client, "sonarr", {
-      retained: retainedFor(),
-      patch: {},
-      destination: "/media/example/series",
-    });
-
-    expect(result).toMatchObject({ status: "refused", refusal: { kind: "stale" } });
-    if (result.status === "refused" && result.refusal.kind === "stale") {
-      expect(result.refusal.moved).toEqual(["size"]);
-    }
-  });
-
   it("still refuses a rejection the answer raised, though it carries no other facts", async () => {
     // The rejection is the one thing this answer does state, and it still stops
     // the import once the call succeeds: completing the file's facts from the
     // scan settles what the answer omits and decides nothing it reported.
     const running = instance({
       decided: [
-        reDecided({
-          rejections: [
-            { reason: "Not an upgrade for existing episode file(s)", type: "permanent" },
-          ],
-        }),
+        reDecided([{ reason: "Not an upgrade for existing episode file(s)", type: "permanent" }]),
       ],
     });
 
@@ -855,8 +824,12 @@ describe("validating immediately before an import", () => {
   });
 
   it("refuses a candidate whose file changed underneath it", async () => {
+    // The size moves on the scan, which is the only place either application
+    // reports one: a reprocess answer restates the decision and says nothing
+    // about the file, so a guard that waited to be told there by the answer
+    // would never fire at all.
     const moved = { ...(sonarr.candidates[0] as Record<string, unknown>), size: 17 };
-    const running = instance({ decided: [moved] });
+    const running = instance({ scan: [moved], decided: [reDecided()] });
 
     const result = await validateForImport(running.client, "sonarr", {
       retained: retainedFor(),

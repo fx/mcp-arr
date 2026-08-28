@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { type ApplicationId, describeApplication } from "../../src/applications.js";
 import { fixturePathFor, loadFixture } from "./fixtures.js";
+import { reprocessAnswer } from "./manual-import.js";
 import { fixtureRoot } from "./tool-context.js";
 
 /**
@@ -399,36 +400,21 @@ export async function startFixtureInstance(
   /**
    * One re-decided row, in the shape a reprocess actually answers with.
    *
-   * The answer is a narrower resource than the scan row: it restates the
-   * decision and says nothing about the file, so there is no size, no row
-   * identifier, no relative path and no existing-file identity in it, the media
-   * is named flat, and the indexer flags come back as the numeric bitfield both
-   * applications serialize here. Echoing the scan row instead would let an
-   * adapter that read the wrong fields pass.
-   *
-   * The rejections are the instance's own, looked up from the row it holds for
-   * that file, because re-running the decision engine is what this endpoint is
-   * for — a caller cannot suppress a rejection by declining to send one.
+   * The shape itself is {@link reprocessAnswer}'s, shared with the adapter's
+   * own tests. What this adds is the decision: the rejections are the
+   * instance's own, looked up from the row it holds for that file, because
+   * re-running the decision engine is what this endpoint is for — a caller
+   * cannot suppress a rejection by declining to send one.
    */
   const decidedReprocessRow = (sent: Record<string, unknown>): Record<string, unknown> => {
     const scan = bodies.get("manualimport");
     const scanned = (Array.isArray(scan) ? scan : []).find(
       (record) => isRecord(record) && record.path === sent.path,
     );
-    const episodeIds = Array.isArray(sent.episodeIds) ? sent.episodeIds : [];
-    const carried = ["seriesId", "movieId", "seasonNumber", "quality", "languages", "releaseGroup"];
-    return {
-      path: sent.path,
-      ...Object.fromEntries(
-        carried.filter((field) => sent[field] !== undefined).map((field) => [field, sent[field]]),
-      ),
-      episodes: episodeIds.map((id) => ({ id })),
-      downloadId: sent.downloadId ?? null,
-      indexerFlags: 0,
-      customFormats: [],
-      customFormatScore: 0,
-      rejections: isRecord(scanned) && Array.isArray(scanned.rejections) ? scanned.rejections : [],
-    };
+    return reprocessAnswer(
+      sent,
+      isRecord(scanned) && Array.isArray(scanned.rejections) ? scanned.rejections : [],
+    );
   };
 
   /**

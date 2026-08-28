@@ -952,41 +952,55 @@ export async function reprocessCandidate(
 }
 
 /**
- * The decided row, completed with the facts a reprocess answer leaves out.
+ * The re-decided row, read over the scan row it re-decides.
  *
- * The answer is a different resource from the scan row: it restates the
+ * The answer is a narrower resource than a scan row: it restates the
  * *decision* — the mapping, the quality, the languages, the rejections — and
  * says nothing about the file itself. It carries no size, no row identifier, no
- * relative path, and no existing-file identity, and it names its media flat
- * where the scan names it nested.
+ * relative path and no existing-file identity, and Sonarr names its media flat
+ * where a scan names it nested.
  *
- * So the file's own facts come from the scan this same call just re-ran, a few
- * milliseconds earlier and against the same folder, which is the freshest thing
- * the instance will say about them — and the decision's facts come from the
- * answer, which is the whole point of asking. Nothing is weakened by that: the
- * fingerprint comparison still runs against a scan performed now rather than
- * against anything a reference remembered.
+ * So the scan this same call just re-ran is the base, and only what the answer
+ * actually decided is written over it. That direction is the point: a field the
+ * answer does not state keeps the value the instance reported for it moments
+ * ago, rather than becoming absent because this list forgot to name it. The
+ * decision's own fields are closed by what the resource declares, and a
+ * decision the answer does state — including an empty rejection list — wins
+ * over the scan's, which is the whole reason for asking.
+ *
+ * Nothing is weakened by this: the fingerprint comparison still runs against a
+ * scan performed now rather than against anything a reference remembered.
  */
 function decidedRow(scanned: UpstreamCandidate, decided: UpstreamCandidate): UpstreamCandidate {
   return {
-    ...decided,
-    // The media the answer names flat, put back in the shape the mapping reads.
-    // Sonarr sends only the flat identifier here; Radarr sends both.
-    series: decided.series ?? identified(decided.seriesId) ?? scanned.series,
-    movie: decided.movie ?? identified(decided.movieId) ?? scanned.movie,
-    // Facts of the file rather than of the decision, so the scan is what
-    // reports them and the answer never contradicts it.
-    id: decided.id ?? scanned.id,
-    size: decided.size ?? scanned.size,
-    relativePath: decided.relativePath ?? scanned.relativePath,
-    name: decided.name ?? scanned.name,
-    folderName: decided.folderName ?? scanned.folderName,
-    episodeFileId: decided.episodeFileId ?? scanned.episodeFileId,
-    movieFileId: decided.movieFileId ?? scanned.movieFileId,
-    // Both applications restate these as a numeric bitfield on this answer,
-    // which names nothing a caller can read, so the scan's names are kept.
-    indexerFlags: Array.isArray(decided.indexerFlags) ? decided.indexerFlags : scanned.indexerFlags,
+    ...scanned,
+    ...stated({
+      // The media the answer may name flat, put back in the shape the mapping
+      // reads. Sonarr sends only the flat identifier; Radarr sends both.
+      series: decided.series ?? identified(decided.seriesId),
+      movie: decided.movie ?? identified(decided.movieId),
+      seasonNumber: decided.seasonNumber,
+      episodes: decided.episodes,
+      quality: decided.quality,
+      languages: decided.languages,
+      releaseGroup: decided.releaseGroup,
+      releaseType: decided.releaseType,
+      customFormats: decided.customFormats,
+      customFormatScore: decided.customFormatScore,
+      rejections: decided.rejections,
+      // Both applications restate these as a numeric bitfield here, which names
+      // nothing a caller can read, so an answer that is not a list of names
+      // leaves the scan's names in place.
+      indexerFlags: Array.isArray(decided.indexerFlags) ? decided.indexerFlags : undefined,
+    }),
   };
+}
+
+/** The members an answer actually stated, where `undefined` is "did not say". */
+function stated<TFields extends Record<string, unknown>>(fields: TFields): Partial<TFields> {
+  return Object.fromEntries(
+    Object.entries(fields).filter(([, value]) => value !== undefined),
+  ) as Partial<TFields>;
 }
 
 /** The nested media object a flat identifier stands for, where there is one. */
@@ -1044,12 +1058,13 @@ export function importFileFields(
   path: string,
   patch: UpstreamMappingPatch,
 ): UpstreamBody {
-  const mediaId = patch.mediaId ?? row.series?.id ?? row.movie?.id ?? undefined;
+  const mediaId = patch.mediaId ?? count(row.series?.id) ?? count(row.movie?.id);
   const episodeIds =
     patch.episodeIds ??
-    (row.episodes ?? []).flatMap((episode) =>
-      episode.id === undefined || episode.id === null ? [] : [episode.id],
-    );
+    (row.episodes ?? []).flatMap((episode) => {
+      const id = count(episode.id);
+      return id === undefined ? [] : [id];
+    });
   const quality =
     patch.quality === undefined
       ? row.quality

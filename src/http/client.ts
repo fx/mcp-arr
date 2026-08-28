@@ -40,18 +40,14 @@ export type UpstreamQuery = Readonly<Record<string, UpstreamQueryValue | undefin
 export type UpstreamBody = Readonly<Record<string, unknown>>;
 
 /**
- * A request body that is a list rather than an object.
+ * Either shape a write may carry: the object above, or a list.
  *
- * A few upstream routes declare their payload as the collection itself —
- * manual-import reprocessing is one, and it refuses an object wrapping the list
- * with a `400` naming the type it wanted. Its members are built the same way
- * every other body is, so what this widens is the JSON shape and nothing about
- * where the values come from.
+ * A few upstream routes declare their payload as the collection itself, and
+ * refuse an object wrapping it with a `400` naming the type they wanted. The
+ * members of such a list are built exactly as every other body is, so what this
+ * widens is the JSON shape and nothing about where the values come from.
  */
-export type UpstreamListBody = readonly unknown[];
-
-/** Either shape a write may carry. */
-export type UpstreamRequestBody = UpstreamBody | UpstreamListBody;
+export type UpstreamRequestBody = UpstreamBody | readonly unknown[];
 
 /**
  * One answer to a validating write: the status the instance chose, and whatever

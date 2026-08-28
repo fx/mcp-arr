@@ -107,6 +107,37 @@ function candidatesOf(structured: unknown): readonly InspectedCandidate[] {
   return envelope.applications?.[0]?.data?.candidates ?? [];
 }
 
+/**
+ * The recorded scan of the tracked download, and the candidate it may import.
+ *
+ * Every test here starts from a candidate the instance actually offered rather
+ * than from a reference this file wrote, so the preamble is shared: a wrong
+ * assumption about the recorded scan should fail once, here, and not four
+ * times in four different words.
+ */
+async function inspectedCandidate(
+  child: SpawnedStdioProcess,
+  importable: boolean,
+): Promise<{
+  inspected: { isError: boolean; structured: unknown };
+  candidate: InspectedCandidate;
+}> {
+  const inspected = await inspect(child, 2, {
+    source: "queue_item",
+    queue: await queueReference(child, 90),
+    applications: ["sonarr"],
+  });
+  const candidate = candidatesOf(inspected.structured).find(
+    (found) => found.decision?.importable === importable,
+  );
+  if (candidate === undefined) {
+    throw new Error(
+      `Expected a candidate the instance ${importable ? "accepts" : "refuses"} in the recorded scan`,
+    );
+  }
+  return { inspected, candidate };
+}
+
 describe("arr_import_execute over stdio", () => {
   it("plans an import without moving anything, then applies it as one command", async () => {
     const sonarr = await instance();
@@ -114,17 +145,7 @@ describe("arr_import_execute over stdio", () => {
 
     try {
       await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
-      const inspected = await inspect(child, 2, {
-        source: "queue_item",
-        queue: await queueReference(child, 90),
-        applications: ["sonarr"],
-      });
-      const importable = candidatesOf(inspected.structured).find(
-        (candidate) => candidate.decision?.importable === true,
-      );
-      if (importable === undefined) {
-        throw new Error("Expected an importable candidate in the recorded scan");
-      }
+      const { inspected, candidate: importable } = await inspectedCandidate(child, true);
       // A candidate is named by reference, and its file by name alone.
       expect(importable.reference).toMatch(/^imp_/u);
       expect(JSON.stringify(inspected.structured)).not.toContain("/media/example/downloads");
@@ -178,17 +199,7 @@ describe("arr_import_execute over stdio", () => {
 
     try {
       await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
-      const inspected = await inspect(child, 2, {
-        source: "queue_item",
-        queue: await queueReference(child, 90),
-        applications: ["sonarr"],
-      });
-      const importable = candidatesOf(inspected.structured).find(
-        (candidate) => candidate.decision?.importable === true,
-      );
-      if (importable === undefined) {
-        throw new Error("Expected an importable candidate in the recorded scan");
-      }
+      const { inspected, candidate: importable } = await inspectedCandidate(child, true);
 
       const applied = await execute(child, 3, {
         mode: "apply",
@@ -243,17 +254,7 @@ describe("arr_import_execute over stdio", () => {
 
     try {
       await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
-      const inspected = await inspect(child, 2, {
-        source: "queue_item",
-        queue: await queueReference(child, 90),
-        applications: ["sonarr"],
-      });
-      const importable = candidatesOf(inspected.structured).find(
-        (candidate) => candidate.decision?.importable === true,
-      );
-      if (importable === undefined) {
-        throw new Error("Expected an importable candidate in the recorded scan");
-      }
+      const { candidate: importable } = await inspectedCandidate(child, true);
 
       const applied = await execute(child, 3, {
         mode: "apply",
@@ -286,17 +287,7 @@ describe("arr_import_execute over stdio", () => {
 
     try {
       await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
-      const inspected = await inspect(child, 2, {
-        source: "queue_item",
-        queue: await queueReference(child, 90),
-        applications: ["sonarr"],
-      });
-      const blocked = candidatesOf(inspected.structured).find(
-        (candidate) => candidate.decision?.importable === false,
-      );
-      if (blocked === undefined) {
-        throw new Error("Expected a candidate the instance refuses");
-      }
+      const { candidate: blocked } = await inspectedCandidate(child, false);
 
       const applied = await execute(child, 3, {
         mode: "apply",
