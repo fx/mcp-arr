@@ -5,7 +5,7 @@
 Read Radarr's import-list exclusions from the route Radarr serves. The domain map sends both applications to `importlistexclusion`, which Radarr answers with 404, so `arr_config_observe` fails for that domain on Radarr and reports the failure as a stale reference the caller never supplied.
 
 **Spec:** [Configuration Reconciliation](../specs/configuration-reconciliation/)
-**Status:** draft
+**Status:** complete
 **Depends On:** —
 
 ## Motivation
