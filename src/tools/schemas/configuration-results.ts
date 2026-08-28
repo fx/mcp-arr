@@ -7,7 +7,8 @@ import {
 import { configurationReferenceSchema } from "./common.js";
 
 /**
- * The published payloads of the two configuration tools.
+ * The published payload of `arr_config_observe`, the whole of the configuration
+ * surface.
  *
  * These are the contract, not a description of it: every envelope this server
  * produces is validated against the schema a host received from `tools/list`
@@ -121,87 +122,4 @@ export const configurationViewSchema = z.discriminatedUnion("family", [
     domain: resourceDomainSchema,
     records: z.array(resourceRecordSchema),
   }),
-]);
-
-/**
- * One field a write moves.
- *
- * `before` is absent where the current value is not one this server may report,
- * and `redacted` says so; a pointer reports the record it now names rather than
- * the value the instance stores for it, which is how a root folder's path stays
- * out of a diff.
- */
-const configurationChangeSchema = z.strictObject({
-  path: z.string().min(1),
-  action: z.enum(["set", "clear", "unchanged"]),
-  before: safeFieldValueSchema.optional(),
-  after: safeFieldValueSchema.optional(),
-  redacted: z.boolean().optional(),
-  reference: configurationReferenceSchema.optional(),
-});
-
-const secretDispositionSchema = z.strictObject({
-  name: z.string().min(1),
-  disposition: z.enum(["preserved", "cleared", "set", "changed"]),
-});
-
-export const configurationDiffSchema = z.strictObject({
-  reference: configurationReferenceSchema,
-  changes: z.array(configurationChangeSchema),
-  secrets: z.array(secretDispositionSchema),
-  /** What this write carried through without touching, as counts. */
-  preserved: z.strictObject({ properties: z.int().min(0), fields: z.int().min(0) }),
-});
-
-/**
- * What a provider test established.
- *
- * A finding names the field the instance objected to and whether the objection
- * was a warning; the instance's own message is deliberately not published,
- * because a rejection body is upstream text this server does not quote back.
- */
-const validationFindingSchema = z.strictObject({
-  field: z.string().min(1).optional(),
-  warning: z.boolean(),
-});
-
-export const providerTestResultSchema = z.strictObject({
-  outcome: z.enum(["passed", "warned", "failed"]),
-  findings: z.array(validationFindingSchema),
-  /** Objections this server could not read, counted rather than guessed at. */
-  unreadable: z.int().min(0),
-});
-
-const syncEffectSchema = z.strictObject({
-  indexer: configurationReferenceSchema,
-  name: z.string().min(1),
-  effect: z.enum(["add", "update", "remove", "stale"]),
-  reason: z.string().min(1),
-});
-
-const syncItemSchema = z.strictObject({
-  reference: configurationReferenceSchema,
-  name: z.string().min(1),
-  selection: z.string().min(1),
-  currentLevel: z.enum(["disabled", "add_only", "full_sync"]).optional(),
-  desiredLevel: z.enum(["disabled", "add_only", "full_sync"]),
-  effects: z.array(syncEffectSchema),
-  changed: z.boolean(),
-  attempted: z.boolean(),
-  verified: z.boolean().optional(),
-});
-
-export const applicationSyncResultSchema = z.strictObject({
-  mappings: z.array(syncItemSchema),
-});
-
-/**
- * The three payloads a reconciliation answers with, kept apart because they say
- * different things: what a desired-state write would change, what a test found,
- * and what each synchronized mapping did.
- */
-export const configurationReconcileDataSchema = z.union([
-  configurationDiffSchema,
-  providerTestResultSchema,
-  applicationSyncResultSchema,
 ]);

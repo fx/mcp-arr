@@ -28,12 +28,7 @@ import {
 } from "./schemas/activity.js";
 import { capabilitiesInputSchema, capabilitiesOutputSchema } from "./schemas/capabilities.js";
 import type { DetailLevel } from "./schemas/common.js";
-import {
-  configObserveInputSchema,
-  configObserveOutputSchema,
-  configReconcileInputSchema,
-  configReconcileOutputSchema,
-} from "./schemas/configuration.js";
+import { configObserveInputSchema, configObserveOutputSchema } from "./schemas/configuration.js";
 import {
   jobCancelInputSchema,
   jobCancelOutputSchema,
@@ -382,24 +377,6 @@ export const toolDefinitions: readonly ToolDefinition[] = [
     inputSchema: libraryChangeInputSchema,
     outputSchema: libraryChangeOutputSchema,
     annotations: destructive,
-    discriminator: "intent",
-  }),
-
-  domainTool({
-    name: "arr_config_reconcile",
-    title: "Reconcile application configuration",
-    description:
-      "Reconcile providers, profiles, and related resources toward a desired state, delete " +
-      "them, test a provider, or reconcile Prowlarr application sync. Unspecified fields are " +
-      "preserved, removals are explicit, and supplied secrets are used only for that request.",
-    inputSchema: configReconcileInputSchema,
-    outputSchema: configReconcileOutputSchema,
-    annotations: {
-      readOnlyHint: false,
-      destructiveHint: true,
-      idempotentHint: false,
-      openWorldHint: true,
-    },
     discriminator: "intent",
   }),
 

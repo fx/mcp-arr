@@ -1,13 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createManualClock } from "../src/state/clock.js";
-import {
-  checkResuppliedSecrets,
-  compareReadSet,
-  createPlanStore,
-  fingerprintReadSet,
-  readTransientSecrets,
-  stripTransientSecrets,
-} from "../src/state/plans.js";
+import { compareReadSet, createPlanStore, fingerprintReadSet } from "../src/state/plans.js";
 import { createReferenceStore, referenceLifetimes } from "../src/state/references.js";
 import { canonicalJson } from "../src/state/tokens.js";
 
@@ -19,13 +12,11 @@ function planStore(now = 0) {
   return { plans: createPlanStore(references, clock), references, clock };
 }
 
-const reconcileIntent = {
-  intent: "reconcile_provider",
+const monitoringIntent = {
+  intent: "set_monitoring",
   mode: "apply",
-  application: "sonarr",
-  domain: "indexers",
-  fields: [{ name: "baseUrl", value: "https://indexer.example.invalid" }],
-  secrets: [{ name: "apiKey", value: password }],
+  items: ["med_00000001"],
+  monitored: true,
 };
 
 describe("read-set fingerprints", () => {
@@ -83,65 +74,19 @@ describe("read-set fingerprints", () => {
   });
 });
 
-describe("transient secrets", () => {
-  it("reads only the well-formed secrets a validated intent carried", () => {
-    expect(readTransientSecrets(reconcileIntent)).toEqual([{ name: "apiKey", value: password }]);
-    expect(readTransientSecrets({ secrets: "not-an-array" })).toEqual([]);
-    expect(readTransientSecrets(undefined)).toEqual([]);
-  });
-
-  it("strips every secret value while retaining its name and presence", () => {
-    const stripped = stripTransientSecrets(reconcileIntent);
-
-    expect(stripped.requiredSecrets.map((secret) => secret.name)).toEqual(["apiKey"]);
-    expect(stripped.requiredSecrets[0]?.presence).not.toContain(password);
-    expect(JSON.stringify(stripped)).not.toContain(password);
-    expect(stripped.intent).toEqual({
-      intent: "reconcile_provider",
-      mode: "apply",
-      application: "sonarr",
-      domain: "indexers",
-      fields: [{ name: "baseUrl", value: "https://indexer.example.invalid" }],
-    });
-  });
-
-  it("requires each named secret to be resupplied", () => {
-    const { requiredSecrets } = stripTransientSecrets(reconcileIntent);
-
-    expect(checkResuppliedSecrets(requiredSecrets, [])).toEqual({
-      status: "missing",
-      names: ["apiKey"],
-    });
-    expect(checkResuppliedSecrets(requiredSecrets, [{ name: "apiKey", value: password }])).toEqual({
-      status: "satisfied",
-      warnings: [],
-    });
-  });
-
-  it("says so when the resupplied value is not the one the plan validated", () => {
-    const { requiredSecrets } = stripTransientSecrets(reconcileIntent);
-    const check = checkResuppliedSecrets(requiredSecrets, [{ name: "apiKey", value: "rotated" }]);
-
-    expect(check.status).toBe("satisfied");
-    expect(check.status === "satisfied" && check.warnings).toEqual([
-      "the resupplied apiKey differs from the value the plan validated",
-    ]);
-  });
-});
-
 describe("plan store", () => {
   it("records the intent, effects, and read set behind an opaque reference", () => {
     const { plans } = planStore(5_000);
     const record = plans.record({
-      tool: "arr_config_reconcile",
-      variant: "reconcile_provider",
+      tool: "arr_library_change",
+      variant: "set_monitoring",
       applications: ["sonarr"],
-      intent: reconcileIntent,
+      intent: monitoringIntent,
       requestedEffects: [
-        { application: "sonarr", severity: "consequential", summary: "update the indexer" },
+        { application: "sonarr", severity: "consequential", summary: "monitor the series" },
       ],
       predictedEffects: [],
-      warnings: ["the indexer will be re-tested"],
+      warnings: ["the series will be searched"],
       observations: [{ key: "provider", value: { id: 3, name: "Example" } }],
     });
 
@@ -149,29 +94,10 @@ describe("plan store", () => {
     expect(record.createdAt).toBe(5_000);
     expect(record.expiresAt).toBe(5_000 + referenceLifetimes.plan);
     expect(record.readSet).toHaveLength(1);
-    expect(record.requiredSecrets.map((secret) => secret.name)).toEqual(["apiKey"]);
+    expect(record.intent).toEqual(monitoringIntent);
 
     const resolved = plans.resolve(record.reference);
     expect(resolved).toEqual({ ok: true, record });
-  });
-
-  it("never retains a secret value in the record or in any serialization of it", () => {
-    const { plans, references } = planStore();
-    const record = plans.record({
-      tool: "arr_config_reconcile",
-      variant: "reconcile_provider",
-      applications: ["sonarr"],
-      intent: reconcileIntent,
-      requestedEffects: [],
-      predictedEffects: [],
-      warnings: [],
-      observations: [],
-    });
-
-    expect(JSON.stringify(record)).not.toContain(password);
-    const resolved = references.resolve(record.reference, "plan");
-    expect(JSON.stringify(resolved)).not.toContain(password);
-    expect(canonicalJson(record)).not.toContain(password);
   });
 
   it("expires and rejects a reference of another kind", () => {

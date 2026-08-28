@@ -56,7 +56,7 @@ Call `arr_capabilities` first. It contacts each configured instance and reports,
 - `unimplementedOperationCount` — how many tool calls this server publishes but has not implemented yet
 - `unsupportedOperationCount` — how many would need a newer release of that application
 
-The report is bounded by default: what an instance can do is listed, and what it cannot do is counted. Pass `detail: "full"` to get `unimplementedOperations` and `unsupportedOperations` enumerated as well — several times the payload, and none of it callable, so ask for it only when you want to know what is coming.
+The report is bounded by default: what an instance can do is listed, and what it cannot do is counted. Pass `detail: "full"` to get `unimplementedOperations` and `unsupportedOperations` enumerated as well — none of it callable, so ask for it only when you want to know what is coming. Both counts are currently zero on a supported release: every published tool call carries behavior.
 
 One unreachable instance never fails the whole report, and an unconfigured application is reported without needing placeholder credentials.
 
@@ -64,13 +64,23 @@ Minimum supported versions are Sonarr 4.0.19.2979 and Radarr 6.3.0.10514 (both A
 
 ## Implemented surface
 
-All fifteen tools publish every argument they accept as a property of one object schema, with each variant's own required and optional arguments described in that schema's documentation. Output schemas are published broadened — the result envelope's four top-level keys and where each application's payload sits, and nothing below that — because the same envelope repeated fifteen times was most of a listing every session pays for before making a call. What a payload contains is published instead as dot-paths generated from the schema the envelope is validated against, carried in that schema's own documentation; that is where to look up the fields a view returns. Only some carry behavior yet:
+All fourteen tools publish every argument they accept as a property of one object schema, with each variant's own required and optional arguments described in that schema's documentation. Output schemas are published broadened — the result envelope's four top-level keys and where each application's payload sits, and nothing below that — because the same envelope repeated once per tool was most of a listing every session pays for before making a call. What a payload contains is published instead as dot-paths generated from the schema the envelope is validated against, carried in that schema's own documentation; that is where to look up the fields a view returns.
 
 - `arr_capabilities` — reports the above.
 - `arr_library_query` — reads Sonarr series, seasons, episodes, episode files, missing and cutoff-unmet episodes; Radarr movies, collections, movie files, missing and cutoff-unmet movies; the calendar and metadata lookup for both. Results are bounded (default 25 records, maximum 100) and a lookup adds nothing.
+- `arr_activity_query` — reads queue status, queue records and details, history, blocklist, health, command activity, disk conditions, and Prowlarr indexer status or sanitized statistics.
+- `arr_release_search` — runs an interactive release search for a Sonarr episode or season, a Radarr movie, or across Prowlarr indexers, returning opaque release references instead of protected download URLs.
+- `arr_import_inspect` — discovers manual-import candidates from a tracked queue reference or a library context, and reprocesses one with explicit mapping corrections.
+- `arr_config_observe` — reads sanitized current configuration for providers, profiles, formats, tags, roots, remote path mappings, lists, and exclusions. Secret fields are reported as configured or unconfigured, never by value. Configuration is read-only: no tool writes it.
 - `arr_job_get` and `arr_job_cancel` — read and cancel jobs this server projected.
+- `arr_search_start` — starts a supported automatic search and returns a job reference.
+- `arr_release_grab` — grabs releases a previous search returned, by reference only.
+- `arr_queue_resolve` — applies a typed queue transition, each compiling to one exact upstream flag combination.
+- `arr_activity_change` — marks a history record failed or removes a blocklist record.
+- `arr_import_execute` — imports validated manual-import candidates with an explicit import mode.
+- `arr_library_change` — adds media from a lookup result, sets monitoring, edits typed metadata, deletes records, updates or deletes media files, renames, or moves.
 
-Every other tool validates its arguments and then answers `unsupported_capability`, which `arr_capabilities` counts under `unimplementedOperationCount` and lists at `detail: "full"`. Prowlarr has no media library, so no `arr_library_query` view is offered for it.
+Every mutation tool accepts `mode: "plan"` and `mode: "apply"`. Prowlarr has no media library, so no `arr_library_query` view is offered for it.
 
 Library records are returned with an opaque `reference`. That reference — not an upstream identifier — is what the views that take a parent (`seasons`, `episodes`, `episode_files`, `movie_files`) and the identifier filter (`media`) accept, so read the parent view first and pass the reference back. References are held in memory, expire after fifteen minutes, and do not survive a restart; a stale one is reported as `stale_reference` and is recovered by repeating the query that produced it.
 

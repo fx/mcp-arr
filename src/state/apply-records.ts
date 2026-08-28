@@ -3,7 +3,6 @@ import type { ToolError } from "../tools/errors.js";
 import type { ProjectedToolName } from "../tools/names.js";
 import type { ApplyRecordState, ItemOutcome } from "../tools/results.js";
 import type { Clock } from "./clock.js";
-import { readTransientSecrets } from "./plans.js";
 import type { ReferenceEntry, ReferenceFailureReason, ReferenceStore } from "./references.js";
 import { canonicalJson, fingerprint } from "./tokens.js";
 
@@ -54,12 +53,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Rewrites a value so nothing a caller chose about ordering can be seen.
  *
  * Every collection a mutation intent carries is a set in meaning — the queue
- * items to resolve, the releases to grab, the fields to reconcile, the secrets
- * to resupply — and none of the published schemas gives an array's order a
- * meaning. So naming the same two items in the other order is the same
- * mutation, and it has to reach the same receipt; if it did not, the reordered
- * repeat would miss the record and be sent upstream a second time, which is
- * exactly the duplicate the receipt exists to prevent.
+ * items to resolve, the releases to grab, the files to import — and none of the
+ * published schemas gives an array's order a meaning. So naming the same two
+ * items in the other order is the same mutation, and it has to reach the same
+ * receipt; if it did not, the reordered repeat would miss the record and be
+ * sent upstream a second time, which is exactly the duplicate the receipt
+ * exists to prevent.
  *
  * Duplicates collapse for the same reason: naming one item twice does not ask
  * for two mutations. Object property order needs no handling here because
@@ -87,13 +86,10 @@ function orderIndependent(value: unknown): unknown {
 /**
  * Derives the identity of an apply.
  *
- * Two fields are deliberately excluded. Secret values are excluded rather than
- * hashed in, because a receipt that survives for the process lifetime must not
- * depend on a credential and two applies differing only in a rotated password
- * are the same mutation. `mode` is excluded because it records how the caller
- * arrived, not what it is changing: an intent that was planned first and the
- * same intent supplied directly must land on one receipt, or the second route
- * would send the mutation a second time.
+ * One field is deliberately excluded. `mode` records how the caller arrived,
+ * not what it is changing: an intent that was planned first and the same intent
+ * supplied directly must land on one receipt, or the second route would send
+ * the mutation a second time.
  *
  * What remains is then made independent of every ordering the caller controls;
  * see {@link orderIndependent}.
@@ -111,9 +107,8 @@ function identifyingFields(intent: unknown): unknown {
   if (!isRecord(intent)) {
     return intent;
   }
-  const { mode: _mode, secrets: _secrets, ...identifying } = intent;
-  const names = readTransientSecrets(intent).map((secret) => secret.name);
-  return names.length === 0 ? identifying : { ...identifying, secrets: names };
+  const { mode: _mode, ...identifying } = intent;
+  return identifying;
 }
 
 export interface BeginApplyInput {

@@ -1,4 +1,9 @@
 import { fileURLToPath } from "node:url";
+import {
+  profileDomains,
+  providerDomains,
+  resourceDomains,
+} from "../../src/adapters/configuration/domains.js";
 import { createAdapterRegistry } from "../../src/adapters/registry.js";
 import { type ApplicationId, applicationDescriptors } from "../../src/applications.js";
 import { type EnvironmentRecord, parseEnvironment } from "../../src/config/environment.js";
@@ -7,11 +12,6 @@ import { createWorkflowState, type WorkflowState } from "../../src/state/workflo
 import type { ToolContext } from "../../src/tools/dispatch.js";
 import type { ToolName } from "../../src/tools/names.js";
 import { createOperationRegistry, type OperationDefinition } from "../../src/tools/operations.js";
-import {
-  profileDomainSchema,
-  providerDomainSchema,
-  resourceDomainSchema,
-} from "../../src/tools/schemas/configuration.js";
 import { loadFixture, type VersionedFixture } from "./fixtures.js";
 
 export const fixtureRoot = fileURLToPath(new URL("../fixtures", import.meta.url));
@@ -137,13 +137,6 @@ export const sampleToolInputs: Readonly<Record<ToolName, Record<string, unknown>
     items: [sampleReferences.media],
     monitored: true,
   },
-  arr_config_reconcile: {
-    intent: "reconcile_provider",
-    mode: "plan",
-    application: "sonarr",
-    domain: "indexers",
-    fields: [],
-  },
   arr_job_cancel: { mode: "apply", job: sampleReferences.job },
 };
 
@@ -151,8 +144,7 @@ export const sampleToolInputs: Readonly<Record<ToolName, Record<string, unknown>
 const planApplyArguments = { mode: "apply", plan: sampleReferences.plan } as const;
 
 /**
- * Every observation domain, assembled from the three domain schemas the
- * reconciliation intents narrow to.
+ * Every observation domain, assembled from the adapter's three family lists.
  *
  * `arr_config_observe` names its sixteen domains one literal at a time, so
  * these lists are a second statement of the same set rather than a restatement
@@ -160,9 +152,9 @@ const planApplyArguments = { mode: "apply", plan: sampleReferences.plan } as con
  * the completeness guard is there to catch.
  */
 const configurationDomains: readonly string[] = [
-  ...providerDomainSchema.options,
-  ...profileDomainSchema.options,
-  ...resourceDomainSchema.options,
+  ...providerDomains,
+  ...profileDomains,
+  ...resourceDomains,
 ];
 
 /**
@@ -325,74 +317,6 @@ export const sampleBranchInputs: Readonly<Record<ToolName, readonly Record<strin
       mode: "plan",
       media: sampleReferences.media,
       rootFolder: sampleReferences.configuration,
-    },
-    planApplyArguments,
-  ],
-  arr_config_reconcile: [
-    {
-      intent: "reconcile_provider",
-      mode: "plan",
-      application: "sonarr",
-      domain: "indexers",
-      fields: [{ name: "baseUrl", value: "https://indexer.example.invalid" }],
-    },
-    {
-      intent: "delete_provider",
-      mode: "plan",
-      application: "sonarr",
-      domain: "indexers",
-      target: sampleReferences.configuration,
-    },
-    {
-      intent: "test_provider",
-      mode: "plan",
-      application: "sonarr",
-      domain: "indexers",
-      target: sampleReferences.configuration,
-    },
-    {
-      intent: "force_provider_save",
-      mode: "plan",
-      application: "sonarr",
-      domain: "indexers",
-      fields: [{ name: "baseUrl", value: "https://indexer.example.invalid" }],
-      acceptValidationWarnings: true,
-    },
-    {
-      intent: "reconcile_profile",
-      mode: "plan",
-      application: "sonarr",
-      domain: "quality_profiles",
-      fields: [{ name: "name", value: "Example" }],
-    },
-    {
-      intent: "delete_profile",
-      mode: "plan",
-      application: "sonarr",
-      domain: "quality_profiles",
-      target: sampleReferences.configuration,
-    },
-    {
-      intent: "reconcile_resource",
-      mode: "plan",
-      application: "sonarr",
-      domain: "tags",
-      fields: [{ name: "label", value: "example" }],
-    },
-    {
-      intent: "delete_resource",
-      mode: "plan",
-      application: "sonarr",
-      domain: "tags",
-      target: sampleReferences.configuration,
-    },
-    {
-      intent: "reconcile_application_sync",
-      mode: "plan",
-      application: "prowlarr",
-      targets: [sampleReferences.configuration],
-      syncLevel: "add_only",
-      startSync: false,
     },
     planApplyArguments,
   ],

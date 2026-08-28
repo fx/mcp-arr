@@ -122,17 +122,21 @@ const propertyKeyPattern = /^[a-zA-Z0-9_.-]{1,64}$/u;
  * Every session pays this before making a single call, so its size is part of
  * the contract rather than an implementation detail. The number is a recorded
  * measurement plus a margin, not a budget somebody chose: it was read off a
- * spawned server at 57,686 bytes.
+ * spawned server at 52,118 bytes.
  *
  * The margin is sized against what it has to catch. The cheapest way for the
  * bulk to come back is one tool publishing its payload schema again, and the
- * smallest of those is `arr_job_get`'s at 1,431 bytes — so a margin under that
+ * smallest of those is `arr_job_get`'s at 1,483 bytes — so a margin under that
  * cannot hide even the least expensive regression, while still leaving room for
- * a tool description or a few payload fields. Raising it is a deliberate act,
- * which is the point: a change that reintroduces bulk fails here rather than
- * merely being regrettable.
+ * a tool description or a few payload fields. The 882 bytes here are well
+ * inside it.
+ *
+ * The number moves in both directions, and lowering it is as deliberate as
+ * raising it: withdrawing a tool shrinks the listing, and a ceiling left at the
+ * old measurement would keep the shape of a guard while admitting several times
+ * the regression it was written to catch.
  */
-const listingByteCeiling = 58_500;
+const listingByteCeiling = 53_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -203,7 +207,7 @@ interface ToolCallResult {
 }
 
 describe("built stdio tool surface", () => {
-  it("publishes the fifteen tools with their schemas and keeps stdout clean", async () => {
+  it("publishes the fourteen tools with their schemas and keeps stdout clean", async () => {
     const { tools, stdout, stderr } = await publishedTools();
 
     expect(tools.map((tool) => tool.name)).toEqual([...toolNames]);
@@ -461,20 +465,9 @@ describe("built stdio tool surface", () => {
       }
     }
 
-    // Pinned by name, and the only expectations here that are: `intent`
-    // scoping `domain` is the largest correlation the merge discards, and a
-    // derived check cannot tell a description that recovers the scoping from
-    // one that lists all sixteen domains on every line. Provider intents reach
-    // the seven provider domains and no profile domain.
-    const reconcile = published.get("arr_config_reconcile");
-    const providerLine = String(reconcile?.description ?? "")
-      .split("\n")
-      .find((line) => line.startsWith("- intent=reconcile_provider"));
-    expect(providerLine).toContain("indexers");
-    expect(providerLine).not.toContain("quality_profiles");
-
-    // The narrowest form of the same claim, and the one no derived check above
-    // can make. `arr_activity_change`'s two intents name the same arguments and
+    // Pinned by name, and the only expectation here that is: the narrowest
+    // correlation the merge discards, and the one no derived check above can
+    // make. `arr_activity_change`'s two intents name the same arguments and
     // differ only in the kind of reference `records` takes, so the reference
     // annotation is the whole of what tells them apart. Lose it — by the
     // published pattern drifting out from under the reverse lookup that

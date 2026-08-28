@@ -7,7 +7,6 @@ import {
   isProviderDomain,
   profileDomains,
   providerDomains,
-  providerSchemaRouteFor,
   resourceDomains,
   routeFor,
 } from "../src/adapters/configuration/domains.js";
@@ -79,12 +78,6 @@ describe("the configuration domain table", () => {
     // Release profiles are Sonarr's alone; Radarr replaced them with formats.
     expect(routeFor("release_profiles", "radarr")).toBeUndefined();
     expect(applicationsForDomain("release_profiles")).toEqual(["sonarr"]);
-  });
-
-  it("derives a provider schema route from the domain's own route", () => {
-    expect(providerSchemaRouteFor("indexers", "sonarr")).toBe("indexer/schema");
-    expect(providerSchemaRouteFor("applications", "prowlarr")).toBe("applications/schema");
-    expect(providerSchemaRouteFor("proxies", "sonarr")).toBeUndefined();
   });
 
   it("writes every route as a relative path, never as a URL or an absolute one", () => {

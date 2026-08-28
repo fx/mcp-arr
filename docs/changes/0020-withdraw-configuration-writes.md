@@ -5,7 +5,7 @@
 Remove `arr_config_reconcile` and everything that exists only to serve it. Configuration becomes read-only through `arr_config_observe`. The tool publishes nine intents, refuses three of them outright, and of the six it implements the only ones with a real use case are provider edits the project has decided not to support. Roughly 5,000 lines of adapter and tool code go with it, along with the transient-secret plumbing that nothing else produces.
 
 **Spec:** [Configuration Reconciliation](../specs/configuration-reconciliation/)
-**Status:** draft
+**Status:** complete
 **Depends On:** —
 
 ## Motivation
@@ -99,25 +99,25 @@ The [Configuration Reconciliation spec](../specs/configuration-reconciliation/#o
 
 ## Tasks
 
-- [ ] Pin the surface before removing it
-  - [ ] Add a wire test asserting the published tool list is exactly the fourteen remaining names, and confirm it fails today
-  - [ ] Add a test asserting no application reports a configuration write operation in any capability list
-- [ ] Remove the tool and its schemas
-  - [ ] Delete `src/tools/config-reconcile.ts`, and remove the tool from `names.ts`, `definitions.ts`, and `operations.ts`
-  - [ ] Remove the reconcile input and output schemas and the reconcile result payloads, keeping the observation view and its records
-  - [ ] Confirm `arr_config_observe` compiles, behaves, and tests identically
-- [ ] Remove the write adapters
-  - [ ] Delete the nine write-only configuration adapter modules
-  - [ ] Remove the fixtures that served only the removed write paths, keeping every fixture the observation path reads
-  - [ ] Update `scripts/verify-package.mjs` for the removed modules
-- [ ] Remove the transient-secret plumbing
-  - [ ] Remove secret handling from `state/plans.ts`, `state/apply-records.ts`, and `tools/dispatch.ts`, and the secret-presence fingerprint if unreferenced
-  - [ ] Confirm the plan, apply-record, and stale-plan suites for the seven remaining mutation tools pass unedited
-- [ ] Record the contract
-  - [ ] Amend the Tool Contracts spec for the fourteen-tool list and relocate the transient-secret requirements, with a changelog row
-  - [ ] Restructure the Configuration Reconciliation spec into the current observation surface and the retained withdrawn design, with a changelog row
-  - [ ] Update the README's tool list and any count it states
-  - [ ] Tick these tasks and set the status in this document, `docs/index.yml`, and `docs/index.md`
+- [x] Pin the surface before removing it
+  - [x] Add a wire test asserting the published tool list is exactly the fourteen remaining names, and confirm it fails today
+  - [x] Add a test asserting no application reports a configuration write operation in any capability list
+- [x] Remove the tool and its schemas
+  - [x] Delete `src/tools/config-reconcile.ts`, and remove the tool from `names.ts`, `definitions.ts`, and `operations.ts`
+  - [x] Remove the reconcile input and output schemas and the reconcile result payloads, keeping the observation view and its records
+  - [x] Confirm `arr_config_observe` compiles, behaves, and tests identically
+- [x] Remove the write adapters
+  - [x] Delete the nine write-only configuration adapter modules
+  - [x] Remove the fixtures that served only the removed write paths, keeping every fixture the observation path reads
+  - [x] Update `scripts/verify-package.mjs` for the removed modules
+- [x] Remove the transient-secret plumbing
+  - [x] Remove secret handling from `state/plans.ts`, `state/apply-records.ts`, and `tools/dispatch.ts`, and the secret-presence fingerprint if unreferenced
+  - [x] Confirm the plan, apply-record, and stale-plan suites for the seven remaining mutation tools pass unedited
+- [x] Record the contract
+  - [x] Amend the Tool Contracts spec for the fourteen-tool list and relocate the transient-secret requirements, with a changelog row
+  - [x] Restructure the Configuration Reconciliation spec into the current observation surface and the retained withdrawn design, with a changelog row
+  - [x] Update the README's tool list and any count it states
+  - [x] Tick these tasks and set the status in this document, `docs/index.yml`, and `docs/index.md`
 
 ## Open Questions
 

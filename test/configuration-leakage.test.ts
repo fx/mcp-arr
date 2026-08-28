@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import type { UpstreamValue } from "../src/adapters/configuration/resources.js";
-import { serializeProviderTemplate } from "../src/adapters/configuration/serialize.js";
 import type { ApplicationId } from "../src/applications.js";
 import {
   expectObservationError,
@@ -9,7 +8,6 @@ import {
   observationRequest,
   observe,
   providerRecords,
-  recordedSchemaContext,
 } from "./support/configuration.js";
 import { fixtureBody, jsonResponse } from "./support/library.js";
 import { testApiKeys } from "./support/tool-context.js";
@@ -76,23 +74,6 @@ describe("planted secrets never reach the model-facing output", () => {
       for (const marker of planted) {
         expect(internal).toContain(marker);
       }
-    }
-  });
-
-  it("keeps a schema endpoint's default value out of the descriptors it produces", async () => {
-    const schema = await fixtureBody<readonly Record<string, unknown>[]>(
-      "sonarr",
-      "indexer/schema",
-    );
-    const planted = canaries(schema);
-    expect(planted.length).toBeGreaterThan(0);
-
-    // The catalogue reaches no result, so this is asserted where the templates
-    // are still built: the staleness check serializes one per reconciliation,
-    // and a default the serializer copied would be a current setting.
-    const templates = schema.map((raw) => serializeProviderTemplate(recordedSchemaContext, raw));
-    for (const marker of planted) {
-      expect(JSON.stringify(templates)).not.toContain(marker);
     }
   });
 });

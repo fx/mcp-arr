@@ -26,9 +26,9 @@ import { configObserveInputSchema } from "./schemas/configuration.js";
  *
  * That translation is the reason this file exists at all. A configuration
  * record's upstream identifier never reaches a result: the caller receives a
- * `cfg_` token, the store holds the identity behind it, and a later
- * reconciliation resolves the token rather than accepting an upstream row
- * number from whoever happened to send one.
+ * `cfg_` token, the store holds the identity behind it, and a later mutation
+ * resolves the token rather than accepting an upstream row number from whoever
+ * happened to send one.
  */
 
 function invalid(invocation: OperationInvocation, message: string): ToolError {
@@ -80,10 +80,10 @@ export interface PublishedView {
  *
  * The detail carries both vocabularies on purpose. `arr_library_change`
  * resolves a configuration reference by the pointer kind a library record uses
- * — `tag`, `root_folder`, `quality_profile` — while reconciliation resolves it
- * by the configuration domain it was observed in. Recording both is what lets
- * one tag reference be used by either tool instead of each minting a token the
- * other refuses.
+ * — `tag`, `root_folder`, `quality_profile` — while the observation that minted
+ * it knows only the configuration domain it was read from. Recording both is
+ * what lets one tag reference be minted by this tool and used by that one,
+ * instead of each minting a token the other refuses.
  */
 export function referenceMinter(references: ReferenceStore): (ref: ConfigurationRef) => string {
   const minted = new Map<string, string>();
@@ -102,8 +102,8 @@ export function referenceMinter(references: ReferenceStore): (ref: Configuration
           upstreamId: ref.id,
           // A configuration record is named by this reference, not read through
           // it, so the identity is the whole of what there is to fingerprint.
-          // Whether the record itself moved is a question reconciliation asks
-          // of the instance, not of a token minted before it.
+          // Whether the record itself moved is a question the mutation that
+          // uses it asks of the instance, not of a token minted before it.
           fingerprint: queryDigest([ref.application, ref.domain, ref.id]),
           detail: {
             domain: ref.domain,

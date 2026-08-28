@@ -56,7 +56,6 @@ const routes: Readonly<Record<ApplicationId, readonly string[]>> = {
     "release",
     "config/downloadclient",
     "indexer",
-    "indexer/schema",
   ],
   radarr: [
     "system/status",
@@ -144,17 +143,10 @@ const queueGrabRoute = /^queue\/grab\/(\d+)$/u;
  * another over a real socket instead of only in a unit test's memory.
  */
 const recordRoutes: Readonly<Record<ApplicationId, readonly string[]>> = {
-  // The configuration collections are here for the same reason the library
-  // ones are: a desired-state write is a read-modify-write over one record, so
-  // the double has to hold the record rather than only the collection, and the
-  // read after a write has to see what was written.
-  sonarr: ["series", "episodefile", "indexer", "qualityprofile", "tag"],
+  sonarr: ["series", "episodefile"],
   radarr: ["movie", "moviefile", "collection"],
-  prowlarr: ["applications"],
+  prowlarr: [],
 };
-
-/** `indexer/test`, the provider-test route each provider collection exposes. */
-const providerTestRoute = /^([a-z]+)\/test$/u;
 
 /** The collections a create may append to, and the metadata identifier one carries. */
 const createRoutes: Readonly<
@@ -173,12 +165,6 @@ const grabRoutes: Readonly<Record<ApplicationId, string>> = {
 };
 
 export interface FixtureInstanceOptions {
-  /**
-   * The objections a provider test answers with, as the instance's own
-   * validation array. Absent means every test is accepted, which is what an
-   * instance that reached the provider and liked what it found returns.
-   */
-  readonly providerTestObjections?: readonly Readonly<Record<string, unknown>>[] | undefined;
   /**
    * Drops every connection instead of answering it, which is what this server
    * sees when a configured instance is not running. Modelled by an accepting
@@ -271,12 +257,6 @@ export interface FixtureInstance {
    * absent — so a test asserting on these cannot mistake a rejected write for a
    * performed one.
    */
-  /**
-   * The provider tests this instance was asked to run, with the resource each
-   * one carried. A test contacts something outside the instance, so a test
-   * asserting that one was or was not sent needs the record of it.
-   */
-  readonly providerTests: readonly { readonly route: string; readonly body: unknown }[];
   /** The candidate rows a manual-import reprocess was asked to re-decide. */
   readonly reprocessed: readonly Record<string, unknown>[];
   readonly failedHistory: readonly number[];
@@ -363,7 +343,6 @@ export async function startFixtureInstance(
   const resolvedQueue: number[] = [];
   const queueResolutions: UpstreamQueueResolution[] = [];
   const writes: UpstreamWrite[] = [];
-  const providerTests: { route: string; body: unknown }[] = [];
   const reprocessed: Record<string, unknown>[] = [];
   // Well clear of every identifier the recorded fixtures use, so a created
   // record is always distinguishable from one that was already there.
@@ -552,10 +531,6 @@ export async function startFixtureInstance(
         (collection === "blocklist" && answers("blocklist"))
       );
     }
-    const test = providerTestRoute.exec(candidate);
-    if (test !== null) {
-      return answers(test[1] ?? "");
-    }
     return historyFailedRoute.test(candidate) && answers("history");
   };
 
@@ -664,27 +639,6 @@ export async function startFixtureInstance(
         failedHistory.push(id);
         response.writeHead(200);
         response.end();
-        return;
-      }
-
-      // A provider test: the one configuration write that stores nothing. It
-      // answers the way an instance does — accepted with no body, or refused
-      // with the objections it raised — so a caller can tell a test that passed
-      // from one that raised warnings without either being invented here.
-      const providerTest = providerTestRoute.exec(route);
-      if (providerTest !== null && answers(providerTest[1] ?? "")) {
-        readPostedBody(request).then(
-          (body) => {
-            providerTests.push({ route, body });
-            if (options.providerTestObjections === undefined) {
-              response.writeHead(200);
-              response.end();
-              return;
-            }
-            send(response, 400, options.providerTestObjections);
-          },
-          () => send(response, 400, { message: "unreadable body" }),
-        );
         return;
       }
 
@@ -857,7 +811,6 @@ export async function startFixtureInstance(
     commands: started,
     failedHistory,
     removedBlocklist,
-    providerTests,
     reprocessed,
     queueResolutions,
     writes,

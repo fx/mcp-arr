@@ -78,25 +78,6 @@ export const providerResourceSchema = z.object({
 
 export type UpstreamProviderResource = z.infer<typeof providerResourceSchema>;
 
-/** One dynamic provider field as the schema endpoint describes it. */
-const providerSchemaFieldSchema = z.object({
-  name: z.string().min(1),
-  label: upstreamText,
-  type: upstreamText,
-  advanced: upstreamFlag,
-  privacy: upstreamText,
-});
-
-export const providerTemplateSchema = z.object({
-  name: upstreamText,
-  implementation: upstreamText,
-  implementationName: upstreamText,
-  configContract: upstreamText,
-  fields: z.array(providerSchemaFieldSchema).nullish(),
-});
-
-export type UpstreamProviderTemplate = z.infer<typeof providerTemplateSchema>;
-
 /**
  * A quality-profile entry, which nests: a group carries its own name and the
  * qualities under it, while a leaf carries one quality. Both are reported by

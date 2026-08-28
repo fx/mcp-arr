@@ -9,7 +9,7 @@ import {
   type ReferenceStore,
   referenceLifetimes,
 } from "./references.js";
-import { fingerprint, secretPresenceFingerprint } from "./tokens.js";
+import { fingerprint } from "./tokens.js";
 
 /**
  * One named value an operation read while planning.
@@ -108,132 +108,20 @@ export function compareReadSet(
     : { status: "changed", changed, missing };
 }
 
-/**
- * A transient secret the caller supplied for one request.
- *
- * The value never leaves the request it arrived on. It is read here only to
- * derive the presence fingerprint a plan retains, and is deliberately not a
- * field of {@link PlanRecord}.
- */
-export interface TransientSecret {
-  readonly name: string;
-  readonly value: string;
-}
-
-export interface SecretRequirement {
-  readonly name: string;
-  /** Non-reversible and process-local; see `secretPresenceFingerprint`. */
-  readonly presence: string;
-}
-
-const secretsProperty = "secrets";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isTransientSecret(value: unknown): value is TransientSecret {
-  return isRecord(value) && typeof value.name === "string" && typeof value.value === "string";
-}
-
-/**
- * Reads the transient secrets a validated mutation input carried.
- *
- * The published schemas declare `secrets` only at the root of an intent, so
- * this looks exactly there: a recursive search would invent a shape no tool
- * accepts and could report two secrets with the same name from different
- * depths.
- */
-export function readTransientSecrets(input: unknown): readonly TransientSecret[] {
-  if (!isRecord(input)) {
-    return [];
-  }
-  const supplied = input[secretsProperty];
-  return Array.isArray(supplied) ? supplied.filter(isTransientSecret) : [];
-}
-
-export interface StrippedIntent {
-  /** The intent with every secret value removed, safe to retain in a plan. */
-  readonly intent: unknown;
-  readonly requiredSecrets: readonly SecretRequirement[];
-}
-
-/**
- * Separates an intent from the secrets it carried.
- *
- * A plan retains the intent so apply can replay it without the caller restating
- * it, which makes the secret values the one thing that must not survive. They
- * are replaced by names and presence fingerprints, so applying the plan
- * requires the caller to resupply each named secret for that request alone.
- */
-export function stripTransientSecrets(input: unknown): StrippedIntent {
-  const secrets = readTransientSecrets(input);
-  if (!isRecord(input) || secrets.length === 0) {
-    return { intent: input, requiredSecrets: [] };
-  }
-
-  const { [secretsProperty]: _removed, ...retained } = input;
-  return {
-    intent: retained,
-    requiredSecrets: secrets.map((secret) => ({
-      name: secret.name,
-      presence: secretPresenceFingerprint(secret.name, secret.value),
-    })),
-  };
-}
-
-export type SecretCheck =
-  | { readonly status: "satisfied"; readonly warnings: readonly string[] }
-  | { readonly status: "missing"; readonly names: readonly string[] };
-
-/**
- * Checks the secrets a caller resupplied against the ones the plan needs.
- *
- * A differing value is not an error — the caller is supplying the credential to
- * use now, and it may legitimately have been rotated since the plan — but it is
- * worth saying out loud, because a plan validated against one credential is
- * being applied with another.
- */
-export function checkResuppliedSecrets(
-  required: readonly SecretRequirement[],
-  supplied: readonly TransientSecret[],
-): SecretCheck {
-  const byName = new Map(supplied.map((secret) => [secret.name, secret.value]));
-  const missing: string[] = [];
-  const warnings: string[] = [];
-
-  for (const requirement of required) {
-    const value = byName.get(requirement.name);
-    if (value === undefined) {
-      missing.push(requirement.name);
-      continue;
-    }
-    if (secretPresenceFingerprint(requirement.name, value) !== requirement.presence) {
-      warnings.push(`the resupplied ${requirement.name} differs from the value the plan validated`);
-    }
-  }
-
-  return missing.length > 0
-    ? { status: "missing", names: missing }
-    : { status: "satisfied", warnings };
-}
-
 export interface PlanRecord {
   readonly reference: string;
   readonly tool: ProjectedToolName;
   readonly variant: string | undefined;
   readonly applications: readonly ApplicationId[];
   /**
-   * The validated direct intent, with every transient secret value removed.
+   * The validated direct intent.
    *
-   * Retaining the rest of the intent is what lets apply replay it without the
-   * caller restating it, so the record does hold the arguments the caller
-   * supplied — for the plan's lifetime, in process memory, and never in a tool
-   * result. The declared channel for anything that must not be retained is the
-   * `secrets` array, whose values are stripped here; a credential placed in an
-   * ordinary field instead is retained like any other argument, which is why
-   * the tool that accepts such fields documents the secret channel as the way
-   * to supply one.
+   * Retaining it is what lets apply replay the plan without the caller
+   * restating it, so the record does hold the arguments the caller supplied —
+   * for the plan's lifetime, in process memory, and never in a tool result. No
+   * tool accepts a credential as an argument; if one is reintroduced, the
+   * requirements for handling it are in the Configuration Reconciliation spec's
+   * withdrawn surface.
    *
    * Its own `mode` field still reads `plan`, because it is the arguments the
    * planning call carried; how a handler is being run is decided by
@@ -249,7 +137,6 @@ export interface PlanRecord {
   readonly predictedEffects: readonly Effect[];
   readonly warnings: readonly string[];
   readonly readSet: readonly ReadSetFingerprint[];
-  readonly requiredSecrets: readonly SecretRequirement[];
   readonly createdAt: number;
   readonly expiresAt: number;
 }
@@ -290,7 +177,6 @@ function planPayloadOf(entry: ReferenceEntry): PlanRecord | undefined {
 export function createPlanStore(references: ReferenceStore, clock: Clock): PlanStore {
   return {
     record(input: RecordPlanInput): PlanRecord {
-      const stripped = stripTransientSecrets(input.intent);
       const createdAt = clock.now();
       const entry = references.mint({
         kind: "plan",
@@ -302,12 +188,11 @@ export function createPlanStore(references: ReferenceStore, clock: Clock): PlanS
             tool: input.tool,
             variant: input.variant,
             applications: [...input.applications],
-            intent: stripped.intent,
+            intent: input.intent,
             requestedEffects: [...input.requestedEffects],
             predictedEffects: [...input.predictedEffects],
             warnings: [...input.warnings],
             readSet: fingerprintReadSet(input.observations),
-            requiredSecrets: stripped.requiredSecrets,
             createdAt,
             expiresAt: createdAt + referenceLifetimes.plan,
           },

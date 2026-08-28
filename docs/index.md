@@ -36,4 +36,4 @@ Changes 0011 through 0014 were scheduled ahead of the lower-numbered domain chan
 | 0017 | [Grammar-Compilable Input Schemas](changes/0017-grammar-compilable-input-schemas.md) | [Tool Contracts](specs/tool-contracts/) | draft | 0015, 0020 |
 | 0018 | [Bounded Tool Listing](changes/0018-bounded-tool-listing.md) | [Tool Contracts](specs/tool-contracts/) | complete | 0015 |
 | 0019 | [Selected Result Fields](changes/0019-selected-result-fields.md) | [Tool Contracts](specs/tool-contracts/) | draft | 0017, 0018 |
-| 0020 | [Withdraw the Configuration Write Surface](changes/0020-withdraw-configuration-writes.md) | [Configuration Reconciliation](specs/configuration-reconciliation/) | draft | — |
+| 0020 | [Withdraw the Configuration Write Surface](changes/0020-withdraw-configuration-writes.md) | [Configuration Reconciliation](specs/configuration-reconciliation/) | complete | — |
