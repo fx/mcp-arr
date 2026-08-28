@@ -80,6 +80,7 @@ This parity is about the argument schema only. Cross-property correlations discl
 - A projection MUST NOT remove the result envelope, a per-application outcome's own fields, or the field that discriminates the payload, and a projection path matching nothing MUST produce a warning naming the paths that were available rather than failing the call.
 - A published output schema MUST admit every envelope its tool returns, including one a projection reduced, and MAY therefore be broader than the envelope any single call produces.
 - Where a published output schema is broader than the envelope returned, each payload's selectable paths MUST be described in documentation generated from the same schemas the envelope is validated against, so the description cannot drift from what is returned.
+- That documentation MUST name each path down to a leaf of the payload, and MUST group the paths of a payload that is discriminated by the value that selects it rather than merging every payload's paths into one list, so no path is offered that resolves for no single call. A tool that returns no payload MUST publish no path inventory.
 
 #### Scenario: Partial cross-application result
 
