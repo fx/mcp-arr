@@ -39,6 +39,27 @@ export const maxProjectionPaths = 64;
 export const maxProjectionPathLength = 64;
 
 /**
+ * The most the one unmatched-path warning may cost, in characters.
+ *
+ * Bounded for the same reason the projection is: this is a size-reduction
+ * feature, and its error path is reached by exactly the caller it was designed
+ * for — an agent guessing field names on a wide payload. Unbounded, a
+ * sixty-four-path near miss on the calendar payload answered with 5,957 bytes,
+ * about a third of the page the projection was shrinking.
+ *
+ * The number is a floor read off the same inventory the other two bounds are,
+ * not a generous-looking round one. The longest complete path list any payload
+ * publishes is `arr_library_query`'s calendar at 1,641 characters, and that list
+ * is already in the caller's hands from `tools/list` — so a warning costing more
+ * than restating the widest inventory in full is strictly worse than one that
+ * stops and points at what the caller already holds. This is above that with
+ * room for a payload to grow, and `tool-projection.test.ts` asserts it against
+ * the generated inventory so a wider payload fails there rather than quietly
+ * making the warning uninformative.
+ */
+export const maxProjectionWarningLength = 1_800;
+
+/**
  * A projection names fields; it never filters, sorts, renames, or computes.
  *
  * Nothing here refuses a path that names no field. A projection is written by a

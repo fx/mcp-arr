@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isRecord, type JsonSchema } from "./schemas/json-schema.js";
+import { maxProjectionWarningLength } from "./schemas/projection.js";
 import { type PayloadInventory, payloadInventory } from "./schemas/publish-results.js";
 
 /**
@@ -240,25 +241,96 @@ function pick(source: unknown, selection: Selection): unknown {
   return Object.keys(projected).length === 0 ? undefined : projected;
 }
 
+const unmatchedHeader = "these projection paths matched nothing and were ignored: ";
+
+function truncationNote(left: string): string {
+  return (
+    `; truncated here, ${left} not named — every path this payload publishes ` +
+    "is in this tool's output schema"
+  );
+}
+
+/**
+ * What the two lists may spend between them.
+ *
+ * The bound is on the finished warning, so the parts that are not a list come
+ * off it first — and they are measured rather than guessed at, with count
+ * placeholders wide enough that a longer number cannot quietly overrun.
+ */
+const listBudget =
+  maxProjectionWarningLength -
+  unmatchedHeader.length -
+  truncationNote("000 more unmatched path(s) and 000 more stopping point(s)").length;
+
+interface Fitted {
+  readonly text: string;
+  /** How many entries did not fit, so the reader is told rather than misled. */
+  readonly omitted: number;
+}
+
+/**
+ * As many entries as a budget allows, and how many were left out.
+ *
+ * The first entry is kept whatever it costs. A warning naming no path at all
+ * would be worse than a long one: it would say something went wrong and give
+ * the caller nothing to act on, and one entry is bounded by the path length a
+ * projection may name in the first place.
+ */
+function within(entries: readonly string[], separator: string, budget: number): Fitted {
+  const kept: string[] = [];
+  let used = 0;
+  for (const entry of entries) {
+    const cost = kept.length === 0 ? entry.length : entry.length + separator.length;
+    if (kept.length > 0 && used + cost > budget) {
+      break;
+    }
+    kept.push(entry);
+    used += cost;
+  }
+  return { text: kept.join(separator), omitted: entries.length - kept.length };
+}
+
 /**
  * The one warning an unmatched projection produces.
  *
- * It names every path that matched nothing and, beside it, the paths that were
+ * It names the paths that matched nothing and, beside them, the paths that were
  * available where each stopped. That is what makes a wrong guess self-correcting
  * inside the same call: the caller reads the alternatives and re-sends, rather
  * than paying a round trip for a rejection and then a second one for the
  * listing. The call itself still succeeds and still returns its matched
  * selection.
+ *
+ * Both halves are bounded, because both grow without limit otherwise — up to
+ * sixty-four paths of sixty-four characters on one side, and one entry per
+ * distinct stopping point on the other. {@link offeredUnder} already bounds how
+ * deep each entry goes; this bounds how many there are and how much they may
+ * cost together, which is the axis a wide payload blows out.
+ *
+ * What is dropped is said out loud. A truncated list a caller reads as complete
+ * is worse than no list: it would rule out the very path that would have worked,
+ * so the note names how much is missing and where the whole of it lives.
  */
 function describeUnmatched(
   unmatched: readonly string[],
   offered: ReadonlyMap<string, readonly string[]>,
 ): string {
-  const where = [...offered].map(([prefix, paths]) => {
+  const clauses = [...offered].map(([prefix, paths]) => {
     const at = prefix === "" ? "the payload" : prefix;
     return paths.length === 0 ? `${at} offers no field` : `${at} offers ${paths.join(", ")}`;
   });
-  return `these projection paths matched nothing and were ignored: ${unmatched.join(", ")}; ${where.join("; ")}`;
+
+  // Half to what missed and the rest to what is available instead, with
+  // whatever the first half leaves unspent carried over. A caller needs both:
+  // which of its guesses failed, and what it could have written instead.
+  const missed = within(unmatched, ", ", Math.floor(listBudget / 2));
+  const where = within(clauses, "; ", listBudget - missed.text.length);
+
+  const left = [
+    ...(missed.omitted === 0 ? [] : [`${missed.omitted} more unmatched path(s)`]),
+    ...(where.omitted === 0 ? [] : [`${where.omitted} more stopping point(s)`]),
+  ];
+  const note = left.length === 0 ? "" : truncationNote(left.join(" and "));
+  return `${unmatchedHeader}${missed.text}; ${where.text}${note}`;
 }
 
 export interface ProjectedEnvelope {

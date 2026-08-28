@@ -1,7 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ToolContext } from "../src/tools/dispatch.js";
 import { type ToolName, toolNames } from "../src/tools/names.js";
-import { maxProjectionPathLength, maxProjectionPaths } from "../src/tools/schemas/projection.js";
+import {
+  maxProjectionPathLength,
+  maxProjectionPaths,
+  maxProjectionWarningLength,
+} from "../src/tools/schemas/projection.js";
 import { type PayloadInventory, payloadInventory } from "../src/tools/schemas/publish-results.js";
 import {
   type FixtureInstance,
@@ -213,6 +217,7 @@ describe("the projection argument", () => {
   it("is bounded at or above the widest and deepest payload the server publishes", () => {
     let widest = 0;
     let deepest = 0;
+    let listed = 0;
     let measured = 0;
 
     for (const name of toolNames) {
@@ -223,6 +228,7 @@ describe("the projection argument", () => {
       for (const payload of inventory.payloads) {
         measured += 1;
         widest = Math.max(widest, payload.paths.length);
+        listed = Math.max(listed, payload.paths.join(", ").length);
         for (const path of payload.paths) {
           deepest = Math.max(deepest, path.length);
         }
@@ -231,17 +237,25 @@ describe("the projection argument", () => {
 
     // A loop is only a check if it ran.
     expect(measured, "payloads measured").toBeGreaterThan(0);
-    // Both bounds are floors read off what the tools advertise, not numbers
-    // anybody preferred: a bound below either would refuse a projection naming
-    // exactly the paths a tool publishes. A payload that later grows a wider or
-    // deeper shape fails here rather than silently making a published path
-    // unselectable.
+    // All three bounds are floors read off what the tools advertise, not numbers
+    // anybody preferred: one below either of the first two would refuse a
+    // projection naming exactly the paths a tool publishes. A payload that later
+    // grows a wider or deeper shape fails here rather than silently making a
+    // published path unselectable.
     expect(maxProjectionPaths, `widest payload publishes ${widest} paths`).toBeGreaterThanOrEqual(
       widest,
     );
     expect(maxProjectionPathLength, `deepest path is ${deepest} characters`).toBeGreaterThanOrEqual(
       deepest,
     );
+    // And the third: a caller already holds every one of these paths from
+    // `tools/list`, so a warning allowed to cost more than restating the widest
+    // inventory in full would be worse than one that stops and points at what
+    // the caller has.
+    expect(
+      maxProjectionWarningLength,
+      `the widest payload's whole path list is ${listed} characters`,
+    ).toBeGreaterThanOrEqual(listed);
   });
 
   it("is accepted by every collection query and by no other tool", () => {
@@ -477,6 +491,65 @@ describe("the projection argument", () => {
     expect(past).toContain("items.title offers no field");
     expect(past).toContain("view offers no field");
     expect(past).not.toContain("items.year");
+  }, 30_000);
+
+  it("keeps the one warning inside its bound on the widest payload it can miss", async () => {
+    const published =
+      inventoryOf("arr_library_query").payloads.find((payload) =>
+        payload.variants.includes("calendar"),
+      )?.paths ?? [];
+    expect(published.length, "calendar paths").toBeGreaterThan(0);
+
+    // The case the bound exists for, and the one this change's own motivation
+    // describes: an agent guessing field names on the widest payload the server
+    // publishes. Every interior node missed by a segment first — those answer
+    // with real alternatives — then every leaf overshot by one, which answer
+    // with none. Together they reach more distinct stopping points than any
+    // payload has fields, which is the axis that blew the warning out.
+    const interior = [
+      ...new Set(
+        published.flatMap((path) => {
+          const segments = path.split(".");
+          return segments
+            .slice(0, -1)
+            .map((_name, depth) => segments.slice(0, depth + 1).join("."));
+        }),
+      ),
+    ];
+    const projection = [
+      ...interior.map((path) => `${path}.nope`),
+      ...published.map((path) => `${path}.extra`),
+    ].slice(0, maxProjectionPaths);
+    expect(projection.length, "projection at the count bound").toBe(maxProjectionPaths);
+
+    const answered = await callTool("arr_library_query", context, {
+      view: "calendar",
+      start: "2026-01-01",
+      end: "2026-03-01",
+      projection,
+    });
+
+    const warnings = Array.isArray(answered.structured.warnings)
+      ? answered.structured.warnings
+      : [];
+    const before = Array.isArray(answered.envelope.warnings) ? answered.envelope.warnings : [];
+    // Still one warning, however many paths missed and however many stopping
+    // points they reached.
+    expect(warnings.length).toBe(before.length + 1);
+
+    const warning = String(warnings.at(-1));
+    const bytes = Buffer.byteLength(warning, "utf8");
+    expect(bytes, `the warning is ${bytes} bytes`).toBeLessThanOrEqual(maxProjectionWarningLength);
+
+    // Still self-correcting: it says where reading stopped and names paths the
+    // caller could have written instead.
+    expect(warning).toContain("items offers ");
+    expect(warning).toContain("items.media");
+    // And it says what it left out, so a truncated list cannot be read as the
+    // whole of what was available — which would rule out the very path that
+    // would have worked.
+    expect(warning).toMatch(/truncated here, .+ not named/u);
+    expect(warning).toContain("this tool's output schema");
   }, 30_000);
 
   it("still says a path named nothing when no application answered with a payload", async () => {
