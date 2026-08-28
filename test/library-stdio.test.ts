@@ -4,6 +4,7 @@ import { libraryViews } from "../src/adapters/library/requests.js";
 import type { ApplicationId } from "../src/applications.js";
 import { libraryQueryOutputSchema } from "../src/tools/schemas/library.js";
 import type { LibraryViewResult } from "../src/tools/schemas/library-results.js";
+import { publishedResultSchema } from "../src/tools/schemas/publish-results.js";
 import {
   type FixtureInstance,
   instanceEnvironment,
@@ -229,6 +230,85 @@ describe("arr_library_query over stdio", () => {
       expect(answer.summary).toContain(
         "errors: unavailable_application (Confirm the instance is running and reachable, then retry; other applications are unaffected.)",
       );
+
+      await child.terminateGracefully();
+      assertCleanProtocolStdout(child.stdout);
+      expect(child.stderr).toBe("");
+      expect(child.stdout).not.toContain(radarr.apiKey);
+      expect(child.stdout).not.toContain("127.0.0.1");
+    } finally {
+      await child.forceCleanup().catch(() => undefined);
+    }
+  }, 30_000);
+
+  it("returns only the fields a projection names and warns about the one that missed", async () => {
+    const radarr = await instance("radarr");
+    const child = spawnBuiltServer(instanceEnvironment([radarr]), 10_000);
+
+    try {
+      await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
+      // The same page unprojected, over the same session, so what the projected
+      // call hands back is compared against what this tool really returns
+      // rather than against a literal written here.
+      const full = only(
+        (await query(child, 2, { view: "movies", applications: ["radarr"] })).outcomes,
+        "movies outcome",
+      );
+      const records = full.data?.view === "movies" ? full.data.items : [];
+      expect(records.length).toBeGreaterThan(0);
+
+      const called = (await child.request(3, "tools/call", {
+        name: "arr_library_query",
+        arguments: {
+          view: "movies",
+          applications: ["radarr"],
+          projection: ["items.title", "items.year", "items.titel"],
+        },
+      })) as CallResult;
+
+      const structured = called.result?.structuredContent as {
+        status: string;
+        warnings: string[];
+        applications: Array<{
+          application: string;
+          status: string;
+          continuation?: { returned: number };
+          data?: { view?: string; items?: Array<Record<string, unknown>> };
+        }>;
+      };
+
+      // A host validates structured content against the schema it received from
+      // `tools/list`, so a projected envelope has to keep satisfying it.
+      expect(
+        publishedResultSchema(libraryQueryOutputSchema).safeParse(structured).success,
+        "projected envelope against the published schema",
+      ).toBe(true);
+      expect(called.result?.isError).toBe(false);
+      expect(structured.status).toBe("ok");
+
+      const outcome = only(structured.applications, "projected outcome");
+      // The payload still says which of the tool's payloads it is, and the
+      // record count still describes what the query matched.
+      expect(outcome.data?.view).toBe("movies");
+      expect(outcome.continuation?.returned).toBe(records.length);
+
+      const projected = outcome.data?.items ?? [];
+      expect(projected.length).toBe(records.length);
+      for (const [index, record] of projected.entries()) {
+        const source = records[index];
+        // Only the named fields, and only where the record carried one — the
+        // whole claim, value by value against the unprojected page.
+        expect(Object.keys(record).sort(), `record ${index}`).toEqual(
+          ["title", "year"].filter((name) => source?.[name as "title" | "year"] !== undefined),
+        );
+        expect(record.title, `record ${index} title`).toBe(source?.title);
+        expect(record.year, `record ${index} year`).toBe(source?.year);
+      }
+
+      const warning = structured.warnings.at(-1) ?? "";
+      expect(warning).toContain("items.titel");
+      expect(warning).toContain("items.title");
+      expect(called.result?.content?.[0]?.text).toContain("1 warning(s)");
 
       await child.terminateGracefully();
       assertCleanProtocolStdout(child.stdout);

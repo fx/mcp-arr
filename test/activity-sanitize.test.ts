@@ -8,8 +8,17 @@ import {
   safeText,
 } from "../src/adapters/activity/parse.js";
 import { runActivityQuery } from "../src/adapters/activity/service.js";
+import { payloadInventory } from "../src/tools/schemas/publish-results.js";
 import { expectOk, paging, queueItems, servePagedRecords } from "./support/activity.js";
-import { libraryHarness } from "./support/library.js";
+import { jsonResponse, libraryHarness } from "./support/library.js";
+import {
+  callTool,
+  definitionOf,
+  leafValues,
+  outcomesOf,
+  payloadOutcomes,
+} from "./support/projection.js";
+import { createTestToolContext } from "./support/tool-context.js";
 
 /**
  * A recognizable value planted in the parts of an upstream payload this server
@@ -263,5 +272,49 @@ describe("activity canary and untrusted status messages", () => {
     expect(item.evidence.statusMessages.length).toBeLessThanOrEqual(20);
 
     expect(item.languages).toEqual(["English [redacted path]"]);
+  });
+
+  /**
+   * The same hostile row again, through the tool and under a projection naming
+   * every path the queue payload publishes.
+   *
+   * A projection runs on an envelope the tool's own output schema has already
+   * validated, so it can only ever narrow what leaves — but that is the claim,
+   * and this is where it is checked. Asking for everything is the strongest form
+   * of it: whatever a projection could possibly return, it returned here, and
+   * the marker is still nowhere in it.
+   */
+  it("cannot select back anything the sanitizer took out of a queue row", async () => {
+    const inventory = payloadInventory(definitionOf("arr_activity_query").outputSchema);
+    const projection = inventory?.payloads.find((payload) =>
+      payload.variants.includes("queue"),
+    )?.paths;
+    expect(projection?.length ?? 0, "published queue paths").toBeGreaterThan(0);
+
+    const context = createTestToolContext({
+      environment: { SONARR_URL: "https://sonarr.example.invalid", SONARR_API_KEY: "key" },
+      fetch: async (url) =>
+        url.includes("system/status")
+          ? jsonResponse({ appName: "Sonarr", version: "4.0.19.2979" })
+          : servePagedRecords([hostileQueueRecord()], 1)({ url: new URL(url), init: {} }),
+    });
+
+    const projected = await callTool("arr_activity_query", context, {
+      view: "queue",
+      detail: "full",
+      applications: ["sonarr"],
+      projection: [...(projection ?? [])],
+    });
+
+    const outcome = payloadOutcomes(projected.structured)[0];
+    const source = outcome === undefined ? undefined : outcomesOf(projected.envelope)[outcome[0]];
+    const returned = leafValues(outcome?.[1]?.data);
+    const available = leafValues(source?.data);
+    expect(returned.size, "projected values compared").toBeGreaterThan(0);
+    for (const [path, value] of returned) {
+      expect(available.has(path), `invented ${path}`).toBe(true);
+      expect(value, path).toEqual(available.get(path));
+    }
+    expect(JSON.stringify(projected.structured)).not.toContain(canary);
   });
 });

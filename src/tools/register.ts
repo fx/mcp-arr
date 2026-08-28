@@ -3,6 +3,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { type ToolDefinition, toolDefinitions } from "./definitions.js";
 import type { ToolContext } from "./dispatch.js";
 import { createToolError } from "./errors.js";
+import { acceptsProjection, projectEnvelope, readProjection } from "./projection.js";
 import { buildToolResult, summarizeToolResult, type ToolResult } from "./results.js";
 import { publishedResultSchema } from "./schemas/publish-results.js";
 
@@ -38,6 +39,10 @@ function conformingContent(
  * cannot drift apart. Every result carries both the structured envelope and a
  * concise text summary; `isError` is set only when nothing succeeded, so a
  * partial result still reaches a caller that inspects structured content.
+ *
+ * A caller-supplied projection is applied after that validation and never
+ * before, so what is projected is always a subset of something already known to
+ * conform. Omitting one leaves the envelope exactly as it was.
  */
 export async function runTool(
   definition: ToolDefinition,
@@ -55,6 +60,23 @@ export async function runTool(
   if (structuredContent === undefined) {
     result = fallbackResult(`${definition.name}: produced a non-conforming result`);
     structuredContent = conformingContent(definition, result);
+  }
+
+  const projection = readProjection(input);
+  if (
+    projection !== undefined &&
+    structuredContent !== undefined &&
+    acceptsProjection(definition.inputSchema)
+  ) {
+    const projected = projectEnvelope(definition.outputSchema, structuredContent, projection);
+    structuredContent = projected.content;
+    // Carried into the summarized result as well, so the count the text reports
+    // and the list the structured half carries describe the same call. The
+    // record counts themselves are untouched: they say what the query matched,
+    // which is what a caller pages on, not what the projection kept.
+    if (projected.warning !== undefined) {
+      result = { ...result, warnings: [...result.warnings, projected.warning] };
+    }
   }
 
   const content: CallToolResult["content"] = [

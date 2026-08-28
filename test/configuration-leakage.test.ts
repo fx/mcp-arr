@@ -9,8 +9,17 @@ import {
   observe,
   providerRecords,
 } from "./support/configuration.js";
+import { instanceEnvironment, startFixtureInstance } from "./support/instance-server.js";
 import { fixtureBody, jsonResponse } from "./support/library.js";
-import { testApiKeys } from "./support/tool-context.js";
+import {
+  callTool,
+  isRecord,
+  leafValues,
+  outcomesOf,
+  payloadOutcomes,
+  presentPaths,
+} from "./support/projection.js";
+import { createTestToolContext, testApiKeys } from "./support/tool-context.js";
 
 /**
  * The four leakage classes this change has to be safe against.
@@ -211,4 +220,116 @@ describe("upstream failures carry no upstream content", () => {
     expect(error.code).toBe("unexpected_response");
     expect(JSON.stringify(error)).not.toContain("CANARY-ERROR-SHAPE-0403");
   });
+});
+
+/**
+ * The same coverage again, through the tool and under a projection.
+ *
+ * A projection removes values from a result that has already been through the
+ * observation allowlist, so it can only ever narrow what leaves — but "can only"
+ * is the claim, and this is where it is checked rather than reasoned about. A
+ * projection naming every credential-adjacent path the payload publishes has to
+ * come back with exactly what the same call returned unprojected, so the
+ * argument cannot become a second channel past the allowlist.
+ */
+describe("a projection is not a second way past the observation allowlist", () => {
+  it("hands back only what the same unprojected call returned, markers and all", async () => {
+    const instance = await startFixtureInstance("sonarr");
+    try {
+      const context = createTestToolContext({ environment: instanceEnvironment([instance]) });
+      const planted = canaries(await fixtureBody("sonarr", "indexer"));
+      expect(planted.length).toBeGreaterThan(0);
+
+      // Every place a credential could travel: the secrets themselves, the safe
+      // fields beside them, the withheld count, and the containers holding all
+      // three — because selecting a container is how a caller asks for
+      // everything underneath it.
+      const projection = [
+        "records.secrets",
+        "records.secrets.name",
+        "records.secrets.state",
+        "records.secrets.masked",
+        "records.fields",
+        "records.fields.name",
+        "records.fields.value",
+        "records.withheld",
+        "records.withheld.count",
+        "records.name",
+        "records.implementation",
+        "records.configContract",
+      ];
+      const projected = await callTool("arr_config_observe", context, {
+        domain: "indexers",
+        applications: ["sonarr"],
+        detail: "full",
+        projection,
+      });
+
+      const outcome = payloadOutcomes(projected.structured)[0];
+      const source = outcome === undefined ? undefined : outcomesOf(projected.envelope)[outcome[0]];
+      const returned = leafValues(outcome?.[1]?.data);
+      const available = leafValues(source?.data);
+      // Named, so this cannot pass by selecting nothing credential-adjacent at
+      // all: the secrets and the safe field values both really came back, and
+      // it is those the comparison below is about.
+      expect(
+        [...presentPaths(isRecord(outcome?.[1]?.data) ? outcome[1].data : {})].sort(),
+        "credential-adjacent paths returned",
+      ).toEqual([
+        "family",
+        "records.configContract",
+        "records.fields.name",
+        "records.fields.value",
+        "records.implementation",
+        "records.name",
+        "records.secrets.masked",
+        "records.secrets.name",
+        "records.secrets.state",
+        "records.withheld.count",
+      ]);
+      for (const [path, value] of returned) {
+        expect(available.has(path), `invented ${path}`).toBe(true);
+        expect(value, path).toEqual(available.get(path));
+      }
+
+      const serialized = JSON.stringify(projected.structured);
+      for (const marker of planted) {
+        expect(serialized, marker).not.toContain(marker);
+      }
+    } finally {
+      await instance.close();
+    }
+  }, 20_000);
+
+  it("cannot name a field the allowlist dropped and get it back", async () => {
+    const instance = await startFixtureInstance("sonarr");
+    try {
+      const context = createTestToolContext({ environment: instanceEnvironment([instance]) });
+      // Upstream field names the observation deliberately never publishes as a
+      // value. Naming one selects nothing, warns, and leaves the rest of the
+      // projection intact.
+      const withheld = ["records.apiKey", "records.fields.privateValue", "records.settings"];
+      const projected = await callTool("arr_config_observe", context, {
+        domain: "indexers",
+        applications: ["sonarr"],
+        detail: "full",
+        projection: [...withheld, "records.name"],
+      });
+
+      const data = payloadOutcomes(projected.structured)[0]?.[1]?.data;
+      const named = presentPaths(isRecord(data) ? data : {});
+      for (const path of withheld) {
+        expect(named, path).not.toContain(path);
+      }
+      // The matched half still came back, and the miss is reported rather than
+      // being indistinguishable from a record that has no such value.
+      expect(named).toContain("records.name");
+      const warnings = Array.isArray(projected.structured.warnings)
+        ? projected.structured.warnings
+        : [];
+      expect(String(warnings.at(-1))).toContain("records.apiKey");
+    } finally {
+      await instance.close();
+    }
+  }, 20_000);
 });
