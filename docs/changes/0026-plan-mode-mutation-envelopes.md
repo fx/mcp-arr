@@ -75,12 +75,12 @@ The [Tool Contracts spec](../specs/tool-contracts/#plan-and-apply) owns the rule
 - **Decision:** Cover every mutation tool's plan mode against its published schema, not just this one.
   - **Why:** The defect is that a published schema and a handler disagreed with nothing checking. Fixing only the tool that was caught leaves the check absent for the rest.
 - **Decision:** Treat this as a defect fix rather than a contract change.
-  - **Why:** Plan mode has never returned a conforming result for this tool, so no caller depends on the current behavior. The applied envelope is unchanged.
+  - **Why:** Plan mode has never returned a conforming result for this tool, so no caller depends on the current behavior. The applied envelope keeps every field it had, including its required outcome, and gains only the stage that names which variant it is.
 
 ### Non-Goals
 
 - Changing what cancellation does or which outcomes it distinguishes.
-- Changing apply-mode results for any mutation tool.
+- Changing what any mutation tool's apply mode reports, beyond the stage that names the variant an applied cancellation is.
 - Revisiting the `unexpected_response` code, which correctly described a non-conforming result.
 - Adding new plan-mode warnings beyond the one already produced.
 

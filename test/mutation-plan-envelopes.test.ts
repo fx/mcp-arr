@@ -1,9 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  findToolDefinition,
-  type ToolDefinition,
-  toolDefinitions,
-} from "../src/tools/definitions.js";
+import { type ToolDefinition, toolDefinitions } from "../src/tools/definitions.js";
 import type { ToolContext } from "../src/tools/dispatch.js";
 import type { ToolName } from "../src/tools/names.js";
 import { runTool } from "../src/tools/register.js";
@@ -15,6 +11,7 @@ import {
   instanceEnvironment,
   startFixtureInstance,
 } from "./support/instance-server.js";
+import { definitionOf, isRecord } from "./support/projection.js";
 import { createTestToolContext } from "./support/tool-context.js";
 
 /**
@@ -63,18 +60,6 @@ const started: FixtureInstance[] = [];
 let context: ToolContext;
 let planCases: readonly PlanCase[] = [];
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function definitionOf(name: ToolName): ToolDefinition {
-  const definition = findToolDefinition(name);
-  if (definition === undefined) {
-    throw new Error(`${name} must be registered`);
-  }
-  return definition;
-}
-
 interface CalledTool {
   /** The handler's own envelope, before anything validated or replaced it. */
   readonly envelope: ToolResult<unknown>;
@@ -90,6 +75,11 @@ interface CalledTool {
  * envelope is what the declared output schema is asked about, and the structured
  * content is what a caller actually receives — which is where a refused envelope
  * shows up as `unexpected_response` rather than as a missing field.
+ *
+ * The shared helper in `support/projection.ts` records the same envelope but
+ * parses it, so a refusal arrives here as a thrown Zod error rather than as
+ * something to report. This test exists to name what was refused, so it keeps
+ * the envelope unvalidated and leaves the verdict to the assertions.
  */
 async function call(name: ToolName, args: Record<string, unknown>): Promise<CalledTool> {
   const definition = definitionOf(name);
