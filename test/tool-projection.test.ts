@@ -462,6 +462,21 @@ describe("the projection argument", () => {
     // the projection kept, because a caller pages on them.
     const continuation = outcomesOf(answered.structured)[0]?.continuation;
     expect(isRecord(continuation) ? continuation.returned : undefined).toBe(items.length);
+
+    // A path that runs past a real field stops at that field, not at its
+    // parent. `items.title` is a published leaf holding nothing, and answering
+    // with the record's other fields instead would place the mistake at the
+    // second segment when it is the third.
+    const overshot = await callTool("arr_library_query", context, {
+      view: "movies",
+      projection: ["items.title.extra", "view.value"],
+    });
+    const past = String(
+      (Array.isArray(overshot.structured.warnings) ? overshot.structured.warnings : []).at(-1),
+    );
+    expect(past).toContain("items.title offers no field");
+    expect(past).toContain("view offers no field");
+    expect(past).not.toContain("items.year");
   }, 30_000);
 
   it("still says a path named nothing when no application answered with a payload", async () => {

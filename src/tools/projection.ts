@@ -116,12 +116,18 @@ function names(available: readonly string[], path: string): boolean {
  * The longest prefix of an unmatched path that still names something, which is
  * where reading it stopped. The empty string means it stopped at the payload
  * itself, so the first segment was already wrong.
+ *
+ * A prefix qualifies on the same test a whole path does, which is what keeps a
+ * published leaf from being skipped over. `items.title.extra` stops at
+ * `items.title` — a real field that simply holds nothing — and answering
+ * `items` instead would offer the record's other fields as though the mistake
+ * were the second segment rather than the third.
  */
 function stoppedAt(available: readonly string[], path: string): string {
   const segments = path.split(".");
   for (let depth = segments.length - 1; depth > 0; depth -= 1) {
     const prefix = segments.slice(0, depth).join(".");
-    if (available.some((candidate) => candidate.startsWith(`${prefix}.`))) {
+    if (names(available, prefix)) {
       return prefix;
     }
   }
