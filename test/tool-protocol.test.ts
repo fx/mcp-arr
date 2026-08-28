@@ -4,9 +4,11 @@ import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { ApplicationId } from "../src/applications.js";
 import { createServer } from "../src/server.js";
+import { findToolDefinition } from "../src/tools/definitions.js";
 import type { ToolContext } from "../src/tools/dispatch.js";
 import { toolNames } from "../src/tools/names.js";
 import type { VersionedFixture } from "./support/fixtures.js";
+import { schemaFailures } from "./support/json-schema.js";
 import {
   allApplicationsEnvironment,
   applicationForUrl,
@@ -256,7 +258,8 @@ describe("tool protocol surface", () => {
 
   it("accepts every published tool's minimal arguments and answers with its own envelope", async () => {
     const client = await connect(fixtureContext());
-    await client.listTools();
+    const { tools } = await client.listTools();
+    const published = new Map(tools.map((tool: Tool) => [tool.name, tool.outputSchema]));
 
     for (const name of toolNames) {
       const result = (await client.callTool({
@@ -268,6 +271,24 @@ describe("tool protocol surface", () => {
       expect(["ok", "partial", "error"], name).toContain(content.status);
       expect(Array.isArray(content.applications), name).toBe(true);
       expect(JSON.stringify(result), name).not.toContain(testApiKeys.sonarr);
+
+      // `runTool` replaces an envelope its own schema rejects with a generic
+      // failure, and that substitute conforms too — so conformance on its own
+      // would pass whether or not the tool produced a valid result. Ruling out
+      // the substitution is what makes the two assertions below about the real
+      // one.
+      expect(
+        (content.errors as Array<{ message?: string }>).map((error) => error.message),
+        name,
+      ).not.toContain(`${name}: produced a non-conforming result`);
+
+      // The tool's own schema is the authority and stays the authority: what
+      // the listing publishes may be broader, but it may never stop admitting
+      // an envelope this server actually returns.
+      const definition = findToolDefinition(name);
+      expect(definition?.outputSchema.safeParse(content).success, `${name} internal`).toBe(true);
+      const declared = (published.get(name) ?? {}) as Record<string, unknown>;
+      expect(schemaFailures(declared, content), `${name} published`).toEqual([]);
     }
   });
 });

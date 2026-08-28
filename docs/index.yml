@@ -157,7 +157,7 @@ changes:
     path: changes/0018-bounded-tool-listing.md
     description: Broaden published output schemas and generate each payload's selectable paths as documentation
     spec: tool-contracts
-    status: draft
+    status: complete
     depends_on: ["0015"]
   - id: "0019"
     name: selected-result-fields

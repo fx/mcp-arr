@@ -2,6 +2,7 @@ import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
 import { findToolDefinition } from "../src/tools/definitions.js";
 import { type ToolName, toolNames } from "../src/tools/names.js";
+import { describePayloadPaths, payloadInventory } from "../src/tools/schemas/publish-results.js";
 import {
   assertWellFormed,
   declaredPropertyValues,
@@ -31,7 +32,7 @@ interface PublishedTool {
   name: string;
   description?: string;
   inputSchema?: Record<string, unknown>;
-  outputSchema?: { type?: string };
+  outputSchema?: Record<string, unknown>;
   annotations?: Record<string, unknown>;
 }
 
@@ -41,8 +42,29 @@ interface ToolListResult {
 
 interface PublishedListing {
   readonly tools: readonly PublishedTool[];
+  /** What the listing cost on the wire, framing included. */
+  readonly bytes: number;
   readonly stdout: string;
   readonly stderr: string;
+}
+
+/**
+ * The bytes one response occupied on the wire, its newline delimiter included.
+ *
+ * Read off the raw stdout rather than re-serialized from the decoded message,
+ * because the number this file pins is what a host actually receives. A
+ * re-serialization would be measuring this test's own `JSON.stringify` instead
+ * of the server's, and dropping the delimiter would measure the payload rather
+ * than the message.
+ */
+function responseBytes(stdout: string, id: number): number {
+  const line = stdout
+    .split("\n")
+    .find((candidate) => candidate !== "" && (JSON.parse(candidate) as { id?: number }).id === id);
+  if (line === undefined) {
+    throw new Error(`The spawned server sent no response for request ${id}`);
+  }
+  return Buffer.byteLength(`${line}\n`, "utf8");
 }
 
 async function readPublishedTools(): Promise<PublishedListing> {
@@ -51,7 +73,12 @@ async function readPublishedTools(): Promise<PublishedListing> {
     await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
     const listed = (await child.request(2, "tools/list")) as ToolListResult;
     await child.terminateGracefully();
-    return { tools: listed.result?.tools ?? [], stdout: child.stdout, stderr: child.stderr };
+    return {
+      tools: listed.result?.tools ?? [],
+      bytes: responseBytes(child.stdout, 2),
+      stdout: child.stdout,
+      stderr: child.stderr,
+    };
   } finally {
     await child.forceCleanup().catch(() => undefined);
   }
@@ -88,6 +115,24 @@ const rootCombinators = ["anyOf", "oneOf", "allOf"] as const;
 
 /** The property-key shape a host requires of a published schema, at any depth. */
 const propertyKeyPattern = /^[a-zA-Z0-9_.-]{1,64}$/u;
+
+/**
+ * The most the published listing may cost on the wire, in bytes.
+ *
+ * Every session pays this before making a single call, so its size is part of
+ * the contract rather than an implementation detail. The number is a recorded
+ * measurement plus a margin, not a budget somebody chose: it was read off a
+ * spawned server at 57,686 bytes.
+ *
+ * The margin is sized against what it has to catch. The cheapest way for the
+ * bulk to come back is one tool publishing its payload schema again, and the
+ * smallest of those is `arr_job_get`'s at 1,431 bytes — so a margin under that
+ * cannot hide even the least expensive regression, while still leaving room for
+ * a tool description or a few payload fields. Raising it is a deliberate act,
+ * which is the point: a change that reintroduces bulk fails here rather than
+ * merely being regrettable.
+ */
+const listingByteCeiling = 58_500;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -203,6 +248,44 @@ describe("built stdio tool surface", () => {
 
     assertCleanProtocolStdout(stdout);
     expect(stderr).toBe("");
+  });
+
+  it("keeps the whole listing under its recorded byte ceiling", async () => {
+    const { bytes } = await publishedTools();
+
+    expect(bytes, `tools/list is ${bytes} bytes`).toBeLessThanOrEqual(listingByteCeiling);
+  });
+
+  it("publishes a broadened envelope carrying each payload's generated paths", async () => {
+    const { tools } = await publishedTools();
+
+    for (const tool of tools) {
+      const schema = tool.outputSchema ?? {};
+      assertWellFormed(schema, `${tool.name} output`);
+      // Open at the root, so `mutation` — which every mutation tool returns
+      // and this schema does not declare — stays valid for a host that checks
+      // structured content against what was published.
+      expect(schema.additionalProperties, `${tool.name} closed output root`).not.toBe(false);
+
+      const outcomes = isRecord(schema.properties) ? schema.properties.applications : undefined;
+      const outcome = isRecord(outcomes) && isRecord(outcomes.items) ? outcomes.items : {};
+      const declared = isRecord(outcome.properties) ? outcome.properties : {};
+      // Where `data` sits is the one thing below the root that is published,
+      // because a path into a payload is written relative to it.
+      expect(Object.keys(declared), `${tool.name} outcome`).toEqual(["data"]);
+      // And nothing below it: the payload's fields are the generated prose.
+      expect(declared.data, `${tool.name} data`).toEqual({});
+
+      // The inventory a caller reads is the one this process generates, so
+      // what is advertised and what a projection will resolve cannot be two
+      // different things.
+      const definition = findToolDefinition(tool.name as ToolName);
+      const inventory =
+        definition === undefined ? undefined : payloadInventory(definition.outputSchema);
+      expect(schema.description, `${tool.name} inventory`).toBe(
+        inventory === undefined ? undefined : describePayloadPaths(inventory),
+      );
+    }
   });
 
   it("publishes a schema that admits every variant each tool accepts and refuses what it rejects", async () => {
