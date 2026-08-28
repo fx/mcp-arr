@@ -47,7 +47,7 @@ export type UpstreamBody = Readonly<Record<string, unknown>>;
  * members of such a list are built exactly as every other body is, so what this
  * widens is the JSON shape and nothing about where the values come from.
  */
-export type UpstreamRequestBody = UpstreamBody | readonly unknown[];
+export type UpstreamRequestBody = UpstreamBody | readonly UpstreamBody[];
 
 /**
  * One answer to a validating write: the status the instance chose, and whatever
