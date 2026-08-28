@@ -20,7 +20,7 @@ Related behavior:
 
 ### Stable Typed Surface
 
-- The server MUST expose `arr_capabilities`, `arr_library_query`, `arr_activity_query`, `arr_release_search`, `arr_import_inspect`, `arr_config_observe`, `arr_job_get`, `arr_search_start`, `arr_release_grab`, `arr_queue_resolve`, `arr_activity_change`, `arr_import_execute`, `arr_library_change`, `arr_config_reconcile`, and `arr_job_cancel`.
+- The server MUST expose `arr_capabilities`, `arr_library_query`, `arr_activity_query`, `arr_release_search`, `arr_import_inspect`, `arr_config_observe`, `arr_job_get`, `arr_search_start`, `arr_release_grab`, `arr_queue_resolve`, `arr_activity_change`, `arr_import_execute`, `arr_library_change`, and `arr_job_cancel`.
 - Each tool MUST publish a closed input schema and a declared output schema.
 - Tool inputs MUST reject unknown properties.
 - Domain variants MUST use typed discriminated unions rather than arbitrary operation names or argument objects.
@@ -29,6 +29,8 @@ Related behavior:
 - Every value the published input schema admits for a single property MUST be a value some accepted variant admits, and every argument a tool accepts MUST be admitted by its published schema. Where a constraint holds only between properties — a variant's required arguments, a value set scoped by the discriminator, or two forms that may not be combined — the published schema MAY be broader than validation, and the constraint MUST then be described in the generated variant documentation rather than left discoverable only by triggering a validation error.
 
 This parity is about the argument schema only. Cross-property correlations disclosed as documentation, and rejections a schema cannot express — an expired or wrong-kind reference, an unsupported application or version, a bulk combination the upstream handler cannot process, or any current-state precondition — remain governed by the specification that owns them.
+- A published input schema MUST NOT declare a maximum length for a string value. The bound MUST remain in validation and MUST be stated in the generated variant documentation, because a host that compiles a published schema into a constrained-decoding grammar expands a length bound once per admissible character, and a schema it cannot compile costs the caller the whole tool rather than the bound.
+- A published input schema MUST NOT admit an intent the server refuses unconditionally. An operation that is declared but not yet implemented MUST remain visible in the capability report as unimplemented rather than being advertised as callable.
 - The server MUST NOT expose a generic HTTP, upstream endpoint, provider action, command-name, or filesystem-path dispatcher.
 
 #### Scenario: Reject an unknown operation
@@ -42,6 +44,18 @@ This parity is about the argument schema only. Cross-property correlations discl
 - **GIVEN** a caller has listed the available tools and has never invoked them
 - **WHEN** it reads the published input schema of a tool that accepts typed variants
 - **THEN** the published schema names every accepted variant in its discriminator, publishes every argument any variant accepts, and describes each variant's own required and optional arguments in generated documentation, so no variant and no per-variant requirement is discoverable only by triggering a validation error
+
+#### Scenario: A host compiles a published schema into a decoding grammar
+
+- **GIVEN** a host that constrains its model's output by compiling a tool's published input schema into a decoding grammar
+- **WHEN** it lists this server's tools and compiles each one
+- **THEN** every tool compiles, and a value whose accepted length the schema no longer states is still refused by validation with the bound named
+
+#### Scenario: An unimplemented operation is not advertised as callable
+
+- **GIVEN** the server declares an operation it refuses unconditionally
+- **WHEN** a caller reads the published input schema of the tool that would host it
+- **THEN** the operation is absent from the schema, and the capability report is where the caller learns it is planned but unimplemented
 
 ### Capabilities
 
@@ -62,12 +76,34 @@ This parity is about the argument schema only. Cross-property correlations discl
 - Collection queries MUST support bounded page size and continuation metadata.
 - Default results MUST omit large nested payloads unless the caller requests a supported detail level.
 - Bulk and cross-application results MUST report per-item or per-application outcomes and MUST NOT conceal partial failure.
+- A collection query MUST accept an optional caller-supplied projection naming which parts of a per-application payload to return, and a projected result MUST carry only the named parts and only values the same call would have returned unprojected.
+- A projection MUST NOT remove the result envelope, a per-application outcome's own fields, or the field that discriminates the payload, and a projection path matching nothing MUST produce a warning naming the paths that were available rather than failing the call.
+- A published output schema MUST admit every envelope its tool returns, including one a projection reduced, and MAY therefore be broader than the envelope any single call produces.
+- Where a published output schema is broader than the envelope returned, each payload's selectable paths MUST be described in documentation generated from the same schemas the envelope is validated against, so the description cannot drift from what is returned.
 
 #### Scenario: Partial cross-application result
 
 - **GIVEN** a query targets all relevant configured applications and one application fails
 - **WHEN** the query completes
 - **THEN** successful results and the failed application's normalized error are returned together
+
+#### Scenario: Return only the fields a caller asked for
+
+- **GIVEN** a caller queries a collection and names a projection covering part of each record
+- **WHEN** the query completes
+- **THEN** each record carries the named parts and the payload's discriminating field, the envelope and per-application outcome are unchanged, and no value appears that the same call would not have returned unprojected
+
+#### Scenario: A projection names a path that does not exist
+
+- **GIVEN** a caller names a projection path no part of the payload matches
+- **WHEN** the query completes
+- **THEN** the call succeeds and warns, naming the paths that were available, so the caller can correct the path without a failed request
+
+#### Scenario: Discover selectable paths without calling the tool
+
+- **GIVEN** a caller has listed the available tools and has never invoked them
+- **WHEN** it reads a collection query's published output schema and its generated documentation
+- **THEN** the selectable paths of every payload the tool can return are named, so a projection can be written without first making an unprojected call
 
 ### Error Contract
 
@@ -95,23 +131,17 @@ This parity is about the argument schema only. Cross-property correlations discl
 - The calling agent MAY choose either mode without an MCP-owned confirmation workflow.
 - Plan mode MUST perform all non-mutating validation available at that time and return requested effects, conditional effects, warnings, read-set fingerprints, and an opaque process-local plan reference.
 - Apply mode MAY accept either a complete direct intent or a compatible plan reference.
-- Applying a secret-bearing plan reference MUST require the caller to resupply each named transient secret required by that plan.
-- A secret-bearing plan MUST retain only the required secret field names and non-reversible presence fingerprints, never secret values.
 - Applying a plan reference MUST re-read every effect-relevant precondition and MUST fail with `stale_plan` when material state changed.
 - Direct apply MUST validate current state immediately before sending the mutation upstream.
 - The server MUST NOT interpret plan mode as authorization or require a user-interface confirmation.
+
+No tool currently accepts a transient secret. The requirements governing one — resupply on apply, and a plan that retains names and presence fingerprints rather than values — are owned by [Transient Secret Inputs](../configuration-reconciliation/#transient-secret-inputs) in the withdrawn write surface, and bind again if any tool reintroduces one.
 
 #### Scenario: Direct apply
 
 - **GIVEN** the calling agent chooses apply and supplies a valid mutation intent
 - **WHEN** current upstream state passes validation
 - **THEN** the mutation executes without requiring a prior plan call
-
-#### Scenario: Apply a secret-bearing plan
-
-- **GIVEN** a plan requires a provider password that was not retained in the plan
-- **WHEN** the caller applies the plan reference and resupplies the named password field
-- **THEN** the server validates the plan and uses the password only for the current upstream request
 
 #### Scenario: Planned apply becomes stale
 
@@ -169,7 +199,7 @@ Shared result envelopes carry application, status, data, warnings, continuation,
 
 ### API Surface
 
-The fifteen tool names are stable public contracts. The details of upstream HTTP calls remain adapter-private.
+The fourteen tool names are stable public contracts. The details of upstream HTTP calls remain adapter-private.
 
 ### Business Logic
 
@@ -198,3 +228,7 @@ None.
 | 2026-08-26 | Published input schemas required to describe every accepted variant | [0012-published-tool-schemas](../../changes/0012-published-tool-schemas.md) |
 | 2026-08-26 | Error summaries required to carry code and remediation; capability results bounded | [0013-result-summary-fidelity](../../changes/0013-result-summary-fidelity.md) |
 | 2026-08-27 | Published input schemas flattened to one object root; variant detail moved to generated documentation | [0015-flat-tool-input-schemas](../../changes/0015-flat-tool-input-schemas.md) |
+| 2026-08-28 | Published output schemas permitted to be broader than the returned envelope; selectable paths required as generated documentation | [0018-bounded-tool-listing](../../changes/0018-bounded-tool-listing.md) |
+| 2026-08-28 | Collection queries required to accept a caller-supplied result projection | [0019-selected-result-fields](../../changes/0019-selected-result-fields.md) |
+| 2026-08-28 | Published input schemas barred from declaring string length bounds and unconditionally refused intents | [0017-grammar-compilable-input-schemas](../../changes/0017-grammar-compilable-input-schemas.md) |
+| 2026-08-28 | `arr_config_reconcile` withdrawn; transient-secret requirements relocated to the withdrawn surface | [0020-withdraw-configuration-writes](../../changes/0020-withdraw-configuration-writes.md) |

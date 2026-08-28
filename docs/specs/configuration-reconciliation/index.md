@@ -4,6 +4,8 @@
 
 This specification defines safe observation and reconciliation of configuration stored in the upstream *arr applications. It does not introduce MCP-local configuration persistence; the MCP's own connection settings remain environment-only as defined by [Architecture](../architecture/).
 
+The exposed surface is observation only. The write surface is withdrawn, and the requirements describing it are retained below as the design for any reinstatement rather than as a description of what the server does — see [Configuration Writes Are Not Exposed](#configuration-writes-are-not-exposed).
+
 ## Background
 
 Sonarr, Radarr, and Prowlarr expose dynamic provider schemas and full-resource updates for indexers, download clients, applications, notifications, lists, metadata, proxies, profiles, formats, roots, tags, and related settings. Unknown, masked, and version-specific fields must be preserved even when they are not shown to the calling agent.
@@ -16,6 +18,14 @@ Sonarr, Radarr, and Prowlarr expose dynamic provider schemas and full-resource u
 - Observation MUST use explicit output allowlists and MUST drop unknown fields from model-facing results.
 - Secret fields MUST be represented as configured or unconfigured rather than returning their current values.
 - Observation MUST distinguish unsupported, unavailable, and unconfigured capabilities.
+- Every part of an observation payload MUST be governed by the query's page bound, so no detail level makes a result grow without one.
+- An observation MUST NOT return the instance's provider template catalogue, and any provider-schema read an operation needs MUST be internal to that operation rather than published to the caller.
+
+#### Scenario: Observe a provider domain at full detail
+
+- **GIVEN** an instance whose provider catalogue offers far more definitions than it has configured records
+- **WHEN** the caller observes that provider domain at the detail level that discloses the most
+- **THEN** the result describes the configured records the page bound admits and nothing whose size is set by the catalogue instead
 
 #### Scenario: Observe a configured indexer
 
@@ -23,9 +33,34 @@ Sonarr, Radarr, and Prowlarr expose dynamic provider schemas and full-resource u
 - **WHEN** configuration is observed
 - **THEN** safe settings and configured-state indicators are returned without either secret value
 
+### Configuration Writes Are Not Exposed
+
+- The server MUST NOT expose a tool that writes upstream configuration, and MUST NOT report a configuration write as a supported, unsupported, or unimplemented operation.
+
+#### Scenario: No configuration write is offered
+
+- **GIVEN** a caller has listed the available tools and read the capability report for every configured application
+- **WHEN** it looks for a way to change upstream configuration
+- **THEN** no tool and no reported operation offers one, so the absence is discoverable without attempting a call
+
+### No MCP-Local Configuration Store
+
+- Upstream desired-state documents, provider resources, and observed configuration MUST NOT be persisted in an MCP-local database or configuration file.
+- Process-local plans MAY retain redacted diffs and fingerprints only until expiration or restart.
+- The upstream applications MUST remain the authoritative configuration stores.
+
+#### Scenario: Restart after observation
+
+- **GIVEN** configuration was observed successfully
+- **WHEN** the MCP server restarts
+- **THEN** a new observation reconstructs current state from the upstream application
+
+## Retained Design — The Withdrawn Write Surface
+
+The requirements in this section describe a surface the server does not currently expose. They are retained because the decision is that configuration writes are not worth their cost *for now*, not that the design was wrong, and because reinstating them would otherwise mean re-deriving a contract that was carefully worked out. Nothing here is currently implemented, and nothing here is currently testable; treat every requirement below as conditional on that surface being reinstated.
+
 ### Desired-State Reconciliation
 
-- `arr_config_observe` MUST provide current-state observation, while `arr_config_reconcile` MUST provide diff, plan, apply, and verify behavior through typed configuration domains.
 - Desired state MUST name only fields owned by the requested reconciliation.
 - Unspecified fields MUST be preserved from the current upstream resource.
 - Field removal MUST be explicit.
@@ -97,18 +132,6 @@ Sonarr, Radarr, and Prowlarr expose dynamic provider schemas and full-resource u
 - **WHEN** deletion is applied without a dependent migration
 - **THEN** the operation fails without attempting to bypass the upstream dependency
 
-### No MCP-Local Configuration Store
-
-- Upstream desired-state documents, provider resources, and reconciliation history MUST NOT be persisted in an MCP-local database or configuration file.
-- Process-local plans MAY retain redacted diffs and fingerprints only until expiration or restart.
-- The upstream applications MUST remain the authoritative configuration stores.
-
-#### Scenario: Restart after reconciliation
-
-- **GIVEN** a reconciliation completed successfully
-- **WHEN** the MCP server restarts
-- **THEN** a new observation reconstructs current state from the upstream application
-
 ## Design
 
 ### Architecture
@@ -121,7 +144,7 @@ Models include provider summary, dynamic field descriptor, configured-secret sta
 
 ### API Surface
 
-Reads use `arr_config_observe`; writes and tests use typed variants of `arr_config_reconcile`. MCP instance URLs and API keys are not managed by these tools.
+Reads use `arr_config_observe`. No tool writes or tests configuration; the retained design above describes the typed variants a reinstated write surface would expose. MCP instance URLs and API keys are not managed by these tools.
 
 ### Business Logic
 
@@ -147,3 +170,5 @@ None.
 | Date | Change | Document |
 |------|--------|----------|
 | 2026-08-25 | Initial desired-state specification created | [0008-configuration-reconciliation](../../changes/0008-configuration-reconciliation.md) |
+| 2026-08-28 | Provider template derivation made internal; observation payloads required to be bounded in every part | [0016-bounded-provider-schema-observation](../../changes/0016-bounded-provider-schema-observation.md) |
+| 2026-08-28 | Write surface withdrawn; reconciliation requirements retained as design rather than current behavior | [0020-withdraw-configuration-writes](../../changes/0020-withdraw-configuration-writes.md) |
