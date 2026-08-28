@@ -968,7 +968,7 @@ export async function reprocessCandidate(
  * decision the answer does state — including an empty rejection list — wins
  * over the scan's, which is the whole reason for asking.
  *
- * Two fields the answer does state are deliberately not among them, because
+ * Four fields the answer does state are deliberately not among them, because
  * what it states is a default rather than a decision. Sonarr answers
  * `releaseType: "unknown"` for a file its own scan called a single episode or a
  * season pack, and both applications answer `indexerFlags` as a numeric
@@ -976,6 +976,17 @@ export async function reprocessCandidate(
  * something this server knows with something it does not, and reporting
  * "unknown" for a value already in hand is exactly the untrue answer this
  * surface must not give.
+ *
+ * `customFormats` and `customFormatScore` are held to the same rule, and here
+ * the reason is a limit rather than a recording: on the instances this was
+ * verified against, no file matches any format either application defines, so
+ * both the scan and the answer report an empty list and a zero score and
+ * whether the answer recomputes them or defaults them could not be
+ * established. The scan is preferred because the two readings are not equally
+ * costly — a default would blank the formats of every re-decided candidate,
+ * unconditionally, while a recomputation differs from the scan only where a
+ * correction changed it, and the scan's value is still one this instance
+ * reported for this file moments ago rather than one nobody gave.
  *
  * Nothing is weakened by this: the fingerprint comparison still runs against a
  * scan performed now rather than against anything a reference remembered.
@@ -993,8 +1004,6 @@ function decidedRow(scanned: UpstreamCandidate, decided: UpstreamCandidate): Ups
       quality: decided.quality,
       languages: decided.languages,
       releaseGroup: decided.releaseGroup,
-      customFormats: decided.customFormats,
-      customFormatScore: decided.customFormatScore,
       rejections: decided.rejections,
       // Both applications restate these as a numeric bitfield here, which names
       // nothing a caller can read, so an answer that is not a list of names

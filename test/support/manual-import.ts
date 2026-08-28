@@ -5,9 +5,18 @@
  * It is a narrower resource than the scan row this project reads elsewhere: it
  * restates the *decision* and says nothing about the file, so there is no size,
  * no row identifier, no relative path, no folder name and no existing-file
- * identity in it; the media is named flat; and the indexer flags come back as
- * the numeric bitfield the resource declares rather than as a list of names.
- * Recorded from Sonarr 4.0.19.2979 and Radarr 6.3.0.10514.
+ * identity in it; the media is named flat; the indexer flags come back as the
+ * numeric bitfield the resource declares rather than as a list of names; and
+ * the release type comes back as `unknown` for a file the same instance's scan
+ * called a single episode. Recorded from Sonarr 4.0.19.2979 and Radarr
+ * 6.3.0.10514.
+ *
+ * The custom formats below are the one part that is a *floor* rather than a
+ * recording: those instances define no format any of their files match, so an
+ * empty list and a zero score are all either endpoint was ever seen to answer,
+ * and whether this endpoint recomputes them is not established. The adapter
+ * therefore keeps the scan's values for both, and this double answering the
+ * empty form is what proves it does.
  *
  * It lives here because both the instance double and the adapter's own tests
  * depend on it, and two restatements of one upstream shape are two things that

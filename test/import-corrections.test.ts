@@ -593,13 +593,17 @@ describe("what a reprocess answer leaves out", () => {
     expect(result.candidate.indexerFlags).toEqual(["freeleech"]);
   });
 
-  it("keeps the release type the scan stated, over the default the answer echoes", async () => {
+  it("keeps what the scan stated over a default the answer echoes", async () => {
     // Sonarr answers `releaseType: "unknown"` for a file its own scan called a
     // single episode, so taking the answer's word would have the same file
     // report a type when it is inspected and no type when it is re-decided —
-    // an untrue answer about something this server is holding.
+    // an untrue answer about something this server is holding. The custom
+    // formats are held to the same rule: an answer that blanks them would drop
+    // a format and a score the scan reported, on every re-decided candidate.
     const scanned = sonarr.candidates[0] as Record<string, unknown>;
     expect(scanned.releaseType).toBe("singleEpisode");
+    expect(scanned.customFormats).toEqual([{ id: 2, name: "Example Format" }]);
+    expect(scanned.customFormatScore).toBe(25);
 
     const running = instance({ decided: [reDecided()] });
     const result = await reprocessCandidate(
@@ -613,10 +617,17 @@ describe("what a reprocess answer leaves out", () => {
     if (result.status !== "ok") {
       throw new Error(`Expected a re-decided candidate, got ${result.status}`);
     }
-    // The control: the answer really did say "unknown", so the assertion above
-    // it is about what this adapter chose rather than about what it was given.
-    expect(reDecided().releaseType).toBe("unknown");
+    // The control: the answer really did state each of these defaults, so the
+    // assertions below are about what this adapter chose rather than about
+    // what it happened to be given.
+    const answered = reDecided();
+    expect(answered.releaseType).toBe("unknown");
+    expect(answered.customFormats).toEqual([]);
+    expect(answered.customFormatScore).toBe(0);
+
     expect(result.candidate.releaseType).toBe("singleEpisode");
+    expect(result.candidate.customFormats).toEqual(["Example Format"]);
+    expect(result.candidate.customFormatScore).toBe(25);
   });
 
   it("still refuses a rejection the answer raised, though it carries no other facts", async () => {
