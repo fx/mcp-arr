@@ -80,10 +80,27 @@ export const jobProjectionSchema = z.strictObject({
 
 export type JobProjection = z.infer<typeof jobProjectionSchema>;
 
-/** The same projection plus which of the five cancellation outcomes happened. */
-export const jobCancellationSchema = jobProjectionSchema.extend({
-  outcome: z.enum(jobCancelOutcomes),
-});
+/**
+ * What a cancellation returns, discriminated by which stage produced it.
+ *
+ * Both stages carry the same projection, because a plan and its apply describe
+ * the same job. Only the applied one carries the outcome: which of the five
+ * cancellation outcomes happened is knowable exactly once a cancellation has
+ * been attempted, so a plan has none to report and an apply must never omit it.
+ * Requiring it on one variant rather than making it optional on a flat shape is
+ * what keeps an applied cancellation that reports no outcome invalid — which is
+ * the whole reason the field exists — while letting a plan validate against the
+ * tool's own declared output. The grab and search-start results discriminate on
+ * the same property for the same reason.
+ */
+export const jobCancellationSchema = z.discriminatedUnion("stage", [
+  z.strictObject({ stage: z.literal("planned"), ...jobProjectionSchema.shape }),
+  z.strictObject({
+    stage: z.literal("applied"),
+    ...jobProjectionSchema.shape,
+    outcome: z.enum(jobCancelOutcomes),
+  }),
+]);
 
 export type JobCancellationProjection = z.infer<typeof jobCancellationSchema>;
 

@@ -5,7 +5,7 @@
 Let `arr_job_cancel` be planned. Its output schema requires an `outcome` that only an applied cancellation can have, so plan mode returns a projection the server then rejects as non-conforming and reports as `unexpected_response`. The [Tool Contracts spec](../specs/tool-contracts/#plan-and-apply) now requires a mutation tool's published output schema to admit its own plan-mode envelope.
 
 **Spec:** [Tool Contracts](../specs/tool-contracts/)
-**Status:** draft
+**Status:** complete
 **Depends On:** —
 
 ## Motivation
@@ -86,13 +86,13 @@ The [Tool Contracts spec](../specs/tool-contracts/#plan-and-apply) owns the rule
 
 ## Tasks
 
-- [ ] Admit the planned cancellation envelope
-  - [ ] Discriminate the cancellation result by stage, with the outcome required only on the applied variant
-  - [ ] Confirm plan mode still discloses the requested effect, predicts nothing for an uncancellable job, and warns accordingly
-  - [ ] Confirm apply mode still reports its outcome and still leaves an unconfirmed request reconcilable
-- [ ] Cover plan-mode conformance across mutation tools
-  - [ ] Validate each mutation tool's planned envelope against its own published output schema
-  - [ ] Confirm the cancellation case fails against the current flat schema
+- [x] Admit the planned cancellation envelope
+  - [x] Discriminate the cancellation result by stage, with the outcome required only on the applied variant
+  - [x] Confirm plan mode still discloses the requested effect, predicts nothing for an uncancellable job, and warns accordingly
+  - [x] Confirm apply mode still reports its outcome and still leaves an unconfirmed request reconcilable
+- [x] Cover plan-mode conformance across mutation tools
+  - [x] Validate each mutation tool's planned envelope against its own published output schema
+  - [x] Confirm the cancellation case fails against the current flat schema
 
 ## Open Questions
 
