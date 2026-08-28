@@ -9,7 +9,6 @@ import {
   bulkReferences,
   importCandidateReferenceSchema,
   maxBulkItems,
-  maxMutationApplications,
   mediaApplicationSchema,
   mediaReferenceSchema,
   mutationBaseShape,
@@ -78,25 +77,6 @@ export const releaseGrabInputSchema = variantUnion(
 );
 
 /**
- * The one application a wanted-list search runs on.
- *
- * Required and bounded to a single entry, because these two targets are the
- * only mutation intents that name the applications they act on and a mutation
- * targets exactly one. Left optional it published a default the dispatcher
- * refused every time, and bounded at two it published a second call the
- * dispatcher refused as well; a caller reading the schema could learn the rule
- * only by being rejected. Searching both instances is two calls, each with its
- * own job and its own receipt.
- */
-const wantedSearchApplications = z
-  .array(mediaApplicationSchema)
-  .min(1)
-  .max(maxMutationApplications)
-  .describe(
-    "The single application to run this search on, as a one-element list. A mutation targets exactly one application, so this is required; search the other application with a second call.",
-  );
-
-/**
  * Whether a wanted-list search stays inside the monitored set.
  *
  * `false` does not widen the search to unmonitored media. The upstream filter
@@ -116,6 +96,16 @@ const monitoredOnlySchema = z
  * Automatic search commands. These start upstream work and return a job
  * reference; reading wanted media stays in `arr_library_query` so a wanted-list
  * read never launches a search.
+ *
+ * The four targets that name records derive their application from the
+ * references they were given. The two wanted-list targets name no record, so
+ * they name the application instead — required, and singular in the same
+ * spelling `add_media` uses, because a mutation targets exactly one and a shape
+ * able to hold two would only be advertising a second entry the dispatcher
+ * refuses. Published as an optional list, it offered a default refused on every
+ * call and a maximum refused on every call, so the rule was discoverable only by
+ * being rejected by it. Searching both applications is two calls, each with its
+ * own job and its own receipt.
  */
 const searchStartIntentSchema = z.discriminatedUnion("target", [
   z.strictObject({
@@ -142,13 +132,13 @@ const searchStartIntentSchema = z.discriminatedUnion("target", [
   z.strictObject({
     target: z.literal("missing"),
     ...mutationBaseShape,
-    applications: wantedSearchApplications,
+    application: mediaApplicationSchema,
     monitoredOnly: monitoredOnlySchema,
   }),
   z.strictObject({
     target: z.literal("cutoff_unmet"),
     ...mutationBaseShape,
-    applications: wantedSearchApplications,
+    application: mediaApplicationSchema,
     monitoredOnly: monitoredOnlySchema,
   }),
 ]);

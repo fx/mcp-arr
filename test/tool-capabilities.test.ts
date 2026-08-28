@@ -299,31 +299,10 @@ describe("arr_capabilities", () => {
     ).toBe(true);
   });
 
-  it("lists a wanted search on every application that supports it", async () => {
-    const context = createTestToolContext({
-      environment: allApplicationsEnvironment,
-      fetch: async (url) => jsonResponse(fixtureBody(applicationForUrl(url))),
-    });
-
-    const result = await reportCapabilities(context, undefined, "full");
-
-    // Requiring one application per call narrows what a single call targets,
-    // not what an application can do. Each of the two remains individually
-    // callable, so each report has to keep saying so — a report that listed the
-    // variant only once, or dropped it, would tell a caller that half the
-    // library cannot be searched at all.
-    for (const application of ["sonarr", "radarr"] as const) {
-      expect(
-        reportFor(result, application).supportedOperations.map(operationKey),
-        application,
-      ).toEqual(
-        expect.arrayContaining(["arr_search_start/missing", "arr_search_start/cutoff_unmet"]),
-      );
-    }
-    // Prowlarr has no library to search a wanted list of, and still says so.
-    expect(projectedKeys(reportFor(result, "prowlarr"))).not.toContain("arr_search_start/missing");
-  });
-
+  // The lists below are what says a wanted search stays individually callable on
+  // each library application: requiring one application per call narrows what a
+  // single call targets, not what an application can do, so both reports have to
+  // keep naming `arr_search_start/missing` and `arr_search_start/cutoff_unmet`.
   it("advertises exactly the operations that already have adapter behavior", async () => {
     const context = createTestToolContext({
       environment: allApplicationsEnvironment,

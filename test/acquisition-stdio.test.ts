@@ -316,7 +316,7 @@ describe("arr_search_start over stdio", () => {
         arguments: {
           target: "missing",
           mode: "apply",
-          applications: ["sonarr"],
+          application: "sonarr",
           monitoredOnly: true,
         },
       })) as CallResult;

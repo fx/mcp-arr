@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { findToolDefinition } from "../src/tools/definitions.js";
 import { type ToolName, toolNames } from "../src/tools/names.js";
 import { isImplementedOperation, operationDefinitions } from "../src/tools/operations.js";
-import { maxMutationApplications } from "../src/tools/schemas/common.js";
 import { maxProjectionPathLength, maxProjectionPaths } from "../src/tools/schemas/projection.js";
 import { describePayloadPaths, payloadInventory } from "../src/tools/schemas/publish-results.js";
 import {
@@ -645,25 +644,25 @@ describe("built stdio tool surface", () => {
     expect(wanted).toHaveLength(1);
     expect([...(wanted[0]?.values ?? [])].sort()).toEqual(["cutoff_unmet", "missing"]);
 
-    // Required, not optional. This is the half a caller could previously learn
-    // only by making the call the documentation described and being refused,
-    // and it is generated from the same union that validates, so the prose and
-    // the rule cannot come apart.
-    expect(wanted[0]?.required.has("applications"), "wanted search names its application").toBe(
+    // Required rather than optional, and named in the singular. Both halves are
+    // generated from the union that validates — the first from the form's own
+    // required list, the second from the property it declares — so what the
+    // documentation states and what the tool accepts cannot come apart. This is
+    // what a caller could previously learn only by making the call the
+    // documentation described and being refused.
+    expect(wanted[0]?.required.has("application"), "wanted search names its application").toBe(
       true,
     );
-
-    // And the other half: the published property admits exactly what a mutation
-    // can target, stated as a bound a host reads and as a sentence a caller
-    // does.
-    const properties = isRecord(schema.properties) ? schema.properties : {};
-    const applications = isRecord(properties.applications) ? properties.applications : {};
-    expect(applications.type).toBe("array");
-    expect(applications.minItems).toBe(1);
-    expect(applications.maxItems).toBe(maxMutationApplications);
-    expect(String(applications.description ?? "")).toContain(
-      "A mutation targets exactly one application",
+    expect(wanted[0]?.names.has("applications"), "wanted search takes no application list").toBe(
+      false,
     );
+
+    // And the property itself admits one application rather than a list bounded
+    // at one, so a second is unstatable rather than merely refused.
+    const properties = isRecord(schema.properties) ? schema.properties : {};
+    const application = isRecord(properties.application) ? properties.application : {};
+    expect(application.type).toBe("string");
+    expect(application.enum).toEqual(["sonarr", "radarr"]);
   });
 
   it("returns the unsupported_capability error without contacting an instance", async () => {

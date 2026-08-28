@@ -33,14 +33,11 @@ import {
   type Effect,
   type ItemOutcome,
   type MutationDetail,
+  maxMutationApplications,
   type Receipt,
   type ToolResult,
 } from "./results.js";
-import {
-  isReferenceProperty,
-  maxMutationApplications,
-  type ReferenceKind,
-} from "./schemas/common.js";
+import { isReferenceProperty, type ReferenceKind } from "./schemas/common.js";
 
 /**
  * Everything a tool handler is allowed to reach. All three dependencies are

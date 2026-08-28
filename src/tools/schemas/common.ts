@@ -24,18 +24,6 @@ export const applicationFilterSchema = z
   .max(applicationIds.length);
 
 /**
- * How many applications one mutation can target.
- *
- * The published mutation envelope carries one plan reference, one job
- * reference, and one receipt, so a mutation that ran on two instances would
- * produce records the envelope cannot report. The dispatcher refuses such a
- * call, and a mutation schema that names the applications it targets bounds
- * itself by the same number rather than by a second copy of the rule — a schema
- * admitting more would be advertising an intent the server always refuses.
- */
-export const maxMutationApplications = 1;
-
-/**
  * Every mutation tool accepts both modes. The calling agent owns the
  * interaction strategy: plan performs non-mutating validation and returns the
  * predicted effects, apply performs the change. Plan is never treated as

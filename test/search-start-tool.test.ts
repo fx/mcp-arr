@@ -287,7 +287,7 @@ describe("arr_search_start plan mode", () => {
     const result = await call(searchStartTool, contextFor(instance, state), {
       target: "missing",
       mode: "plan",
-      applications: ["radarr"],
+      application: "radarr",
       monitoredOnly: true,
     });
 
@@ -308,7 +308,7 @@ describe("arr_search_start plan mode", () => {
     const result = await call(searchStartTool, contextFor(instance, state), {
       target: "missing",
       mode: "plan",
-      applications: ["sonarr"],
+      application: "sonarr",
       monitoredOnly: false,
     });
 
@@ -528,7 +528,7 @@ describe("arr_search_start refusals", () => {
     const result = await call(searchStartTool, contextFor(instance, state), {
       target: "cutoff_unmet",
       mode: "apply",
-      applications: ["radarr"],
+      application: "radarr",
       monitoredOnly: true,
     });
 
@@ -568,7 +568,7 @@ describe("arr_search_start refusals", () => {
     const result = await call(searchStartTool, contextFor(offline, state), {
       target: "missing",
       mode: "apply",
-      applications: ["sonarr"],
+      application: "sonarr",
       monitoredOnly: true,
     });
 

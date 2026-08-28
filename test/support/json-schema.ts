@@ -350,9 +350,19 @@ export function assertWellFormed(schema: Schema, path = ""): void {
 export function declaredPropertyValues(schema: Schema, name: string): readonly string[] {
   const properties = isRecord(schema.properties) ? schema.properties : {};
   const node = properties[name];
-  if (!isRecord(node)) {
-    return [];
-  }
+  return isRecord(node) ? fixedValues(node) : [];
+}
+
+/**
+ * The string values one node fixes itself to, in the order it lists them, or
+ * none where it fixes no set.
+ *
+ * Split out of the lookup above because two questions are asked of a published
+ * node's accepted set — which values a discriminator names, and whether a
+ * property's whole set is applications — and a second reader would let the two
+ * disagree about what "fixes a value" means.
+ */
+export function fixedValues(node: Schema): readonly string[] {
   if (typeof node.const === "string") {
     return [node.const];
   }

@@ -5,11 +5,11 @@ import { applicationIds } from "../src/applications.js";
 import { findToolDefinition, toolDefinitions } from "../src/tools/definitions.js";
 import { toolNames } from "../src/tools/names.js";
 import { operationDefinitions } from "../src/tools/operations.js";
+import { maxMutationApplications } from "../src/tools/results.js";
 import {
   defaultPageSize,
   isReferenceProperty,
   maxBulkItems,
-  maxMutationApplications,
   maxPageSize,
   referenceKinds,
   referencePattern,
@@ -19,6 +19,7 @@ import { objectInput, variantUnion } from "../src/tools/schemas/publish.js";
 import {
   declaredKeywordPaths,
   declaredPropertyValues,
+  fixedValues,
   publishedPropertyNames,
 } from "./support/json-schema.js";
 import { sampleReferences, sampleToolInputs } from "./support/tool-context.js";
@@ -132,35 +133,6 @@ function collectReferencePropertyNames(node: unknown, found: Set<string>): void 
  */
 const applicationSelectionProperties = ["applications", "application"] as const;
 
-/** Every place a published schema declares one property, at any depth. */
-function collectPropertyNodes(
-  node: unknown,
-  name: string,
-  found: Array<Record<string, unknown>> = [],
-): Array<Record<string, unknown>> {
-  if (Array.isArray(node)) {
-    for (const entry of node) {
-      collectPropertyNodes(entry, name, found);
-    }
-    return found;
-  }
-  if (typeof node !== "object" || node === null) {
-    return found;
-  }
-  const record = node as Record<string, unknown>;
-  const properties = record.properties;
-  if (typeof properties === "object" && properties !== null) {
-    const declared = (properties as Record<string, unknown>)[name];
-    if (typeof declared === "object" && declared !== null) {
-      found.push(declared as Record<string, unknown>);
-    }
-  }
-  for (const value of Object.values(record)) {
-    collectPropertyNodes(value, name, found);
-  }
-  return found;
-}
-
 /**
  * How many applications one published node admits at once.
  *
@@ -188,27 +160,33 @@ function admittedApplications(node: Record<string, unknown>): number {
   );
 }
 
-/** The values one published node fixes itself, or its elements, to. */
-function admittedValues(node: Record<string, unknown>): readonly string[] {
-  const items = node.items;
-  const source =
-    typeof items === "object" && items !== null ? (items as Record<string, unknown>) : node;
-  if (typeof source.const === "string") {
-    return [source.const];
-  }
-  return Array.isArray(source.enum)
-    ? source.enum.filter((value): value is string => typeof value === "string")
-    : [];
-}
-
-/** Whether a published node's whole accepted set is applications. */
+/**
+ * Whether a published node's whole accepted set is applications.
+ *
+ * Read off the elements where the node has them, so a selection is recognized
+ * whichever of the two shapes it takes.
+ */
 function namesApplications(node: Record<string, unknown>): boolean {
-  const values = admittedValues(node);
+  const items = node.items;
+  const values = fixedValues(
+    typeof items === "object" && items !== null ? (items as Record<string, unknown>) : node,
+  );
   return (
     values.length > 0 &&
     values.every((value) => (applicationIds as readonly string[]).includes(value))
   );
 }
+
+/**
+ * The keywords whose value is caller data rather than a nested schema.
+ *
+ * The same exclusion `declaredKeywordPaths` makes, for the same reason: a
+ * `default` may be an arbitrary object, and descending into one would read a
+ * defaulted *value's* fields as a schema's properties — so a default that
+ * happened to hold an `application` field would be swept as though a tool
+ * published one.
+ */
+const dataKeywords = new Set(["const", "default", "enum", "examples"]);
 
 /** Every property a published schema declares, named beside its own node. */
 function collectDeclaredProperties(
@@ -233,8 +211,10 @@ function collectDeclaredProperties(
       }
     }
   }
-  for (const value of Object.values(record)) {
-    collectDeclaredProperties(value, found);
+  for (const [keyword, value] of Object.entries(record)) {
+    if (!dataKeywords.has(keyword)) {
+      collectDeclaredProperties(value, found);
+    }
   }
   return found;
 }
@@ -364,21 +344,27 @@ describe("published tool surface", () => {
     // is correct, and only a mutation carries the one plan, job, and receipt
     // that make a second target unreportable.
     const swept: string[] = [];
-    for (const name of toolNames.filter((tool) => "mode" in sampleToolInputs[tool])) {
-      const schema = inputJsonSchema(name);
-      for (const property of applicationSelectionProperties) {
-        for (const node of collectPropertyNodes(schema, property)) {
-          swept.push(`${name}.${property}`);
-          expect(admittedApplications(node), `${name} publishes ${property}`).toBeLessThanOrEqual(
-            maxMutationApplications,
-          );
+    // Which tools mutate is read off the annotations they publish rather than
+    // off a test fixture: that declaration is the same one a host reads to
+    // decide whether a call changes anything.
+    for (const definition of toolDefinitions.filter(
+      (candidate) => candidate.annotations.readOnlyHint === false,
+    )) {
+      for (const [property, node] of collectDeclaredProperties(inputJsonSchema(definition.name))) {
+        if (!(applicationSelectionProperties as readonly string[]).includes(property)) {
+          continue;
         }
+        swept.push(`${definition.name}.${property}`);
+        expect(
+          admittedApplications(node),
+          `${definition.name} publishes ${property}`,
+        ).toBeLessThanOrEqual(maxMutationApplications);
       }
     }
 
     // The sweep found the selections it is meant to be checking. Without this
     // the assertion above would pass just as happily over nothing at all.
-    expect(swept).toContain("arr_search_start.applications");
+    expect(swept).toContain("arr_search_start.application");
     expect(swept).toContain("arr_library_change.application");
   });
 
