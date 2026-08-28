@@ -2,9 +2,11 @@ import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
 import { findToolDefinition } from "../src/tools/definitions.js";
 import { type ToolName, toolNames } from "../src/tools/names.js";
+import { isImplementedOperation, operationDefinitions } from "../src/tools/operations.js";
 import { describePayloadPaths, payloadInventory } from "../src/tools/schemas/publish-results.js";
 import {
   assertWellFormed,
+  declaredKeywordPaths,
   declaredPropertyValues,
   publishedPropertyNames,
   schemaFailures,
@@ -122,13 +124,15 @@ const propertyKeyPattern = /^[a-zA-Z0-9_.-]{1,64}$/u;
  * Every session pays this before making a single call, so its size is part of
  * the contract rather than an implementation detail. The number is a recorded
  * measurement plus a margin, not a budget somebody chose: it was read off a
- * spawned server at 52,118 bytes.
+ * spawned server at 52,620 bytes, with the length bounds stripped from every
+ * published input schema and restated as one sentence in six of their
+ * descriptions.
  *
  * The margin is sized against what it has to catch. The cheapest way for the
  * bulk to come back is one tool publishing its payload schema again, and the
  * smallest of those is `arr_job_get`'s at 1,483 bytes — so a margin under that
  * cannot hide even the least expensive regression, while still leaving room for
- * a tool description or a few payload fields. The 882 bytes here are well
+ * a tool description or a few payload fields. The 880 bytes here are well
  * inside it.
  *
  * The number moves in both directions, and lowering it is as deliberate as
@@ -136,7 +140,7 @@ const propertyKeyPattern = /^[a-zA-Z0-9_.-]{1,64}$/u;
  * old measurement would keep the shape of a guard while admitting several times
  * the regression it was written to catch.
  */
-const listingByteCeiling = 53_000;
+const listingByteCeiling = 53_500;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -258,6 +262,81 @@ describe("built stdio tool surface", () => {
     const { bytes } = await publishedTools();
 
     expect(bytes, `tools/list is ${bytes} bytes`).toBeLessThanOrEqual(listingByteCeiling);
+  });
+
+  it("declares no string length bound in any published input schema", async () => {
+    const published = await publishedInputSchemas();
+
+    for (const [name, schema] of published) {
+      // A host that compiles a published input schema into a decoding grammar
+      // expands a bounded repeat once per admissible character, and the schema
+      // it then cannot compile costs the caller the whole tool rather than the
+      // bound. Read off the wire and at every depth, because the bound that
+      // caused it was three levels down inside a variant.
+      expect(declaredKeywordPaths(schema, "maxLength"), `${name} publishes a length bound`).toEqual(
+        [],
+      );
+    }
+  });
+
+  it("restates every bound it stripped in the published description", async () => {
+    const published = await publishedInputSchemas();
+
+    // Pinned by name for the two shapes a bound occurs in — a property of the
+    // merged root, and a property of a nested object — because the stripped
+    // schema no longer holds anything to derive them from. That is the whole
+    // point of generating the sentence before stripping rather than after.
+    expect(published.get("arr_library_query")?.description, "arr_library_query bounds").toContain(
+      "Maximum lengths in characters, enforced but not published: cursor 512, term 200.",
+    );
+    expect(published.get("arr_import_inspect")?.description, "arr_import_inspect bounds").toContain(
+      "Maximum lengths in characters, enforced but not published: cursor 512, mapping.quality " +
+        "120, mapping.languages 60, mapping.releaseGroup 120.",
+    );
+
+    // And nowhere does the sentence name a property the root does not publish,
+    // which is what a path generated from the pre-strip shape could drift into
+    // if the merge later renamed or dropped one.
+    for (const [name, schema] of published) {
+      const stated = /^Maximum lengths in characters, enforced but not published: (.*)\.$/mu.exec(
+        String(schema.description ?? ""),
+      )?.[1];
+      if (stated === undefined) {
+        continue;
+      }
+      const roots = stated.split(", ").map((entry) => entry.split(" ")[0]?.split(".")[0] ?? "");
+      const declared = publishedPropertyNames(schema);
+      expect(
+        roots.filter((property) => !declared.has(property)),
+        `${name} names a bound on a property it does not publish`,
+      ).toEqual([]);
+    }
+  });
+
+  it("publishes no variant the operation registry refuses unconditionally", async () => {
+    const published = await publishedInputSchemas();
+    const unimplemented = operationDefinitions.filter(
+      (operation) => !isImplementedOperation(operation),
+    );
+
+    for (const name of toolNames) {
+      const schema = published.get(name) ?? {};
+      const discriminator = findToolDefinition(name)?.discriminator;
+      const advertised =
+        discriminator === undefined ? [] : declaredPropertyValues(schema, discriminator);
+
+      // Checked against the registry rather than a list somebody maintains, so
+      // a future unimplemented operation fails here the moment it is
+      // registered. A tool with no discriminator has no variant to withhold, so
+      // an unimplemented operation behind one condemns the whole tool.
+      const refused = unimplemented
+        .filter((operation) => operation.tool === name)
+        .filter(
+          (operation) => operation.variant === undefined || advertised.includes(operation.variant),
+        )
+        .map((operation) => operation.id);
+      expect(refused, `${name} publishes an intent the server always refuses`).toEqual([]);
+    }
   });
 
   it("publishes a broadened envelope carrying each payload's generated paths", async () => {
