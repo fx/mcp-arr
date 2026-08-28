@@ -5,7 +5,7 @@
 Read Radarr's import-list exclusions from the route Radarr serves. The domain map sends both applications to `importlistexclusion`, which Radarr answers with 404, so `arr_config_observe` fails for that domain on Radarr and reports the failure as a stale reference the caller never supplied.
 
 **Spec:** [Configuration Reconciliation](../specs/configuration-reconciliation/)
-**Status:** draft
+**Status:** complete
 **Depends On:** —
 
 ## Motivation
@@ -26,7 +26,7 @@ Probing both instances directly settles it — the two applications name this re
 | `/api/v3/exclusions` | 404 | 200 |
 | `/api/v3/exclusions/paged` | 404 | 200 |
 
-The domain map hard-codes `importlistexclusion` for both. The field allowlist for this domain already names `tmdbId`, `movieTitle`, and `movieYear` alongside Sonarr's `tvdbId`, so the Radarr half of the feature was designed and then pointed at a route that never existed. The recorded fixture is `radarr/v3/6.3.0.10514/importlistexclusion.json`, a body attributed to a route Radarr does not serve, which is why nothing caught it.
+The domain map hard-codes `importlistexclusion` for both. The field allowlist for this domain already names `tmdbId`, `movieTitle`, and `movieYear` alongside Sonarr's `tvdbId`, so the Radarr half of the feature was designed and then pointed at a route that never existed. The recorded fixture was `radarr/v3/6.3.0.10514/importlistexclusion.json`, a body attributed to a route Radarr does not serve, which is why nothing caught it. This change replaces it with `radarr/v3/6.3.0.10514/exclusions-paged.json`, captured against the route Radarr actually serves.
 
 The second defect is in the reporting. A 404 is mapped to `stale_reference`, whose remediation tells the caller to repeat the query that produced the reference. This request carried no reference, so the advice is not merely unhelpful — it describes a recovery that does not apply, and it hides a permanent misconfiguration behind an error code that means "try again".
 
@@ -62,7 +62,7 @@ The [Configuration Reconciliation spec](../specs/configuration-reconciliation/#o
 ### Approach
 
 - Give the exclusion domain a per-application route, as the domain map already supports for other differences.
-- Recapture the Radarr fixture from `exclusions` and keep the Sonarr fixture as it is.
+- Recapture this domain's fixtures against the route each observation sends. Radarr's moves from `importlistexclusion`, which it 404s, to `exclusions/paged`; Sonarr's moves to `importlistexclusion/paged` because preferring the paged form repoints its read too, and its records are carried over unchanged rather than recaptured.
 - Extend the domain's tests to cover both applications.
 - Separate the 404 mapping so a route-level miss on a referenceless request is not reported as a recoverable stale reference.
 
@@ -83,17 +83,17 @@ The [Configuration Reconciliation spec](../specs/configuration-reconciliation/#o
 - Adding, removing, or editing exclusions — configuration writes remain withdrawn per [0020](./0020-withdraw-configuration-writes.md).
 - Reviewing every other domain's route map, beyond confirming this domain.
 - Reworking the error taxonomy generally.
-- Repairing any fixture other than this domain's Radarr one, or adding the capture procedure — that is [0021](./0021-live-verified-fixtures.md).
+- Repairing any fixture other than this domain's own, or adding the capture procedure — that is [0021](./0021-live-verified-fixtures.md).
 
 ## Tasks
 
-- [ ] Route exclusion observation per application
-  - [ ] Give the domain a per-application route and use each application's paged form where it offers one
-  - [ ] Recapture the Radarr fixture from the route Radarr serves and confirm the observation returns its records through the existing allowlist
-  - [ ] Extend the domain's tests to cover Sonarr and Radarr, confirming they fail against the shared-route map
-- [ ] Stop reporting a route-level 404 as a stale reference
-  - [ ] Map a 404 on a referenceless request to an error whose code and remediation describe what actually happened
-  - [ ] Cover the mapping so a referenceless 404 cannot regress to a recoverable stale reference
+- [x] Route exclusion observation per application
+  - [x] Give the domain a per-application route and use each application's paged form where it offers one
+  - [x] Recapture the Radarr fixture from the route Radarr serves and confirm the observation returns its records through the existing allowlist
+  - [x] Extend the domain's tests to cover Sonarr and Radarr, confirming they fail against the shared-route map
+- [x] Stop reporting a route-level 404 as a stale reference
+  - [x] Map a 404 on a referenceless request to an error whose code and remediation describe what actually happened
+  - [x] Cover the mapping so a referenceless 404 cannot regress to a recoverable stale reference
 
 ## Open Questions
 
