@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { applicationIds } from "../../applications.js";
+import { projectionSchema } from "./projection.js";
 
 export const applicationIdSchema = z.enum(applicationIds);
 
@@ -209,11 +210,20 @@ export function bulkReferences(schema: z.ZodString): z.ZodArray<z.ZodString> {
  * default: omitting `pageSize` yields {@link defaultPageSize} rather than an
  * unbounded fetch, and `detail` defaults to the payload that omits large
  * nested upstream structures.
+ *
+ * `projection` is declared once here rather than on each of the five query
+ * tools, which is what makes "a collection query accepts a projection" a
+ * property of the shared shape: a query variant added to any of them gains it
+ * without anyone remembering to, and no query can drift into offering a
+ * differently bounded one. `detail` stays beside it as the coarser lever it
+ * always was — it chooses among payloads the server decided are large, where a
+ * projection names the fields the caller will actually read.
  */
 export const queryBaseShape = {
   applications: applicationFilterSchema.optional(),
   detail: detailLevelSchema.default("summary"),
   ...pageShape,
+  projection: projectionSchema.optional(),
 } as const;
 
 /** Fields every direct mutation intent shares. */

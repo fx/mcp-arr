@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { findToolDefinition } from "../src/tools/definitions.js";
 import { type ToolName, toolNames } from "../src/tools/names.js";
 import { isImplementedOperation, operationDefinitions } from "../src/tools/operations.js";
+import { maxProjectionPathLength, maxProjectionPaths } from "../src/tools/schemas/projection.js";
 import { describePayloadPaths, payloadInventory } from "../src/tools/schemas/publish-results.js";
 import {
   assertWellFormed,
@@ -124,15 +125,16 @@ const propertyKeyPattern = /^[a-zA-Z0-9_.-]{1,64}$/u;
  * Every session pays this before making a single call, so its size is part of
  * the contract rather than an implementation detail. The number is a recorded
  * measurement plus a margin, not a budget somebody chose: it was read off a
- * spawned server at 52,508 bytes, with the length bounds stripped from every
+ * spawned server at 54,495 bytes, with the length bounds stripped from every
  * published input schema and restated as one sentence in six of their
- * descriptions.
+ * descriptions, and with the five collection queries each publishing the
+ * projection argument and its own sentence describing it.
  *
  * The margin is sized against what it has to catch. The cheapest way for the
  * bulk to come back is one tool publishing its payload schema again, and the
  * smallest of those is `arr_job_get`'s at 1,483 bytes — so a margin under that
  * cannot hide even the least expensive regression, while still leaving room for
- * a tool description or a few payload fields. The 992 bytes here are well
+ * a tool description or a few payload fields. The 905 bytes here are well
  * inside it.
  *
  * The number moves in both directions, and lowering it is as deliberate as
@@ -140,7 +142,7 @@ const propertyKeyPattern = /^[a-zA-Z0-9_.-]{1,64}$/u;
  * old measurement would keep the shape of a guard while admitting several times
  * the regression it was written to catch.
  */
-const listingByteCeiling = 53_500;
+const listingByteCeiling = 55_400;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -279,6 +281,48 @@ describe("built stdio tool surface", () => {
     }
   });
 
+  it("publishes the projection's count bound and keeps its path-length bound in validation", async () => {
+    const published = await publishedInputSchemas();
+
+    // Derived from what each tool published rather than from a list: the
+    // projection is declared once, on the shape every bounded collection query
+    // spreads, so which tools offer it is a fact about that shape.
+    const projecting = [...published].filter(([, schema]) => {
+      const properties = isRecord(schema.properties) ? schema.properties : {};
+      return isRecord(properties.projection);
+    });
+    expect(
+      projecting.map(([name]) => name),
+      "tools accepting a projection",
+    ).toEqual([
+      "arr_library_query",
+      "arr_activity_query",
+      "arr_release_search",
+      "arr_import_inspect",
+      "arr_config_observe",
+    ]);
+
+    for (const [name, schema] of projecting) {
+      const properties = isRecord(schema.properties) ? schema.properties : {};
+      const projection = isRecord(properties.projection) ? properties.projection : {};
+      // The count bound is the half 0017 keeps: an item count is the bound a
+      // caller acts on, so it stays on the wire.
+      expect(projection.maxItems, `${name} projection count bound`).toBe(maxProjectionPaths);
+      expect(projection.minItems, `${name} projection minimum`).toBe(1);
+      // The path-length bound is the half it strips, and this is where a caller
+      // learns it instead. Both still validate — `tool-projection.test.ts`
+      // sends a call past each of them and watches it be refused.
+      expect(String(schema.description ?? ""), `${name} projection length bound`).toContain(
+        `projection elements ${maxProjectionPathLength}`,
+      );
+      // The paths are described where a caller can act on them, which is what
+      // makes a projection writable straight out of the listing.
+      expect(String(projection.description ?? ""), `${name} projection description`).toContain(
+        "applications[].data",
+      );
+    }
+  });
+
   it("restates every bound it stripped in the published description", async () => {
     const published = await publishedInputSchemas();
 
@@ -287,11 +331,13 @@ describe("built stdio tool surface", () => {
     // schema no longer holds anything to derive them from. That is the whole
     // point of generating the sentence before stripping rather than after.
     expect(published.get("arr_library_query")?.description, "arr_library_query bounds").toContain(
-      "Maximum lengths in characters, enforced but not published: cursor 512, term 200.",
+      "Maximum lengths in characters, enforced but not published: cursor 512, projection " +
+        "elements 64, term 200.",
     );
     expect(published.get("arr_import_inspect")?.description, "arr_import_inspect bounds").toContain(
-      "Maximum lengths in characters, enforced but not published: cursor 512, mapping.quality " +
-        "120, mapping.languages elements 60, mapping.releaseGroup 120.",
+      "Maximum lengths in characters, enforced but not published: cursor 512, projection " +
+        "elements 64, mapping.quality 120, mapping.languages elements 60, " +
+        "mapping.releaseGroup 120.",
     );
 
     // And nowhere does the sentence name a property the root does not publish,
