@@ -59,8 +59,8 @@ export interface OperationInvocation {
    * own variant rather than re-deriving one from a free-form bag.
    *
    * When the caller applied a recorded plan, this is the plan's stored intent
-   * with the resupplied transient secrets merged back in, so a handler never
-   * has to know which of the two apply forms the caller used.
+   * replayed as it was recorded, so a handler never has to know which of the
+   * two apply forms the caller used.
    */
   readonly input: unknown;
   /** The process-local stores; the only mutable state a handler may touch. */

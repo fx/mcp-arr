@@ -54,10 +54,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  *
  * Every collection a mutation intent carries is a set in meaning — the queue
  * items to resolve, the releases to grab, the files to import — and none of the
- * published schemas gives an array's order a meaning. So naming the same two items in the other order is the same
- * mutation, and it has to reach the same receipt; if it did not, the reordered
- * repeat would miss the record and be sent upstream a second time, which is
- * exactly the duplicate the receipt exists to prevent.
+ * published schemas gives an array's order a meaning. So naming the same two
+ * items in the other order is the same mutation, and it has to reach the same
+ * receipt; if it did not, the reordered repeat would miss the record and be
+ * sent upstream a second time, which is exactly the duplicate the receipt
+ * exists to prevent.
  *
  * Duplicates collapse for the same reason: naming one item twice does not ask
  * for two mutations. Object property order needs no handling here because
