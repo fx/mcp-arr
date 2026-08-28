@@ -159,7 +159,7 @@ const providerSurfacedKeys = [
  * reports no field values at all: its credentials are still acknowledged, and
  * everything else is counted as withheld.
  */
-export function isDynamicallyDefined(raw: Record<string, unknown>): boolean {
+function isDynamicallyDefined(raw: Record<string, unknown>): boolean {
   const implementation =
     typeof raw.implementation === "string" ? text(raw.implementation)?.toLowerCase() : undefined;
   return implementation === "cardigann" || "definitionName" in raw || "definitionFile" in raw;

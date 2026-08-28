@@ -150,12 +150,14 @@ interface CollectedReference {
  *
  * Two filters have to agree before a value is treated as a reference. The
  * property must be one the schemas declare as reference-bearing, so
- * caller-authored free text — a Prowlarr search term, a provider field value —
- * is never resolved; and the value must carry a prefix this server mints, so a
- * property name that means something else on another tool (`target` is both a
- * configuration reference and a search discriminator) is passed over rather
- * than rejected. Anything that satisfies neither is the schema's business, and
- * the schema already validated it.
+ * caller-authored free text — a Prowlarr search term, a media title — is never
+ * resolved; and the value must carry a prefix this server mints, so a property
+ * one tool declares as reference-bearing is passed over rather than rejected
+ * where another tool gives the same name a different meaning. Neither filter is
+ * redundant: `referenceProperties` is a list a schema change can add to, and
+ * the second filter is what keeps that from turning an ordinary string into a
+ * lookup. Anything that satisfies neither is the schema's business, and the
+ * schema already validated it.
  */
 function collectReferences(input: unknown): readonly CollectedReference[] {
   const found: CollectedReference[] = [];
