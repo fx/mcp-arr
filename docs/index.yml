@@ -192,7 +192,7 @@ changes:
     path: changes/0023-radarr-exclusion-route.md
     description: Read Radarr import-list exclusions from the route Radarr serves and stop reporting the 404 as a stale reference
     spec: configuration-reconciliation
-    status: draft
+    status: complete
     depends_on: []
   - id: "0024"
     name: manual-import-request-shape

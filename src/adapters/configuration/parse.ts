@@ -139,9 +139,11 @@ export function parseConfiguration<TSchema extends z.ZodType>(
 /**
  * Requires a collection body.
  *
- * Every configuration route this server reads answers with an array. An
+ * Every configuration route this server reads unpaged answers with an array. An
  * instance that answers with an object is reporting something else — an error
- * document is the usual case — and is refused without being read.
+ * document is the usual case — and is refused without being read. A route read
+ * through its paged form answers with an envelope instead, and is parsed against
+ * the shared `pagedEnvelope` schema rather than here.
  */
 export function parseCollection(
   body: unknown,

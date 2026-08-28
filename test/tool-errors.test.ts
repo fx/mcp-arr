@@ -82,6 +82,39 @@ describe("tool error contract", () => {
     }
   });
 
+  /**
+   * A 404 means "that resource is gone" only where the caller named it. Where
+   * this server composed the request out of its own route table, the same status
+   * says the request was wrong, and reporting it as a recoverable stale
+   * reference would advise refreshing something the caller never supplied.
+   */
+  it("reports a miss on a request the server composed as an unexpected response", () => {
+    expect(toolErrorCodeForUpstreamKind("not-found", "server_composed")).toBe(
+      "unexpected_response",
+    );
+    expect(toolErrorCodeForUpstreamKind("not-found", "caller_reference")).toBe("stale_reference");
+
+    const upstream = new UpstreamError("not-found", {
+      application: "radarr",
+      operation: "exclusions/paged",
+      status: 404,
+    });
+    const composed = toolErrorForThrown(upstream, "radarr", "server_composed");
+
+    expect(composed.code).toBe("unexpected_response");
+    expect(composed.recoverable).toBe(false);
+    expect(composed.remediation).not.toContain("reference");
+    expect(toolErrorForUpstreamFailure(upstream, "radarr", "server_composed").code).toBe(
+      "unexpected_response",
+    );
+    // The origin decides nothing else: every other kind keeps its own code.
+    for (const kind of upstreamErrorKinds.filter((candidate) => candidate !== "not-found")) {
+      expect(toolErrorCodeForUpstreamKind(kind, "server_composed")).toBe(
+        toolErrorCodeForUpstreamKind(kind),
+      );
+    }
+  });
+
   it("reuses the upstream boundary's redacted message for a normalized failure", () => {
     const upstream = new UpstreamError("authentication", {
       application: "sonarr",
