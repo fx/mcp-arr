@@ -12,8 +12,8 @@
     "sortDirection": "descending",
     "totalRecords": 2,
     "records": [
-      { "id": 1, "tvdbId": 100001, "title": "Example Series" },
-      { "id": 2, "tvdbId": 100002, "title": "Example Other Series" }
+      { "id": 2, "tvdbId": 100002, "title": "Example Other Series" },
+      { "id": 1, "tvdbId": 100001, "title": "Example Series" }
     ]
   }
 }

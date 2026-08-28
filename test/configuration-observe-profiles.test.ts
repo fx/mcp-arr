@@ -329,11 +329,11 @@ describe("observing resources", () => {
     const exclusion = firstRecord(records);
 
     expect(calls[0]?.url.pathname).toBe("/api/v3/importlistexclusion/paged");
-    expect(records.map((record) => record.ref.id)).toEqual(["1", "2"]);
+    expect(records.map((record) => record.ref.id)).toEqual(["2", "1"]);
     expect(exclusion.family).toBe("resource");
     expect(exclusion.fields).toEqual([
-      { name: "tvdbId", value: 100001 },
-      { name: "title", value: "Example Series" },
+      { name: "tvdbId", value: 100002 },
+      { name: "title", value: "Example Other Series" },
     ]);
     // An exclusion carries neither `name` nor `label`, on either application:
     // what it is named by is the allowlisted title property itself.
