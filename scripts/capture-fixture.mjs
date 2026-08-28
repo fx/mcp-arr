@@ -311,7 +311,11 @@ async function main() {
   const client = http.createUpstreamClient({
     application: options.application,
     baseUrl: instance.baseUrl,
-    apiBasePath: descriptor.apiBasePath,
+    // The API base comes from the tuple the fixture will name, not from the
+    // application descriptor, so the request and the recorded metadata cannot
+    // disagree: were the two to drift, a body read from one API version could
+    // otherwise be committed as the answer of another.
+    apiBasePath: `/api/${approved.apiVersion}`,
     apiKey: instance.apiKey,
     timeoutMs: requestTimeoutMs,
   });
