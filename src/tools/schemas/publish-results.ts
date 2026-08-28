@@ -257,6 +257,14 @@ export function payloadInventory(outputSchema: z.ZodType): PayloadInventory | un
     payload instanceof z.ZodDiscriminatedUnion ? payload.def.discriminator : undefined;
 
   const converted = z.toJSONSchema(payload, { target: "draft-7", io: "output" }) as JsonSchema;
+  // Checked here rather than left to the walk. `leafPaths` refuses a reference
+  // at every node it visits, but a union payload never hands it the root — each
+  // alternative is walked on its own — and the root is exactly where a
+  // self-referential payload's `definitions` are hoisted to. Every discriminated
+  // payload this server publishes takes that branch, so a guard that only lives
+  // inside the walk is a guard most payloads never reach.
+  refuseReference(converted, "the payload itself");
+
   const alternatives = alternativesOf(converted);
   const payloads: PayloadPaths[] =
     alternatives === undefined

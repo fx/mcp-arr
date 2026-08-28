@@ -312,6 +312,23 @@ describe("published payload paths", () => {
         toolResultSchema({ data: z.strictObject({ tree: recursive }) }),
         /self-contained schema; found (\$ref|definitions)/u,
       ],
+      // The same recursion inside a discriminated union. `definitions` is
+      // hoisted to the converted root, and the walk never visits that root — it
+      // is handed each alternative — so this is refused by the payload-level
+      // check or not at all. Pinned on the message rather than on the throw:
+      // every alternative here happens to hold a reachable `$ref` too, so
+      // asserting only that it throws would pass whether or not the root is
+      // checked, and would stop testing the thing it was written for.
+      [
+        "recursiveInUnion",
+        toolResultSchema({
+          data: z.discriminatedUnion("view", [
+            z.strictObject({ view: z.literal("tree"), root: recursive }),
+            z.strictObject({ view: z.literal("flat"), id: z.string() }),
+          ]),
+        }),
+        /self-contained schema; found definitions at the payload itself/u,
+      ],
       ["emptyUnion", toolResultSchema({ data: z.union([]) }), /must offer object alternatives/u],
       // Names nothing at all rather than one field it cannot name.
       ["scalar", toolResultSchema({ data: z.string() }), /must name at least one field/u],
