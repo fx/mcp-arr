@@ -656,8 +656,63 @@ describe("what a reprocess answer leaves out", () => {
     expect(result.candidate.sizeBytes).toBe(3_221_225_472);
     expect(result.candidate.context.candidateId).toBe(3001);
     expect(result.candidate.existingLibraryFile).toBe(false);
-    // The flags the answer restates as a bitfield naming nothing readable.
-    expect(result.candidate.indexerFlags).toEqual(["freeleech"]);
+  });
+
+  /**
+   * The indexer-flag guard, on values this test owns rather than on a fixture's.
+   *
+   * The guard keeps a *list of names* the scan stated where the answer restates
+   * the flags as something else, and neither application currently sends that
+   * list: both answer the numeric bitfield on the scan as well as on the
+   * reprocess. So there is no recording that can supply the shape the guard is
+   * for, and a test reading one would assert against whatever the recording
+   * happens to hold — and would have to be rewritten again the next time a
+   * fixture is corrected towards what the instances actually send. The names
+   * below are synthetic for that reason, and both directions are exercised:
+   * a list is kept where the answer states no list, and given up where it does.
+   */
+  const namedFlags = ["freeleech", "halfleech"];
+
+  function scannedWithFlags(flags: unknown): Record<string, unknown> {
+    return { ...(sonarr.candidates[0] as Record<string, unknown>), indexerFlags: flags };
+  }
+
+  async function reDecidedFlags(
+    scanned: unknown,
+    answered: unknown,
+  ): Promise<readonly string[] | undefined> {
+    const running = instance({
+      scan: [scannedWithFlags(scanned)],
+      decided: [{ ...reDecided(), indexerFlags: answered }],
+    });
+    const result = await reprocessCandidate(
+      running.client,
+      "sonarr",
+      { sourceKind: "tracked_download", queueItemId: 502, mediaId: 12 },
+      fileIdentity(cleanFile),
+      {},
+    );
+
+    if (result.status !== "ok") {
+      throw new Error(`Expected a re-decided candidate, got ${result.status}`);
+    }
+    return result.candidate.indexerFlags;
+  }
+
+  it.each([
+    { answered: 0, named: "a bitfield" },
+    { answered: null, named: "nothing at all" },
+  ])(
+    "keeps the flag names the scan stated where the answer states $named",
+    async ({ answered }) => {
+      expect(await reDecidedFlags(namedFlags, answered)).toEqual(namedFlags);
+    },
+  );
+
+  it("takes the flag names the answer states, where it states a list", async () => {
+    // The other half, so the guard above is what keeps the scan's names rather
+    // than an adapter that never reads the answer's flags at all.
+    expect(await reDecidedFlags(namedFlags, ["halfleech"])).toEqual(["halfleech"]);
   });
 
   it("keeps what the scan stated over a default the answer echoes", async () => {
