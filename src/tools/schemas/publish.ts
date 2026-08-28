@@ -1,21 +1,6 @@
 import { z } from "zod";
 import { type ReferenceKind, referenceKinds, referencePattern } from "./common.js";
-
-/**
- * A converted JSON Schema node. Every node these unions produce is a plain
- * object with no `$ref` and no `$defs`, which is what lets deep equality here
- * be `JSON.stringify` and lets a merged property be assembled by hand.
- */
-type JsonSchema = Record<string, unknown>;
-
-function isRecord(value: unknown): value is JsonSchema {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function schemaAt(node: JsonSchema, key: string): JsonSchema | undefined {
-  const value = node[key];
-  return isRecord(value) ? value : undefined;
-}
+import { isRecord, type JsonSchema, schemaAt } from "./json-schema.js";
 
 function propertiesOf(branch: JsonSchema): JsonSchema {
   return schemaAt(branch, "properties") ?? {};

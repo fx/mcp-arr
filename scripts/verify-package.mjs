@@ -105,6 +105,7 @@ const allowedFiles = [
   "dist/tools/schemas/configuration-results.js",
   "dist/tools/schemas/configuration.js",
   "dist/tools/schemas/jobs.js",
+  "dist/tools/schemas/json-schema.js",
   "dist/tools/schemas/library-results.js",
   "dist/tools/schemas/library.js",
   "dist/tools/schemas/publish-results.js",
