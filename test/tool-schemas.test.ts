@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import * as z4mini from "zod/v4-mini";
+import { applicationIds } from "../src/applications.js";
 import { findToolDefinition, toolDefinitions } from "../src/tools/definitions.js";
 import { toolNames } from "../src/tools/names.js";
 import { operationDefinitions } from "../src/tools/operations.js";
+import { maxMutationApplications } from "../src/tools/results.js";
 import {
   defaultPageSize,
   isReferenceProperty,
@@ -17,7 +19,9 @@ import { objectInput, variantUnion } from "../src/tools/schemas/publish.js";
 import {
   declaredKeywordPaths,
   declaredPropertyValues,
+  fixedValues,
   publishedPropertyNames,
+  variantLines,
 } from "./support/json-schema.js";
 import { sampleReferences, sampleToolInputs } from "./support/tool-context.js";
 
@@ -117,6 +121,147 @@ function collectReferencePropertyNames(node: unknown, found: Set<string>): void 
   for (const value of Object.values(record)) {
     collectReferencePropertyNames(value, found);
   }
+}
+
+/**
+ * The two properties a caller names applications in.
+ *
+ * They are what `readApplications` in `src/tools/definitions.ts` reads to decide
+ * which instances a call targets. Writing them here rather than importing a
+ * reader is safe because of the second assertion below, which checks that no
+ * published schema names an application selection under a third spelling — so a
+ * property this list misses fails rather than going unguarded.
+ */
+const applicationSelectionProperties = ["applications", "application"] as const;
+
+/**
+ * How many applications one published node admits at once.
+ *
+ * An array admits as many as its own ceiling allows, and one without a ceiling
+ * admits every application there is; a single value admits one. A node that is
+ * neither throws rather than answering, because a selection whose shape this
+ * cannot count is one the assertion below would silently stop checking.
+ *
+ * A union answers with its widest alternative, and refuses a union it cannot
+ * read: an empty `anyOf` would otherwise reduce to `-Infinity` and an
+ * alternative that is not a schema object cannot be counted at all — either one
+ * compares as under any ceiling, so the guard would report success over a
+ * selection it never looked at.
+ */
+function admittedApplications(node: Record<string, unknown>): number {
+  if (Array.isArray(node.anyOf)) {
+    if (node.anyOf.length === 0) {
+      throw new Error("An application selection published as an empty anyOf cannot be counted");
+    }
+    return Math.max(
+      ...node.anyOf.map((alternative) => {
+        if (typeof alternative !== "object" || alternative === null || Array.isArray(alternative)) {
+          throw new Error(
+            `An anyOf alternative published as ${JSON.stringify(alternative)} cannot be counted`,
+          );
+        }
+        return admittedApplications(alternative as Record<string, unknown>);
+      }),
+    );
+  }
+  if (node.type === "array") {
+    return typeof node.maxItems === "number" ? node.maxItems : Number.POSITIVE_INFINITY;
+  }
+  if (node.type === "string") {
+    return 1;
+  }
+  throw new Error(
+    `An application selection published as ${JSON.stringify(node.type ?? null)} cannot be counted`,
+  );
+}
+
+/**
+ * How many applications a published node's own default names, or none where it
+ * publishes no default.
+ *
+ * A default is caller data rather than a schema, so nothing about the node's
+ * shape constrains it: a property bounded at one application can still publish
+ * a default naming two, and a caller that omits the argument then gets the
+ * selection the schema said was accepted.
+ *
+ * Only the two shapes a selection takes can be counted — a list of application
+ * ids, or one id. Any other default throws rather than being read as a single
+ * application, because counting `null` or an object as one would report a
+ * default this cannot see as being within the ceiling.
+ */
+function defaultApplications(node: Record<string, unknown>): number {
+  const declared = node.default;
+  if (declared === undefined) {
+    return 0;
+  }
+  if (Array.isArray(declared)) {
+    return declared.length;
+  }
+  if (typeof declared === "string") {
+    return 1;
+  }
+  throw new Error(
+    `An application selection defaulting to ${JSON.stringify(declared ?? null)} cannot be counted`,
+  );
+}
+
+/**
+ * Whether a published node's whole accepted set is applications.
+ *
+ * Read off the elements where the node has them, so a selection is recognized
+ * whichever of the two shapes it takes.
+ */
+function namesApplications(node: Record<string, unknown>): boolean {
+  const items = node.items;
+  const values = fixedValues(
+    typeof items === "object" && items !== null ? (items as Record<string, unknown>) : node,
+  );
+  return (
+    values.length > 0 &&
+    values.every((value) => (applicationIds as readonly string[]).includes(value))
+  );
+}
+
+/**
+ * The keywords whose value is caller data rather than a nested schema.
+ *
+ * The same exclusion `declaredKeywordPaths` makes, for the same reason: a
+ * `default` may be an arbitrary object, and descending into one would read a
+ * defaulted *value's* fields as a schema's properties — so a default that
+ * happened to hold an `application` field would be swept as though a tool
+ * published one.
+ */
+const dataKeywords = new Set(["const", "default", "enum", "examples"]);
+
+/** Every property a published schema declares, named beside its own node. */
+function collectDeclaredProperties(
+  node: unknown,
+  found: Array<readonly [string, Record<string, unknown>]> = [],
+): Array<readonly [string, Record<string, unknown>]> {
+  if (Array.isArray(node)) {
+    for (const entry of node) {
+      collectDeclaredProperties(entry, found);
+    }
+    return found;
+  }
+  if (typeof node !== "object" || node === null) {
+    return found;
+  }
+  const record = node as Record<string, unknown>;
+  const properties = record.properties;
+  if (typeof properties === "object" && properties !== null) {
+    for (const [name, declared] of Object.entries(properties as Record<string, unknown>)) {
+      if (typeof declared === "object" && declared !== null) {
+        found.push([name, declared as Record<string, unknown>]);
+      }
+    }
+  }
+  for (const [keyword, value] of Object.entries(record)) {
+    if (!dataKeywords.has(keyword)) {
+      collectDeclaredProperties(value, found);
+    }
+  }
+  return found;
 }
 
 describe("published tool surface", () => {
@@ -233,6 +378,182 @@ describe("published tool surface", () => {
       parseInput("arr_queue_resolve", { intent: "ignore_tracking", mode: "apply", items: [] })
         .success,
     ).toBe(false);
+  });
+
+  it("admits no application selection a mutation could not target", () => {
+    // The class rather than the two variants that prompted it: a published
+    // schema that advertises a selection the dispatcher refuses for naming more
+    // than one instance is the defect, and naming the tools it is known to
+    // affect today would pass while the next mutation to publish one repeated
+    // it. Read tools are deliberately absent — fanning a query across instances
+    // is correct, and only a mutation carries the one plan, job, and receipt
+    // that make a second target unreportable.
+    //
+    // Two halves, because the spec rule has two: a selection must not admit more
+    // than one application, and a schema whose default resolves to more than one
+    // must not publish that default as accepted. Checking the ceiling alone
+    // would pass a selection capped at one but left optional — which is half of
+    // the very defect this guard exists for, since omitting it falls through to
+    // every application the operation declares.
+    const swept: string[] = [];
+    const isSelection = (name: string): boolean =>
+      (applicationSelectionProperties as readonly string[]).includes(name);
+
+    // Which tools mutate is read off the annotations they publish rather than
+    // off a test fixture: that declaration is the same one a host reads to
+    // decide whether a call changes anything.
+    //
+    // But an annotation is a tool's own claim about itself, so the sweep would
+    // be one copied line from covering nothing: a mutation that declared
+    // `readOnlyHint: true` would drop out of the loop below while still
+    // publishing `mode` and a selection, and nothing else here would notice —
+    // the completeness assertion reads only the spelling of selection
+    // properties, and the anchors at the end name only the tools that exist
+    // today, so a new tool has none to fail. Tying the claim to `mode` is what
+    // closes that: the plan/apply choice is a property only a write has, it is
+    // published in the schema rather than asserted beside it, and a tool cannot
+    // drop it to escape the sweep without ceasing to be reachable as a
+    // mutation at all.
+    const namesMode = (name: (typeof toolNames)[number]): boolean =>
+      collectDeclaredProperties(inputJsonSchema(name)).some(([property]) => property === "mode");
+    expect(
+      toolDefinitions
+        .filter((candidate) => candidate.annotations.readOnlyHint === false)
+        .map((candidate) => candidate.name)
+        .sort(),
+    ).toEqual(
+      toolDefinitions
+        .filter((candidate) => namesMode(candidate.name))
+        .map((candidate) => candidate.name)
+        .sort(),
+    );
+
+    for (const definition of toolDefinitions.filter(
+      (candidate) => candidate.annotations.readOnlyHint === false,
+    )) {
+      const schema = inputJsonSchema(definition.name);
+
+      for (const [property, node] of collectDeclaredProperties(schema)) {
+        if (!isSelection(property)) {
+          continue;
+        }
+        swept.push(`${definition.name}.${property}`);
+        expect(
+          admittedApplications(node),
+          `${definition.name} publishes ${property}`,
+        ).toBeLessThanOrEqual(maxMutationApplications);
+        // A default is a value rather than a schema, so the ceiling above says
+        // nothing about it: a property capped at one could still publish a
+        // default naming both.
+        expect(
+          defaultApplications(node),
+          `${definition.name} defaults ${property}`,
+        ).toBeLessThanOrEqual(maxMutationApplications);
+      }
+
+      // The other half, read from the generated documentation, because a flat
+      // published root cannot say it: its `required` list is the intersection
+      // across forms, so a property required by one form and absent from
+      // another is optional at the root. Which form requires what survives only
+      // in the prose generated from the same union that validates.
+      for (const line of variantLines(schema, definition.discriminator)) {
+        for (const property of [...line.names].filter(isSelection)) {
+          swept.push(`${definition.name}.${property} required`);
+          expect(
+            line.required.has(property),
+            `${definition.name} form ${line.values.join("|")} leaves ${property} optional`,
+          ).toBe(true);
+        }
+      }
+    }
+
+    // The sweep found the selections it is meant to be checking, in both halves.
+    // Without this the assertions above would pass just as happily over nothing
+    // at all.
+    expect(swept).toContain("arr_search_start.application");
+    expect(swept).toContain("arr_search_start.application required");
+    expect(swept).toContain("arr_library_change.application");
+    expect(swept).toContain("arr_library_change.application required");
+  });
+
+  it("refuses to count an application selection it cannot read", () => {
+    // What keeps the sweep above from passing over a selection it never
+    // understood. Both counters answer with a number the sweep compares against
+    // a ceiling, so any shape they cannot read has to throw rather than return
+    // one: a sentinel that happens to compare as under the ceiling reports
+    // success over exactly the defect the sweep exists to catch.
+    // Each message is asserted rather than only the throw, so a refusal has to
+    // come from the reason under test and not from a later one it fell through
+    // to — or from a bare TypeError on the way.
+    expect(() => admittedApplications({ anyOf: [] })).toThrow(/empty anyOf cannot be counted/);
+    expect(() => admittedApplications({ anyOf: ["sonarr"] })).toThrow(
+      /anyOf alternative published as "sonarr"/,
+    );
+    expect(() => admittedApplications({ anyOf: [null] })).toThrow(
+      /anyOf alternative published as null/,
+    );
+    expect(() => admittedApplications({ type: "object" })).toThrow(
+      /selection published as "object" cannot be counted/,
+    );
+
+    expect(() => defaultApplications({ default: null })).toThrow(/cannot be counted/);
+    expect(() => defaultApplications({ default: {} })).toThrow(/cannot be counted/);
+    expect(() => defaultApplications({ default: 1 })).toThrow(/cannot be counted/);
+
+    // And the shapes a selection really does take still count, so refusing
+    // above has not cost the sweep the readings it is made of.
+    expect(admittedApplications({ type: "string" })).toBe(1);
+    expect(admittedApplications({ type: "array", maxItems: 2 })).toBe(2);
+    expect(admittedApplications({ type: "array" })).toBe(Number.POSITIVE_INFINITY);
+    expect(
+      admittedApplications({ anyOf: [{ type: "string" }, { type: "array", maxItems: 3 }] }),
+    ).toBe(3);
+    expect(defaultApplications({})).toBe(0);
+    expect(defaultApplications({ default: "sonarr" })).toBe(1);
+    expect(defaultApplications({ default: ["sonarr", "radarr"] })).toBe(2);
+  });
+
+  it("counts every published application selection without refusing one", () => {
+    // The counters throw on what they cannot read, so this says the published
+    // surface is entirely readable to them today: every selection any tool
+    // publishes — read tools included, since a read tool's selection is a
+    // mutation's one rename away — answers with a real count rather than
+    // tripping the refusals above.
+    const counted: string[] = [];
+    for (const definition of toolDefinitions) {
+      for (const [property, node] of collectDeclaredProperties(inputJsonSchema(definition.name))) {
+        if (!(applicationSelectionProperties as readonly string[]).includes(property)) {
+          continue;
+        }
+        const admitted = admittedApplications(node);
+        expect(admitted, `${definition.name} publishes ${property}`).toBeGreaterThanOrEqual(1);
+        expect(Number.isNaN(admitted), `${definition.name} publishes ${property}`).toBe(false);
+        expect(
+          defaultApplications(node),
+          `${definition.name} defaults ${property}`,
+        ).toBeGreaterThanOrEqual(0);
+        counted.push(`${definition.name}.${property}`);
+      }
+    }
+
+    expect(counted.length).toBeGreaterThan(0);
+  });
+
+  it("names an application selection nothing but applications or application", () => {
+    // What keeps the sweep above honest. It looks for two property names, so a
+    // selection published under a third would go unchecked — and would also be
+    // one the dispatcher never reads, since those two names are exactly what it
+    // resolves a call's targets from.
+    const named = new Set<string>();
+    for (const definition of toolDefinitions) {
+      for (const [name, node] of collectDeclaredProperties(inputJsonSchema(definition.name))) {
+        if (namesApplications(node)) {
+          named.add(name);
+        }
+      }
+    }
+
+    expect([...named].sort()).toEqual([...applicationSelectionProperties].sort());
   });
 
   it("requires an explicit mode on every mutation tool and rejects it on read tools", () => {
