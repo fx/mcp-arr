@@ -11,20 +11,12 @@ import {
   projectPage,
   queryDigest,
 } from "../library/paging.js";
-import {
-  type ConfigurationDomain,
-  familyOf,
-  isProviderDomain,
-  providerSchemaRouteFor,
-  routeFor,
-} from "./domains.js";
+import { type ConfigurationDomain, familyOf, routeFor } from "./domains.js";
 import type {
   ConfigurationRecord,
   ConfigurationView,
   ProfileRecord,
   ProviderRecord,
-  ProviderSchema,
-  ProviderTemplate,
   ResourceRecord,
 } from "./model.js";
 import { isUpstreamRecord, parseCollection } from "./parse.js";
@@ -39,7 +31,6 @@ import {
   type SerializationContext,
   serializeProfile,
   serializeProvider,
-  serializeProviderTemplate,
   serializeResource,
 } from "./serialize.js";
 
@@ -68,15 +59,6 @@ export interface ConfigurationObservationRequest {
   readonly domain: ConfigurationDomain;
   readonly detail: ConfigurationDetail;
   readonly paging: ConfigurationPaging;
-  /**
-   * Also read the instance's provider templates.
-   *
-   * Provider field lists are version specific, so the templates come from the
-   * instance rather than from a table compiled into this server. It is opt-in
-   * because it costs a second upstream request, and it is meaningless outside a
-   * provider domain — a profile has a fixed shape and no schema route.
-   */
-  readonly includeSchema?: boolean | undefined;
 }
 
 export type ConfigurationObservationOutcome =
@@ -115,18 +97,7 @@ function digestParts(
   application: ApplicationId,
   request: ConfigurationObservationRequest,
 ): readonly (string | number | boolean | undefined)[] {
-  return [
-    application,
-    request.domain,
-    request.detail,
-    request.paging.pageSize,
-    // Only where it changes the answer. Outside a provider domain there is no
-    // schema route to read and the flag is ignored, so digesting it there would
-    // mint two incompatible cursors for two observations that returned exactly
-    // the same page — and the second page of one would be refused as belonging
-    // to a different observation.
-    isProviderDomain(request.domain) ? request.includeSchema === true : undefined,
-  ];
+  return [application, request.domain, request.detail, request.paging.pageSize];
 }
 
 interface MappedRecord {
@@ -169,45 +140,15 @@ function mapRecord(context: SerializationContext, value: unknown): MappedRecord 
 function viewOf(
   domain: ConfigurationDomain,
   records: readonly ConfigurationRecord[],
-  schema: ProviderSchema | undefined,
 ): ConfigurationView {
   switch (familyOf(domain)) {
     case "provider":
-      return {
-        family: "provider",
-        domain,
-        records: records as readonly ProviderRecord[],
-        ...(schema === undefined ? {} : { schema }),
-      };
+      return { family: "provider", domain, records: records as readonly ProviderRecord[] };
     case "profile":
       return { family: "profile", domain, records: records as readonly ProfileRecord[] };
     case "resource":
       return { family: "resource", domain, records: records as readonly ResourceRecord[] };
   }
-}
-
-/**
- * Reads one provider domain's templates from the instance.
- *
- * A template whose payload names no implementation is dropped rather than
- * reported under an invented name: it is the implementation a later create has
- * to name, so a template without one describes nothing a caller could use.
- */
-async function readProviderTemplates(
-  client: UpstreamClient,
-  context: SerializationContext,
-): Promise<readonly ProviderTemplate[]> {
-  const body = await client.get(context.route);
-  return parseCollection(body, context.application, context.route).flatMap((value) => {
-    if (!isUpstreamRecord(value)) {
-      throw new UpstreamError("unexpected-response", {
-        application: context.application,
-        operation: context.route,
-      });
-    }
-    const template = serializeProviderTemplate(context, value);
-    return template === undefined ? [] : [template];
-  });
 }
 
 /**
@@ -263,7 +204,6 @@ export async function runConfigurationObservation(
   };
 
   let page: AdapterPage<MappedRecord>;
-  let schema: ProviderSchema | undefined;
   try {
     const body = await client.get(route);
     page = projectPage<unknown, MappedRecord>({
@@ -271,17 +211,6 @@ export async function runConfigurationObservation(
       window,
       map: (value) => mapRecord(context, value),
     });
-
-    if (request.includeSchema === true && isProviderDomain(request.domain)) {
-      const schemaRoute = providerSchemaRouteFor(request.domain, application);
-      if (schemaRoute !== undefined) {
-        schema = {
-          application,
-          domain: request.domain,
-          templates: await readProviderTemplates(client, { ...context, route: schemaRoute }),
-        };
-      }
-    }
   } catch (error) {
     return { status: "error", error: toolErrorForThrown(error, application) };
   }
@@ -298,7 +227,6 @@ export async function runConfigurationObservation(
     data: viewOf(
       request.domain,
       page.items.map((item) => item.record),
-      schema,
     ),
     resources: new ConfigurationResourceSet(
       application,

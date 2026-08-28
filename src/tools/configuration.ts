@@ -6,7 +6,6 @@ import type {
   ConfigurationRecord,
   ConfigurationRef,
   ConfigurationView,
-  ProviderSchema,
 } from "../adapters/configuration/model.js";
 import { runConfigurationObservation } from "../adapters/configuration/service.js";
 import { queryDigest } from "../adapters/library/paging.js";
@@ -57,7 +56,6 @@ export interface PublishedView {
   readonly family: ConfigurationFamily;
   readonly domain: ConfigurationDomain;
   readonly records: readonly PublishedRecord[];
-  readonly schema?: ProviderSchema | undefined;
 }
 
 /**
@@ -151,7 +149,6 @@ function publishView(
     family: view.family,
     domain: view.domain,
     records: view.records.map((record) => publishRecord(record, mint)),
-    ...(view.family === "provider" && view.schema !== undefined ? { schema: view.schema } : {}),
   };
 }
 
@@ -177,10 +174,6 @@ export const configObserveHandler: OperationHandler = async (invocation) => {
       domain: input.domain,
       detail: input.detail,
       paging: { pageSize: input.pageSize, cursor: input.cursor },
-      // The instance's own provider templates are read only at full detail: they
-      // cost a second request, and a summary is asking what is configured rather
-      // than what could be.
-      includeSchema: input.detail === "full",
     },
   );
   if (outcome.status === "error") {

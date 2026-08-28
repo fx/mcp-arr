@@ -1,5 +1,5 @@
 import type { ApplicationId } from "../../applications.js";
-import type { ConfigurationDomain, ProviderDomain } from "./domains.js";
+import type { ConfigurationDomain } from "./domains.js";
 
 /**
  * The model-facing configuration model.
@@ -151,18 +151,18 @@ export interface DynamicFieldDescriptor {
   readonly secret: boolean;
 }
 
-/** One provider template the instance offers for a domain. */
+/**
+ * One provider template the instance offers for a domain.
+ *
+ * Internal to the operation that reads a schema route: the instance's
+ * catalogue is not something an observation returns, so this describes what a
+ * staleness check digests rather than anything a caller receives.
+ */
 export interface ProviderTemplate {
   readonly implementation: string;
   readonly name?: string | undefined;
   readonly configContract?: string | undefined;
   readonly fields: readonly DynamicFieldDescriptor[];
-}
-
-export interface ProviderSchema {
-  readonly application: ApplicationId;
-  readonly domain: ProviderDomain;
-  readonly templates: readonly ProviderTemplate[];
 }
 
 /**
@@ -174,8 +174,6 @@ export type ConfigurationView =
       readonly family: "provider";
       readonly domain: ConfigurationDomain;
       readonly records: readonly ProviderRecord[];
-      /** Present only when the caller asked for the instance's templates. */
-      readonly schema?: ProviderSchema | undefined;
     }
   | {
       readonly family: "profile";
