@@ -89,15 +89,28 @@ const leafTypes: ReadonlySet<string> = new Set(["string", "number", "integer", "
  * discriminator groups, because that is the one a caller has already chosen by
  * the time a result exists.
  *
- * A node that still holds structure this walk cannot name — an object with no
- * declared properties, a tuple, a map keyed by a value — throws rather than
- * being published as a leaf, and it throws when the tool is registered. Naming
- * it as a leaf would silently stop publishing everything inside it, which is
- * the same failure `publish.ts` refuses on the input side and for the same
- * reason: a field a caller is never told about is worse than a server that
- * will not start.
+ * A node that still holds fields this walk cannot name — an object declaring no
+ * properties, a tuple, a map keyed by a value, an intersection — throws when
+ * the tool is registered rather than being published as a leaf or dropped.
+ * Either would silently stop telling a caller about everything inside it, which
+ * is the same failure `publish.ts` refuses on the input side and for the same
+ * reason: a field a caller is never told about is worse than a server that will
+ * not start.
  */
+function refuseUnnamable(node: JsonSchema, prefix: string, holding: string): Error {
+  return new Error(
+    `A payload field must bottom out at a value; found ${holding} at ` +
+      `${prefix === "" ? "the payload itself" : prefix}: ${JSON.stringify(node).slice(0, 200)}`,
+  );
+}
+
 function leafPaths(node: JsonSchema, prefix: string, into: string[]): string[] {
+  // An intersection is checked before anything else, because it carries the
+  // fields of its members without declaring a type or properties of its own —
+  // so every test below would pass it through as though it held nothing.
+  if (Array.isArray(node.allOf)) {
+    throw refuseUnnamable(node, prefix, "an intersection this walk cannot flatten");
+  }
   const alternatives = alternativesOf(node);
   if (alternatives !== undefined) {
     for (const alternative of alternatives) {
@@ -111,18 +124,19 @@ function leafPaths(node: JsonSchema, prefix: string, into: string[]): string[] {
   }
   const properties = schemaAt(node, "properties");
   if (properties !== undefined) {
-    for (const [name, declared] of Object.entries(properties)) {
-      if (isRecord(declared)) {
-        leafPaths(declared, prefix === "" ? name : `${prefix}.${name}`, into);
-      }
+    const declared = Object.entries(properties).filter((entry) => isRecord(entry[1]));
+    if (declared.length === 0) {
+      // Descending would produce no path at all, which is the one outcome worse
+      // than a wrong one: the field vanishes from the inventory silently.
+      throw refuseUnnamable(node, prefix, "an object declaring no properties");
+    }
+    for (const [name, child] of declared) {
+      leafPaths(child as JsonSchema, prefix === "" ? name : `${prefix}.${name}`, into);
     }
     return into;
   }
   if (typeof node.type === "string" && !leafTypes.has(node.type)) {
-    throw new Error(
-      `A payload field must bottom out at a value; found a ${node.type} declaring ` +
-        `neither properties nor items, at ${prefix === "" ? "the payload itself" : prefix}`,
-    );
+    throw refuseUnnamable(node, prefix, `a ${node.type} declaring neither properties nor items`);
   }
   if (prefix !== "" && !into.includes(prefix)) {
     into.push(prefix);

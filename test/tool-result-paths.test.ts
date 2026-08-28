@@ -264,18 +264,30 @@ describe("published payload paths", () => {
   });
 
   it("refuses a payload whose fields it cannot name", () => {
-    // A map keyed by a value and a tuple both hold fields this walk has no
-    // segment for. Publishing either as one leaf would quietly stop telling a
-    // caller about everything inside it, so registration fails instead.
-    const mapped = toolResultSchema({
-      data: z.record(z.string(), z.strictObject({ title: z.string() })),
-    });
-    const tupled = toolResultSchema({
-      data: z.strictObject({ pair: z.tuple([z.string(), z.number()]) }),
-    });
+    // Four shapes that hold fields this walk has no path for. Publishing any of
+    // them as one leaf — or, for the empty object, as nothing at all — would
+    // quietly stop telling a caller about everything inside it, so registration
+    // fails instead. None of them occurs in the tree today; the point is that
+    // one arriving is caught rather than silently truncating the inventory.
+    const refused = {
+      map: toolResultSchema({ data: z.record(z.string(), z.strictObject({ title: z.string() })) }),
+      tuple: toolResultSchema({
+        data: z.strictObject({ pair: z.tuple([z.string(), z.number()]) }),
+      }),
+      intersection: toolResultSchema({
+        data: z.strictObject({
+          both: z.intersection(
+            z.strictObject({ x: z.string() }),
+            z.strictObject({ y: z.string() }),
+          ),
+        }),
+      }),
+      emptyObject: toolResultSchema({ data: z.strictObject({ nothing: z.strictObject({}) }) }),
+    };
 
-    expect(() => payloadInventory(mapped)).toThrow(/bottom out at a value/u);
-    expect(() => payloadInventory(tupled)).toThrow(/bottom out at a value/u);
+    for (const [shape, schema] of Object.entries(refused)) {
+      expect(() => payloadInventory(schema), shape).toThrow(/bottom out at a value/u);
+    }
   });
 
   it("names every value a discriminated payload can be selected by", () => {
