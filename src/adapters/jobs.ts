@@ -55,11 +55,18 @@ export type CommandRefresh =
 /**
  * Reads the current state of one upstream command.
  *
- * Only two things ever come out of it, and neither is an exception: an
- * observation the job store can fold in, or a redacted failure. That is what
- * makes it usable from a read that must keep answering with the instance
- * switched off — the caller decides what an unreachable instance means for the
- * projection it already holds, rather than having the read fail underneath it.
+ * Two things come back without an exception: an observation the job store can
+ * fold in, or a redacted failure that learned nothing about the command. That
+ * is what makes it usable from a read that must keep answering with the
+ * instance switched off — the caller decides what an unreachable instance means
+ * for the projection it already holds, rather than having the read fail
+ * underneath it.
+ *
+ * The exception is reserved for the failures a caller must act on rather than
+ * wait out: a rejected API key, a request the instance called invalid, and a
+ * defect in this process. Swallowing one of those into a warning beside a
+ * projection that can never advance is how an operator who rotated a key would
+ * poll a job forever without ever being told why it stopped moving.
  */
 export async function readCommandRecord(
   client: UpstreamClient,
@@ -78,11 +85,34 @@ export async function readCommandRecord(
       // outage would freeze the job at its last state and say nothing.
       throw error;
     }
-    // Every one of the three applications answers an unknown or aged-out
-    // command identifier with 404, which is the command record expiring rather
-    // than anything going wrong.
-    return error.kind === "not-found"
-      ? { status: "observed", observation: { warnings: [commandGoneWarning] } }
-      : { status: "unreachable", failure: { kind: error.kind, message: error.message } };
+    switch (error.kind) {
+      // Every one of the three applications answers an unknown or aged-out
+      // command identifier with 404, which is the command record expiring
+      // rather than anything going wrong.
+      case "not-found":
+        return { status: "observed", observation: { warnings: [commandGoneWarning] } };
+
+      // Nothing was learned about the command, and nothing about the failure is
+      // the caller's to fix: the instance was down, slow, throttling, or said
+      // something this server could not read. A job read is answerable with the
+      // instance switched off, so these leave the held projection alone.
+      case "unavailable":
+      case "timeout":
+      case "rate-limit":
+      case "unexpected-response":
+        return { status: "unreachable", failure: { kind: error.kind, message: error.message } };
+
+      // A rejected API key, a request the instance called invalid, and a
+      // request this server could not even compose are all failures a caller
+      // has to be told about, and none of them get better by being read again.
+      // Degrading them would leave a poller reading `ok` beside a projection
+      // that can never advance, never learning that its credentials are being
+      // refused. Every other read in this project surfaces them as errors, and
+      // so does this one.
+      case "authentication":
+      case "validation":
+      case "invalid-request":
+        throw error;
+    }
   }
 }

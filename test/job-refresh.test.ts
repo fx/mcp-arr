@@ -6,6 +6,7 @@ import {
   readCommandRecord,
 } from "../src/adapters/jobs.js";
 import type { ApplicationId } from "../src/applications.js";
+import { UpstreamError } from "../src/http/errors.js";
 import { normalizeJobStatus, type UpstreamCommandObservation } from "../src/state/jobs.js";
 import { activityFixture } from "./support/activity.js";
 import { jsonResponse, libraryHarness, type UpstreamCall } from "./support/library.js";
@@ -59,6 +60,17 @@ function serving(application: ApplicationId, respond: (call: UpstreamCall) => Re
     calls: harness.calls,
     read: (upstreamId) => readCommandRecord(harness.client, application, upstreamId),
   };
+}
+
+/** The upstream error one read raised, failing the test if it raised none. */
+async function rejectionOf(read: Promise<CommandRefresh>): Promise<UpstreamError> {
+  try {
+    await read;
+  } catch (error) {
+    expect(error).toBeInstanceOf(UpstreamError);
+    return error as UpstreamError;
+  }
+  throw new Error("Expected the read to raise an upstream error");
 }
 
 /** Narrows a refresh to the observation it carried, failing the test if it did not. */
@@ -116,6 +128,37 @@ describe("readCommandRecord", () => {
     expect(normalizeJobStatus(observation.state, observation.result)).toBe("completed");
   });
 
+  it("keeps a completed command that reports no result at all a completion", async () => {
+    // Prowlarr sends no `result` field on any command it answers. An absent
+    // result is that application saying the command finished and nothing more,
+    // which is still a completion — and it must stay one, because the reading
+    // below turns on the difference between saying nothing and declining to
+    // answer.
+    const command = commandOf("prowlarr");
+    const instance = serving("prowlarr", () => jsonResponse(command));
+
+    const observation = observationOf(await instance.read(String(command.id)));
+
+    expect(command.status).toBe("completed");
+    expect(command.result).toBeUndefined();
+    expect(observation.result).toBeUndefined();
+    expect(normalizeJobStatus(observation.state, observation.result)).toBe("completed");
+  });
+
+  it("does not turn a result the application would not state into a success", async () => {
+    // Observed live: the same Sonarr command answered `completed / successful`
+    // and, minutes later, `completed / unknown`. Reading the second answer as a
+    // completion would publish a success the application refused to state, and
+    // a completion is terminal, so nothing would ever revisit it.
+    const command = { ...commandOf("sonarr", 1), result: "unknown" };
+    const instance = serving("sonarr", () => jsonResponse(command));
+
+    const observation = observationOf(await instance.read(String(command.id)));
+
+    expect(observation.result).toBe("unknown");
+    expect(normalizeJobStatus(observation.state, observation.result)).toBe("unknown");
+  });
+
   it("keeps the command's own payload, trigger, and identity out of the observation", async () => {
     const command = commandOf("sonarr");
     const instance = serving("sonarr", () => jsonResponse(command));
@@ -168,6 +211,27 @@ describe("readCommandRecord", () => {
     expect(refresh.failure.kind).toBe("unexpected-response");
     expect(refresh.failure.message).toContain("sonarr");
     expect(refresh.failure.message).not.toContain(testApiKeys.sonarr);
+  });
+
+  it("raises a rejected API key rather than reporting it as an unreachable instance", async () => {
+    // An operator who rotates a key mid-job must learn that the key is being
+    // refused. Reported as an outage, it would leave a poller reading a stale
+    // projection beside a warning, forever, and nothing about it improves by
+    // being read again.
+    const instance = serving("sonarr", () => jsonResponse({ message: "Unauthorized" }, 401));
+
+    const raised = await rejectionOf(instance.read("77"));
+
+    expect(raised.kind).toBe("authentication");
+    expect(raised.message).not.toContain(testApiKeys.sonarr);
+  });
+
+  it("raises a request the instance rejected as invalid", async () => {
+    // Same reasoning as a refused key: the instance answered, and what it said
+    // is that this request is wrong. That is not an outage to wait out.
+    const instance = serving("sonarr", () => jsonResponse({ message: "Bad Request" }, 400));
+
+    expect((await rejectionOf(instance.read("77"))).kind).toBe("validation");
   });
 
   it("reports an unreadable command record as a failure rather than as no state", async () => {

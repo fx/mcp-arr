@@ -55,7 +55,23 @@ describe("job status normalization", () => {
   it("does not project an unsuccessful command as a successful one", () => {
     expect(normalizeJobStatus("completed", "unsuccessful")).toBe("failed");
     expect(normalizeJobStatus("completed", "successful")).toBe("completed");
-    expect(normalizeJobStatus("completed", "unknown")).toBe("completed");
+  });
+
+  it("separates a result an application never sends from one it declined to state", () => {
+    // Prowlarr sends no result field on any command it answers, so a completed
+    // command with no result is simply a completion.
+    expect(normalizeJobStatus("completed")).toBe("completed");
+    expect(normalizeJobStatus("completed", undefined)).toBe("completed");
+    expect(normalizeJobStatus("completed", "  ")).toBe("completed");
+
+    // A result that is present and indefinite is the opposite: the application
+    // was asked how the command ended and would not say. `completed` is
+    // terminal, so reading it as one would publish a success the application
+    // refused to state and nothing would ever revisit it.
+    expect(jobResultFor("completed")).toBe("succeeded");
+    expect(normalizeJobStatus("completed", "unknown")).toBe("unknown");
+    expect(normalizeJobStatus("completed", "Unknown")).toBe("unknown");
+    expect(normalizeJobStatus("completed", "partial")).toBe("unknown");
   });
 
   it("reports an unrecognized or absent state as unknown rather than guessing", () => {
@@ -127,6 +143,36 @@ describe("job projection", () => {
     expect(record.terminal?.items).toEqual(perItem);
     expect(record.terminal?.result).toBe("succeeded");
     expect(record.items.filter((item) => item.status === "error")).toHaveLength(1);
+  });
+
+  it("does not settle a job on a result the application declined to state", () => {
+    const { jobs, clock } = store(0);
+    const record = jobs.project({
+      application: "sonarr",
+      command,
+      observation: { state: "completed", result: "unknown" },
+      cancellation: { supported: false },
+    });
+
+    // No snapshot, so nothing published a success, and the job stays open to a
+    // later reading rather than being frozen on the non-answer.
+    expect(record.status).toBe("unknown");
+    expect(record.terminal).toBeUndefined();
+
+    clock.advance(1_000);
+    const later = jobs.observe(record.reference, {
+      state: "completed",
+      result: "successful",
+      items: perItem,
+    });
+
+    expect(later.ok && later.record.status).toBe("completed");
+    expect(later.ok && later.record.terminal).toEqual({
+      status: "completed",
+      result: "succeeded",
+      items: perItem,
+      at: 1_000,
+    });
   });
 
   it("preserves the terminal snapshot after the upstream command record is gone", () => {

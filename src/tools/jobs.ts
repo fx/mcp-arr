@@ -95,6 +95,12 @@ interface RefreshedJob {
  * this server could not reach leaves the held record alone and says so, because
  * a job read is answerable with the instance switched off and turning that into
  * a failure would hide the state the caller asked for.
+ *
+ * A refused API key is the one thing that is not answered from the held record:
+ * the reader raises it, this handler does not catch it, and the caller gets the
+ * error every other read in this project would give it. Nothing about it
+ * improves by polling, and a job that answered `ok` from a projection that can
+ * never advance again would keep the reason to itself.
  */
 async function refreshJob(
   invocation: OperationInvocation,

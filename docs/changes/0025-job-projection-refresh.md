@@ -117,9 +117,11 @@ The [Tool Contracts spec](../specs/tool-contracts/#job-projection) owns job refr
   - [x] Assert the upstream read happens, since the current tests pass with no caller at all
 - [x] Keep a terminal answer once observed
   - [x] Refuse to replace an observed terminal status or result with a less definite reading
+  - [x] Settle a job only on a result an application actually stated, so a reading that is indefinite from the start cannot publish a success — while a result no application sends at all still completes
   - [x] Cover a second read whose answer has lost the result, and a read after cancellation established an outcome
 - [x] Degrade safely when the command is gone
   - [x] Map a 404 to unknown state and confirm the job stays resolvable
+  - [x] Degrade only what an expired command record or an unreachable instance justifies, surfacing a refused API key or a rejected request as an error rather than as a stale answer
   - [x] Confirm no command body, trigger, or other unpublished value reaches the caller
 - [x] Report progress only where an application supplies counts
   - [x] Populate progress solely from numeric counts an application reports, and leave it absent otherwise

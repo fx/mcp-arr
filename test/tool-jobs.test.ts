@@ -238,6 +238,87 @@ describe("arr_job_get", () => {
     });
   });
 
+  it("reports a result the application declined to state as unknown, not as a success", async () => {
+    // The degradation the other direction: the first reading this job ever gets
+    // is the indefinite one. There is no earlier definite reading to hold on
+    // to, so the guard that protects one does nothing here — and publishing
+    // `succeeded` would be worse than degrading, because it would state an
+    // outcome the application explicitly would not.
+    const { context, state, requested } = harness([
+      { record: commandRecord({ status: "completed", result: "unknown" }) },
+      { record: commandRecord({ status: "completed", result: "successful" }) },
+    ]);
+    const record = state.jobs.project({
+      application: "sonarr",
+      command,
+      observation: { state: "queued" },
+      cancellation: { supported: false },
+    });
+
+    const indefinite = await callTool(context, "arr_job_get", { job: record.reference });
+
+    expect(indefinite.status).toBe("ok");
+    expect(projectionOf(indefinite)).toMatchObject({ status: "unknown" });
+    expect(projectionOf(indefinite).terminal).toBeUndefined();
+
+    // Nothing was settled, so the next read still asks — and a definite answer
+    // is accepted when one finally arrives.
+    const settled = await callTool(context, "arr_job_get", { job: record.reference });
+
+    expect(requested).toEqual([commandRoute("sonarr"), commandRoute("sonarr")]);
+    expect(projectionOf(settled)).toMatchObject({
+      status: "completed",
+      terminal: { status: "completed", result: "succeeded" },
+    });
+  });
+
+  it("keeps a completed command that reports no result at all a success", async () => {
+    // Prowlarr sends no result field on any command it answers. Saying nothing
+    // beyond "it finished" is not the same as declining to say how it finished,
+    // and this projection must not collapse the two.
+    const { context, state } = harness([{ record: commandRecord({ status: "completed" }) }]);
+    const record = state.jobs.project({
+      application: "sonarr",
+      command,
+      observation: { state: "queued" },
+      cancellation: { supported: false },
+    });
+
+    const result = await callTool(context, "arr_job_get", { job: record.reference });
+
+    expect(projectionOf(result)).toMatchObject({
+      status: "completed",
+      terminal: { status: "completed", result: "succeeded" },
+    });
+  });
+
+  it("reports an API key the instance refused rather than answering from a stale projection", async () => {
+    // An operator rotating a key mid-job must be able to learn that the key is
+    // being refused. Reported as a warning beside `status: ok`, the job would
+    // sit at `started` for the life of the process and a polling caller would
+    // never find out why.
+    const { context, state } = harness([{ status: 401 }]);
+    const record = state.jobs.project({
+      application: "sonarr",
+      command,
+      observation: { state: "started" },
+      cancellation: { supported: false },
+    });
+
+    const result = await callTool(context, "arr_job_get", { job: record.reference });
+
+    expect(result.status).toBe("error");
+    expect(result.applications[0]?.error?.code).toBe("upstream_authentication");
+    expect(result.applications[0]?.data).toBeUndefined();
+    // The projection the caller would otherwise have been handed is still the
+    // one this job was minted with, which is exactly what makes answering `ok`
+    // from it a lie.
+    expect(state.jobs.resolve(record.reference)).toMatchObject({
+      ok: true,
+      record: { status: "started" },
+    });
+  });
+
   it("reports a command the application no longer holds as unknown, without failing", async () => {
     const { context, state, requested } = harness();
     const record = state.jobs.project({
