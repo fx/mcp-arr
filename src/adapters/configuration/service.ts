@@ -260,7 +260,11 @@ export async function runConfigurationObservation(
       ? await readPagedCollection(client, context, window)
       : await readWholeCollection(client, context, window);
   } catch (error) {
-    return { status: "error", error: toolErrorForThrown(error, application) };
+    // Every route this observation sends comes from the domain table, and no
+    // part of the request is a value the caller supplied, so an upstream miss
+    // is this server's own composition being wrong rather than a reference the
+    // caller could refresh.
+    return { status: "error", error: toolErrorForThrown(error, application, "server_composed") };
   }
 
   const continuation: Continuation = {

@@ -91,9 +91,9 @@ The [Configuration Reconciliation spec](../specs/configuration-reconciliation/#o
   - [x] Give the domain a per-application route and use each application's paged form where it offers one
   - [x] Recapture the Radarr fixture from the route Radarr serves and confirm the observation returns its records through the existing allowlist
   - [x] Extend the domain's tests to cover Sonarr and Radarr, confirming they fail against the shared-route map
-- [ ] Stop reporting a route-level 404 as a stale reference
-  - [ ] Map a 404 on a referenceless request to an error whose code and remediation describe what actually happened
-  - [ ] Cover the mapping so a referenceless 404 cannot regress to a recoverable stale reference
+- [x] Stop reporting a route-level 404 as a stale reference
+  - [x] Map a 404 on a referenceless request to an error whose code and remediation describe what actually happened
+  - [x] Cover the mapping so a referenceless 404 cannot regress to a recoverable stale reference
 
 ## Open Questions
 

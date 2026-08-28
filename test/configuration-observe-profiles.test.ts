@@ -396,6 +396,25 @@ describe("observing resources", () => {
     expect(expectObservationError(outcome).code).toBe("unexpected_response");
   });
 
+  /**
+   * The defect this domain's wrong route produced: a 404 reported as a stale
+   * reference told the caller to repeat a query that had produced no reference,
+   * which described a recovery that did not exist and hid a permanent
+   * misconfiguration behind a code meaning "try again".
+   */
+  it("reports a route the instance does not serve without advising a refresh", async () => {
+    const { outcome } = await observe(
+      "radarr",
+      observationRequest("import_list_exclusions"),
+      serving({ message: "NotFound" }, 404),
+    );
+    const error = expectObservationError(outcome);
+
+    expect(error.code).toBe("unexpected_response");
+    expect(error.recoverable).toBe(false);
+    expect(error.remediation).not.toContain("reference");
+  });
+
   it("withholds the machine a remote path mapping names, on either application", async () => {
     for (const application of ["sonarr", "radarr"] as const) {
       const { outcome } = await observe(
