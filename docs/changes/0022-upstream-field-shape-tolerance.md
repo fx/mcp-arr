@@ -107,6 +107,7 @@ The [Architecture spec](../specs/architecture/#upstream-connection-handling) own
   - [x] Drop a label only when it is entirely a redaction marker, so a name that merely contained a protected value keeps the words around it on both surfaces
   - [x] Plant the protected-data canary in every one of those fields, so the suite covers the class rather than the field a defect was demonstrated on
   - [x] Keep a separator that joins two words of a label, so the slash-delimited taxonomies these fields are drawn from — Prowlarr's categories, a custom format named `Repack/Proper` — survive scrubbing while every path shape is still redacted
+  - [x] Confine that tolerance to the fields that need it, so it is a named sanitizer three call sites ask for rather than a property of every label: `safeLabel` is the strict prose rule again, and `safeTaxonomyLabel` spares a separator only when the whole value is one two-segment forward-slashed pair of short dotless names
 
 ## Field Comparison Result
 

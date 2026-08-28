@@ -134,17 +134,26 @@ const redactions: ReadonlyArray<readonly [RegExp, string]> = [
  * readable tail behind, and this takes it. It runs last, after the URL rule has
  * consumed the one other thing that contains separators.
  *
- * What it does with a token it matched is the caller's decision, because prose
- * and a label do not want the same answer. In prose, over-redaction is the
- * deliberate trade: a token such as `and/or` becomes a marker, and a path
- * fragment never survives. A label is a whole field value rather than a
- * fragment of a sentence, and the taxonomies labels are drawn from are
- * slash-delimited by construction, so {@link safeLabel} spares the shapes that
- * cannot be a path. See {@link namesTaxonomy}.
+ * What it does with a token it matched is the caller's decision, and for all but
+ * two fields the answer is the same: redact it. Over-redaction is the deliberate
+ * trade — a token such as `and/or` becomes a marker, and a path fragment never
+ * survives. {@link safeTaxonomyLabel} is the single exception, and it is asked
+ * for by name by the two fields whose values carry a separator by construction.
+ * See {@link namesTaxonomy}.
  */
 const residualSeparator = /[^\s"']*[\\/][^\s"']+|[^\s"']+[\\/][^\s"']*/gu;
 
-/** What every residual separator becomes in prose: the whole token, redacted. */
+/**
+ * What a matched token becomes.
+ *
+ * The subject is the whole value the token was found in, after the redactions
+ * above ran and before whitespace was collapsed. Only the taxonomy rule reads
+ * it, and it reads it to insist that the token is the entire value rather than
+ * the surviving tail of something larger.
+ */
+type ResidualRule = (token: string, subject: string) => string;
+
+/** What every residual separator becomes outside a taxonomy field: redacted. */
 function redactResidual(): string {
   return "[redacted path]";
 }
@@ -166,7 +175,7 @@ export const maxMessageLength = 500;
 function sanitize(
   value: string | null | undefined,
   maxLength: number,
-  residual: (token: string) => string,
+  residual: ResidualRule,
 ): string | undefined {
   const raw = text(value);
   if (raw === undefined) {
@@ -176,7 +185,8 @@ function sanitize(
   for (const [pattern, marker] of redactions) {
     cleaned = cleaned.replaceAll(pattern, marker);
   }
-  cleaned = cleaned.replaceAll(residualSeparator, (token) => residual(token));
+  const subject = cleaned;
+  cleaned = cleaned.replaceAll(residualSeparator, (token) => residual(token, subject));
   cleaned = cleaned.replaceAll(/\s+/gu, " ").trim();
   if (cleaned === "") {
     return undefined;
@@ -198,19 +208,37 @@ export const maxLabelLength = 120;
 export const maxTitleLength = 200;
 
 /**
+ * Sanitizes one short upstream label.
+ *
+ * It is {@link safeText} under a label's length bound and nothing else. Every
+ * rule the prose sanitizer applies, this applies — the residual-separator rule
+ * included — so a token carrying a separator of either kind never survives a
+ * label either. A field whose published values are slash-delimited by
+ * construction asks for {@link safeTaxonomyLabel} by name instead; nothing gets
+ * that tolerance by default.
+ */
+export function safeLabel(value: string | null | undefined): string | undefined {
+  return safeText(value, maxLabelLength);
+}
+
+/**
  * The longest a segment may be and still read as a name rather than a folder.
  *
- * The taxonomies this spares are terse by construction — `HD`, `Foreign`,
- * `Lossless`, `Proper` — so the bound is generous for a name and short for the
- * directory names a media root is actually built from. It is deliberately the
- * same ceiling the opaque-identifier rule uses, which is the length at which an
- * unbroken run stops being a word at all; a segment of plain identifier
- * characters that reaches it has already been redacted by then.
+ * The taxonomies {@link safeTaxonomyLabel} spares are terse by construction —
+ * `HD`, `Foreign`, `Lossless`, `Proper` — so the bound is generous for a name
+ * and short for the directory names a media root is actually built from.
+ *
+ * It is a defence in its own right rather than a restatement of the
+ * opaque-identifier rule, which shares the number but not the reach. That rule
+ * matches `[A-Za-z0-9_-]{32,}` between word boundaries, so it sees neither a
+ * segment written in a non-ASCII script nor one an `&` has broken into runs
+ * shorter than its threshold. A long opaque segment of either kind reaches this
+ * bound un-redacted, and this bound is what takes it.
  */
 const maxTaxonomySegmentLength = 32;
 
 /**
- * One segment of a label, as a name rather than a path component.
+ * One segment of a taxonomy label, as a name rather than a path component.
  *
  * It opens with a letter or a digit and continues with letters, digits, and the
  * few joiners a chosen name uses. A dot is excluded deliberately and is the
@@ -220,37 +248,50 @@ const maxTaxonomySegmentLength = 32;
  * `tracker.example.invalid/x`, and `10.0.0.1/24` without having to guess at a
  * list of extensions. A colon is excluded for the same reason — it is a drive
  * letter or a scheme.
+ *
+ * A plus is excluded too, and for a reason the other exclusions do not share: no
+ * *arr taxonomy value observed on a live instance uses one, while `+` and `/`
+ * together are exactly the alphabet of unpadded base64, so admitting it would
+ * have let a token shaped like a credential through a rule meant for `TV/HD`.
  */
-const taxonomySegmentPattern = /^[\p{L}\p{N}][\p{L}\p{N}_+&-]*$/u;
+const taxonomySegmentPattern = /^[\p{L}\p{N}][\p{L}\p{N}_&-]*$/u;
 
 /**
- * Whether a separator inside a label joins two words rather than two path parts.
+ * Whether a separator joins two words of a name rather than two parts of a path.
  *
- * A label is not prose, and the values labels are drawn from are slash-delimited
- * on purpose: Prowlarr's category taxonomy is `TV/HD` and `Movies/UHD`, and the
- * custom format TRaSH Guides ships for a repacked release is literally named
+ * The values the two taxonomy fields publish are slash-delimited on purpose:
+ * Prowlarr's category taxonomy is `TV/HD` and `Movies/UHD`, and the custom
+ * format TRaSH Guides ships for a repacked release is literally named
  * `Repack/Proper`. Redacting those destroys the whole of what the field was for,
- * so the label path needs a test for what actually distinguishes a path from a
- * name.
+ * so those two fields need a test for what distinguishes a name from a path.
  *
- * Three properties do it, and a value must have all of them to be spared:
+ * Four properties do it, and a value must have all of them:
  *
- * 1. **Exactly two segments, both non-empty.** A leading separator, a trailing
+ * 1. **The separator is a forward slash.** Every *arr taxonomy writes itself
+ *    with one; a backslash appears in none of them and is the Windows path
+ *    separator, so it is simply not a taxonomy separator here. Splitting on `/`
+ *    alone is what refuses `server\share` and `C\Media` — a UNC share or a drive
+ *    path whose prefix a rule above already ate — because each of those is then
+ *    one segment carrying a character no segment may contain.
+ * 2. **Exactly two segments, both non-empty.** A leading separator, a trailing
  *    separator, a UNC prefix, and a drive prefix all produce an empty segment or
  *    a third one. Real taxonomies are two-level — a category, then its
  *    subcategory — while a path worth hiding is a root plus what is under it,
  *    which is three parts or more by the time it names anything.
- * 2. **Neither segment carries a dot or a colon**, so nothing shaped like a file
+ * 3. **Neither segment carries a dot or a colon**, so nothing shaped like a file
  *    name, a host, or a drive survives.
- * 3. **Neither segment is longer than {@link maxTaxonomySegmentLength}.**
+ * 4. **Neither segment is longer than {@link maxTaxonomySegmentLength}.**
  *
- * The rejected residue — a two-segment separator-joined pair of short bare words
- * that is genuinely a fragment of a path, `Series/Season` — is the accepted
- * cost, and it is a cost the prose sanitizer does not pay: {@link safeText} is
- * unchanged, so a path embedded in a rejection reason is still taken whole.
+ * This is a test of *shape*, and shape alone cannot tell `TV/HD` from
+ * `etc/passwd`. A two-segment pair of short dotless words joined by a forward
+ * slash that really is a path fragment — `etc/passwd`, `home/someone`,
+ * `Users/someone`, `admin/hunter2` — passes it, and no refinement of the shape
+ * can refuse those without refusing `Movies/UHD` too. That is not a defect in
+ * the test; it is the reason its one caller is named after the two fields it
+ * serves rather than being the default for every label.
  */
 function namesTaxonomy(token: string): boolean {
-  const segments = token.split(/[\\/]/u);
+  const segments = token.split("/");
   return (
     segments.length === 2 &&
     segments.every(
@@ -261,16 +302,34 @@ function namesTaxonomy(token: string): boolean {
 }
 
 /**
- * Sanitizes one short upstream label.
+ * Sanitizes one label whose documented values carry a path separator.
  *
- * Everything {@link safeText} removes, it removes — a URL, an absolute or UNC or
- * drive-rooted path, an opaque identifier, a hidden character — with one
- * difference: a residual separator that {@link namesTaxonomy} recognizes as an
- * ordinary intra-word separator is kept rather than swallowing the label.
+ * This is {@link safeLabel} with one deliberate hole in it, and the hole is why
+ * it has a name of its own: a residual-separator token is published as it stands
+ * when {@link namesTaxonomy} accepts its shape **and** the token is the entire
+ * value. Use it only for a field whose taxonomy is slash-delimited by
+ * construction — a Prowlarr category, a custom format — and never for a field
+ * that merely might contain a separator one day.
+ *
+ * The whole-value condition is what keeps the hole from widening. Every path
+ * rule above is `[^\s"']`-bounded and so stops at the first space, which leaves
+ * the tail of a space-bearing path behind as a token of its own:
+ * `\\\\server\\share$\\Private Stash\\Home Movies` reaches this rule as
+ * `[redacted path] Stash\\Home Movies`. Shape alone would spare `Stash\\Home`
+ * and disclose two directory names; requiring the token to be the whole value
+ * refuses it, because a value that has already lost a head to a redaction marker
+ * is not a category name. What a taxonomy field publishes is one bare value, and
+ * that is all this admits.
+ *
+ * It remains weaker than {@link safeLabel}, by exactly the residue
+ * {@link namesTaxonomy} describes: a bare `root/child` pair of short dotless
+ * words is published. The three fields that call it — Prowlarr's categories and
+ * the custom formats on both the acquisition and the import surface — are the
+ * whole of that exposure, and none of them reads an upstream `data` bag.
  */
-export function safeLabel(value: string | null | undefined): string | undefined {
-  return sanitize(value, maxLabelLength, (token) =>
-    namesTaxonomy(token) ? token : redactResidual(),
+export function safeTaxonomyLabel(value: string | null | undefined): string | undefined {
+  return sanitize(value, maxLabelLength, (token, subject) =>
+    token === subject.trim() && namesTaxonomy(token) ? token : redactResidual(),
   );
 }
 

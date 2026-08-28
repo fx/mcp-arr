@@ -406,20 +406,27 @@ describe("protected release data", () => {
   });
 
   /**
-   * A separator joining two ordinary words is not a path, and a label is a whole
-   * field value rather than a fragment of a sentence — an indexer flag, a custom
-   * format, a category. It survives beside the labels that really were paths.
+   * The tolerance is a property of the field, not of the value.
+   *
+   * A custom format is the one operator-authored name whose values carry a
+   * separator by design — TRaSH Guides ships one called `Repack/Proper` — so it
+   * publishes one. An indexer flag is `Freeleech` or `Internal` and has no such
+   * shape, so the same string in that field is a path fragment as far as this
+   * server can tell, and it is taken. Both are asserted in one test because the
+   * divergence between them is the point.
    */
-  it("keeps a label whose separator joins two words", async () => {
+  it("publishes a separator only in the field whose taxonomy has one", async () => {
     const [record] = releases.sonarr;
     const { items } = await run("sonarr", { ...episodeSearch, detail: "full" }, [
       {
         ...record,
-        indexerFlags: ["and/or", "Repack/Proper", `/media/private/tv`],
+        customFormats: [{ name: "Repack/Proper" }, { name: "/media/private/tv" }],
+        indexerFlags: ["Repack/Proper", "and/or", `/media/private/tv`],
       },
     ]);
 
-    expect(items[0]?.release.detail?.indexerFlags).toEqual(["and/or", "Repack/Proper"]);
+    expect(items[0]?.release.detail?.customFormats).toEqual(["Repack/Proper"]);
+    expect(items[0]?.release.detail?.indexerFlags).toBeUndefined();
   });
 
   it("keeps a release's own cache identity out of its indexer flags", async () => {

@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { UpstreamBody, UpstreamClient, UpstreamQuery } from "../../http/client.js";
 import { isUpstreamError } from "../../http/errors.js";
 import { createToolError, type ToolError } from "../../tools/errors.js";
-import { safeLabelList, safeReason, scrubLabel } from "../acquisition/parse.js";
+import { safeLabelList, safeReason, safeTaxonomyList, scrubLabel } from "../acquisition/parse.js";
 import { safeText } from "../activity/parse.js";
 import { type MediaApplication, mediaRef } from "../library/model.js";
 import { type AdapterPage, type PageWindow, projectPage } from "../library/paging.js";
@@ -558,7 +558,11 @@ export function mapCandidate(
     languages,
     releaseGroup,
     releaseType: scrubLabel(record.releaseType, known),
-    customFormats: safeLabelList(
+    // The same concept the acquisition surface publishes, and held to the same
+    // rule: a custom format is the one operator-authored name whose values carry
+    // a separator by design, so scrubbing it strictly here while publishing it
+    // there would be the divergence this adapter exists to avoid.
+    customFormats: safeTaxonomyList(
       (record.customFormats ?? []).map((format) => format.name),
       known,
     ),

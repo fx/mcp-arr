@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ApplicationId } from "../../applications.js";
-import { safeLabel } from "../activity/parse.js";
+import { safeLabel, safeTaxonomyLabel } from "../activity/parse.js";
 import {
   count,
   customFormatList,
@@ -228,6 +228,23 @@ export function scrubLabel(
 }
 
 /**
+ * The same, for the two fields whose values carry a path separator by design.
+ *
+ * A Prowlarr category is `TV/HD` and a custom format can be `Repack/Proper`, so
+ * {@link scrubLabel} empties exactly the half of those fields that carries the
+ * information. This is the only sanitizer in the project that publishes a
+ * separator, and it is deliberately not the default: `safeTaxonomyLabel` cannot
+ * tell a two-word name from a two-part path fragment, so every field that has no
+ * documented separator in its values keeps {@link scrubLabel}.
+ */
+export function scrubTaxonomyLabel(
+  value: string | null | undefined,
+  known: readonly string[],
+): string | undefined {
+  return safeTaxonomyLabel(safeReason(value, known));
+}
+
+/**
  * Every marker either sanitizer can leave behind.
  *
  * {@link safeReason} writes a bare `[redacted]`, and `safeLabel` writes kinded
@@ -263,11 +280,34 @@ export function safeLabelList(
   values: readonly (string | null | undefined)[] | null | undefined,
   known: readonly string[],
 ): readonly string[] | undefined {
+  return scrubbedList(values, known, scrubLabel);
+}
+
+/**
+ * A list of labels drawn from a slash-delimited taxonomy.
+ *
+ * The two callers are the only fields in the project whose published values
+ * carry a path separator by construction: Prowlarr's indexer categories and the
+ * custom formats an operator configures. Every other list stays on
+ * {@link safeLabelList}, because tolerance that is not needed is only exposure.
+ */
+export function safeTaxonomyList(
+  values: readonly (string | null | undefined)[] | null | undefined,
+  known: readonly string[],
+): readonly string[] | undefined {
+  return scrubbedList(values, known, scrubTaxonomyLabel);
+}
+
+function scrubbedList(
+  values: readonly (string | null | undefined)[] | null | undefined,
+  known: readonly string[],
+  scrub: (value: string | null | undefined, known: readonly string[]) => string | undefined,
+): readonly string[] | undefined {
   if (!Array.isArray(values)) {
     return undefined;
   }
   const cleaned = values
-    .map((value) => scrubLabel(value, known))
+    .map((value) => scrub(value, known))
     .filter((value): value is string => value !== undefined && !namesNothing(value));
   return cleaned.length === 0 ? undefined : cleaned;
 }
@@ -392,7 +432,11 @@ function releaseDetail(
     return undefined;
   }
   return present({
-    customFormats: safeLabelList(
+    // A custom format is the one operator-authored name with a documented
+    // separator in it — TRaSH Guides ships one called `Repack/Proper` — so it
+    // takes the taxonomy rule. An indexer flag has no such shape: `Freeleech`,
+    // `Internal`, `Scene`. It keeps the strict one.
+    customFormats: safeTaxonomyList(
       (record.customFormats ?? []).map((format) => format.name),
       known,
     ),

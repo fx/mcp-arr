@@ -24,8 +24,8 @@ import {
   cacheIdentity,
   mapReleaseBase,
   releaseSchema,
-  safeLabelList,
   safeReason,
+  safeTaxonomyList,
   scrubLabel,
 } from "./parse.js";
 import type { ReleaseDetailLevel, ReleaseRequestFor } from "./requests.js";
@@ -102,8 +102,11 @@ function mapRelease(record: ProwlarrRelease, detail: ReleaseDetailLevel): Releas
       // an approval nothing actually granted.
       decided: false,
       // A category name is the indexer's own, exactly as a flag name is, so it
-      // is scrubbed against the same literals rather than merely normalized.
-      categories: safeLabelList(
+      // is scrubbed against the same literals rather than merely normalized. It
+      // takes the taxonomy rule rather than the strict one because this taxonomy
+      // is slash-delimited by construction — `TV/HD`, `Movies/UHD` — and the
+      // subcategory is the half that carries the information.
+      categories: safeTaxonomyList(
         (record.categories ?? []).map((category) => category.name),
         [record.guid],
       ),

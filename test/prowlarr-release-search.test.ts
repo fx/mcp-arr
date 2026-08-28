@@ -331,6 +331,65 @@ describe("prowlarr release normalization", () => {
     expect(ok.data.items[0]?.release.detail?.categories).toEqual(["Movies/UHD"]);
   });
 
+  /**
+   * The category field is one of only three that publish a separator at all, so
+   * it is the surface where a planted path would travel if the tolerance were
+   * wider than its own description. Each of these is a shape the taxonomy rule
+   * refuses for a different reason — a third segment, a UNC prefix, a drive
+   * letter, a dot, a backslash — and a category list that is nothing but markers
+   * is dropped rather than published.
+   */
+  it("still takes a path an indexer planted in a category name", async () => {
+    const planted = fixtures.releases.map((release) => ({
+      ...release,
+      categories: [
+        { name: "/media/private/tv" },
+        { name: "\\\\server\\share\\Private" },
+        { name: "C:\\Media\\tv" },
+        { name: "tracker.example.invalid/rss" },
+        { name: "server\\share" },
+        { name: "https://tracker.example.invalid/rules?apikey=SECRET" },
+      ],
+    }));
+
+    const ok = expectOk(
+      (
+        await run(
+          { statuses: [], search: () => jsonResponse(planted) },
+          { ...aggregate, detail: "full" },
+        )
+      ).outcome,
+    );
+
+    expect(ok.data.items[0]?.release.detail?.categories).toBeUndefined();
+  });
+
+  /**
+   * A path with a space in it is the shape a shape-only rule is worst at: every
+   * head rule stops at the first space, so the tail arrives as a fresh token
+   * that looks exactly like a two-level category. It is refused here because the
+   * taxonomy rule spares a token only when it is the whole value, and this one
+   * is what a redaction left behind. What survives is the final bare word, which
+   * carries no separator and so names no directory level.
+   */
+  it("refuses a category that is only the tail of a path a rule already cut", async () => {
+    const planted = fixtures.releases.map((release) => ({
+      ...release,
+      categories: [{ name: "\\\\server\\share$\\Private Stash\\Home Movies" }],
+    }));
+
+    const ok = expectOk(
+      (
+        await run(
+          { statuses: [], search: () => jsonResponse(planted) },
+          { ...aggregate, detail: "full" },
+        )
+      ).outcome,
+    );
+
+    expect(ok.data.items[0]?.release.detail?.categories).toEqual(["[redacted] Movies"]);
+  });
+
   it("orders the merged result deterministically and pages it by whole pages", async () => {
     const instance: Instance = {
       statuses: [],
