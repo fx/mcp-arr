@@ -61,8 +61,11 @@ const stringChoiceKeywords: ReadonlySet<string> = new Set(["type", "const", "enu
  * Whether a node is nothing but a choice among string values.
  *
  * Only such nodes collapse into one root `enum`. Anything carrying a further
- * constraint — a length, a pattern, a default — would lose it in the collapse,
- * so it is published as an alternative instead. A `description` is not such a
+ * constraint — a pattern, a default — would lose it in the collapse, so it is
+ * published as an alternative instead. A length is not among them because it
+ * is gone by the time the branches are merged, which is why two forms bounding
+ * one property differently collapse rather than publishing two indistinguishable
+ * alternatives. A `description` is not such a
  * constraint: it is an annotation, and counting it as one would mean that
  * describing a property on a single variant is enough to bury that property's
  * whole accepted set under a nested `anyOf` — which is the exact combinator a
@@ -429,10 +432,8 @@ interface ChildSchema {
  * every key it holds.
  *
  * A generic sweep would descend into `properties` itself and treat each
- * property *name* as a keyword — which matters here because the keyword being
- * collected and stripped is one a property could legitimately be called. Both
- * the collection and the stripping below share this walk, so a nesting one of
- * them reaches and the other does not cannot exist.
+ * property *name* as a keyword — which matters here because the keyword {@link
+ * takeLengthBounds} removes is one a property could legitimately be called.
  */
 function childSchemas(node: JsonSchema, path: string, inArray: boolean): ChildSchema[] {
   const children: ChildSchema[] = [];
