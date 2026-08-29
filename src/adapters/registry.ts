@@ -66,7 +66,6 @@ export interface ApplicationAdapter {
 
 export interface AdapterRegistryDependencies {
   readonly fetch?: FetchLike | undefined;
-  readonly timeoutMs?: number | undefined;
 }
 
 export interface AdapterRegistry {
@@ -150,7 +149,7 @@ export function createAdapterRegistry(
       baseUrl: instance.baseUrl,
       apiBasePath: descriptor.apiBasePath,
       apiKey: instance.apiKey,
-      timeoutMs: dependencies.timeoutMs,
+      timeoutMs: configuration.upstreamTimeoutMs,
       fetch: dependencies.fetch,
     });
 

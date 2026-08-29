@@ -11,25 +11,27 @@ import { consumeReadable, waitForChildCompletion } from "../../scripts/child-pro
 const projectRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 /**
- * The instance variables a spawned server must never inherit.
+ * The configuration variables a spawned server must never inherit: the three
+ * instance pairs and the upstream timeout.
  *
  * A developer's own settings would otherwise decide what these tests observe,
  * and — worse — could point a test at a real instance.
  */
-export const instanceVariables: readonly string[] = [
+export const configurationVariables: readonly string[] = [
   "SONARR_URL",
   "SONARR_API_KEY",
   "RADARR_URL",
   "RADARR_API_KEY",
   "PROWLARR_URL",
   "PROWLARR_API_KEY",
+  "ARR_UPSTREAM_TIMEOUT_MS",
 ];
 
 /** The process environment a host would launch the built server with. */
 export function serverEnvironment(instances: Readonly<Record<string, string>>): NodeJS.ProcessEnv {
   return {
     ...Object.fromEntries(
-      Object.entries(process.env).filter(([name]) => !instanceVariables.includes(name)),
+      Object.entries(process.env).filter(([name]) => !configurationVariables.includes(name)),
     ),
     ...instances,
   };
