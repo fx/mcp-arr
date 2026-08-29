@@ -50,10 +50,14 @@ The URL is the instance's own base URL, including any path prefix a reverse prox
 
 `ARR_UPSTREAM_TIMEOUT_MS` sets how long the server waits for any one request to an instance. It is optional, its unit is whole milliseconds, and it defaults to `30000` — thirty seconds. Accepted values run from `1` to `600000`, and anything else — a fraction, a suffix, a value out of range — fails startup with a message naming the variable but never the value you set.
 
-Raise it if a large library or a slow indexer needs longer: a whole-library read or a season release search can take well over the default on a big instance. Like the instance settings, it is read once at startup, so changing it means restarting the server.
+Raise it if a large library or a slow indexer needs longer: a whole-library read or a season release search can take well over the default on a big instance. Like the instance settings, it is read once at startup, so changing it means restarting the server. It belongs in the same `env` block as the instance settings above:
 
 ```json
-"ARR_UPSTREAM_TIMEOUT_MS": "60000"
+{
+  "env": {
+    "ARR_UPSTREAM_TIMEOUT_MS": "60000"
+  }
+}
 ```
 
 ## Verify a connection
