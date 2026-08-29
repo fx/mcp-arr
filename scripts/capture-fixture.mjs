@@ -218,6 +218,19 @@ function createSanitizer(screen) {
     return fresh;
   };
 
+  /**
+   * The two texts a provider field's value carries as meaning, not as content.
+   *
+   * A blank value is how these applications say a credential is unset, and a
+   * run of asterisks is what they substitute for one that is set — the
+   * configuration adapter reads both as state rather than as text. Replacing
+   * either would make a recaptured fixture claim the opposite of what the
+   * instance said, which is the class of defect this whole change exists to
+   * end. Neither can carry a credential: one is empty and the other is the
+   * applications' own stand-in for the secret they are not disclosing.
+   */
+  const statesRatherThanCarries = (value) => value.trim() === "" || /^\*+$/u.test(value.trim());
+
   /** Replaces every string inside a value, however it is nested. */
   const redact = (value) => {
     if (Array.isArray(value)) {
@@ -226,7 +239,10 @@ function createSanitizer(screen) {
     if (typeof value === "object" && value !== null) {
       return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, redact(child)]));
     }
-    return typeof value === "string" ? replace(value) : value;
+    if (typeof value !== "string" || statesRatherThanCarries(value)) {
+      return value;
+    }
+    return replace(value);
   };
 
   /**

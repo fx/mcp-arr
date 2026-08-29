@@ -301,6 +301,10 @@ describe("fixture capture procedure", () => {
               { order: 5, name: "torrent_pass", value: "CANARY-TORRENTPASS-SECRET" },
               { order: 6, name: "categories", value: [5030, 5040] },
               { order: 7, name: "minimumSeeders", value: 1 },
+              // The two texts these applications use as state rather than as
+              // content: a credential they hold, and one they do not.
+              { order: 8, name: "vipExpiration", value: "" },
+              { order: 9, name: "maskedKey", value: "********" },
             ],
           },
         ]),
@@ -338,12 +342,19 @@ describe("fixture capture procedure", () => {
       "torrent_pass",
       "categories",
       "minimumSeeders",
+      "vipExpiration",
+      "maskedKey",
     ]);
     expect(fields?.[0]?.value).not.toBe("example-indexer");
     expect(typeof fields?.[0]?.value).toBe("string");
     expect(fields?.[2]?.value).toBeInstanceOf(Array);
     expect(fields?.[6]?.value).toEqual([5030, 5040]);
     expect(fields?.[7]?.value).toBe(1);
+    // A blank value says the credential is unset and a run of asterisks says
+    // it is set; replacing either would record the opposite of what the
+    // instance said, which is the falsehood this whole procedure exists against.
+    expect(fields?.[8]?.value).toBe("");
+    expect(fields?.[9]?.value).toBe("********");
   });
 
   it("writes nothing when the sanitized body still fails a fixture screen", async () => {
