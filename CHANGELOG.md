@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.3.0](https://github.com/fx/mcp-arr/compare/v0.2.0...v0.3.0) (2026-08-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* **tools:** a wanted-list `arr_search_start` now requires `application` and no longer accepts `applications`. A call naming `applications: ["sonarr"]`, or naming neither, is refused against the published schema; send `application: "sonarr"` instead, and run the other application as a second call.
+* **tools:** withdraw the configuration write surface ([#56](https://github.com/fx/mcp-arr/issues/56))
+
+### Features
+
+* **config:** make the upstream timeout configurable and default it to 30s ([#68](https://github.com/fx/mcp-arr/issues/68)) ([28b18c2](https://github.com/fx/mcp-arr/commit/28b18c2edcba5eb28fb9f0643d893d4f57c85dc3))
+* **tools:** let a collection query select result fields ([#58](https://github.com/fx/mcp-arr/issues/58)) ([084e3c9](https://github.com/fx/mcp-arr/commit/084e3c907d2a4b4da056563b5200f1ce1e39711b))
+* **tools:** withdraw the configuration write surface ([#56](https://github.com/fx/mcp-arr/issues/56)) ([245cc21](https://github.com/fx/mcp-arr/commit/245cc21e6ea26da8a82d6ea4d56c66178ab2c6b6))
+
+
+### Bug Fixes
+
+* **acquisition:** tolerate an unmodelled flag shape and scrub every label a search returns ([#62](https://github.com/fx/mcp-arr/issues/62)) ([f27b948](https://github.com/fx/mcp-arr/commit/f27b948d38c1f84ea74174a0721cdf1db8046a01))
+* **activity:** read the indexer status body prowlarr sends ([#66](https://github.com/fx/mcp-arr/issues/66)) ([022d1b4](https://github.com/fx/mcp-arr/commit/022d1b412e92f09cd93139b2f655163407f5b9bd))
+* **configuration:** read exclusions from each application's own route ([#63](https://github.com/fx/mcp-arr/issues/63)) ([e68264f](https://github.com/fx/mcp-arr/commit/e68264fd293052a6e3b34d9aa13889232912082f))
+* **configuration:** stop publishing the provider template catalogue ([#53](https://github.com/fx/mcp-arr/issues/53)) ([8b4fd2b](https://github.com/fx/mcp-arr/commit/8b4fd2bcb07755af9ddfeea9b088476660b8835d))
+* **import:** send the reprocess request in the shape both applications accept ([#64](https://github.com/fx/mcp-arr/issues/64)) ([2ee38a1](https://github.com/fx/mcp-arr/commit/2ee38a11576a4e82889cee577d07998645bec2b0))
+* **jobs:** refresh a job projection from its upstream command ([#65](https://github.com/fx/mcp-arr/issues/65)) ([efe08c6](https://github.com/fx/mcp-arr/commit/efe08c60915e711cd89b7a2f59515a79335250f3))
+* **tools:** admit the planned cancellation envelope ([#60](https://github.com/fx/mcp-arr/issues/60)) ([4f5aabb](https://github.com/fx/mcp-arr/commit/4f5aabb2623d66d80547218c9c35340c875761f0))
+* **tools:** publish a bounded output schema and generate selectable paths ([#55](https://github.com/fx/mcp-arr/issues/55)) ([92eac86](https://github.com/fx/mcp-arr/commit/92eac869f9f4e435f6877fa111bdfc884142119c))
+* **tools:** require one application on a wanted-list search ([#61](https://github.com/fx/mcp-arr/issues/61)) ([2bcdc0e](https://github.com/fx/mcp-arr/commit/2bcdc0e2c96e81838680664db20d3a0088b01dfe))
+* **tools:** stop publishing string length bounds in input schemas ([#57](https://github.com/fx/mcp-arr/issues/57)) ([d7c770f](https://github.com/fx/mcp-arr/commit/d7c770f54afbe64a6b1efbd7e589264c90063e76))
+
 ## [0.2.0](https://github.com/fx/mcp-arr/compare/v0.1.2...v0.2.0) (2026-08-28)
 
 
