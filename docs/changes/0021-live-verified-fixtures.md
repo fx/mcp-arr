@@ -161,7 +161,7 @@ describing what to do about itself.
 
 | What the instances send | What the fixtures recorded |
 |---|---|
-| An absent value is an omitted property. A JSON null appears in 5 of 3310 live field paths, all inside a history record's free-form `data` bag. | 83 nulls across 22 fixtures. |
+| An absent value is an omitted property. A JSON null appears in 5 of 3310 live field paths, all inside a history record's free-form `data` bag. | 83 nulls across 21 fixtures. |
 | Sonarr and Radarr both answer `manualimport` with `indexerFlags` as a numeric bitfield, and send no `episodeFileId` or `movieFileId` at all. | A list of flag names, and a file identifier on the already-held row. |
 | Every one of 897 release rejections on both applications is a bare string. | The `{reason, type}` object form on both `release` fixtures. |
 | Prowlarr history rows carry neither `sourceTitle` nor `downloadId`. | Both. |

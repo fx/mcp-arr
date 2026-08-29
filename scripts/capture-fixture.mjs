@@ -230,24 +230,34 @@ function createSanitizer(screen) {
   };
 
   /**
-   * Whether this object is a provider field naming a credential.
+   * Whether this object is a dynamically described provider field.
    *
-   * These applications describe a provider's settings dynamically, as a list of
+   * These applications describe a provider's settings as a list of
    * `{ name, value }` pairs, so a credential arrives under the property name
-   * `value` with `apiKey` or `password` as a sibling. Screening the property
-   * name alone sees `value`, finds nothing to object to, and writes the real
-   * credential — the one shape where what a field holds is stated beside it
-   * rather than by the key it is under.
+   * `value` with its real name as a sibling. Screening the property name alone
+   * sees `value`, finds nothing to object to, and writes the credential — the
+   * one shape where what a field holds is stated beside it rather than by the
+   * key it is under.
+   *
+   * Every such value is replaced, not only those whose sibling name the secret
+   * list happens to spell. That list cannot be the test here: a private tracker
+   * calls its credential `passkey`, `authkey`, `rssKey` or `torrent_pass`, a
+   * Cardigann definition may call it anything at all, and adding `key` or
+   * `pass` to the list instead would refuse `sortKey` in every paged fixture.
+   * A provider field's value is instance configuration that no fixture's shape
+   * depends on — the shape is the field's presence, its name and its type, and
+   * all three survive — so the safe rule is the one that does not need to
+   * recognize the credential to protect it.
    */
-  const namesACredential = (value) =>
-    typeof value.name === "string" && keyDisposition(value.name) === "drop";
+  const isProviderField = (value) =>
+    typeof value.name === "string" && Object.hasOwn(value, "value");
 
   const sanitize = (value) => {
     if (Array.isArray(value)) {
       return value.map(sanitize);
     }
     if (typeof value === "object" && value !== null) {
-      const redactSiblingValue = namesACredential(value);
+      const redactSiblingValue = isProviderField(value);
       const entries = [];
       for (const [key, child] of Object.entries(value)) {
         const disposition = keyDisposition(key);

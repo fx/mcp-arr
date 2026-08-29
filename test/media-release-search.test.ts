@@ -245,21 +245,20 @@ describe("radarr interactive search", () => {
     expect(items[2]?.release.languages).toEqual(["English", "French"]);
   });
 
-  it("normalizes an instance that reports the single-title form", async () => {
-    // Radarr 6.3.0.10514 sends `movieTitles` and never the singular
-    // `movieTitle`, so the singular form is supplied here rather than recorded
-    // as a response no instance produces. The normalization still has to hold
-    // for a release that sends it.
-    // Built from the recorded row that carries the empty edition, so the
-    // normalization of that to absent is covered here rather than lost with the
-    // assertion this test replaces.
+  it("normalizes the fields a newer Radarr sends and this one does not", async () => {
+    // Radarr 6.3.0.10514 sends `movieTitles` and neither the singular
+    // `movieTitle` nor `year`, so both are supplied here rather than recorded
+    // as a response no instance produces — and every mapping they feed would
+    // otherwise be asserted only as absent, which passes whether or not it
+    // works. The row is the recorded one carrying the empty edition, so the
+    // normalization of that to absent is covered here too.
     const record = releases.radarr[1];
     const { items } = await run("radarr", movieSearch, [
-      { ...record, movieTitles: undefined, movieTitle: "Example Movie" },
+      { ...record, movieTitles: undefined, movieTitle: "Example Movie", year: 2021 },
     ]);
 
     expect(items[0]?.release).toMatchObject({
-      radarr: { movieTitles: ["Example Movie"], edition: undefined },
+      radarr: { movieTitles: ["Example Movie"], year: 2021, edition: undefined },
     });
   });
 

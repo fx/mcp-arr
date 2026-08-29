@@ -276,11 +276,14 @@ describe("fixture capture procedure", () => {
     ).rejects.toThrow();
   });
 
-  it("redacts a credential a provider field names beside it", async () => {
+  it("redacts every provider field's value, not only the ones it can name", async () => {
     // These applications describe a provider's settings as a list of
     // `{ name, value }` pairs, so a credential arrives under the property name
-    // `value` with `apiKey` as a sibling. Screening the property name alone
-    // sees `value`, objects to nothing, and writes the real credential.
+    // `value` with its real name as a sibling. Screening the property name
+    // alone sees `value`, objects to nothing, and writes the credential — and a
+    // rule that redacted only the names a secret list spells would still write
+    // `passkey`, `authkey`, `rssKey` and whatever a Cardigann definition calls
+    // its own, which is every private tracker's credential.
     const fixtureRoot = await temporaryFixtureRoot();
     const url = await startStub({
       "/api/v3/system/status": sonarrStatus,
@@ -293,6 +296,11 @@ describe("fixture capture procedure", () => {
               { order: 0, name: "baseUrl", value: "example-indexer" },
               { order: 1, name: "apiKey", value: "CANARY-PROVIDER-FIELD-SECRET" },
               { order: 2, name: "password", value: ["CANARY-NESTED-SECRET"] },
+              { order: 3, name: "passkey", value: "CANARY-PASSKEY-SECRET" },
+              { order: 4, name: "rssKey", value: "CANARY-RSSKEY-SECRET" },
+              { order: 5, name: "torrent_pass", value: "CANARY-TORRENTPASS-SECRET" },
+              { order: 6, name: "categories", value: [5030, 5040] },
+              { order: 7, name: "minimumSeeders", value: 1 },
             ],
           },
         ]),
@@ -313,11 +321,29 @@ describe("fixture capture procedure", () => {
       path.join(fixtureRoot, "sonarr/v3/4.0.19.2979/indexer.json"),
       "utf8",
     );
-    expect(written).not.toContain("CANARY-PROVIDER-FIELD-SECRET");
-    expect(written).not.toContain("CANARY-NESTED-SECRET");
-    // The field itself survives, so the recorded shape still has it.
-    expect(written).toContain('"name": "apiKey"');
-    expect(written).toContain("example-indexer");
+    expect(written).not.toContain("CANARY");
+    // Every field survives with its name and its type, because that is the
+    // shape a fixture owes; only the text it held is gone. A value that is not
+    // text cannot be a credential and is left alone, so a select field and a
+    // numeric setting still record what they record.
+    const fields = (
+      JSON.parse(written) as { body: Array<{ fields: Array<Record<string, unknown>> }> }
+    ).body[0]?.fields;
+    expect(fields?.map((field) => field.name)).toEqual([
+      "baseUrl",
+      "apiKey",
+      "password",
+      "passkey",
+      "rssKey",
+      "torrent_pass",
+      "categories",
+      "minimumSeeders",
+    ]);
+    expect(fields?.[0]?.value).not.toBe("example-indexer");
+    expect(typeof fields?.[0]?.value).toBe("string");
+    expect(fields?.[2]?.value).toBeInstanceOf(Array);
+    expect(fields?.[6]?.value).toEqual([5030, 5040]);
+    expect(fields?.[7]?.value).toBe(1);
   });
 
   it("writes nothing when the sanitized body still fails a fixture screen", async () => {
