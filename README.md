@@ -46,6 +46,20 @@ Pass instance settings through the command environment. Each application is opti
 
 The URL is the instance's own base URL, including any path prefix a reverse proxy adds — `https://media.example/sonarr`, not the API path. The API key is the one under Settings → General in each application. Instance settings are read once at startup, so changing one means restarting the server.
 
+## Request timeout
+
+`ARR_UPSTREAM_TIMEOUT_MS` sets how long the server waits for any one request to an instance. It is optional, its unit is whole milliseconds, and it defaults to `30000` — thirty seconds. Accepted values run from `1` to `600000`, and anything else — a fraction, a suffix, a value out of range — fails startup with a message naming the variable but never the value you set.
+
+Raise it if a large library or a slow indexer needs longer: a whole-library read or a season release search can take well over the default on a big instance. Like the instance settings, it is read once at startup, so changing it means restarting the server. It belongs in the same `env` block as the instance settings above:
+
+```json
+{
+  "env": {
+    "ARR_UPSTREAM_TIMEOUT_MS": "60000"
+  }
+}
+```
+
 ## Verify a connection
 
 Call `arr_capabilities` first. It contacts each configured instance and reports, per application:

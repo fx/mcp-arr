@@ -7,10 +7,19 @@ import {
   loadEnvironment,
   parseEnvironment,
 } from "../src/config/environment.js";
+import { defaultUpstreamTimeoutMs } from "../src/http/client.js";
 
 const sonarrKey = "sonarr-secret-key";
 const radarrKey = "radarr-secret-key";
 const prowlarrKey = "prowlarr-secret-key";
+const sonarrEnvironment: EnvironmentRecord = {
+  SONARR_URL: "https://sonarr.example.invalid",
+  SONARR_API_KEY: sonarrKey,
+};
+const timeoutProblem =
+  "ARR_UPSTREAM_TIMEOUT_MS must be a whole number of milliseconds between 1 and 600000";
+/** A configured timeout the parser refuses, used to prove it is never echoed. */
+const rejectedTimeout = "999999999";
 
 function expectProblems(env: EnvironmentRecord): readonly string[] {
   try {
@@ -150,6 +159,7 @@ describe("parseEnvironment", () => {
       SONARR_URL: `https://sonarr.example.invalid/secret-prefix?apikey=${sonarrKey}`,
       SONARR_API_KEY: sonarrKey,
       RADARR_URL: "https://radarr.example.invalid",
+      ARR_UPSTREAM_TIMEOUT_MS: rejectedTimeout,
     };
 
     let thrown: ConfigurationError | undefined;
@@ -164,11 +174,84 @@ describe("parseEnvironment", () => {
       ...thrown,
       problems: thrown?.problems,
     })}`;
-    for (const value of [sonarrKey, "secret-prefix", "sonarr.example.invalid"]) {
+    for (const value of [sonarrKey, "secret-prefix", "sonarr.example.invalid", rejectedTimeout]) {
       expect(serialized).not.toContain(value);
     }
     expect(thrown?.message).toContain("SONARR_URL must not include a query string or fragment");
     expect(thrown?.message).toContain("RADARR_API_KEY is required when RADARR_URL is set");
+    expect(thrown?.message).toContain(timeoutProblem);
+  });
+
+  it("defaults the upstream timeout to the client's own constant", () => {
+    const configuration = parseEnvironment(sonarrEnvironment);
+
+    expect(configuration.upstreamTimeoutMs).toBe(defaultUpstreamTimeoutMs);
+    expect(configuration.upstreamTimeoutMs).toBe(30_000);
+  });
+
+  it("accepts a surrounding-whitespace timeout as a whole number of milliseconds", () => {
+    expect(
+      parseEnvironment({ ...sonarrEnvironment, ARR_UPSTREAM_TIMEOUT_MS: "  45000  " })
+        .upstreamTimeoutMs,
+    ).toBe(45_000);
+  });
+
+  it("accepts both ends of the supported range", () => {
+    expect(
+      parseEnvironment({ ...sonarrEnvironment, ARR_UPSTREAM_TIMEOUT_MS: "1" }).upstreamTimeoutMs,
+    ).toBe(1);
+    expect(
+      parseEnvironment({ ...sonarrEnvironment, ARR_UPSTREAM_TIMEOUT_MS: "600000" })
+        .upstreamTimeoutMs,
+    ).toBe(600_000);
+  });
+
+  it("rejects every timeout spelling that is not a whole number in range", () => {
+    // `Number` would accept most of these: `"1e4"` as 10000, `"+30000"` as
+    // 30000, and `"30.5"` as a fraction. Each is a value nobody wrote.
+    for (const value of [
+      "0",
+      "-1",
+      "abc",
+      "30.5",
+      "1e4",
+      "30s",
+      "Infinity",
+      "30_000",
+      "+30000",
+      "600001",
+      "0x7530",
+      "9007199254740993",
+    ]) {
+      expect(expectProblems({ ...sonarrEnvironment, ARR_UPSTREAM_TIMEOUT_MS: value })).toEqual([
+        timeoutProblem,
+      ]);
+    }
+  });
+
+  it("rejects a present-but-empty timeout", () => {
+    expect(expectProblems({ ...sonarrEnvironment, ARR_UPSTREAM_TIMEOUT_MS: "   " })).toEqual([
+      "ARR_UPSTREAM_TIMEOUT_MS is set but empty",
+    ]);
+  });
+
+  it("reports an unusable timeout after every instance problem", () => {
+    expect(
+      expectProblems({
+        SONARR_URL: "https://sonarr.example.invalid",
+        SONARR_API_KEY: sonarrKey,
+        RADARR_URL: "https://radarr.example.invalid",
+        ARR_UPSTREAM_TIMEOUT_MS: "abc",
+      }),
+    ).toEqual(["RADARR_API_KEY is required when RADARR_URL is set", timeoutProblem]);
+  });
+
+  it("still reports the missing application when the timeout is unusable too", () => {
+    const problems = expectProblems({ PATH: "/usr/bin", ARR_UPSTREAM_TIMEOUT_MS: "abc" });
+
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toContain("no application is configured");
+    expect(problems[1]).toBe(timeoutProblem);
   });
 });
 
@@ -193,6 +276,10 @@ describe("loadEnvironment", () => {
       vi.stubEnv(descriptor.urlVariable, undefined);
       vi.stubEnv(descriptor.apiKeyVariable, undefined);
     }
+    // Stubbed alongside them because this is the one case that reads the real
+    // process environment: a developer who exports the timeout for their own
+    // instances would otherwise decide what this test observes.
+    vi.stubEnv("ARR_UPSTREAM_TIMEOUT_MS", undefined);
 
     try {
       expect(() => loadEnvironment()).toThrow(ConfigurationError);

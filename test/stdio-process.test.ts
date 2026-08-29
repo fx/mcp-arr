@@ -4,7 +4,12 @@ import { deserializeMessage, serializeMessage } from "@modelcontextprotocol/sdk/
 import { type JSONRPCMessage, LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it, vi } from "vitest";
 import { isCleanTermination } from "../scripts/platform-command.mjs";
-import { spawnStdioProcess, withDeadline } from "./support/spawned-stdio.js";
+import {
+  configurationVariables,
+  serverEnvironment,
+  spawnStdioProcess,
+  withDeadline,
+} from "./support/spawned-stdio.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 /**
@@ -18,30 +23,16 @@ const manifestVersion = (
   }
 ).version;
 const sonarrApiKey = "sonarr-secret-key";
-const instanceVariables: readonly string[] = [
-  "SONARR_URL",
-  "SONARR_API_KEY",
-  "RADARR_URL",
-  "RADARR_API_KEY",
-  "PROWLARR_URL",
-  "PROWLARR_API_KEY",
-];
 
 function without(env: NodeJS.ProcessEnv, names: readonly string[]): NodeJS.ProcessEnv {
   return Object.fromEntries(Object.entries(env).filter(([name]) => !names.includes(name)));
 }
 
-/**
- * The built server rejects startup without a complete instance pair. Every
- * inherited instance variable is dropped first so a developer's own settings
- * cannot change what these tests observe, and nothing here reaches the network,
- * so the reserved `.invalid` host is never contacted.
- */
-const configuredEnvironment: NodeJS.ProcessEnv = {
-  ...without(process.env, instanceVariables),
+/** The environment this suite spawns the built server with. */
+const configuredEnvironment: NodeJS.ProcessEnv = serverEnvironment({
   SONARR_URL: "https://sonarr.example.invalid/sonarr",
   SONARR_API_KEY: sonarrApiKey,
-};
+});
 
 function environmentWithout(...names: readonly string[]): NodeJS.ProcessEnv {
   return without(configuredEnvironment, names);
@@ -109,7 +100,7 @@ describe("built stdio process", () => {
   });
 
   it("rejects an unconfigured environment before opening a session", async () => {
-    const child = spawnNode(["dist/cli.js"], environmentWithout(...instanceVariables));
+    const child = spawnNode(["dist/cli.js"], environmentWithout(...configurationVariables));
 
     try {
       await expect(withDeadline(child.exit, "unconfigured exit")).resolves.toEqual({
@@ -149,13 +140,37 @@ describe("built stdio process", () => {
     }
   });
 
+  it("rejects an unusable upstream timeout without echoing the configured value", async () => {
+    const child = spawnNode(["dist/cli.js"], {
+      ...configuredEnvironment,
+      ARR_UPSTREAM_TIMEOUT_MS: "abc",
+    });
+
+    try {
+      await expect(withDeadline(child.exit, "invalid timeout exit")).resolves.toEqual({
+        code: 1,
+        signal: null,
+      });
+      expect(child.stdout).toBe("");
+      expect(child.stderr).toBe(
+        "mcp-arr: startup failed: invalid environment configuration: " +
+          "ARR_UPSTREAM_TIMEOUT_MS must be a whole number of milliseconds between 1 and 600000\n",
+      );
+      expect(child.stderr).not.toContain("abc");
+    } finally {
+      await child.forceCleanup().catch(() => undefined);
+    }
+  });
+
   it("exits after a fatal startup failure while stdin remains open", async () => {
     const processModuleUrl = new URL("../dist/process.js", import.meta.url).href;
     const script = `
       import { runProcess } from ${JSON.stringify(processModuleUrl)};
       process.stdin.ref();
       await runProcess({
-        loadConfiguration: () => ({ instances: [] }),
+        // Kept in step with EnvironmentConfiguration by hand: this literal is
+        // inside a template string, so tsc does not type-check it.
+        loadConfiguration: () => ({ instances: [], upstreamTimeoutMs: 30_000 }),
         createRuntime: () => ({
           registry: { adapters: [], adapter: () => undefined, probe: async () => [] },
           start: async () => { throw new Error("forced startup failure"); },

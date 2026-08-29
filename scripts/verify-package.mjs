@@ -120,24 +120,25 @@ const strictNpmEnvironment = {
   npm_config_engine_strict: "true",
   npm_config_strict_peer_deps: "true",
 };
-const instanceVariables = [
+const configurationVariables = [
   "SONARR_URL",
   "SONARR_API_KEY",
   "RADARR_URL",
   "RADARR_API_KEY",
   "PROWLARR_URL",
   "PROWLARR_API_KEY",
+  "ARR_UPSTREAM_TIMEOUT_MS",
 ];
 /**
- * The server rejects startup without a complete instance pair. Inherited
- * instance variables are dropped so a developer's own settings cannot change
- * the verification, and these placeholders point at the reserved `.invalid`
- * domain, which is never contacted because the verifier only initializes the
- * MCP session.
+ * The server rejects startup without a complete instance pair. Every inherited
+ * variable the server reads is dropped — the instance pairs and the upstream
+ * timeout alike — so a developer's own settings cannot change the verification,
+ * and these placeholders point at the reserved `.invalid` domain, which is
+ * never contacted because the verifier only initializes the MCP session.
  */
 const instanceEnvironment = {
   ...Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => !instanceVariables.includes(name)),
+    Object.entries(process.env).filter(([name]) => !configurationVariables.includes(name)),
   ),
   SONARR_URL: "https://sonarr.example.invalid/sonarr",
   SONARR_API_KEY: "package-verification-placeholder",

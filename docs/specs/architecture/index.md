@@ -70,6 +70,10 @@ The feature contracts are split across:
 - Every upstream request MUST send the configured API key in the `X-Api-Key` header.
 - API keys MUST NOT appear in tool results, diagnostics, or upstream error messages returned to the caller.
 - Upstream requests MUST use finite timeouts and MUST distinguish unavailable instances, authentication failures, validation failures, rate limits, and unexpected responses.
+- The upstream request timeout MUST be configurable through a single environment variable, `ARR_UPSTREAM_TIMEOUT_MS`, that applies to every outbound request.
+- The upstream request timeout MUST default to 30 000 milliseconds when that variable is absent.
+- An unusable timeout value MUST reject startup with a problem that names the variable and MUST NOT include the configured value.
+- The accepted timeout range MUST be bounded so that the configured delay is one a single `setTimeout` can honor without being clamped.
 - A result MUST NOT be refused because a value the answer does not depend on arrived in a shape this server does not model; the unusable value MUST be omitted and the rest of the result returned.
 - An upstream payload MUST NOT be required to carry a member the result does not read.
 
@@ -84,6 +88,12 @@ The feature contracts are split across:
 - **GIVEN** a supported application omits a member no mapped result reads
 - **WHEN** a query over that payload runs
 - **THEN** the query succeeds and every record is returned
+
+#### Scenario: Configure a longer upstream timeout
+
+- **GIVEN** the upstream timeout variable is set to a whole number of milliseconds in the accepted range
+- **WHEN** an upstream request takes longer than the default deadline but less than the configured one
+- **THEN** the request completes rather than being aborted, and a value outside the accepted range would have rejected startup without appearing in the diagnostic
 
 #### Scenario: Upstream authentication failure
 
@@ -211,3 +221,4 @@ None.
 | 2026-08-28 | Recorded fixtures required to match the instance they name, with a repeatable capture procedure | [0021-live-verified-fixtures](../../changes/0021-live-verified-fixtures.md) |
 | 2026-08-28 | Unmodelled shapes in fields a result does not depend on required to be dropped rather than fail the result | [0022-upstream-field-shape-tolerance](../../changes/0022-upstream-field-shape-tolerance.md) |
 | 2026-08-28 | Upstream payloads barred from being required to carry a member no result reads | [0028-prowlarr-indexer-status-shape](../../changes/0028-prowlarr-indexer-status-shape.md) |
+| 2026-08-29 | Upstream request timeout required to be configurable, defaulted to 30 000 ms, and bounded | [0029-configurable-upstream-timeout](../../changes/0029-configurable-upstream-timeout.md) |

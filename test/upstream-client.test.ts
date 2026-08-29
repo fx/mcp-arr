@@ -612,6 +612,9 @@ describe("createUpstreamClient", () => {
 
     expect(defaultUpstreamTimeoutMs).toBeGreaterThan(0);
     expect(Number.isFinite(defaultUpstreamTimeoutMs)).toBe(true);
+    // Pinned, not derived: the default is the deadline every request that
+    // configures nothing gets, so moving it is a deliberate edit.
+    expect(defaultUpstreamTimeoutMs).toBe(30_000);
   });
 
   it("never exposes the API key through any normalized error", async () => {

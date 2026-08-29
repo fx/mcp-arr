@@ -248,6 +248,38 @@ describe("createAdapterRegistry", () => {
       });
     }
   });
+
+  it("gives every client it builds the configured upstream timeout", async () => {
+    const registry = createAdapterRegistry(
+      parseEnvironment({
+        SONARR_URL: "https://sonarr.example.invalid/sonarr",
+        SONARR_API_KEY: apiKeys.sonarr,
+        ARR_UPSTREAM_TIMEOUT_MS: "5",
+      }),
+      {
+        // Never answers, and rejects only when the client's own abort fires —
+        // which is how the client tells a timeout from an unreachable
+        // instance. A stub that ignored the signal could not produce one.
+        fetch: (_url, init) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+              once: true,
+            });
+          }),
+      },
+    );
+
+    const adapter = registry.adapter("sonarr");
+    expect(adapter).toBeDefined();
+    // The number in the message is the one the client armed its timer with, so
+    // a green assertion covers the whole path the configured value travels:
+    // the environment, the parsed configuration, the registry, the client, and
+    // the abort — without a network.
+    await expect(adapter?.probe()).resolves.toMatchObject({
+      status: "unavailable",
+      failure: { kind: "timeout", message: expect.stringContaining("timed out after 5ms") },
+    });
+  });
 });
 
 describe("createApplicationAdapter", () => {

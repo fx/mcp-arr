@@ -3,9 +3,27 @@ import {
   type ApplicationId,
   applicationDescriptors,
 } from "../applications.js";
+import { defaultUpstreamTimeoutMs } from "../http/client.js";
 import { describeBaseUrlProblem, normalizeBaseUrl } from "./base-url.js";
 
 export type EnvironmentRecord = Readonly<Record<string, string | undefined>>;
+
+/**
+ * The variable that sets the deadline every outbound upstream request is
+ * given. It is not an instance connection setting — it selects, addresses, and
+ * authenticates to nothing — so it is global rather than per application.
+ */
+export const upstreamTimeoutVariable = "ARR_UPSTREAM_TIMEOUT_MS";
+
+const minimumUpstreamTimeoutMs = 1;
+/**
+ * Bounded for correctness rather than policy. `setTimeout` holds its delay in a
+ * signed 32-bit integer and clamps anything larger to 1ms, so an overflowing
+ * value would abort every request almost immediately — the inverse of what was
+ * asked for, and invisible to the client's own finite-and-positive guard, which
+ * such a value passes.
+ */
+const maximumUpstreamTimeoutMs = 600_000;
 
 /**
  * One application's resolved connection settings.
@@ -23,6 +41,12 @@ export interface InstanceConfiguration {
 
 export interface EnvironmentConfiguration {
   readonly instances: readonly InstanceConfiguration[];
+  /**
+   * The deadline, in milliseconds, every outbound upstream request is given.
+   * Always present: an absent variable resolves to the default rather than to
+   * nothing, so no caller has to decide what a missing deadline means.
+   */
+  readonly upstreamTimeoutMs: number;
 }
 
 /**
@@ -101,9 +125,51 @@ function describeMissingConfiguration(): string {
 }
 
 /**
- * Reads the six supported instance variables from an injected environment
- * record. Each application is optional, but an incomplete, empty, or invalid
- * pair rejects startup.
+ * Reads the upstream request deadline, falling back to the client's own
+ * default when the variable is absent.
+ *
+ * An unusable value is accumulated as a problem rather than thrown, so it is
+ * reported alongside every other configuration problem in one diagnostic; the
+ * default is returned in that case only so this function has a value to give
+ * back, since the accumulated problem rejects startup before it can be used.
+ * The problem names the variable and never the value, like every other one.
+ */
+function parseUpstreamTimeout(env: EnvironmentRecord, problems: string[]): number {
+  const state = readVariable(env, upstreamTimeoutVariable);
+  if (state.kind === "absent") {
+    return defaultUpstreamTimeoutMs;
+  }
+  if (state.kind === "empty") {
+    problems.push(`${upstreamTimeoutVariable} is set but empty`);
+    return defaultUpstreamTimeoutMs;
+  }
+
+  // Digits and nothing else, tested before conversion, because `Number`
+  // accepts far more spellings than a decimal integer and would silently
+  // accept a value the operator did not write: `" "` becomes 0, `"1e4"`
+  // becomes 10000, `"0x7530"` becomes 30000, and `"+30000"` becomes 30000.
+  // Magnitude comes free — a digit string past `Number.MAX_SAFE_INTEGER`
+  // converts to a number above the cap and is refused by the range check.
+  const value = /^\d+$/.test(state.value) ? Number(state.value) : Number.NaN;
+  if (
+    !Number.isInteger(value) ||
+    value < minimumUpstreamTimeoutMs ||
+    value > maximumUpstreamTimeoutMs
+  ) {
+    problems.push(
+      `${upstreamTimeoutVariable} must be a whole number of milliseconds between ` +
+        `${minimumUpstreamTimeoutMs} and ${maximumUpstreamTimeoutMs}`,
+    );
+    return defaultUpstreamTimeoutMs;
+  }
+  return value;
+}
+
+/**
+ * Reads the six supported instance variables and the optional upstream timeout
+ * from an injected environment record. Each application is optional, but an
+ * incomplete, empty, or invalid pair rejects startup, as does an unusable
+ * timeout.
  *
  * @throws {ConfigurationError} when no application is usable.
  */
@@ -121,11 +187,18 @@ export function parseEnvironment(env: EnvironmentRecord): EnvironmentConfigurati
   if (problems.length === 0 && instances.length === 0) {
     problems.push(describeMissingConfiguration());
   }
+  // Deliberately after the check above and before the throw below. The
+  // missing-application diagnostic is emitted only when nothing else has been
+  // reported, so a timeout problem recorded earlier would suppress it and an
+  // environment with neither an application nor a usable timeout would be told
+  // only about the timeout. Recording it here keeps both, keeps an unusable
+  // value fatal, and leaves it last in the accumulation order.
+  const upstreamTimeoutMs = parseUpstreamTimeout(env, problems);
   if (problems.length > 0) {
     throw new ConfigurationError(problems);
   }
 
-  return { instances };
+  return { instances, upstreamTimeoutMs };
 }
 
 export function loadEnvironment(env: EnvironmentRecord = process.env): EnvironmentConfiguration {

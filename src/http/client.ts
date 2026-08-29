@@ -4,7 +4,7 @@ import { UpstreamError, type UpstreamErrorKind, upstreamErrorKindForStatus } fro
 
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
-export const defaultUpstreamTimeoutMs = 10_000;
+export const defaultUpstreamTimeoutMs = 30_000;
 
 export interface UpstreamClientOptions {
   readonly application: ApplicationId;
