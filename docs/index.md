@@ -49,3 +49,4 @@ A corrected fixture is the failing test for the defect it exposes, so each chang
 | 0026 | [Plan-Mode Mutation Envelopes](changes/0026-plan-mode-mutation-envelopes.md) | [Tool Contracts](specs/tool-contracts/) | complete | — |
 | 0027 | [Single-Application Mutation Scope](changes/0027-single-application-mutation-scope.md) | [Tool Contracts](specs/tool-contracts/) | complete | — |
 | 0028 | [Prowlarr Indexer Status Shape](changes/0028-prowlarr-indexer-status-shape.md) | [Architecture](specs/architecture/) | complete | — |
+| 0029 | [Configurable Upstream Timeout](changes/0029-configurable-upstream-timeout.md) | [Architecture](specs/architecture/) | complete | — |

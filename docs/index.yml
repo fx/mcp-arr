@@ -229,3 +229,10 @@ changes:
     spec: architecture
     status: complete
     depends_on: []
+  - id: "0029"
+    name: configurable-upstream-timeout
+    path: changes/0029-configurable-upstream-timeout.md
+    description: Make the upstream request timeout settable through one environment variable and raise its default to 30 seconds
+    spec: architecture
+    status: complete
+    depends_on: []
