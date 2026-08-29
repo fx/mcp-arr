@@ -109,20 +109,20 @@ The spec's rule that instance connection settings are read exclusively from the 
 
 ## Tasks
 
-- [ ] Make the upstream timeout configurable and raise the default
-  - [ ] Raise `defaultUpstreamTimeoutMs` in `src/http/client.ts` to 30 000, leaving the client's own finite-positive guard as it is
-  - [ ] Parse `ARR_UPSTREAM_TIMEOUT_MS` in `src/config/environment.ts` as a whole number of milliseconds in the accepted range, defaulting to the client's constant, and return it as a required field
-  - [ ] Accumulate an unusable value as a problem that names the variable only, recorded after the missing-application check so both diagnostics survive
-  - [ ] Delete the unreachable `AdapterRegistryDependencies.timeoutMs` and pass `configuration.upstreamTimeoutMs` into every client the registry builds
-- [ ] Prove the configured value reaches the request
-  - [ ] Cover acceptance, the default, both boundaries, every rejected spelling, and the accumulation order in `test/environment.test.ts`, including that a rejected value never appears in the error
-  - [ ] Pin the default to 30 000 ms in `test/upstream-client.test.ts`
-  - [ ] Build a registry from a parsed environment carrying a tiny timeout and assert the resulting abort reports that number, so the whole path is covered by one test with no network
-  - [ ] Spawn the built server with an unusable value and assert it exits before opening a session without echoing the value
-  - [ ] Add the variable to the environment filters in `test/support/spawned-stdio.ts`, `test/stdio-process.test.ts`, and `scripts/verify-package.mjs`, and correct the comments that describe them as instance variables
-- [ ] Record the rule the change establishes
-  - [ ] State the configurability, the default, the redaction, and the bounded range in [Architecture — Upstream Connection Handling](../specs/architecture/#upstream-connection-handling), with a scenario and a changelog row
-  - [ ] Document the variable in `README.md` beside the instance settings
+- [x] Make the upstream timeout configurable and raise the default
+  - [x] Raise `defaultUpstreamTimeoutMs` in `src/http/client.ts` to 30 000, leaving the client's own finite-positive guard as it is
+  - [x] Parse `ARR_UPSTREAM_TIMEOUT_MS` in `src/config/environment.ts` as a whole number of milliseconds in the accepted range, defaulting to the client's constant, and return it as a required field
+  - [x] Accumulate an unusable value as a problem that names the variable only, recorded after the missing-application check so both diagnostics survive
+  - [x] Delete the unreachable `AdapterRegistryDependencies.timeoutMs` and pass `configuration.upstreamTimeoutMs` into every client the registry builds
+- [x] Prove the configured value reaches the request
+  - [x] Cover acceptance, the default, both boundaries, every rejected spelling, and the accumulation order in `test/environment.test.ts`, including that a rejected value never appears in the error
+  - [x] Pin the default to 30 000 ms in `test/upstream-client.test.ts`
+  - [x] Build a registry from a parsed environment carrying a tiny timeout and assert the resulting abort reports that number, so the whole path is covered by one test with no network
+  - [x] Spawn the built server with an unusable value and assert it exits before opening a session without echoing the value
+  - [x] Add the variable to the environment filters in `test/support/spawned-stdio.ts`, `test/stdio-process.test.ts`, and `scripts/verify-package.mjs`, and correct the comments that describe them as instance variables
+- [x] Record the rule the change establishes
+  - [x] State the configurability, the default, the redaction, and the bounded range in [Architecture — Upstream Connection Handling](../specs/architecture/#upstream-connection-handling), with a scenario and a changelog row
+  - [x] Document the variable in `README.md` beside the instance settings
 
 ## Open Questions
 
