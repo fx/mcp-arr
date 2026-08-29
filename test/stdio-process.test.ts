@@ -4,7 +4,12 @@ import { deserializeMessage, serializeMessage } from "@modelcontextprotocol/sdk/
 import { type JSONRPCMessage, LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it, vi } from "vitest";
 import { isCleanTermination } from "../scripts/platform-command.mjs";
-import { spawnStdioProcess, withDeadline } from "./support/spawned-stdio.js";
+import {
+  configurationVariables,
+  serverEnvironment,
+  spawnStdioProcess,
+  withDeadline,
+} from "./support/spawned-stdio.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 /**
@@ -18,33 +23,16 @@ const manifestVersion = (
   }
 ).version;
 const sonarrApiKey = "sonarr-secret-key";
-/** Every variable the server reads, instance pairs and the upstream timeout. */
-const configurationVariables: readonly string[] = [
-  "SONARR_URL",
-  "SONARR_API_KEY",
-  "RADARR_URL",
-  "RADARR_API_KEY",
-  "PROWLARR_URL",
-  "PROWLARR_API_KEY",
-  "ARR_UPSTREAM_TIMEOUT_MS",
-];
 
 function without(env: NodeJS.ProcessEnv, names: readonly string[]): NodeJS.ProcessEnv {
   return Object.fromEntries(Object.entries(env).filter(([name]) => !names.includes(name)));
 }
 
-/**
- * The built server rejects startup without a complete instance pair. Every
- * inherited variable the server reads is dropped first — the instance pairs and
- * the upstream timeout alike — so a developer's own settings cannot change what
- * these tests observe, and nothing here reaches the network, so the reserved
- * `.invalid` host is never contacted.
- */
-const configuredEnvironment: NodeJS.ProcessEnv = {
-  ...without(process.env, configurationVariables),
+/** The environment this suite spawns the built server with. */
+const configuredEnvironment: NodeJS.ProcessEnv = serverEnvironment({
   SONARR_URL: "https://sonarr.example.invalid/sonarr",
   SONARR_API_KEY: sonarrApiKey,
-};
+});
 
 function environmentWithout(...names: readonly string[]): NodeJS.ProcessEnv {
   return without(configuredEnvironment, names);
