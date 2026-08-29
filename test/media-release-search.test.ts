@@ -250,12 +250,17 @@ describe("radarr interactive search", () => {
     // `movieTitle`, so the singular form is supplied here rather than recorded
     // as a response no instance produces. The normalization still has to hold
     // for a release that sends it.
-    const [record] = releases.radarr;
+    // Built from the recorded row that carries the empty edition, so the
+    // normalization of that to absent is covered here rather than lost with the
+    // assertion this test replaces.
+    const record = releases.radarr[1];
     const { items } = await run("radarr", movieSearch, [
       { ...record, movieTitles: undefined, movieTitle: "Example Movie" },
     ]);
 
-    expect(items[0]?.release).toMatchObject({ radarr: { movieTitles: ["Example Movie"] } });
+    expect(items[0]?.release).toMatchObject({
+      radarr: { movieTitles: ["Example Movie"], edition: undefined },
+    });
   });
 
   it("normalizes an instance that reports age in days only", async () => {
