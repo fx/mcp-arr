@@ -7,6 +7,7 @@ import {
 } from "@modelcontextprotocol/sdk/shared/stdio.js";
 import type { JSONRPCMessage, RequestId } from "@modelcontextprotocol/sdk/types.js";
 import { consumeReadable, waitForChildCompletion } from "../../scripts/child-process.mjs";
+import { upstreamTimeoutVariable } from "../../src/config/environment.js";
 
 const projectRoot = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -24,7 +25,7 @@ export const configurationVariables: readonly string[] = [
   "RADARR_API_KEY",
   "PROWLARR_URL",
   "PROWLARR_API_KEY",
-  "ARR_UPSTREAM_TIMEOUT_MS",
+  upstreamTimeoutVariable,
 ];
 
 /** The process environment a host would launch the built server with. */

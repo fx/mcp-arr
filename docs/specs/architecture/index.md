@@ -70,7 +70,7 @@ The feature contracts are split across:
 - Every upstream request MUST send the configured API key in the `X-Api-Key` header.
 - API keys MUST NOT appear in tool results, diagnostics, or upstream error messages returned to the caller.
 - Upstream requests MUST use finite timeouts and MUST distinguish unavailable instances, authentication failures, validation failures, rate limits, and unexpected responses.
-- The upstream request timeout MUST be configurable through a single environment variable that applies to every outbound request.
+- The upstream request timeout MUST be configurable through a single environment variable, `ARR_UPSTREAM_TIMEOUT_MS`, that applies to every outbound request.
 - The upstream request timeout MUST default to 30 000 milliseconds when that variable is absent.
 - An unusable timeout value MUST reject startup with a problem that names the variable and MUST NOT include the configured value.
 - The accepted timeout range MUST be bounded so that the configured delay is one a single `setTimeout` can honor without being clamped.

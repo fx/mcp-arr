@@ -168,7 +168,9 @@ describe("built stdio process", () => {
       import { runProcess } from ${JSON.stringify(processModuleUrl)};
       process.stdin.ref();
       await runProcess({
-        loadConfiguration: () => ({ instances: [] }),
+        // Kept in step with EnvironmentConfiguration by hand: this literal is
+        // inside a template string, so tsc does not type-check it.
+        loadConfiguration: () => ({ instances: [], upstreamTimeoutMs: 30_000 }),
         createRuntime: () => ({
           registry: { adapters: [], adapter: () => undefined, probe: async () => [] },
           start: async () => { throw new Error("forced startup failure"); },
