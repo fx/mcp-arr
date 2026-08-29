@@ -1086,7 +1086,12 @@ describe("validating immediately before an import", () => {
   });
 
   it("directs an existing library file elsewhere rather than importing it again", async () => {
-    const running = instance({ decided: [sonarr.candidates[2] as Record<string, unknown>] });
+    // The file identifier is supplied here rather than recorded: neither Sonarr
+    // 4.0.19.2979 nor Radarr 6.3.0.10514 sends one on a manual-import row, so a
+    // recorded body carrying it would describe a response no instance produces.
+    // The guard still has to hold for a release that does send one.
+    const existing = { ...(sonarr.candidates[2] as Record<string, unknown>), episodeFileId: 5001 };
+    const running = instance({ scan: [existing], decided: [existing] });
 
     const result = await validateForImport(running.client, "sonarr", {
       retained: retainedFor({

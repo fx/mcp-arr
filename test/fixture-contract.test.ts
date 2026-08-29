@@ -6,6 +6,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   approvedFixtureInventory,
   approvedFixtures,
+  approvedFixtureTuples,
+  type FixtureTuple,
+  type FixtureVersion,
   fixturePathFor,
   loadFixture,
   validateFixture,
@@ -149,6 +152,25 @@ describe("versioned fixture contract", () => {
       "sonarr/v3/4.0.19.2979/wanted-missing.json",
     );
     expect(() => fixturePathFor("prowlarr", "series")).toThrow("No approved fixture");
+  });
+
+  it("declares exactly the tuples the approved inventory holds", () => {
+    // The contract's rules run as JavaScript and are declared for TypeScript in
+    // a file beside them, so the two could disagree: a tuple added to the
+    // declaration alone would type-check while the runtime contract refused it.
+    // Keying by version makes the map exhaustive in both directions —
+    // TypeScript refuses a missing key and an excess one, and a version is what
+    // distinguishes one declared tuple from another — while each value has to
+    // satisfy the declared tuple union, so an application or API label that
+    // drifted there fails to compile. Comparing the map against the runtime
+    // list is what catches drift the other way.
+    const declared: Record<FixtureVersion, FixtureTuple> = {
+      "4.0.19.2979": { application: "sonarr", apiVersion: "v3", version: "4.0.19.2979" },
+      "6.3.0.10514": { application: "radarr", apiVersion: "v3", version: "6.3.0.10514" },
+      "2.5.2.5491": { application: "prowlarr", apiVersion: "v1", version: "2.5.2.5491" },
+    };
+
+    expect(new Set(approvedFixtureTuples)).toEqual(new Set(Object.values(declared)));
   });
 
   it("rejects a fixture whose endpoint is not the one its file records", () => {
@@ -313,12 +335,37 @@ describe("versioned fixture contract", () => {
       ["sensitive path", ["", "media", "private", "data"].join("/")],
       ["Windows path", ["prefix=C:", "fixture", "data"].join("\\")],
       ["UNC path", `${"\\".repeat(2)}fixture\\share`],
+      // A path arrives embedded in upstream free text as readily as it arrives
+      // alone, and one behind a delimiter would otherwise read as ordinary text.
+      ["workspace path", `detail=${["", "workspace", "fixture"].join("/")}`],
+      ["sensitive path", `detail:${["", "srv", "fixture"].join("/")}`],
+      ["sensitive path", `first,${["", "srv", "fixture"].join("/")}`],
+      ["sensitive path", `first;${["", "srv", "fixture"].join("/")}`],
+      ["sensitive path", `first|${["", "srv", "fixture"].join("/")}`],
     ] as const;
 
     for (const [description, unsafeValue] of unsafeValues) {
       const fixture = validFixture();
       (fixture.body as Record<string, unknown>).nested = [unsafeValue];
       expect(() => validate(fixture)).toThrow(`Sensitive ${description} is not allowed`);
+      // A key is text the instance chose too, and is held to the same screens.
+      // Which refusal fires is not the point — a key whose name is on the
+      // identifying list is refused for that first — only that none passes.
+      const keyed = validFixture();
+      (keyed.body as Record<string, unknown>).nested = [{ [unsafeValue]: 1 }];
+      expect(() => validate(keyed)).toThrow("is not allowed");
     }
+  });
+
+  it("keeps a relative path a name rather than a path", () => {
+    // The boundary the path screens anchor on never includes a character a path
+    // segment can end in, so an ordinary relative file name still passes.
+    const fixture = validFixture();
+    (fixture.body as Record<string, unknown>).nested = [
+      "Season 01/Example Series - S01E01 - Example Pilot Bluray-1080p.mkv",
+      "Example Movie (2021)/Example Movie (2021) Bluray-1080p.mkv",
+    ];
+
+    expect(() => validate(fixture)).not.toThrow();
   });
 });

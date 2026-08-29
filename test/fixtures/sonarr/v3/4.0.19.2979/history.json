@@ -121,7 +121,6 @@
         "eventType": "episodeFileDeleted",
         "date": "2026-08-24T07:45:00Z",
         "sourceTitle": "Example Anime S01E14 WEBDL-720p",
-        "downloadId": null,
         "quality": {
           "quality": {
             "id": 4,

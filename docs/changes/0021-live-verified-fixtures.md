@@ -7,8 +7,8 @@ Give the project a repeatable way to capture upstream fixtures from the instance
 Two of those four are the failing test for a defect with its own change document, so they are corrected there rather than here — see [Ownership](#ownership) below.
 
 **Spec:** [Architecture](../specs/architecture/)
-**Status:** draft
-**Depends On:** [0022](./0022-upstream-field-shape-tolerance.md), [0023](./0023-radarr-exclusion-route.md)
+**Status:** complete
+**Depends On:** [0022](./0022-upstream-field-shape-tolerance.md), [0023](./0023-radarr-exclusion-route.md), [0028](./0028-prowlarr-indexer-status-shape.md)
 
 ## Motivation
 
@@ -22,6 +22,8 @@ The fixtures are not missing and not unversioned. They are stored per applicatio
 | `sonarr/v3/4.0.19.2979/manualimport.json` | `indexerFlags: ["freeleech"]` | `indexerFlags: 0` |
 | `radarr/v3/6.3.0.10514/manualimport.json` | `indexerFlags: []` | `indexerFlags: 0` |
 | `radarr/v3/6.3.0.10514/importlistexclusion.json` | a body for `/api/v3/importlistexclusion` | `404` — Radarr serves `/api/v3/exclusions` |
+
+[0023](./0023-radarr-exclusion-route.md) has since replaced that last file with `radarr/v3/6.3.0.10514/exclusions-paged.json`, recorded from the route Radarr does serve. The row stands as the finding that prompted this change rather than as a description of the tree today.
 
 The last one is the clearest tell: a fixture records a response from a route that does not exist on the application it names. These bodies were authored to the shape the adapter expected rather than captured from an instance, so every fixture-backed test confirmed the adapter against its own assumption. That is a closed loop, and it will keep producing defects of exactly this kind — it already has once before, when a provider field's absent `value` key broke `arr_config_observe` against every real instance while the fixtures passed.
 
@@ -111,26 +113,118 @@ The [Architecture spec](../specs/architecture/#testing-contract) owns the fixtur
 
 ### Non-Goals
 
-- Correcting the Sonarr `release` fixture or the Radarr exclusions fixture — each is the red test of the change that owns it, [0022](./0022-upstream-field-shape-tolerance.md) and [0023](./0023-radarr-exclusion-route.md) respectively.
+- Correcting the Sonarr `release` fixture or the Radarr exclusions fixture on the axis that makes it the red test of the change owning it — `indexerFlags` for [0022](./0022-upstream-field-shape-tolerance.md), the route for [0023](./0023-radarr-exclusion-route.md). This exclusion is about those defects, not about those files: the sweep found the `release` fixtures also recorded a rejection form neither application sends, which no point fix owns and which leaving in place would contradict the completion rule below.
 - Fixing any adapter defect a corrected fixture reveals.
 - Capturing routes the server does not currently read.
 - Testing against live instances in CI.
 - Changing the fixture storage layout, metadata schema, or contract test beyond adding route verification.
 
+## Findings
+
+What the sweep found, recorded because the tasks below turn on it and because a
+sweep whose result is not written down has to be run again to be believed.
+
+Two states are kept apart throughout. A **divergence** is a fixture the instance
+contradicts: it records a field, or a type, that the application does not send
+at the version and route the fixture names. **Not verifiable** is a fixture the
+instance can neither confirm nor contradict, because it holds no data of that
+kind — an empty collection says nothing about the shape of a record it does not
+have. Only the first is a fault in the fixture, and only the first blocks this
+change.
+
+Every claim below was read from the live instances: 3310 field paths across the
+three applications, and hundreds to thousands of rows per route.
+
+### A seventh defect, and its own change
+
+The original sweep of all fourteen tools found the six defects the
+[Motivation](#motivation) records, and that count stands as the history it is.
+This change's own sweep found one more, which is the clearest evidence the
+mechanism was worth building: it is a defect of exactly the class the fixtures
+were hiding, in a fixture nobody suspected.
+
+`prowlarr/v1/2.5.2.5491/indexerstatus.json` recorded an `id` and an
+`escalationLevel`. Prowlarr 2.5.2.5491 sends neither — a row is `indexerId`,
+`disabledTill`, `mostRecentFailure`, `initialFailure` and nothing else — while
+the adapter declared `id` as **required**, and the shared activity parser refuses
+a whole body rather than dropping a row. So every indexer-status read failed
+against a real instance, and the recorded `id` is the only reason no test said
+so.
+
+That correction could not land here: the fixture is the failing test for an
+adapter fix, and correcting it without the fix would land red. It became
+[0028](./0028-prowlarr-indexer-status-shape.md) and a prerequisite of this
+change, which is the scenario [above](#scenario-a-correction-would-need-an-adapter-change)
+describing what to do about itself.
+
+### Divergences corrected here
+
+| What the instances send | What the fixtures recorded |
+|---|---|
+| An absent value is an omitted property. A JSON null appears in 5 of 3310 live field paths, all inside a history record's free-form `data` bag. | 83 nulls across 21 fixtures. |
+| Sonarr and Radarr both answer `manualimport` with `indexerFlags` as a numeric bitfield, and send no `episodeFileId` or `movieFileId` at all. | A list of flag names, and a file identifier on the already-held row. |
+| Every one of 897 release rejections on both applications is a bare string. | The `{reason, type}` object form on both `release` fixtures. |
+| Prowlarr history rows carry neither `sourceTitle` nor `downloadId`. | Both. |
+| Radarr release rows carry neither `movieTitle` nor `year`; the plural `movieTitles` is what it sends. | Both. |
+| A route omits a field another route carries: Sonarr's episode files name no episodes and its history no `successful`; its download-client configuration has no finished-download interval; a series or movie lookup carries no root folder, no season statistics and no release groups, and Radarr's adds neither `hasFile` nor `sizeOnDisk`; a Radarr collection has no genres and no member monitoring, its cutoff-unmet records no movie file, its wanted and calendar rows no root folder, and its history no `successful`. | Each of them. |
+| A paged response's records are in the order its own `sortKey` and `sortDirection` declare, verified across four paged routes on both media applications. | Prowlarr's `history` records contradicted their own declared sort. |
+
+Two of those have a consequence beyond the fixture, recorded here and left to a
+change of their own because [Non-Goals](#non-goals) excludes fixing an adapter
+defect a corrected fixture reveals:
+
+- Because neither application sends a file identifier on a manual-import row,
+  the `existing_file` refusal is unreachable against a real instance, and the
+  comment claiming that identifier is "the only signal either gives" is false.
+  Both tests that cover the refusal now supply the identifier themselves.
+- Because Prowlarr history carries neither field, a mapped history record's
+  `title` and `downloadIdentity` are never populated at 2.5.2.5491.
+
+**None of these corrections needs an adapter change**, which is what makes them
+this change's to make rather than a prerequisite's. The release rejection union
+still accepts the string and the object form, so nothing is refused by dropping
+the form no instance sends; `sourceTitle`, `downloadId`, `movieTitle` and `year`
+are declared nullish and `episodeFileId`/`movieFileId` optional, so a body
+without them parses exactly as one with them did. That is the difference from
+the indexer-status finding above, where a **required** field was absent and the
+corrected fixture could not parse at all.
+
+### Not verifiable on these instances
+
+Recorded rather than corrected. Each is a shape the application genuinely
+produces, which this instance holds no instance of:
+
+- No records at all: Sonarr `tag`, `importlist`, `rename` and
+  `importlistexclusion/paged`; Radarr `tag`, `rename` and `exclusions/paged`;
+  Prowlarr `notification`. For the two exclusion routes the paged **envelope**
+  was verified live and the **records** were not, and it stays that way until an
+  instance holds an exclusion.
+- Populated rows, unpopulated optional: every `tags[]` element, because both
+  media instances define no tags and the two tagged Prowlarr applications have
+  none assigned; every `customFormats[]` element; Sonarr's
+  `absoluteEpisodeNumbers[]`; Radarr's cutoff-unmet `alternateTitles[]`.
+- Indexer-dependent: `seeders`, `leechers` and named `indexerFlags` on both
+  `release` fixtures and on Prowlarr `search`. Every release either instance
+  returned was usenet, and the two configured torrent indexers returned nothing,
+  so these could not be checked — which is not the same as their being wrong.
+- Free-form dictionaries whose key set varies by event: a history record's
+  `data` bag, where absence of a key on this instance's events says nothing
+  about the shape.
+
 ## Tasks
 
-- [ ] Add the operator-run fixture capture procedure
-  - [ ] Write a capture script that reads a route from a configured instance and emits a fixture with application, API version, exact version, and route metadata
-  - [ ] Sanitize secrets, identifying values, and canonical paths through the existing helpers, and fail the capture rather than write a body that would not pass the contract test
-  - [ ] Fail the capture when the named route does not resolve on the named application
-  - [ ] Document the procedure so fixtures are refreshed rather than authored
-- [ ] Correct the fixtures no point fix owns
-  - [ ] Recapture the Sonarr and Radarr `manualimport` fixtures, and update the assertions written against their current bodies so the suite stays green
-  - [ ] Confirm the import adapter needs no change to read the recaptured bodies
-- [ ] Sweep the remaining fixtures
-  - [ ] Compare every other recorded fixture against its instance at the version it names
-  - [ ] For any divergence needing an adapter change, create that change, record it as a prerequisite of this one, and do not complete this change until it has landed and the fixture matches
-  - [ ] Confirm at completion that no recorded fixture is known to contradict the instance it names
+- [x] Add the operator-run fixture capture procedure
+  - [x] Write a capture script that reads a route from a configured instance and emits a fixture with application, API version, exact version, and route metadata
+  - [x] Sanitize secrets, identifying values, and canonical paths through the existing helpers, and fail the capture rather than write a body that would not pass the contract test
+  - [x] Fail the capture when the named route does not resolve on the named application
+  - [x] Document the procedure so fixtures are refreshed rather than authored
+- [x] Correct the fixtures no point fix owns
+  - [x] Recapture the Sonarr and Radarr `manualimport` fixtures, and update the assertions written against their current bodies so the suite stays green
+  - [x] Confirm the import adapter needs no change to read the recaptured bodies
+- [x] Sweep the remaining fixtures
+  - [x] Compare every other recorded fixture against its instance at the version it names
+  - [x] For any divergence needing an adapter change, create that change, record it as a prerequisite of this one, and do not complete this change until it has landed and the fixture matches
+  - [x] Confirm at completion that no recorded fixture is known to contradict the instance it names
 
 ## Open Questions
 
@@ -139,4 +233,4 @@ None.
 ## References
 
 - Spec: [Architecture](../specs/architecture/)
-- Related changes: [0022-upstream-field-shape-tolerance](./0022-upstream-field-shape-tolerance.md), [0023-radarr-exclusion-route](./0023-radarr-exclusion-route.md), [0024-manual-import-request-shape](./0024-manual-import-request-shape.md), [0025-job-projection-refresh](./0025-job-projection-refresh.md)
+- Related changes: [0022-upstream-field-shape-tolerance](./0022-upstream-field-shape-tolerance.md), [0023-radarr-exclusion-route](./0023-radarr-exclusion-route.md), [0024-manual-import-request-shape](./0024-manual-import-request-shape.md), [0025-job-projection-refresh](./0025-job-projection-refresh.md), [0028-prowlarr-indexer-status-shape](./0028-prowlarr-indexer-status-shape.md)

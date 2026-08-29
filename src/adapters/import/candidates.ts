@@ -576,9 +576,17 @@ export function mapCandidate(
     indexerFlags: safeLabelList(indexerFlagStrings(record.indexerFlags), known),
     decision: { importable, rejections },
     // A candidate the instance already associates with a library file is a file
-    // the library holds, not a new import. Both applications report that as the
-    // file identifier on the row, and a positive one is the only signal either
-    // gives.
+    // the library holds, not a new import, and a positive file identifier on
+    // the row is what says so.
+    //
+    // Neither application sends that identifier at the recorded versions —
+    // Sonarr 4.0.19.2979 and Radarr 6.3.0.10514 both omit it on every
+    // manual-import row, which change 0021's sweep established against both
+    // instances — so this reads false against them today and the rejection is
+    // what reports an already-held file instead. The field stays declared and
+    // read: it is the shape the resource documents, an older or newer release
+    // may send it, and reading it costs nothing. Closing the gap it leaves
+    // needs its own change.
     existingLibraryFile: existingFileId !== undefined,
     context: {
       application,

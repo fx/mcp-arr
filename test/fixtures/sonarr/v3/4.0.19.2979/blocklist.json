@@ -49,7 +49,6 @@
         "date": "2026-07-30T09:15:00Z",
         "protocol": "usenet",
         "indexer": "Example Usenet Indexer",
-        "message": null,
         "quality": {
           "quality": {
             "id": 4,

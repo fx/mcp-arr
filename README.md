@@ -118,3 +118,31 @@ npm install ../mcp-arr
 
 - POSIX: `/absolute/path/to/mcp-arr-install/node_modules/.bin/mcp-arr`
 - Windows: `C:\absolute\path\to\mcp-arr-install\node_modules\.bin\mcp-arr.cmd`
+
+### Recording upstream fixtures
+
+The adapter tests read recorded upstream responses from `test/fixtures`, stored per application, per API version, per exact instance version. Every one of them must be a response the application it names genuinely returns at the route it names — a body written to the shape an adapter expects instead confirms that adapter against its own assumption, and the suite stays green while the server is broken against a real instance.
+
+So a fixture is **refreshed, not authored**:
+
+```sh
+npm run build
+node scripts/capture-fixture.mjs --application sonarr --route manualimport \
+  --query folder=/downloads/complete/example
+npx biome check --write test/fixtures
+```
+
+The capture reads one route from the instance the usual environment variables name, sanitizes what it read, and writes the fixture the inventory approves for that route. Running the test suite never does any of this: the suite needs no instance, no network, and no credentials, and the capture is deliberately outside it.
+
+It refuses rather than writing whenever it cannot stand behind what it read:
+
+- the route is not one the inventory approves for that application;
+- the instance is not the version the recorded fixtures name;
+- the application answers the route with `404`, or with its web interface instead of JSON — which is what an unrecognized API path is served, with a `200`;
+- the sanitized body still trips one of the fixture screens.
+
+Sanitizing drops any key the screens name as secret-bearing or identifying, and replaces any other text they refuse — a URL, an address, a home or host path, whether it arrived as a value or as a key — with a neutral stand-in of the same kind, so the shape survives and the text does not. If a capture is still refused, neutralize what the message names. Never weaken a screen to accommodate what an instance sent.
+
+A provider's settings are the exception, and they are treated more harshly than the screens require. These applications describe an indexer, a download client, an import list, a notification or an application connection as a list of `{ name, value }` pairs, so a credential arrives under the property name `value` with its real name beside it — and no screen that asks what a property is called can see it. Every such value is therefore replaced, whatever the field is called: a private tracker's `passkey` or `rssKey` is no more recognizable by name than an `apiKey`, and a Cardigann definition may call its own anything at all. The field keeps its name and its type, which is the whole of what the fixture's shape needs, and a value that is not text is left alone, so a select field still records its selection. The two texts these applications use as state rather than as content are also kept: a blank value means the credential is unset, and a run of asterisks is the stand-in for one that is set.
+
+A route's records can only be verified against an instance that holds records of that kind: an instance with no tags, import lists, notifications, import-list exclusions or pending renames answers those routes with an empty collection, and a usenet-only indexer set never produces a torrent release. Such a fixture's envelope is recorded from the instance while its records are not, and it stays that way until an instance holds the data. That is a limit of the capture, not a licence to invent a record: a recorded body must still describe a response the application produces.

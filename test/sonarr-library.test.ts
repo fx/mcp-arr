@@ -274,7 +274,10 @@ describe("sonarr library reads", () => {
       languages: ["English"],
       releaseGroup: "EXAMPLEGRP",
       detail: undefined,
-      sonarr: { seriesId: 12, seasonNumber: 1, episodeIds: [1001] },
+      // Sonarr 4.0.19.2979 answers this route with no `episodeIds` on any row —
+      // the episode-to-file association is carried on the episode instead — so
+      // the namespaced list is empty for every recorded file.
+      sonarr: { seriesId: 12, seasonNumber: 1, episodeIds: [] },
     });
 
     const secondSeason = expectOk(
@@ -299,6 +302,24 @@ describe("sonarr library reads", () => {
         customFormatScore: 0,
         mediaInfo: { videoCodec: "x264", audioCodec: "EAC3", resolution: "1920x1080" },
       },
+    });
+  });
+
+  it("maps the episodes of a file whose row names them", async () => {
+    // Supplied rather than recorded: Sonarr 4.0.19.2979 names no episodes on an
+    // episode file, so every recorded row maps to an empty list and the mapping
+    // itself would go untested. It still has to hold for a release that names
+    // them.
+    const files = body("episodefile") as Record<string, unknown>[];
+    const [first, ...rest] = files;
+
+    const { outcome } = await run(
+      { view: "episode_files", detail: "summary", seriesId: 12, paging: paging(25) },
+      () => jsonResponse([{ ...first, episodeIds: [1001, 1002] }, ...rest]),
+    );
+
+    expect(mediaFiles(expectOk(outcome).data)[0]).toMatchObject({
+      sonarr: { episodeIds: [1001, 1002] },
     });
   });
 

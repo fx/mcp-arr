@@ -20,9 +20,7 @@
       "overview": "A sanitized episode overview recorded only to fix the payload shape",
       "hasFile": true,
       "monitored": true,
-      "absoluteEpisodeNumber": null,
-      "unverifiedSceneNumbering": false,
-      "finaleType": null
+      "unverifiedSceneNumbering": false
     },
     {
       "id": 1002,
@@ -39,8 +37,7 @@
       "overview": "A sanitized anime episode overview recorded only to fix the payload shape",
       "hasFile": true,
       "monitored": true,
-      "unverifiedSceneNumbering": false,
-      "finaleType": null
+      "unverifiedSceneNumbering": false
     },
     {
       "id": 1003,
@@ -49,7 +46,6 @@
       "episodeFileId": 0,
       "seasonNumber": 2,
       "episodeNumber": 1,
-      "absoluteEpisodeNumber": null,
       "title": "Example Return",
       "airDate": "2026-09-30",
       "airDateUtc": "2026-09-30T20:00:00Z",
@@ -67,7 +63,6 @@
       "episodeFileId": 2003,
       "seasonNumber": 2,
       "episodeNumber": 2,
-      "absoluteEpisodeNumber": null,
       "title": "Example Follow Up",
       "airDate": "2020-05-10",
       "airDateUtc": "2020-05-10T20:00:00Z",
@@ -75,8 +70,7 @@
       "overview": "A sanitized second-season episode overview recorded only to fix the payload shape",
       "hasFile": true,
       "monitored": true,
-      "unverifiedSceneNumbering": false,
-      "finaleType": null
+      "unverifiedSceneNumbering": false
     }
   ]
 }

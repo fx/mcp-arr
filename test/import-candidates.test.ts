@@ -47,9 +47,12 @@ interface Scanned {
  * folder and the download identity came from upstream rather than from an
  * argument.
  */
-async function instance(application: MediaApplication) {
+async function instance(
+  application: MediaApplication,
+  amend: (rows: unknown[]) => unknown[] = (rows) => rows,
+) {
   const [candidates, queue, records] = await Promise.all([
-    activityFixture<unknown[]>(application, "manualimport"),
+    activityFixture<unknown[]>(application, "manualimport").then(amend),
     activityFixture<unknown[]>(application, "queue/details"),
     activityFixture<Array<{ id: number }>>(
       application,
@@ -80,8 +83,9 @@ async function scanTracked(
   application: MediaApplication,
   request: { queueItemId: number; mediaId?: number },
   window: PageWindow = wholeFolder,
+  amend?: (rows: unknown[]) => unknown[],
 ): Promise<Scanned> {
-  const harness = libraryHarness(application, await instance(application));
+  const harness = libraryHarness(application, await instance(application, amend));
   const result = await scanTrackedDownload(harness.client, application, request, window);
   return { result, calls: harness.calls };
 }
@@ -215,7 +219,9 @@ describe("candidate mapping", () => {
     expect(mapped?.languages).toEqual(["English"]);
     expect(mapped?.customFormats).toEqual(["Example Format"]);
     expect(mapped?.customFormatScore).toBe(25);
-    expect(mapped?.indexerFlags).toEqual(["freeleech"]);
+    // Both applications answer this route with the numeric bitfield rather than
+    // a list of names, so a recorded row names no flag and the list is absent.
+    expect(mapped?.indexerFlags).toBeUndefined();
     expect(mapped?.decision).toEqual({ importable: true, rejections: [] });
     expect(mapped?.existingLibraryFile).toBe(false);
 
@@ -226,10 +232,29 @@ describe("candidate mapping", () => {
     expect(unmapped?.decision.rejections[0]?.type).toBe("permanent");
     expect(unmapped?.quality?.repack).toBe(true);
 
-    // A file the library already holds is distinguished from a new import.
-    expect(existing?.existingLibraryFile).toBe(true);
-    expect(existing?.context.existingFileId).toBe(5001);
+    // The recorded row for a file the library already holds carries no file
+    // identifier, because neither application sends one on this route: what
+    // says the file is already there is the rejection.
+    expect(existing?.existingLibraryFile).toBe(false);
+    expect(existing?.context.existingFileId).toBeUndefined();
     expect(existing?.decision.rejections[0]?.type).toBe("temporary");
+  });
+
+  it("distinguishes an already-held file when the row names its file identifier", async () => {
+    // Supplied rather than recorded: Sonarr 4.0.19.2979 and Radarr 6.3.0.10514
+    // send no file identifier on a manual-import row, so a recorded body
+    // carrying one would describe a response neither instance produces. The
+    // distinction still has to hold for a release that does send it.
+    const candidates = candidatesOf(
+      await scanTracked("sonarr", trackedRequest, wholeFolder, (rows) =>
+        rows.map((row, index) =>
+          index === 2 ? { ...(row as Record<string, unknown>), episodeFileId: 5001 } : row,
+        ),
+      ),
+    );
+
+    expect(candidates[2]?.existingLibraryFile).toBe(true);
+    expect(candidates[2]?.context.existingFileId).toBe(5001);
   });
 
   it("returns a bounded page and says when the folder holds more", async () => {

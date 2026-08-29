@@ -26,9 +26,7 @@
         "overview": "A sanitized episode overview recorded only to fix the payload shape",
         "hasFile": true,
         "monitored": true,
-        "absoluteEpisodeNumber": null,
         "unverifiedSceneNumbering": false,
-        "finaleType": null,
         "series": {
           "id": 12,
           "title": "Example Series",

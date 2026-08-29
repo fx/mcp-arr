@@ -45,8 +45,7 @@
         }
       ],
       "customFormatScore": 10,
-      "indexerFlags": [],
-      "movieFileId": 0,
+      "indexerFlags": 0,
       "rejections": []
     },
     {
@@ -56,7 +55,6 @@
       "folderName": "Example Movie (2021)",
       "name": "sample",
       "size": 52428800,
-      "movie": null,
       "quality": {
         "quality": {
           "id": 0,
@@ -71,12 +69,10 @@
         }
       },
       "languages": [],
-      "releaseGroup": null,
       "qualityWeight": 0,
       "customFormats": [],
       "customFormatScore": 0,
-      "indexerFlags": [],
-      "movieFileId": 0,
+      "indexerFlags": 0,
       "rejections": [
         {
           "reason": "Sample file",

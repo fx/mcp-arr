@@ -12,10 +12,7 @@
       "commandName": "Refresh Movie",
       "status": "queued",
       "queued": "2026-08-27T09:05:00Z",
-      "started": null,
-      "ended": null,
       "trigger": "manual",
-      "message": null,
       "body": {
         "name": "RefreshMovie",
         "trigger": "manual",

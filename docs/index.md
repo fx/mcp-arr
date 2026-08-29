@@ -41,7 +41,7 @@ A corrected fixture is the failing test for the defect it exposes, so each chang
 | 0018 | [Bounded Tool Listing](changes/0018-bounded-tool-listing.md) | [Tool Contracts](specs/tool-contracts/) | complete | 0015 |
 | 0019 | [Selected Result Fields](changes/0019-selected-result-fields.md) | [Tool Contracts](specs/tool-contracts/) | complete | 0017, 0018 |
 | 0020 | [Withdraw the Configuration Write Surface](changes/0020-withdraw-configuration-writes.md) | [Configuration Reconciliation](specs/configuration-reconciliation/) | complete | — |
-| 0021 | [Live-Verified Fixtures](changes/0021-live-verified-fixtures.md) | [Architecture](specs/architecture/) | draft | 0022, 0023, 0028 |
+| 0021 | [Live-Verified Fixtures](changes/0021-live-verified-fixtures.md) | [Architecture](specs/architecture/) | complete | 0022, 0023, 0028 |
 | 0022 | [Upstream Field Shape Tolerance](changes/0022-upstream-field-shape-tolerance.md) | [Architecture](specs/architecture/) | complete | — |
 | 0023 | [Radarr Exclusion Route](changes/0023-radarr-exclusion-route.md) | [Configuration Reconciliation](specs/configuration-reconciliation/) | complete | — |
 | 0024 | [Manual Import Request Shape](changes/0024-manual-import-request-shape.md) | [Acquisition and Import](specs/acquisition-and-import/) | complete | — |

@@ -19,11 +19,8 @@
           "messages": ["Not an upgrade for existing movie file"]
         }
       ],
-      "errorMessage": null,
       "size": 21474836480,
       "sizeleft": 0,
-      "timeleft": null,
-      "estimatedCompletionTime": null,
       "added": "2026-08-26T18:00:00Z",
       "protocol": "usenet",
       "indexer": "Example Usenet Indexer",
@@ -57,7 +54,6 @@
       "trackedDownloadStatus": "ok",
       "trackedDownloadState": "downloading",
       "statusMessages": [],
-      "errorMessage": null,
       "size": 8589934592,
       "sizeleft": 4294967296,
       "timeleft": "00:25:00",

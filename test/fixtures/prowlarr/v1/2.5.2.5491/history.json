@@ -13,12 +13,23 @@
     "totalRecords": 3,
     "records": [
       {
+        "id": 8002,
+        "indexerId": 21,
+        "eventType": "releaseGrabbed",
+        "date": "2026-08-27T09:39:00Z",
+        "successful": true,
+        "data": {
+          "grabMethod": "Proxy",
+          "elapsedTime": "402",
+          "publishedDate": "2026-08-26T00:00:00Z"
+        }
+      },
+      {
         "id": 8001,
         "indexerId": 21,
         "eventType": "indexerQuery",
         "date": "2026-08-27T09:38:00Z",
         "successful": true,
-        "sourceTitle": "Example Indexer",
         "data": {
           "query": "example series",
           "queryType": "tvsearch",
@@ -28,26 +39,11 @@
         }
       },
       {
-        "id": 8002,
-        "indexerId": 21,
-        "eventType": "releaseGrabbed",
-        "date": "2026-08-27T09:39:00Z",
-        "successful": true,
-        "sourceTitle": "Example Series S01E01 Bluray-1080p",
-        "downloadId": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
-        "data": {
-          "grabMethod": "Proxy",
-          "elapsedTime": "402",
-          "publishedDate": "2026-08-26T00:00:00Z"
-        }
-      },
-      {
         "id": 8003,
         "indexerId": 22,
         "eventType": "indexerAuth",
         "date": "2026-08-26T22:00:00Z",
         "successful": false,
-        "sourceTitle": "Example Usenet Indexer",
         "data": {
           "elapsedTime": "15021"
         }

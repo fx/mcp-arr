@@ -17,19 +17,16 @@
       "rootFolderPath": "/media/example/movies",
       "searchOnAdd": false,
       "minimumAvailability": "released",
-      "genres": ["Drama"],
       "images": [],
       "movies": [
         {
           "tmdbId": 200001,
           "title": "Example Movie",
-          "monitored": true,
           "year": 2021
         },
         {
           "tmdbId": 200005,
           "title": "Example Movie Sequel",
-          "monitored": false,
           "year": 2024
         }
       ]
@@ -45,7 +42,6 @@
       "rootFolderPath": "/media/example/movies",
       "searchOnAdd": false,
       "minimumAvailability": "announced",
-      "genres": [],
       "images": [],
       "movies": []
     }
