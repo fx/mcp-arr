@@ -178,7 +178,7 @@ changes:
     path: changes/0021-live-verified-fixtures.md
     description: Correct the counterfactual upstream fixtures and add a repeatable operator-run capture procedure
     spec: architecture
-    status: draft
+    status: complete
     depends_on: ["0022", "0023", "0028"]
   - id: "0022"
     name: upstream-field-shape-tolerance
