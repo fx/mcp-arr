@@ -84,10 +84,11 @@ describe("prowlarr activity reads", () => {
     );
 
     expect(calls[0]?.url.pathname).toBe("/api/v1/indexerstatus");
-    // The recorded fixture is the one change 0005 already captured for this
-    // route; reading the same route twice does not justify a second recording
-    // of it. `escalationLevel` is in that payload and in neither result: it is
-    // upstream backoff bookkeeping, not evidence a caller can act on.
+    // The recorded body is the four members Prowlarr 2.5.2.5491 sends for a
+    // held-down indexer and no others. It carries neither `id` nor
+    // `escalationLevel`, because the instance sends neither; an earlier
+    // recording carried both and made the adapter's required `id` look
+    // satisfied while every real read of this route was refused.
     expect(indexerStatuses(expectOk(outcome).data)).toEqual([
       {
         application: "prowlarr",
@@ -117,7 +118,6 @@ describe("prowlarr activity reads", () => {
       () =>
         jsonResponse([
           {
-            id: 13,
             indexerId: 4,
             initialFailure: "2026-08-01T00:00:00Z",
             mostRecentFailure: "2026-08-01T01:00:00Z",
@@ -130,6 +130,52 @@ describe("prowlarr activity reads", () => {
     expect(statuses).toHaveLength(1);
     expect(statuses[0]?.disabledUntil).toBeUndefined();
     expect(statuses[0]?.mostRecentFailure).toBe("2026-08-01T01:00:00Z");
+  });
+
+  it("reads a status row whatever unread members it carries", async () => {
+    // The four members the mapper reads are the whole of what this view
+    // depends on. A version that also sends the row's own identifier and its
+    // backoff counter is read exactly as well, and neither reaches the result.
+    const { outcome } = await run(
+      { view: "indexer_status", detail: "summary", paging: paging() },
+      () =>
+        jsonResponse([
+          {
+            id: 13,
+            escalationLevel: 9,
+            indexerId: 5,
+            initialFailure: "2026-08-01T00:00:00Z",
+            mostRecentFailure: "2026-08-01T01:00:00Z",
+            disabledTill: "2026-08-01T02:00:00Z",
+          },
+        ]),
+    );
+
+    expect(indexerStatuses(expectOk(outcome).data)).toEqual([
+      {
+        application: "prowlarr",
+        indexer: { application: "prowlarr", indexerId: 5 },
+        disabledUntil: "2026-08-01T02:00:00Z",
+        initialFailure: "2026-08-01T00:00:00Z",
+        mostRecentFailure: "2026-08-01T01:00:00Z",
+      },
+    ]);
+  });
+
+  it("still refuses a status row whose indexer identity it cannot use", async () => {
+    // The tolerance is confined to members nothing reads. The identity the
+    // result is built around is not one of them: `indexerId` is what the
+    // returned indexer reference is, and a fraction cannot become one, so the
+    // read fails rather than publishing a reference to indexer one and a half.
+    // A fraction rather than a string is what pins that boundary, since a
+    // string is refused by any numeric declaration while `1.5` is refused only
+    // while the identity is still declared as a whole number.
+    const { outcome } = await run(
+      { view: "indexer_status", detail: "summary", paging: paging() },
+      () => jsonResponse([{ indexerId: 1.5, disabledTill: "2026-08-01T02:00:00Z" }]),
+    );
+
+    expect(expectError(outcome).code).toBe("unexpected_response");
   });
 
   it("passes the statistics window to the instance and maps the indexer aggregate", async () => {

@@ -35,13 +35,50 @@ export function isTerminalJobStatus(status: JobStatus): status is TerminalJobSta
 }
 
 /**
+ * What a completed command's separate result says about how it ended.
+ *
+ * Three answers, and the difference between the last two is the whole point.
+ * `successful` and `unsuccessful` are the two words the applications were
+ * observed to use, and they decide the outcome. **No** result at all is
+ * Prowlarr, which sends the field on no command it answers: an application that
+ * reports only a state has said the command finished and nothing more, and a
+ * finished command with nothing said against it is a completion.
+ *
+ * A result that is *present* and is neither word — `unknown` is the one
+ * observed — is a different answer entirely. The application was asked how the
+ * command ended and declined to say. Reading that as a completion would publish
+ * a definite success the application refused to state, and because a completion
+ * is terminal the projection would never be revisited, so the invention would be
+ * permanent. So it becomes `unknown`, which is what this server actually knows:
+ * the job is left open rather than settled on a non-answer. A later reading may
+ * be definite and settle it; the degradation observed live was one-way, so a job
+ * whose result is never stated stays `unknown`, and that is the honest answer.
+ */
+function completedCommandStatus(result: string | undefined): JobStatus {
+  const reported = result?.trim().toLowerCase();
+  switch (reported) {
+    // Absent, and blank — which the upstream parser already normalizes to
+    // absent — are the same statement: nothing was said beyond "it finished".
+    case undefined:
+    case "":
+    case "successful":
+      return "completed";
+    case "unsuccessful":
+      return "failed";
+    default:
+      return "unknown";
+  }
+}
+
+/**
  * Maps an upstream command's reported state onto the normalized vocabulary.
  *
  * Sonarr, Radarr, and Prowlarr all report a command state alongside a separate
  * result, and a command that finished unsuccessfully reports `completed` with
  * an unsuccessful result. Folding the two together here is what stops a failed
- * command from being projected as a successful one. Anything this function does
- * not recognize becomes `unknown` rather than a guess.
+ * command from being projected as a successful one, and stops a result the
+ * application would not commit to from being projected as either. Anything this
+ * function does not recognize becomes `unknown` rather than a guess.
  */
 export function normalizeJobStatus(
   state: string | undefined,
@@ -54,10 +91,18 @@ export function normalizeJobStatus(
     case "running":
       return "started";
     case "completed":
-      return result?.toLowerCase() === "unsuccessful" ? "failed" : "completed";
+      return completedCommandStatus(result);
     case "failed":
       return "failed";
     case "aborted":
+    // An orphaned command was queued or running when its application restarted,
+    // and the application marks it orphaned on the way back up precisely
+    // because it will not be resumed. That is an abort, and saying so settles
+    // the job. Left unrecognized it would fall through to `unknown`, which is
+    // not terminal, so every later read would ask the instance about a command
+    // that is never going to move again — until the record is trimmed and the
+    // job is pinned at `unknown` for the life of the process.
+    case "orphaned":
       return "aborted";
     case "cancelled":
     case "canceled":

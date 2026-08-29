@@ -1,7 +1,11 @@
 import { z } from "zod";
 import type { ApplicationId } from "../../applications.js";
 import type { UpstreamBody, UpstreamClient } from "../../http/client.js";
-import type { UpstreamCommandObservation } from "../../state/jobs.js";
+import {
+  isTerminalJobStatus,
+  normalizeJobStatus,
+  type UpstreamCommandObservation,
+} from "../../state/jobs.js";
 import { safeText } from "../activity/parse.js";
 import {
   flag,
@@ -223,6 +227,57 @@ export async function readSearchTargets(
   return states;
 }
 
+/**
+ * Whether a command reading is the one that should carry the instance's own
+ * sentence into a job projection.
+ *
+ * Only a reading that ends the job badly keeps it. On a `failed`, `aborted`, or
+ * `cancelled` command the sentence is the only account of *why* it ended that
+ * way, and a job that has ended is never read from upstream again, so that
+ * reading is the one chance to record it.
+ *
+ * Every other reading drops it. A job is refreshed on every read, so a command
+ * that narrates itself — "Processing file 1 of 4", then 2, then 3 — would
+ * otherwise file one line of prose per poll into a channel that means something
+ * needs attention, walk the projection's warning cap, and evict the warnings
+ * that do. A successful ending drops it too, and that is not an oversight: live
+ * Radarr ends `RssSync` at `completed / successful` with "RSS Sync Completed.
+ * Reports found: 100, Reports grabbed: 0", and a caller told a job succeeded
+ * needs no warning attached to it.
+ */
+function explainsAnEnding(observation: UpstreamCommandObservation): boolean {
+  const status = normalizeJobStatus(observation.state, observation.result);
+  return isTerminalJobStatus(status) && status !== "completed";
+}
+
+/**
+ * The reading a job projection keeps, with the command's narration left behind
+ * unless this is the reading that explains an ending.
+ *
+ * Every reading a job is built or refreshed from goes through here, so the two
+ * paths cannot disagree about the same sentence: what a job republishes on
+ * every later read is decided once. The call that reads a command still has the
+ * message in hand and may report it for itself — saying it once, now, is not
+ * the same as a projection carrying it for the life of the process.
+ *
+ * The message is removed by value rather than by dropping the `warnings`
+ * channel it travels in. That channel is shared, so anything the reader above
+ * gains later — a truncation notice, a redaction notice — has to keep reaching
+ * the caller; only this one sentence is ours to discard.
+ */
+export function observationForJob(
+  observation: UpstreamCommandObservation,
+  message: string | undefined,
+): UpstreamCommandObservation {
+  if (message === undefined || explainsAnEnding(observation)) {
+    return observation;
+  }
+  return {
+    ...observation,
+    warnings: (observation.warnings ?? []).filter((warning) => warning !== message),
+  };
+}
+
 export interface StartedCommand {
   /** The upstream command id, as a string so the job store can hold it as-is. */
   readonly upstreamId: string;
@@ -233,6 +288,12 @@ export interface StartedCommand {
    */
   readonly name: string;
   readonly observation: UpstreamCommandObservation;
+  /**
+   * The instance's own sanitized sentence about this command, named separately
+   * from the observation that also carries it so a caller can decide about the
+   * sentence specifically. {@link observationForJob} is that decision.
+   */
+  readonly message: string | undefined;
 }
 
 /**
@@ -252,25 +313,35 @@ export interface StartedCommand {
  * once. What comes back is the upstream id and an observation; the command
  * *name* is deliberately not among them, because the name a job publishes is
  * the constant this project sent rather than the instance's echo of it.
+ *
+ * The sanitized message is handed back beside the observation as well as
+ * inside it. A caller that reads one command once wants it; a caller that
+ * re-reads the same command on every poll does not want all of them, and
+ * naming it here is what lets that caller drop the sentence *specifically*
+ * rather than discarding the whole warning channel it happens to travel in.
  */
 export function readAcceptedCommand(
   body: unknown,
   application: ApplicationId,
   route: string,
-): { readonly upstreamId: string; readonly observation: UpstreamCommandObservation } {
+): {
+  readonly upstreamId: string;
+  readonly observation: UpstreamCommandObservation;
+  readonly message: string | undefined;
+} {
   const accepted = parseUpstream(acceptedCommandSchema, body, application, route);
+  // Sanitized rather than passed through: the message is the one field on this
+  // response an instance composes for itself, so it is the one place the values
+  // kept off the model-facing contract can still appear.
+  const message = commandMessage(accepted.message);
   return {
     upstreamId: String(accepted.id),
     observation: {
       state: text(accepted.status),
       result: text(accepted.result),
-      // Sanitized rather than passed through: the message is the one field on
-      // this response an instance composes for itself, so it is the one place
-      // the values kept off the model-facing contract can still appear.
-      warnings: [commandMessage(accepted.message)].filter(
-        (warning): warning is string => warning !== undefined,
-      ),
+      warnings: message === undefined ? [] : [message],
     },
+    message,
   };
 }
 
@@ -286,5 +357,10 @@ export async function startSearchCommand(
     application,
     route,
   );
-  return { upstreamId: accepted.upstreamId, name, observation: accepted.observation };
+  return {
+    upstreamId: accepted.upstreamId,
+    name,
+    observation: accepted.observation,
+    message: accepted.message,
+  };
 }

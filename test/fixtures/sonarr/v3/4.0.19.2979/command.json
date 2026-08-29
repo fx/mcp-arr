@@ -14,18 +14,43 @@
       "queued": "2026-08-27T09:00:00Z",
       "started": "2026-08-27T09:00:01Z",
       "trigger": "manual",
-      "message": "Refreshing series"
+      "message": "Refreshing series",
+      "body": {
+        "name": "RefreshSeries",
+        "trigger": "manual",
+        "isExclusive": false,
+        "isLongRunning": false,
+        "requiresDiskAccess": false,
+        "sendUpdatesToClient": true,
+        "suppressMessages": false,
+        "updateScheduledTask": true,
+        "lastExecutionTime": "2026-08-27T08:00:00Z",
+        "lastStartTime": "2026-08-27T08:00:00Z"
+      }
     },
     {
       "id": 3002,
       "name": "RssSync",
       "commandName": "Rss Sync",
       "status": "completed",
+      "result": "successful",
       "queued": "2026-08-27T08:45:00Z",
       "started": "2026-08-27T08:45:00Z",
       "ended": "2026-08-27T08:45:12Z",
       "trigger": "scheduled",
-      "message": "Completed"
+      "message": "Completed",
+      "body": {
+        "name": "RssSync",
+        "trigger": "scheduled",
+        "isExclusive": false,
+        "isLongRunning": false,
+        "requiresDiskAccess": false,
+        "sendUpdatesToClient": false,
+        "suppressMessages": false,
+        "updateScheduledTask": true,
+        "lastExecutionTime": "2026-08-27T08:30:00Z",
+        "lastStartTime": "2026-08-27T08:30:00Z"
+      }
     }
   ]
 }

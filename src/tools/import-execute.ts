@@ -1,3 +1,4 @@
+import { observationForJob } from "../adapters/acquisition/commands.js";
 import type { CandidateOrigin, UpstreamMappingPatch } from "../adapters/import/candidates.js";
 import { readMediaFolder } from "../adapters/import/candidates.js";
 import {
@@ -417,7 +418,9 @@ export const importExecuteHandler: OperationHandler = async (invocation) => {
     // command and never one per file, so an item list here would carry a
     // verdict nobody gave — and a terminal snapshot would then preserve it.
     // Which files the job is about is published beside it instead.
-    observation: submission.command.observation,
+    // Reported below on this call, but not written into a projection that would
+    // republish it on every later read: see {@link observationForJob}.
+    observation: observationForJob(submission.command.observation, submission.command.message),
     // This server has no way to ask an application to stop a running import.
     cancellation: { supported: false },
   });
@@ -433,7 +436,7 @@ export const importExecuteHandler: OperationHandler = async (invocation) => {
     job: record.reference,
     warnings: [
       ...context.warnings,
-      ...record.warnings,
+      ...(submission.command.observation.warnings ?? []),
       "this application reports one outcome for the whole import rather than one per file, so the job's result covers every file together",
     ],
   };
