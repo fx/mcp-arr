@@ -59,11 +59,16 @@ const sonarrStatus = {
 async function runCapture(
   url: string | undefined,
   args: readonly string[],
+  application: "sonarr" | "radarr" = "sonarr",
 ): Promise<{ code: number | null; stderr: string }> {
   const environment: Record<string, string> = { PATH: process.env.PATH ?? "" };
   if (url !== undefined) {
-    environment.SONARR_URL = url;
-    environment.SONARR_API_KEY = "capture-test-key";
+    // Which application the variables configure is a parameter, because
+    // "configured, but not the one asked for" is a different refusal from
+    // "nothing configured at all" — and an environment holding neither pair
+    // fails at startup before the one under test is ever reached.
+    environment[`${application.toUpperCase()}_URL`] = url;
+    environment[`${application.toUpperCase()}_API_KEY`] = "capture-test-key";
   }
   const child = spawn(process.execPath, [scriptPath, ...args], { env: environment });
   // Observed through the shared helper, which drains both streams and flushes
@@ -97,9 +102,14 @@ async function expectRefusal(
   url: string | undefined,
   args: readonly string[],
   route: string,
+  application: "sonarr" | "radarr" = "sonarr",
 ): Promise<string> {
   const fixtureRoot = await temporaryFixtureRoot();
-  const { code, stderr } = await runCapture(url, [...args, "--fixture-root", fixtureRoot]);
+  const { code, stderr } = await runCapture(
+    url,
+    [...args, "--fixture-root", fixtureRoot],
+    application,
+  );
 
   expect(code).toBe(1);
   await expect(access(path.join(fixtureRoot, route))).rejects.toThrow();
@@ -337,13 +347,40 @@ describe("fixture capture procedure", () => {
   });
 
   it("names the environment variables an unconfigured application needs", async () => {
+    // Configured, but not with the application being asked for. An environment
+    // holding no pair at all fails at startup instead, with a message that
+    // happens to name the same variables — so this refusal has to be reached
+    // with another application configured or it is never exercised at all.
+    const url = await startStub({ "/api/v3/system/status": sonarrStatus });
+
     const stderr = await expectRefusal(
-      undefined,
+      url,
+      ["--application", "sonarr", "--route", "tag"],
+      "sonarr/v3/4.0.19.2979/tag.json",
+      "radarr",
+    );
+
+    expect(stderr).toContain("Set SONARR_URL and SONARR_API_KEY");
+  });
+
+  it("reports an instance failing as its own failure, not a missing route", async () => {
+    // Every status the client does not name individually arrives as
+    // `unexpected-response`, the same kind a non-JSON body raises. An operator
+    // refreshing a fixture through a reverse proxy that answers 502 must not be
+    // told to correct an approved route that is perfectly valid.
+    const url = await startStub({
+      "/api/v3/system/status": sonarrStatus,
+      "/api/v3/tag": { status: 502, contentType: "text/html", body: "<html></html>" },
+    });
+
+    const stderr = await expectRefusal(
+      url,
       ["--application", "sonarr", "--route", "tag"],
       "sonarr/v3/4.0.19.2979/tag.json",
     );
 
-    expect(stderr).toContain("SONARR_URL");
-    expect(stderr).toContain("SONARR_API_KEY");
+    expect(stderr).toContain("answered tag with status 502");
+    expect(stderr).toContain("do not change the approved route");
+    expect(stderr).not.toContain("does not resolve on this application");
   });
 });

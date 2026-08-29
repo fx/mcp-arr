@@ -128,12 +128,20 @@ function parseQuery(pairs) {
  * the web interface — which these applications serve for an unrecognized API
  * path — is the same defect wearing a success code; the client refuses that
  * one too, because the page does not parse as JSON.
+ *
+ * Which is why the "this route does not exist" reading is taken only from a
+ * *successful* status. `unexpected-response` is the client's catch-all: every
+ * status it does not name individually arrives under it, a 502 from a reverse
+ * proxy included. Telling an operator to correct a perfectly valid approved
+ * route because their proxy was restarting would be worse than saying nothing,
+ * and failing for the right reason is the whole point of failing here.
  */
 async function readRoute(client, route, query = {}) {
   try {
     return await client.get(route, query);
   } catch (error) {
     const kind = error instanceof Error ? Reflect.get(error, "kind") : undefined;
+    const status = error instanceof Error ? Reflect.get(error, "status") : undefined;
     if (kind === "not-found") {
       fail(
         `${client.application} answers ${route} with 404. That application does ` +
@@ -141,11 +149,19 @@ async function readRoute(client, route, query = {}) {
           "Correct the approved route rather than recording a body for it.",
       );
     }
-    if (kind === "unexpected-response") {
+    if (kind === "unexpected-response" && typeof status === "number" && status >= 500) {
       fail(
-        `${client.application} answered ${route} with a body that is not JSON. ` +
-          "An unrecognized API path is served the web interface, so this route " +
-          "does not resolve on this application.",
+        `${client.application} answered ${route} with status ${status}. That is the ` +
+          "instance, or something in front of it, reporting its own failure rather " +
+          "than an answer about this route. Nothing was read; try again once it is " +
+          "healthy, and do not change the approved route on account of it.",
+      );
+    }
+    if (kind === "unexpected-response" && status !== undefined && status >= 200 && status < 300) {
+      fail(
+        `${client.application} answered ${route} with ${status} and a body that is ` +
+          "not JSON. An unrecognized API path is served the web interface, so this " +
+          "route does not resolve on this application.",
       );
     }
     fail(error instanceof Error ? error.message : String(error));
