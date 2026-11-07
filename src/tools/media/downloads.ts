@@ -317,7 +317,11 @@ async function libraryLacksFiles(
   return cannotSay ? downloadReasons.libraryCannotSay : undefined;
 }
 
-function fileRequest(candidate: ImportCandidate): ImportFileRequest {
+/**
+ * The file as an import submits it: the instance's own decision, with no
+ * correction, pinned to what that decision mapped it to when it was approved.
+ */
+function fileRequest(candidate: ImportCandidate, mediaId: number): ImportFileRequest {
   const context = candidate.context;
   const origin: CandidateOrigin = {
     sourceKind: context.sourceKind,
@@ -327,8 +331,14 @@ function fileRequest(candidate: ImportCandidate): ImportFileRequest {
     mediaId: context.queueMediaId,
   };
   // No correction: an `import` remedy imports exactly what the instance
-  // itself decided, so the patch is empty.
-  return { origin, identity: context.fileIdentity, patch: {} };
+  // itself decided, so the patch is empty. What it decided is pinned, so the
+  // submission refuses a file the instance has since mapped elsewhere.
+  return {
+    origin,
+    identity: context.fileIdentity,
+    patch: {},
+    approved: { mediaId, episodeIds: [...(context.episodeIds ?? [])] },
+  };
 }
 
 /**
@@ -401,6 +411,7 @@ async function confirmImport(
   }
 
   let total = 0;
+  const approved: ImportFileRequest[] = [];
   for (const candidate of scan.items) {
     const validated = await validateForImport(adapter.client, application, {
       retained: candidate.context,
@@ -410,6 +421,9 @@ async function confirmImport(
     if (validated.status !== "ok") {
       return { ok: false, reason: refusalReason(validated.refusal) };
     }
+    // Pinned as the instance re-decided it just now, which the validation
+    // has already held equal to what the scan mapped it to.
+    approved.push(fileRequest(validated.validation.candidate, mediaId));
     const size = validated.validation.candidate.sizeBytes;
     if (size === undefined) {
       return { ok: false, reason: downloadReasons.unverifiedSpace };
@@ -425,7 +439,7 @@ async function confirmImport(
         room.status === "insufficient" ? downloadReasons.noSpace : downloadReasons.unverifiedSpace,
     };
   }
-  return { ok: true, files: scan.items.map(fileRequest) };
+  return { ok: true, files: approved };
 }
 
 /**

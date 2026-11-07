@@ -235,6 +235,44 @@ describe("submitting a manual import", () => {
     expect(sonarr.commands).toEqual([]);
   });
 
+  it("sends a file pinned to what it was approved for when it still maps there", async () => {
+    const sonarr = instance();
+
+    const submission = await submitManualImport(
+      sonarr.client,
+      "sonarr",
+      [fileRequest(cleanFile, { approved: { mediaId: 12, episodeIds: [1001] } })],
+      "auto",
+    );
+
+    expect(submission.status).toBe("ok");
+    expect(sonarr.commands).toHaveLength(1);
+  });
+
+  it("submits nothing when a pinned file now maps anywhere else", async () => {
+    for (const approved of [
+      { mediaId: 12, episodeIds: [1003] },
+      { mediaId: 13, episodeIds: [1001] },
+      { mediaId: 12, episodeIds: [1001, 1003] },
+    ]) {
+      const sonarr = instance();
+
+      const submission = await submitManualImport(
+        sonarr.client,
+        "sonarr",
+        [fileRequest(cleanFile, { approved })],
+        "auto",
+      );
+
+      expect(submission.status, JSON.stringify(approved)).toBe("moved");
+      if (submission.status === "moved") {
+        expect(submission.identity).toBe(fileIdentity(cleanFile));
+        expect(submission.error.code).toBe("conflict");
+      }
+      expect(sonarr.commands).toEqual([]);
+    }
+  });
+
   it("keeps the path out of everything the submission answers with", async () => {
     const sonarr = instance();
 

@@ -1,5 +1,5 @@
 import type { UpstreamBody, UpstreamClient } from "../../http/client.js";
-import type { ToolError } from "../../tools/errors.js";
+import { createToolError, type ToolError } from "../../tools/errors.js";
 import { readAcceptedCommand, type StartedCommand } from "../acquisition/commands.js";
 import type { MediaApplication } from "../library/model.js";
 import {
@@ -50,6 +50,13 @@ export const importModes = ["auto", "move", "copy"] as const;
 
 export type ImportMode = (typeof importModes)[number];
 
+/** The series or movie, and the episodes, one file is to be imported into. */
+export interface ImportTargets {
+  readonly mediaId: number;
+  /** Empty for a movie. */
+  readonly episodeIds: readonly number[];
+}
+
 /** One file an import will act on, named by what a reference retained. */
 export interface ImportFileRequest {
   readonly origin: CandidateOrigin;
@@ -57,6 +64,13 @@ export interface ImportFileRequest {
   readonly identity: string;
   /** The mapping the caller selected, as the validation just re-sent it. */
   readonly patch: UpstreamMappingPatch;
+  /**
+   * What the file was approved to be imported into, where the caller pinned
+   * it. The command built for the file is held to it immediately before it is
+   * sent: a file whose recovered mapping now names anything else is not
+   * imported, because nothing was checked about where it would now land.
+   */
+  readonly approved?: ImportTargets | undefined;
 }
 
 /**
@@ -81,7 +95,13 @@ export type ImportSubmission =
    * a selection the caller never approved.
    */
   | { readonly status: "absent"; readonly identity: string; readonly error: ToolError }
-  | { readonly status: "unmapped"; readonly identity: string; readonly error: ToolError };
+  | { readonly status: "unmapped"; readonly identity: string; readonly error: ToolError }
+  /**
+   * One file would be imported somewhere other than it was approved for.
+   * Nothing is submitted, for the same reason a file that has gone stops the
+   * whole submission.
+   */
+  | { readonly status: "moved"; readonly identity: string; readonly error: ToolError };
 
 /**
  * Builds one file's entry, field by named field.
@@ -134,7 +154,19 @@ export async function submitManualImport(
       return { status: found.status, identity: file.identity, error: found.error };
     }
     const { context, row, path } = found.recovered;
-    prepared.push(prepareFile(context, row, path, file.patch, file.identity));
+    const entry = prepareFile(context, row, path, file.patch, file.identity);
+    if (file.approved !== undefined && !targets(entry.entry, file.approved)) {
+      return {
+        status: "moved",
+        identity: file.identity,
+        error: createToolError({
+          code: "conflict",
+          message: `${application}: a file now maps to something other than it was approved for`,
+          application,
+        }),
+      };
+    }
+    prepared.push(entry);
   }
 
   const body: UpstreamBody = {
@@ -159,6 +191,19 @@ export async function submitManualImport(
       message: accepted.message,
     },
   };
+}
+
+/**
+ * Whether one command entry imports into exactly the approved series or
+ * movie and episodes. The entry is the very object the command will carry, so
+ * what is compared is what is sent.
+ */
+function targets(entry: UpstreamBody, approved: ImportTargets): boolean {
+  const mediaId = entry.seriesId ?? entry.movieId;
+  const episodes = Array.isArray(entry.episodeIds) ? entry.episodeIds : [];
+  const sorted = (values: readonly unknown[]) =>
+    JSON.stringify([...values].sort((left, right) => Number(left) - Number(right)));
+  return mediaId === approved.mediaId && sorted(episodes) === sorted(approved.episodeIds);
 }
 
 /** The identities a submission carried, in the order the command lists them. */

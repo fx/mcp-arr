@@ -487,6 +487,51 @@ describe("media_fix importing a download", () => {
     makeImportable();
   });
 
+  /** Changes what the scan says a file maps to, from the given scan onward. */
+  function remapFrom(scan: number, episodes: readonly UpstreamRecord[]): void {
+    let scans = 0;
+    instances.intercept((request) => {
+      if (request.method === "GET" && request.route === "manualimport") {
+        scans += 1;
+        if (scans === scan) {
+          for (const row of instances.state("sonarr").manualimport) {
+            row.episodes = [...episodes];
+          }
+        }
+      }
+      return undefined;
+    });
+  }
+
+  it("sends no import when a file's mapping changed after it was approved", async () => {
+    // The first two scans confirm the import; the third is the one the
+    // submission recovers the file through, and by then the file is mapped to
+    // an episode whose library record was never checked.
+    remapFrom(3, [{ id: 1004, seasonNumber: 2, episodeNumber: 2 }]);
+
+    const { content } = await fix();
+
+    expect(content.downloads).toEqual([
+      {
+        title: "Example Series",
+        episodes: "S02E01",
+        action: "none",
+        reason: downloadReasons.changed,
+      },
+    ]);
+    expect(instances.mutations()).toEqual([]);
+    expect(claims.size).toBe(0);
+  });
+
+  it("sends the import when the mapping is the one approved", async () => {
+    remapFrom(3, [{ id: 1003, seasonNumber: 2, episodeNumber: 1 }]);
+
+    const { content } = await fix();
+
+    expect(content.downloads?.[0]?.action).toBe("import_started");
+    expect(instances.mutations().map(describeRequest)).toEqual(["POST command"]);
+  });
+
   it("starts the import with no correction and keeps the claim while the import is unfinished", async () => {
     const { content } = await fix();
 
