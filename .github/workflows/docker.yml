@@ -23,7 +23,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  image:
+  verify:
     # A release pull request changes only the version and the changelog; the
     # release workflow builds, verifies, and publishes that version's image
     # once it merges. The job-level condition reports the check as skipped
@@ -31,11 +31,13 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || !startsWith(github.head_ref, 'release-please--') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Read-only on every event. This job builds and runs code from the pull
+    # request, so it never holds a token that can write to the registry.
     permissions:
       contents: read
-      # Used only by the publish steps, which run on a push to main and never
-      # on a pull request; a pull request never logs in to the registry.
-      packages: write
+    outputs:
+      sha: ${{ steps.build-info.outputs.sha }}
+      version: ${{ steps.build-info.outputs.version }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -61,6 +63,41 @@ jobs:
           echo "version=$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+      # Built once for the runner's platform and loaded into the local daemon,
+      # so the verifier exercises the image itself rather than a rebuild. The
+      # layers it writes to the cache are the ones the publish job reuses.
+      - name: Build the image for verification
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: mcp-arr:verify
+          build-args: |
+            GIT_SHA=${{ steps.build-info.outputs.sha }}
+            VERSION=${{ steps.build-info.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Verify the image
+        run: node scripts/verify-image.mjs mcp-arr:verify
+
+  publish:
+    # Only a push to main publishes, and only once the same commit's image has
+    # passed verification. A pull request never reaches this job, so its runs
+    # never hold registry write access.
+    needs: verify
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       # Development images only: a branch tag and a commit tag. Version tags
       # and latest are the release workflow's, and only a merged release
       # publishes them.
@@ -74,41 +111,23 @@ jobs:
           tags: |
             type=ref,event=branch
             type=sha,prefix=sha-
-      # Built once for the runner's platform and loaded into the local daemon,
-      # so the verifier exercises the image itself rather than a rebuild.
-      - name: Build the image for verification
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          platforms: linux/amd64
-          load: true
-          push: false
-          tags: mcp-arr:verify
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            GIT_SHA=${{ steps.build-info.outputs.sha }}
-            VERSION=${{ steps.build-info.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Verify the image
-        run: node scripts/verify-image.mjs mcp-arr:verify
-      # Publishing starts only after verification passed. The amd64 image is
-      # rebuilt from the cache the verified build wrote, so its layers are the
-      # verified ones; arm64 is built under emulation from the same Dockerfile.
       - name: Set up QEMU
-        if: github.event_name == 'push'
         uses: docker/setup-qemu-action@v4
         with:
           platforms: arm64
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
       - name: Log in to GitHub Container Registry
-        if: github.event_name == 'push'
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # The amd64 image is rebuilt from the cache the verified build wrote,
+      # with the same build arguments, so its layers are the verified ones;
+      # arm64 is built under emulation from the same Dockerfile and the same
+      # platform-independent build stage.
       - name: Publish the development image
-        if: github.event_name == 'push'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -117,7 +136,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            GIT_SHA=${{ steps.build-info.outputs.sha }}
-            VERSION=${{ steps.build-info.outputs.version }}
+            GIT_SHA=${{ needs.verify.outputs.sha }}
+            VERSION=${{ needs.verify.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
