@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { lstat, mkdtemp, readFile, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -12,8 +13,10 @@ import { assert } from "./verification.mjs";
  *
  *   node scripts/image-archive.mjs check <archive>
  *     Asserts the archive holds one image index of exactly the published
- *     platforms, annotated with its source and description, and prints
- *     `digest=<index digest>` for $GITHUB_OUTPUT.
+ *     platforms, annotated with its source and description, that every blob
+ *     the index reaches — manifests, configurations, and layers — is present
+ *     and matches its digest and size, and prints `digest=<index digest>` for
+ *     $GITHUB_OUTPUT. load and publish run the same validation first.
  *
  *   node scripts/image-archive.mjs load <archive> <os>/<arch> <local tag>
  *     Loads that platform's image from the archive into the Docker daemon,
@@ -52,65 +55,111 @@ function sha256(bytes) {
 }
 
 /**
- * One member of the archive, by its path in the OCI layout. A tar writer may
- * or may not prefix member names with `./`, so the name is matched either way.
+ * The path of a descriptor's blob in an extracted OCI layout, after checking
+ * the descriptor names a blob at all and that the blob is a regular file in
+ * the layout rather than missing or a link to somewhere else.
  */
-const listings = new Map();
-
-async function readMember(archive, name) {
-  if (!listings.has(archive)) {
-    listings.set(archive, (await run("tar", ["-tf", archive])).split("\n"));
-  }
-  const member = listings.get(archive).find((entry) => entry.replace(/^\.\//u, "") === name);
-  assert(member !== undefined, `Archive has no ${name}`);
-  return run("tar", ["-xOf", archive, member], { encoding: "buffer" });
+async function blobPath(layout, descriptor, label) {
+  const digest = descriptor?.digest;
+  assert(
+    typeof digest === "string" && /^sha256:[0-9a-f]{64}$/u.test(digest),
+    `The ${label} descriptor names no sha256 digest: ${digest}`,
+  );
+  assert(
+    Number.isSafeInteger(descriptor.size) && descriptor.size >= 0,
+    `The ${label} descriptor for ${digest} declares no size`,
+  );
+  const file = path.join(layout, "blobs", "sha256", digest.slice(7));
+  const stats = await lstat(file).catch(() => undefined);
+  assert(stats?.isFile() === true, `Archive is missing the ${label} blob ${digest}`);
+  return file;
 }
 
-/** One blob of the archive, held to the digest it is named by. */
-async function readBlob(archive, digest) {
-  assert(/^sha256:[0-9a-f]{64}$/u.test(digest), `Unexpected digest ${digest}`);
-  const bytes = await readMember(archive, `blobs/sha256/${digest.slice(7)}`);
-  assert(sha256(bytes) === digest, `Archive blob ${digest} does not match its digest`);
+/** A small JSON blob — an index, a manifest, a configuration — held to its descriptor. */
+async function readBlob(layout, descriptor, label) {
+  const bytes = await readFile(await blobPath(layout, descriptor, label));
+  assert(
+    bytes.length === descriptor.size && sha256(bytes) === descriptor.digest,
+    `Archive ${label} blob ${descriptor.digest} does not match its digest and size`,
+  );
   return JSON.parse(bytes.toString("utf8"));
 }
 
+/** A layer blob, hashed as it streams so no layer is ever held in memory. */
+async function verifyLayer(layout, descriptor, label) {
+  const file = await blobPath(layout, descriptor, label);
+  const hash = createHash("sha256");
+  let size = 0;
+  for await (const chunk of createReadStream(file)) {
+    hash.update(chunk);
+    size += chunk.length;
+  }
+  assert(
+    size === descriptor.size && `sha256:${hash.digest("hex")}` === descriptor.digest,
+    `Archive ${label} blob ${descriptor.digest} does not match its digest and size`,
+  );
+}
+
 /**
- * The archive's image index and, per platform, its manifest and configuration
- * digests. Exactly the published platforms and nothing else: an attestation or
- * any other manifest in the index would be published without being tested.
+ * The archive's image index and, per platform, its manifest digest and parsed
+ * configuration. Exactly the published platforms and nothing else: an
+ * attestation or any other manifest in the index would be published without
+ * being tested. Every descriptor followed from index.json down is required to
+ * name a blob the archive holds, with the digest and size it declares, so an
+ * archive missing or corrupting any layer is refused before anything loads or
+ * publishes it.
+ *
+ * The archive is extracted once, to a directory removed again before this
+ * returns, so each blob is read from disk rather than by rescanning the tar.
  */
 async function describe(archive) {
-  const top = JSON.parse((await readMember(archive, "index.json")).toString("utf8"));
-  assert(
-    Array.isArray(top.manifests) && top.manifests.length === 1,
-    `Archive index.json must name one image index, not ${top.manifests?.length}`,
-  );
-  const [descriptor] = top.manifests;
-  assert(
-    descriptor.mediaType === indexMediaType,
-    `Archive holds ${descriptor.mediaType}, not an image index`,
-  );
-  const index = await readBlob(archive, descriptor.digest);
-  for (const name of ["org.opencontainers.image.source", "org.opencontainers.image.description"]) {
-    const annotation = index.annotations?.[name];
+  const layout = await mkdtemp(path.join(tmpdir(), "mcp-arr-layout-"));
+  try {
+    await run("tar", ["-xf", archive, "-C", layout]);
+    const top = JSON.parse(await readFile(path.join(layout, "index.json"), "utf8"));
     assert(
-      typeof annotation === "string" && annotation.trim() !== "",
-      `Archive index carries no ${name} annotation`,
+      Array.isArray(top.manifests) && top.manifests.length === 1,
+      `Archive index.json must name one image index, not ${top.manifests?.length}`,
     );
+    const [descriptor] = top.manifests;
+    assert(
+      descriptor.mediaType === indexMediaType,
+      `Archive holds ${descriptor.mediaType}, not an image index`,
+    );
+    const index = await readBlob(layout, descriptor, "image index");
+    for (const name of [
+      "org.opencontainers.image.source",
+      "org.opencontainers.image.description",
+    ]) {
+      const annotation = index.annotations?.[name];
+      assert(
+        typeof annotation === "string" && annotation.trim() !== "",
+        `Archive index carries no ${name} annotation`,
+      );
+    }
+    const images = [];
+    for (const entry of index.manifests ?? []) {
+      const platform = `${entry.platform?.os}/${entry.platform?.architecture}`;
+      const manifest = await readBlob(layout, entry, `${platform} manifest`);
+      const config = await readBlob(layout, manifest.config, `${platform} configuration`);
+      assert(
+        Array.isArray(manifest.layers) && manifest.layers.length > 0,
+        `The ${platform} manifest names no layers`,
+      );
+      for (const layer of manifest.layers) {
+        await verifyLayer(layout, layer, `${platform} layer`);
+      }
+      images.push({ platform, manifest: entry.digest, config });
+    }
+    const platforms = images.map((image) => image.platform).sort();
+    assert(
+      JSON.stringify(platforms) === JSON.stringify(publishedPlatforms),
+      `Archive index holds ${platforms.join(", ")}, not ${publishedPlatforms.join(", ")}`,
+    );
+    return { digest: descriptor.digest, images };
+  } finally {
+    await rm(layout, { recursive: true, force: true });
   }
-  const images = await Promise.all(
-    (index.manifests ?? []).map(async (entry) => ({
-      platform: `${entry.platform?.os}/${entry.platform?.architecture}`,
-      manifest: entry.digest,
-      config: (await readBlob(archive, entry.digest)).config?.digest,
-    })),
-  );
-  const platforms = images.map((image) => image.platform).sort();
-  assert(
-    JSON.stringify(platforms) === JSON.stringify(publishedPlatforms),
-    `Archive index holds ${platforms.join(", ")}, not ${publishedPlatforms.join(", ")}`,
-  );
-  return { digest: descriptor.digest, images };
 }
 
 async function check(archive) {
@@ -161,7 +210,7 @@ async function load(archive, platform, tag) {
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
-  const expected = await readBlob(archive, image.config);
+  const expected = image.config;
   const [loaded] = JSON.parse(await run("docker", ["image", "inspect", tag]));
   assert(
     `${loaded?.Os}/${loaded?.Architecture}` === `${expected.os}/${expected.architecture}`,
