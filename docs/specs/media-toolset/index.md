@@ -83,8 +83,10 @@ The toolset exists to be the smallest surface that manages a library across the 
   | `ARR_MCP_MEDIA_SERIES_ROOT_FOLDER` | Root folder path for new series |
   | `ARR_MCP_MEDIA_ALLOW_REMOVE` | `true` publishes `media_remove`; absent or `false` does not |
 
-- Where a profile or folder variable is absent and the instance has exactly one quality profile or root folder of that kind, that one MUST be used.
-- Where a profile or folder variable is absent and the instance has several, or a variable names a profile or folder the instance does not have, `media_add` MUST fail with `deployment_configuration` and a remediation naming the variable the operator has to set, and MUST NOT add anything.
+- Where a folder variable is absent and the instance has exactly one root folder, that one MUST be used; where it is absent and the instance has several, `media_add` MUST fail with `deployment_configuration`.
+- For a call that names no `resolution`, the same rule MUST decide the quality profile: the configured one, else the only one, else `deployment_configuration`. A call that names a `resolution` has its profile chosen by [Resolution](#resolution) instead, and an absent profile variable is then no failure.
+- A variable that names a profile or folder the instance does not have MUST fail every `media_add` for that kind with `deployment_configuration`, whether or not the call names a `resolution`, so a stale setting is reported rather than silently bypassed.
+- Every `deployment_configuration` failure MUST carry a remediation naming the variable the operator has to set or correct, and MUST add nothing.
 - These defaults MUST be resolved against the instance when a title is added, not at startup, so an instance that is unreachable when the server starts does not prevent it from starting.
 - `ARR_MCP_MEDIA_ALLOW_REMOVE` MUST accept exactly `true` and `false`.
 
@@ -99,8 +101,8 @@ Setting any of these variables while the `media` toolset is not selected, or set
 #### Scenario: Ambiguous defaults
 
 - **GIVEN** the series instance has two quality profiles and `ARR_MCP_MEDIA_SERIES_QUALITY_PROFILE` is absent
-- **WHEN** a caller adds a series
-- **THEN** nothing is added, and the call fails with `deployment_configuration` naming `ARR_MCP_MEDIA_SERIES_QUALITY_PROFILE`
+- **WHEN** a caller adds a series without a `resolution`
+- **THEN** nothing is added, and the call fails with `deployment_configuration` naming `ARR_MCP_MEDIA_SERIES_QUALITY_PROFILE`; the same add with a `resolution` succeeds with the profile [Resolution](#resolution) chooses
 
 ### Resolution
 
@@ -109,7 +111,7 @@ A caller asks for a resolution, never for a quality profile. The server turns on
 - The accepted resolutions MUST be `480p`, `576p`, `720p`, `1080p`, and `2160p`.
 - A quality profile's resolution MUST be the resolution of its cutoff quality, or of the highest-resolution quality in its cutoff group. A profile whose cutoff has no known resolution has no resolution, and MUST NOT be chosen by resolution.
 - Asked for a resolution, the server MUST choose among the profiles of the title's kind whose resolution equals it. Where none does, it MUST choose among those whose resolution is nearest to it, and the lower of two equally near resolutions wins.
-- Among several candidates, the server MUST prefer the [deployment default](#deployment-defaults) profile when it is one of them, then the profile allowing the fewest qualities, then the profile whose name sorts first.
+- Among several candidates, the server MUST prefer the configured [deployment default](#deployment-defaults) profile when one is configured and it is one of them, then the profile allowing the fewest qualities, then the profile whose name sorts first.
 - Where no profile of the kind has a resolution, a request for one MUST fail with `deployment_configuration`, with a remediation saying the operator has to give a quality profile a cutoff with a known resolution.
 
 #### Scenario: Ask for 4K
@@ -147,7 +149,7 @@ A caller asks for a resolution, never for a quality profile. The server turns on
 ### Add
 
 - `media_add` MUST accept a title's kind and id, an optional `resolution`, and, for a series only, an optional `episodes` choice of `all` or `future`, defaulting to `all`.
-- With `resolution`, the quality profile MUST be the one [Resolution](#resolution) chooses; without it, the deployment default.
+- The quality profile MUST be the one [Resolution](#resolution) chooses when the call names a `resolution`, and the one [Deployment Defaults](#deployment-defaults) decides otherwise.
 - `media_add` MUST add the title with the [deployment defaults](#deployment-defaults), monitored, with every other new-record setting taken from the metadata the application's own lookup proposes, and MUST start a search for its missing media.
 - Adding a title already in the library MUST succeed with the outcome `already_in_library`, MUST NOT change the existing record, and MUST NOT start a search, including when the title was added by another call between this call's check and its add.
 - An id the metadata source does not know MUST fail with `not_found`.

@@ -42,7 +42,7 @@ Additionally:
 - **Live sweep gate.** Every `media` tool, and every row of the [download-state and remedy tables](../specs/media-toolset/#download-states) that a live instance can be brought into, MUST be exercised against live Sonarr, Radarr, and Prowlarr instances at the recorded minimum versions before the default changes.
   - The sweep's results MUST be recorded in this document's Findings.
   - Every defect it finds MUST be fixed, or tracked by its own change document, before this change merges.
-- **Breaking-change commit.** The commit that changes the default MUST be marked breaking. Its footer MUST tell an upgrading operator to set `ARR_MCP_TOOLSET=arr` to keep the previous tools, or `media,arr` to add the new ones beside them.
+- **Breaking-change commit.** The commit that changes the default MUST be marked breaking. Its footer MUST tell an upgrading operator to set `ARR_MCP_TOOLSET=arr` to keep the previous tools, or `all` to add the new ones beside them.
 - **README order.** The README MUST present the `media` toolset first. The `arr` toolset becomes the advanced option, with the variable that selects it.
 
 ## Design
@@ -81,7 +81,7 @@ To be recorded by the live sweep.
 - [ ] Make `media` the default
   - [ ] Change the default in `src/config/environment.ts` and pin it with a test.
   - [ ] Select `arr` explicitly in `test/support/spawned-stdio.ts`, `test/stdio-process.test.ts`, `test/tool-protocol.test.ts`, any other test the new default breaks, and `scripts/verify-package.mjs`, and assert the default listing in the package verifier.
-  - [ ] Reorder the README to lead with the `media` toolset, with `ARR_MCP_TOOLSET=arr` documented as the way to keep only the previous tools and `media,arr` as the way to have both.
+  - [ ] Reorder the README to lead with the `media` toolset, with `ARR_MCP_TOOLSET=arr` documented as the way to keep only the previous tools and `all` (or `media,arr`) as the way to have both.
   - [ ] Remove the interim-default status note from [Tool Contracts — Toolset Selection](../specs/tool-contracts/#toolset-selection) and the remaining status note from [Media Toolset](../specs/media-toolset/).
   - [ ] Commit the default change as a breaking `feat` whose footer carries the migration instruction.
 

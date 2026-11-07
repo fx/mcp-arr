@@ -25,7 +25,8 @@ Related behavior:
 
 **Status:** unimplemented. [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) adds the selection with `arr` as its default; [0033-media-default-toolset](../../changes/0033-media-default-toolset.md) makes `media` the default.
 
-- The server MUST publish the toolsets selected at startup by `ARR_MCP_TOOLSET`: `media`, `arr`, or both, written as the comma-separated list `media,arr` in either order.
+- The server MUST publish the toolsets selected at startup by `ARR_MCP_TOOLSET`: `media`, `arr`, or both, written as the comma-separated list `media,arr` in either order or as the alias `all`.
+- `all` MUST stand alone; a list that combines it with a toolset name MUST reject startup.
 - A list that names an unknown toolset, names one twice, or is empty MUST reject startup.
 - When `ARR_MCP_TOOLSET` is absent the server MUST publish the `media` toolset.
 - The published tool list MUST be fixed for the lifetime of the process, and MUST be the same on every transport.
