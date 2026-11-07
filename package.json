@@ -1,7 +1,7 @@
 {
   "name": "mcp-arr",
   "version": "0.3.0",
-  "description": "A local MCP server for Sonarr, Radarr, and Prowlarr",
+  "description": "An MCP server for Sonarr, Radarr, and Prowlarr over stdio or Streamable HTTP",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -15,7 +15,8 @@
     "radarr",
     "prowlarr",
     "arr",
-    "stdio"
+    "stdio",
+    "streamable-http"
   ],
   "type": "module",
   "bin": {

@@ -1,6 +1,6 @@
 # mcp-arr
 
-A local MCP server for Sonarr, Radarr, and Prowlarr.
+An MCP server for Sonarr, Radarr, and Prowlarr, launched locally over stdio or run as a remote service over Streamable HTTP.
 
 ## Requirements
 
@@ -11,7 +11,7 @@ There is nothing to clone, install, or build. `npx` downloads the published pack
 
 ## Configure your host
 
-The server supports MCP over stdio only. Point the host at `npx` and let it launch the published package:
+By default the server speaks MCP over stdio, launched by the host. Point the host at `npx` and let it launch the published package:
 
 ```json
 {
@@ -40,6 +40,8 @@ npx -y mcp-arr
 
 It waits for MCP traffic on stdin and writes nothing to stdout until a client speaks to it. Stop it with Ctrl-C.
 
+To run the server once, as a service that MCP clients reach over the network, see [Run as a remote service](#run-as-a-remote-service).
+
 ## Instance settings
 
 Pass instance settings through the command environment. Each application is optional, but its URL and API key must be provided together. Configure at least one complete pair. The example hosts above use the reserved `.invalid` domain and the keys are placeholders; replace them with values for your instances.
@@ -59,6 +61,57 @@ Raise it if a large library or a slow indexer needs longer: a whole-library read
   }
 }
 ```
+
+## Run as a remote service
+
+Over stdio, every host that launches the server holds every instance URL and API key. Run it as a service instead and only the server holds them: a client gets a URL and a bearer token, and the token authorizes this server's tools and nothing else. It is not an instance API key and cannot be turned into one.
+
+Select the HTTP transport and give it a token, alongside the instance settings above:
+
+```sh
+export ARR_MCP_TRANSPORT=http
+export ARR_MCP_AUTH_TOKEN="$(openssl rand -hex 32)"
+npx -y mcp-arr
+```
+
+On startup it writes one line to stderr naming where it listens, and serves:
+
+- `POST /mcp` — MCP over Streamable HTTP. Every request must carry `Authorization: Bearer <token>`.
+- `GET /healthz` — `200` while the process accepts requests. It needs no token, contacts no instance, and names nothing about the deployment, so it is safe for an orchestrator's liveness probe.
+
+Everything else is `404`, OAuth discovery paths included: there is no OAuth here, only the one token.
+
+| Variable | Meaning | Default |
+|---|---|---|
+| `ARR_MCP_TRANSPORT` | `stdio` or `http` | `stdio` |
+| `ARR_MCP_HTTP_HOST` | The IP address the listener binds to; `0.0.0.0` for every IPv4 interface, as inside a container | `127.0.0.1` |
+| `ARR_MCP_HTTP_PORT` | The TCP port the listener binds to, from `1` to `65535` | `9797` |
+| `ARR_MCP_AUTH_TOKEN` | The bearer token: 32 to 4096 letters, digits, and `-._~+/`, optionally ending in `=` | none; required |
+
+Like every other setting, these are read once at startup. A missing or unusable value fails startup with a message that names the variable but never its value, and so does setting the host, port, or token without selecting `http`, so a deployment that forgot the selection never starts a stdio server nobody intended.
+
+Point a client at the URL and give it the header. Most clients take something of this shape; check your client's documentation for its exact keys:
+
+```json
+{
+  "type": "http",
+  "url": "https://mcp.example.com/mcp",
+  "headers": {
+    "Authorization": "Bearer replace-with-your-token"
+  }
+}
+```
+
+Every answer is a single JSON body and the server keeps no session, so a client can reconnect at any time. Clients running inside a web browser are not supported: any request that carries an `Origin` header is refused.
+
+Before exposing it:
+
+- **TLS is the deployment's job.** The listener speaks plain HTTP. Anything reachable from another machine belongs behind a TLS-terminating reverse proxy, or the token crosses the network in clear text.
+- **Run exactly one process.** Plans, references, receipts, and jobs live in process memory, so two processes behind one URL reject each other's references — and so does a rolling deploy that briefly runs two. Stop the old process before starting the new one.
+- **Rotate the token by restarting.** There is one token and no revocation list: change `ARR_MCP_AUTH_TOKEN`, restart, and give clients the new one.
+- **Throttling is per proxy.** After 10 refused authentication attempts in a minute, an address is answered `429` until the minute is up. The address is the connection's peer, and forwarded headers are not trusted, so every client behind one reverse proxy shares one throttle. A long random token is the real defense against guessing; limit per client at the proxy if you need to.
+
+On `SIGTERM` or `SIGINT` the server stops accepting connections, lets requests already in progress finish for no longer than the request timeout above, and exits.
 
 ## Verify a connection
 
@@ -119,7 +172,7 @@ Run the local build with the same instance variables a host would pass:
 npm start
 ```
 
-`npm run check` runs the full gate — type check, lint, build, tests, and package verification. The package verifier packs the tarball, installs it into a throwaway consumer, and drives the installed executable over stdio, so it catches packaging regressions the unit tests cannot.
+`npm run check` runs the full gate — type check, lint, build, tests, and package verification. The package verifier packs the tarball, installs it into a throwaway consumer, and drives the installed executable over stdio and over HTTP, so it catches packaging regressions the unit tests cannot.
 
 To point a host at a checkout instead of the published package, install the built package into a dedicated directory and use the installed executable's absolute path:
 
