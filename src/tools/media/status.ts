@@ -1,21 +1,23 @@
 import {
+  type MediaProfile,
   profileFor,
   readMediaHistory,
   readQueue,
   readQueueForMedia,
   readQueueStatus,
 } from "../../adapters/activity/media.js";
-import type { HistoryEventType, QueueItem } from "../../adapters/activity/model.js";
+import type { HistoryEventType, HistoryRecord, QueueItem } from "../../adapters/activity/model.js";
 import { readQualityProfiles } from "../../adapters/library/changes.js";
 import { runLibraryQuery } from "../../adapters/library/service.js";
 import {
   type EpisodeState,
   type LibraryTitle,
+  readEpisodeFileResolutions,
   readEpisodeStates,
-  readFileResolutions,
   readLibraryTitles,
 } from "../../adapters/library/titles.js";
 import type { ApplicationAdapter } from "../../adapters/registry.js";
+import type { UpstreamClient } from "../../http/client.js";
 import { maxPageSize } from "../schemas/common.js";
 import type { MediaContext } from "./context.js";
 import {
@@ -72,7 +74,7 @@ const partialQueueWarning =
   "the queue holds more than one page, so downloads_total is at most the number shown";
 
 const partialHistoryWarning =
-  "more imports happened than could be read, so the imported list may be incomplete";
+  "the history was longer than could be read, so the imported list may be incomplete";
 
 const partialCalendarWarning =
   "more is due than could be read, so the upcoming list may be incomplete";
@@ -99,6 +101,42 @@ interface Candidate {
   readonly judgement: Judgement;
   /** The download's place in its own queue read. */
   readonly position: number;
+}
+
+/** The most history pages the overview reads looking for the week's imports. */
+export const maxHistoryPages = 5;
+
+/**
+ * The history records back to an instant, newest first, through the paged
+ * history read a recorded fixture covers.
+ *
+ * Pages are read until one holds a record older than the instant, or the
+ * history ends, and at most {@link maxHistoryPages} of them. `complete` says
+ * whether the read reached the instant; where the bound stopped it, older
+ * imports inside the window may be missing.
+ */
+async function readRecentHistory(
+  client: UpstreamClient,
+  profile: MediaProfile,
+  since: number,
+): Promise<{ readonly records: readonly HistoryRecord[]; readonly complete: boolean }> {
+  const records: HistoryRecord[] = [];
+  for (let page = 0; page < maxHistoryPages; page += 1) {
+    const read = await readMediaHistory(
+      client,
+      { offset: page * maxPageSize, pageSize: maxPageSize },
+      { view: "history", detail: "summary", paging: { pageSize: maxPageSize } },
+      profile,
+    );
+    records.push(...read.items);
+    const older = read.items.some(
+      (record) => record.date !== undefined && Date.parse(record.date) < since,
+    );
+    if (older || !read.hasMore) {
+      return { records, complete: true };
+    }
+  }
+  return { records, complete: false };
 }
 
 /** A list cut to the result bound, with the total it was cut from where it was cut. */
@@ -194,17 +232,7 @@ async function overviewOfKind(
       ),
       readQueueStatus(adapter.client, profile),
       readLibraryTitles(adapter.client, application),
-      readMediaHistory(
-        adapter.client,
-        window,
-        {
-          view: "history",
-          detail: "summary",
-          paging: { pageSize: maxPageSize },
-          since: iso(now - importedWindowDays * day),
-        },
-        profile,
-      ),
+      readRecentHistory(adapter.client, profile, now - importedWindowDays * day),
       runLibraryQuery(application, adapter.client, {
         view: "calendar",
         detail: "summary",
@@ -261,8 +289,8 @@ async function overviewOfKind(
     }
 
     // One entry per title, at its latest import, newest first.
-    const latest = new Map<number, { record: LibraryTitle; date: string; at: number }>();
-    for (const event of history.items) {
+    const latest = new Map<number, { record: LibraryTitle; at: number }>();
+    for (const event of history.records) {
       const record = recordOf(event.context.mediaId);
       const at = event.date === undefined ? Number.NaN : Date.parse(event.date);
       if (
@@ -276,17 +304,17 @@ async function overviewOfKind(
       }
       const seen = latest.get(record.id);
       if (seen === undefined || at > seen.at) {
-        latest.set(record.id, { record, date: event.date, at });
+        latest.set(record.id, { record, at });
       }
     }
-    if (history.hasMore || (history.warnings?.length ?? 0) > 0) {
+    if (!history.complete) {
       warnings.push(partialHistoryWarning);
     }
     const imported = [...latest.values()]
       .sort((left, right) => right.at - left.at)
-      .map(({ record, date }) => ({
+      .map(({ record, at }) => ({
         ...namedTitle(kind, record.externalId as number, titleOf(record)),
-        date,
+        date: iso(at),
       }));
 
     // One entry per title and day, at the earliest instant that day.
@@ -294,7 +322,6 @@ async function overviewOfKind(
       string,
       {
         record: LibraryTitle;
-        date: string;
         at: number;
         episodes: { seasonNumber: number; episodeNumber: number }[];
       }
@@ -319,12 +346,9 @@ async function overviewOfKind(
       ) {
         continue;
       }
-      const key = `${record.id}\u0000${event.start.slice(0, 10)}`;
-      const entry = due.get(key) ?? { record, date: event.start, at, episodes: [] };
-      if (at < entry.at) {
-        entry.at = at;
-        entry.date = event.start;
-      }
+      const key = `${record.id}\u0000${iso(at).slice(0, 10)}`;
+      const entry = due.get(key) ?? { record, at, episodes: [] };
+      entry.at = Math.min(entry.at, at);
       if (media.application === "sonarr" && media.sonarr.kind === "episode") {
         entry.episodes.push({
           seasonNumber: media.sonarr.seasonNumber,
@@ -338,12 +362,12 @@ async function overviewOfKind(
     }
     const upcoming = [...due.values()]
       .sort((left, right) => left.at - right.at)
-      .map(({ record, date, episodes }) => {
+      .map(({ record, at, episodes }) => {
         const label = episodesLabel(episodes);
         return {
           ...namedTitle(kind, record.externalId as number, titleOf(record)),
           ...(label === undefined ? {} : { episodes: label }),
-          date,
+          date: iso(at),
         };
       });
 
@@ -484,20 +508,20 @@ function passed(value: string | undefined, now: number): boolean | undefined {
   return Number.isNaN(at) ? undefined : at <= now;
 }
 
+/**
+ * The earliest of these instants still to come, written by this server: a
+ * date is published as the instant it parses to, never as the text an
+ * instance sent.
+ */
 function earliestAfter(values: readonly (string | undefined)[], now: number): string | undefined {
-  let best: { value: string; at: number } | undefined;
+  let best: number | undefined;
   for (const value of values) {
     const at = value === undefined ? Number.NaN : Date.parse(value);
-    if (
-      value !== undefined &&
-      !Number.isNaN(at) &&
-      at > now &&
-      (best === undefined || at < best.at)
-    ) {
-      best = { value, at };
+    if (!Number.isNaN(at) && at > now && (best === undefined || at < best)) {
+      best = at;
     }
   }
-  return best?.value;
+  return best === undefined ? undefined : iso(best);
 }
 
 function distinctResolutions(pixels: readonly number[]): Resolution[] {
@@ -559,9 +583,14 @@ async function titleStatus(
     })(),
     (async () => {
       try {
-        return distinctResolutions(
-          await readFileResolutions(adapter.client, application, record.id),
-        );
+        // A movie's one file is described by its own library record.
+        const pixels =
+          kind === "movie"
+            ? record.fileResolution === undefined
+              ? []
+              : [record.fileResolution]
+            : await readEpisodeFileResolutions(adapter.client, record.id);
+        return distinctResolutions(pixels);
       } catch {
         warnings.push(unreadFilesWarning);
         return undefined;

@@ -12,11 +12,9 @@ import { jsonResponse, loadStatusFixtures } from "./tool-context.js";
  * episodes and files, its queue, its history, its calendar, and its import
  * scan — and holds that state as a copy a test can change, so a removal
  * removes, a resolved queue row leaves the queue, and a command can be moved
- * to an end. Where a route has no recorded fixture of its own, the double
- * answers it with the records of the route that returns the same resource:
- * `history/since` with the recorded history records, `command/{id}` with a
- * command it accepted. It filters what a real instance filters, and every
- * request is recorded as it arrived.
+ * to an end. `command/{id}` answers with a command it accepted. It filters
+ * and pages what a real instance filters and pages, and every request is
+ * recorded as it arrived.
  */
 
 export type ActivityApplication = "sonarr" | "radarr";
@@ -62,9 +60,9 @@ export interface ActivityInstances {
   mutations(): readonly ActivityRequest[];
 }
 
-const titleRoutes: Readonly<Record<ActivityApplication, { route: string; metadata: string }>> = {
-  sonarr: { route: "series", metadata: "tvdbId" },
-  radarr: { route: "movie", metadata: "tmdbId" },
+const titleRoutes: Readonly<Record<ActivityApplication, { route: string }>> = {
+  sonarr: { route: "series" },
+  radarr: { route: "movie" },
 };
 
 function isRecord(value: unknown): value is UpstreamRecord {
@@ -132,9 +130,7 @@ export async function createActivityInstances(): Promise<ActivityInstances> {
     const parent = application === "sonarr" ? "seriesId" : "movieId";
 
     if (method === "GET" && route === title.route) {
-      return jsonResponse(
-        state.titles.filter((record) => matches(record, title.metadata, query[title.metadata])),
-      );
+      return jsonResponse(state.titles);
     }
     const single = new RegExp(`^${title.route}/(\\d+)$`, "u").exec(route);
     if (single !== null) {
@@ -196,11 +192,19 @@ export async function createActivityInstances(): Promise<ActivityInstances> {
       );
       return new Response(null, { status: 200 });
     }
-    if (method === "GET" && route === "history/since") {
-      const since = query.date === undefined ? Number.NEGATIVE_INFINITY : Date.parse(query.date);
-      return jsonResponse(
-        state.history.filter((record) => Date.parse(String(record.date)) >= since),
+    if (method === "GET" && route === "history") {
+      // Server-paged, newest first, as the instance answers the paged route.
+      const page = Number(query.page ?? "1");
+      const pageSize = Number(query.pageSize ?? String(state.history.length));
+      const sorted = [...state.history].sort(
+        (left, right) => Date.parse(String(right.date)) - Date.parse(String(left.date)),
       );
+      return jsonResponse({
+        page,
+        pageSize,
+        totalRecords: sorted.length,
+        records: sorted.slice((page - 1) * pageSize, page * pageSize),
+      });
     }
     if (method === "GET" && route === "calendar") {
       return jsonResponse(state.calendar);

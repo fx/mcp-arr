@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  readEpisodeFileResolutions,
   readEpisodeStates,
-  readFileResolutions,
   readLibraryTitleByExternalId,
+  readLibraryTitleById,
   readLibraryTitles,
 } from "../src/adapters/library/titles.js";
 import { fixtureBody, jsonResponse, libraryHarness, without } from "./support/library.js";
@@ -11,22 +12,23 @@ import { fixtureBody, jsonResponse, libraryHarness, without } from "./support/li
  * The narrow library reads the `media` toolset decides over, against the
  * recorded library, episode, and file fixtures.
  *
- * Whether an instance honours the metadata-identifier filter on `series` and
- * `movie` has not been captured, so each lookup is shown answering the same
- * way whether the instance filtered the list or answered all of it.
+ * A title is found by reading the whole library list, the route the recorded
+ * fixtures cover, and matching its identifier here.
  */
 
 type UpstreamRecord = Record<string, unknown>;
 
 describe("readLibraryTitleByExternalId", () => {
-  it("asks for a series by TVDB id and matches it locally when the whole library comes back", async () => {
+  it("reads the whole series list and matches the TVDB id locally", async () => {
     const series = await fixtureBody<UpstreamRecord[]>("sonarr", "series");
     const { client, calls } = libraryHarness("sonarr", () => jsonResponse(series));
 
     const found = await readLibraryTitleByExternalId(client, "sonarr", 100_002);
 
+    expect(calls).toHaveLength(1);
     expect(calls[0]?.url.pathname).toMatch(/\/api\/v3\/series$/u);
-    expect(calls[0]?.url.searchParams.get("tvdbId")).toBe("100002");
+    // The filtered route is not used: which version honours it is not established.
+    expect([...(calls[0]?.url.searchParams.keys() ?? [])]).toEqual([]);
     expect(found).toMatchObject({
       application: "sonarr",
       id: 13,
@@ -37,29 +39,29 @@ describe("readLibraryTitleByExternalId", () => {
     });
     // A series record says nothing about a file of its own.
     expect(found?.hasFile).toBeUndefined();
+    expect(found?.fileResolution).toBeUndefined();
   });
 
-  it("finds a movie by TMDB id from a filtered answer", async () => {
+  it("reads a movie's file state, release dates, and file resolution from its list record", async () => {
     const movies = await fixtureBody<UpstreamRecord[]>("radarr", "movie");
-    const { client, calls } = libraryHarness("radarr", (call) =>
-      jsonResponse(
-        movies.filter((movie) => String(movie.tmdbId) === call.url.searchParams.get("tmdbId")),
-      ),
-    );
+    const { client } = libraryHarness("radarr", () => jsonResponse(movies));
 
-    const found = await readLibraryTitleByExternalId(client, "radarr", 200_002);
-
-    expect(calls[0]?.url.searchParams.get("tmdbId")).toBe("200002");
-    expect(found).toMatchObject({
+    expect(await readLibraryTitleByExternalId(client, "radarr", 200_001)).toMatchObject({
+      id: 8,
+      hasFile: true,
+      isAvailable: true,
+      fileResolution: 1080,
+    });
+    expect(await readLibraryTitleByExternalId(client, "radarr", 200_002)).toMatchObject({
       id: 9,
-      externalId: 200_002,
       hasFile: false,
       isAvailable: false,
       releaseDates: ["2026-11-20T00:00:00Z"],
+      fileResolution: undefined,
     });
   });
 
-  it("answers undefined for a title not in the library, filtered or not", async () => {
+  it("answers undefined for a title not in the library", async () => {
     const movies = await fixtureBody<UpstreamRecord[]>("radarr", "movie");
     for (const answer of [movies, []]) {
       const { client } = libraryHarness("radarr", () => jsonResponse(answer));
@@ -83,6 +85,20 @@ describe("readLibraryTitleByExternalId", () => {
     await expect(readLibraryTitleByExternalId(client, "sonarr", 100_001)).rejects.toMatchObject({
       kind: "unexpected-response",
     });
+  });
+});
+
+describe("readLibraryTitleById", () => {
+  it("finds a record by its library identifier from the same list", async () => {
+    const movies = await fixtureBody<UpstreamRecord[]>("radarr", "movie");
+    const { client, calls } = libraryHarness("radarr", () => jsonResponse(movies));
+
+    expect((await readLibraryTitleById(client, "radarr", 9))?.externalId).toBe(200_002);
+    expect(await readLibraryTitleById(client, "radarr", 99)).toBeUndefined();
+    expect(calls.map((call) => call.url.pathname.replace(/^.*\/api\/v3\//u, ""))).toEqual([
+      "movie",
+      "movie",
+    ]);
   });
 });
 
@@ -151,32 +167,24 @@ describe("readEpisodeStates", () => {
   });
 });
 
-describe("readFileResolutions", () => {
+describe("readEpisodeFileResolutions", () => {
   it("reads the resolution of every episode file of a series", async () => {
     const files = await fixtureBody<UpstreamRecord[]>("sonarr", "episodefile");
     const { client, calls } = libraryHarness("sonarr", () => jsonResponse(files));
 
-    expect(await readFileResolutions(client, "sonarr", 12)).toEqual([1080, 720]);
+    expect(await readEpisodeFileResolutions(client, 12)).toEqual([1080, 720]);
     expect(calls[0]?.url.pathname).toMatch(/\/episodefile$/u);
     expect(calls[0]?.url.searchParams.get("seriesId")).toBe("12");
   });
 
-  it("reads the resolution of a movie's file", async () => {
-    const files = await fixtureBody<UpstreamRecord[]>("radarr", "moviefile");
-    const { client, calls } = libraryHarness("radarr", () => jsonResponse(files));
-
-    expect(await readFileResolutions(client, "radarr", 8)).toEqual([1080]);
-    expect(calls[0]?.url.searchParams.get("movieId")).toBe("8");
-  });
-
   it("contributes nothing for a file whose quality names no resolution", async () => {
-    const files = await fixtureBody<UpstreamRecord[]>("radarr", "moviefile");
+    const files = await fixtureBody<UpstreamRecord[]>("sonarr", "episodefile");
     const unknown = files.map((file) => ({
       ...file,
       quality: { quality: { id: 0, name: "Unknown", resolution: 0 } },
     }));
-    const { client } = libraryHarness("radarr", () => jsonResponse(unknown));
+    const { client } = libraryHarness("sonarr", () => jsonResponse(unknown));
 
-    expect(await readFileResolutions(client, "radarr", 8)).toEqual([]);
+    expect(await readEpisodeFileResolutions(client, 12)).toEqual([]);
   });
 });

@@ -28,7 +28,8 @@ import {
  * the tool layer publishes them only through its own sanitizer, which knows
  * the configured keys this layer does not.
  *
- * Every route here is a GET.
+ * Every route here is a GET, and each is one a recorded fixture covers: the
+ * library list, a series' episodes, and a series' episode files.
  */
 
 export const libraryTitleRoutes = {
@@ -36,15 +37,12 @@ export const libraryTitleRoutes = {
   movie: "movie",
   episode: "episode",
   episodeFile: "episodefile",
-  movieFile: "moviefile",
 } as const;
 
-/** The library route and metadata identifier each application files a title under. */
-const titleRoutes: Readonly<
-  Record<MediaApplication, { readonly route: string; readonly parameter: "tvdbId" | "tmdbId" }>
-> = {
-  sonarr: { route: libraryTitleRoutes.series, parameter: "tvdbId" },
-  radarr: { route: libraryTitleRoutes.movie, parameter: "tmdbId" },
+/** The library route each application lists its titles on. */
+const titleRoutes: Readonly<Record<MediaApplication, { readonly route: string }>> = {
+  sonarr: { route: libraryTitleRoutes.series },
+  radarr: { route: libraryTitleRoutes.movie },
 };
 
 const titleRecordSchema = z.object({
@@ -59,6 +57,7 @@ const titleRecordSchema = z.object({
   inCinemas: upstreamText,
   physicalRelease: upstreamText,
   digitalRelease: upstreamText,
+  movieFile: z.object({ quality: qualitySchema }).nullish(),
 });
 
 type TitleUpstream = z.infer<typeof titleRecordSchema>;
@@ -80,6 +79,8 @@ export interface LibraryTitle {
   readonly isAvailable?: boolean | undefined;
   /** Movies only: every release date the record states, as reported. */
   readonly releaseDates: readonly string[];
+  /** Movies only: the vertical resolution of the file the record holds, where it names one. */
+  readonly fileResolution?: number | undefined;
 }
 
 function positiveId(value: number | null | undefined): number | undefined {
@@ -101,6 +102,8 @@ function mapTitle(application: MediaApplication, record: TitleUpstream): Library
     releaseDates: [record.inCinemas, record.physicalRelease, record.digitalRelease]
       .map((date) => text(date))
       .filter((date): date is string => date !== undefined),
+    fileResolution:
+      application === "radarr" ? qualityResolution(record.movieFile?.quality) : undefined,
   };
 }
 
@@ -123,28 +126,29 @@ export async function readLibraryTitles(
  * The library record filed under one metadata identifier, or `undefined` for
  * a title that is not in the library.
  *
- * The request asks the instance to filter by that identifier, and the answer
- * is matched against it here as well. Both supported versions document the
- * filter, but which of them honours it has not been established against a
- * live instance; matching locally makes the answer the same either way — an
- * instance that ignores the filter answers the whole library, and the one
- * record with that identifier is still the only one returned.
+ * The whole library is read and the identifier matched here. Both supported
+ * versions document a filter by metadata identifier on the same route, but
+ * which of them honours it has not been established against a live instance,
+ * and the unfiltered list is the answer a recorded fixture covers; whether the
+ * filtered route is ever adopted waits on that capture.
  */
 export async function readLibraryTitleByExternalId(
   client: UpstreamClient,
   application: MediaApplication,
   externalId: number,
 ): Promise<LibraryTitle | undefined> {
-  const { route, parameter } = titleRoutes[application];
-  const records = parseUpstream(
-    z.array(titleRecordSchema),
-    await client.get(route, { [parameter]: externalId }),
-    application,
-    route,
+  return (await readLibraryTitles(client, application)).find(
+    (title) => title.externalId === externalId,
   );
-  return records
-    .map((record) => mapTitle(application, record))
-    .find((title) => title.externalId === externalId);
+}
+
+/** The library record with one library identifier, read the same way. */
+export async function readLibraryTitleById(
+  client: UpstreamClient,
+  application: MediaApplication,
+  id: number,
+): Promise<LibraryTitle | undefined> {
+  return (await readLibraryTitles(client, application)).find((title) => title.id === id);
 }
 
 const episodeStateSchema = z.object({
@@ -213,34 +217,30 @@ export async function readEpisodeStates(
 
 const fileQualitySchema = z.object({
   seriesId: optionalUpstreamId,
-  movieId: optionalUpstreamId,
   quality: qualitySchema,
 });
 
 /**
- * The vertical resolution of every file the library holds for one series or
- * movie, one entry per file that names one, in the order the instance listed
- * them. A file whose quality names no resolution contributes nothing.
+ * The vertical resolution of every episode file the library holds for one
+ * series, one entry per file that names one, in the order the instance listed
+ * them. A movie's single file is described by its own library record instead.
  */
-export async function readFileResolutions(
+export async function readEpisodeFileResolutions(
   client: UpstreamClient,
-  application: MediaApplication,
-  mediaId: number,
+  seriesId: number,
 ): Promise<readonly number[]> {
-  const route =
-    application === "sonarr" ? libraryTitleRoutes.episodeFile : libraryTitleRoutes.movieFile;
-  const parameter = application === "sonarr" ? "seriesId" : "movieId";
+  const route = libraryTitleRoutes.episodeFile;
   const records = parseUpstream(
     z.array(fileQualitySchema),
-    await client.get(route, { [parameter]: mediaId }),
-    application,
+    await client.get(route, { seriesId }),
+    "sonarr",
     route,
   );
   return records
-    .filter((record) => {
-      const owner = application === "sonarr" ? record.seriesId : record.movieId;
-      return owner === undefined || owner === null || owner === mediaId;
-    })
+    .filter(
+      (record) =>
+        record.seriesId === undefined || record.seriesId === null || record.seriesId === seriesId,
+    )
     .map((record) => qualityResolution(record.quality))
     .filter((pixels): pixels is number => pixels !== undefined);
 }

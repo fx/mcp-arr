@@ -116,7 +116,7 @@ describe("media_status for one title", () => {
       in_library: true,
       have: 0,
       missing: 0,
-      next_due: "2026-11-20T00:00:00Z",
+      next_due: "2026-11-20T00:00:00.000Z",
       downloads: [
         {
           state: "stuck",
@@ -235,17 +235,64 @@ describe("media_status overview", () => {
     const { content } = await status({});
 
     expect(content.imported).toEqual([
-      { kind: "series", id: 100_001, title: "Example Series", date: "2026-08-26T20:15:00Z" },
-      { kind: "movie", id: 200_002, title: "Example Awaited Movie", date: "2026-08-26T17:30:00Z" },
+      { kind: "series", id: 100_001, title: "Example Series", date: "2026-08-26T20:15:00.000Z" },
+      {
+        kind: "movie",
+        id: 200_002,
+        title: "Example Awaited Movie",
+        date: "2026-08-26T17:30:00.000Z",
+      },
     ]);
-    const since = instances.requests.filter((request) => request.route === "history/since");
-    expect(since.map((request) => request.query.date)).toEqual([
-      "2026-08-21T00:00:00.000Z",
-      "2026-08-21T00:00:00.000Z",
+    // The paged history read, newest first; the recorded history fits on one page.
+    const history = instances.requests.filter((request) => request.route === "history");
+    expect(history.map((request) => [request.application, request.query])).toEqual([
+      ["radarr", { page: "1", pageSize: "100", sortKey: "date", sortDirection: "descending" }],
+      ["sonarr", { page: "1", pageSize: "100", sortKey: "date", sortDirection: "descending" }],
     ]);
 
     clock.set(Date.parse("2026-09-05T00:00:00Z"));
     expect((await status({})).content.imported).toEqual([]);
+  });
+
+  it("pages the history back until it passes the week, and no further than five pages", async () => {
+    clock.set(Date.parse("2026-08-28T00:00:00Z"));
+    const [imported] = instances
+      .state("sonarr")
+      .history.filter((record) => record.eventType === "downloadFolderImported");
+    const at = (hours: number) =>
+      new Date(Date.parse("2026-08-27T00:00:00Z") - hours * 3_600_000).toISOString();
+    const records = (count: number, from: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        ...imported,
+        id: 20_000 + from + index,
+        date: at(from + index),
+      }));
+    const pages = () =>
+      instances.requests.filter(
+        (request) => request.application === "sonarr" && request.route === "history",
+      ).length;
+
+    // 150 records inside the week, then one older: the second page reaches it.
+    instances.state("sonarr").history = [...records(150, 0), ...records(1, 24 * 9)];
+    const reached = await status({});
+    expect(pages()).toBe(2);
+    expect(reached.content.warnings).toEqual([]);
+    expect(reached.content.imported).toEqual([
+      { kind: "series", id: 100_001, title: "Example Series", date: "2026-08-27T00:00:00.000Z" },
+      expect.objectContaining({ kind: "movie" }),
+    ]);
+
+    // Six full pages inside the week: the read stops at five and says so.
+    const before = pages();
+    instances.state("sonarr").history = records(600, 0).map((record, index) => ({
+      ...record,
+      date: new Date(Date.parse("2026-08-27T00:00:00Z") - index * 60_000).toISOString(),
+    }));
+    const bounded = await status({});
+    expect(pages() - before).toBe(5);
+    expect(bounded.content.warnings).toContain(
+      "the history was longer than could be read, so the imported list may be incomplete",
+    );
   });
 
   it("reports what is due in the next fourteen days", async () => {
@@ -259,13 +306,18 @@ describe("media_status overview", () => {
         id: 100_001,
         title: "Example Series",
         episodes: "S02E01",
-        date: "2026-09-30T20:00:00Z",
+        date: "2026-09-30T20:00:00.000Z",
       },
     ]);
 
     clock.set(Date.parse("2026-11-10T00:00:00Z"));
     expect((await status({})).content.upcoming).toEqual([
-      { kind: "movie", id: 200_002, title: "Example Awaited Movie", date: "2026-11-20T00:00:00Z" },
+      {
+        kind: "movie",
+        id: 200_002,
+        title: "Example Awaited Movie",
+        date: "2026-11-20T00:00:00.000Z",
+      },
     ]);
   });
 

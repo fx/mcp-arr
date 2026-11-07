@@ -13,9 +13,12 @@ import {
 import type { ImportFileRequest } from "../../adapters/import/execute.js";
 import type { ImportCandidate } from "../../adapters/import/model.js";
 import { commandGoneWarning, readCommandRecord } from "../../adapters/jobs.js";
-import { readRecordResource } from "../../adapters/library/changes.js";
 import type { MediaApplication } from "../../adapters/library/model.js";
-import { type EpisodeState, readEpisodeStates } from "../../adapters/library/titles.js";
+import {
+  type EpisodeState,
+  readEpisodeStates,
+  readLibraryTitleById,
+} from "../../adapters/library/titles.js";
 import type { ApplicationAdapter } from "../../adapters/registry.js";
 import type { UpstreamCommandObservation } from "../../state/jobs.js";
 import type { MediaContext } from "./context.js";
@@ -292,11 +295,11 @@ async function libraryLacksFiles(
   mapped: readonly number[],
 ): Promise<string | undefined> {
   if (application === "radarr") {
-    const record = await readRecordResource(adapter.client, application, "movie", mediaId);
-    if (record.hasFile === true) {
+    const record = await readLibraryTitleById(adapter.client, application, mediaId);
+    if (record?.hasFile === true) {
       return downloadReasons.libraryHasFile;
     }
-    return record.hasFile === false ? undefined : downloadReasons.libraryCannotSay;
+    return record?.hasFile === false ? undefined : downloadReasons.libraryCannotSay;
   }
   const episodes = new Map(
     (await readEpisodeStates(adapter.client, mediaId)).map((episode) => [episode.id, episode]),
