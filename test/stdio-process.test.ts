@@ -213,7 +213,11 @@ describe("built stdio process", () => {
       await runProcess({
         // Kept in step with EnvironmentConfiguration by hand: this literal is
         // inside a template string, so tsc does not type-check it.
-        loadConfiguration: () => ({ instances: [], upstreamTimeoutMs: 30_000 }),
+        loadConfiguration: () => ({
+          instances: [],
+          upstreamTimeoutMs: 30_000,
+          transport: { kind: "stdio" },
+        }),
         createRuntime: () => ({
           registry: { adapters: [], adapter: () => undefined, probe: async () => [] },
           start: async () => { throw new Error("forced startup failure"); },
