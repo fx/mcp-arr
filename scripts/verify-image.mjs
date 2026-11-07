@@ -6,20 +6,39 @@ import { observeChildProcess, waitForResponseOrExit } from "./child-process.mjs"
 import { assert, exchange, freePort, withDeadline } from "./verification.mjs";
 
 /**
- * Smoke-tests a container image that is already built and loaded into the
- * local Docker daemon, named by the tag given as the only argument. It never
- * builds or pulls anything: CI builds the image once, runs this against that
- * exact image, and publishes it only if this passes.
+ * Smoke-tests a container image that is already loaded into the local Docker
+ * daemon, named by its tag. It never builds or pulls anything: CI builds the
+ * image once, loads each platform from that one build, runs this against it,
+ * and publishes that build only if this passes.
  *
- *   node scripts/verify-image.mjs <local image tag>
+ *   node scripts/verify-image.mjs <local image tag> [--platform <os>/<arch>]
+ *
+ * `--platform` runs an image built for another platform than the host's, under
+ * the emulation CI registers, and asserts the image is built for it. Emulation
+ * is several times slower, so every bound is widened for it.
  *
  * It is not part of the test suite because it needs a Docker daemon, and the
  * suite must run anywhere without one; the Docker workflow is where it runs.
  */
 
-const image = process.argv[2];
-if (image === undefined || image === "" || process.argv.length > 3) {
-  throw new Error("Usage: node scripts/verify-image.mjs <local image tag>");
+const [image, platformFlag, platform, ...extra] = process.argv.slice(2);
+if (
+  image === undefined ||
+  image === "" ||
+  extra.length > 0 ||
+  (platformFlag !== undefined &&
+    (platformFlag !== "--platform" || !/^[a-z0-9]+\/[a-z0-9]+$/u.test(platform ?? "")))
+) {
+  throw new Error(
+    "Usage: node scripts/verify-image.mjs <local image tag> [--platform <os>/<arch>]",
+  );
+}
+const platformFlags = platform === undefined ? [] : ["--platform", platform];
+const emulationSlowdown = platform === undefined ? 1 : 5;
+
+/** A bound on a wait, widened when the image runs under emulation. */
+function bound(ms) {
+  return ms * emulationSlowdown;
 }
 
 const canonicalRepository = "https://github.com/fx/mcp-arr";
@@ -59,7 +78,7 @@ function environmentFlags(variables) {
 }
 
 /** Runs one Docker CLI command to completion and reports how it ended, failing only on the bound. */
-function runDocker(args, { variables = {}, timeoutMs = 60_000 } = {}) {
+function runDocker(args, { variables = {}, timeoutMs = bound(60_000) } = {}) {
   return new Promise((resolve, reject) => {
     execFile(
       "docker",
@@ -100,6 +119,10 @@ async function verifyImageConfiguration() {
   const [inspected] = JSON.parse(await docker(["image", "inspect", image]));
   const config = inspected?.Config;
   assert(config !== undefined, `docker image inspect returned no configuration for ${image}`);
+  if (platform !== undefined) {
+    const built = `${inspected.Os}/${inspected.Architecture}`;
+    assert(built === platform, `Image is built for ${built}, not ${platform}`);
+  }
   assert(config.User === `${runtimeUid}:${runtimeUid}`, `Image runs as ${config.User}, not 1000`);
   assert(config.StopSignal === "SIGTERM", `Image stop signal is ${config.StopSignal}`);
   assert(
@@ -177,6 +200,7 @@ process.stdout.write(JSON.stringify({
     containerName("contents"),
     "--pull",
     "never",
+    ...platformFlags,
     "--network",
     "none",
     "--user",
@@ -213,12 +237,13 @@ async function verifyRefusesWithoutToken() {
       containerName("no-token"),
       "--pull",
       "never",
+      ...platformFlags,
       "--network",
       "none",
       ...environmentFlags(instanceEnvironment),
       image,
     ],
-    { variables: instanceEnvironment, timeoutMs: 30_000 },
+    { variables: instanceEnvironment, timeoutMs: bound(30_000) },
   );
   assert(result.code === 1, `Container without a token exited ${result.code}, not 1`);
   assert(
@@ -241,10 +266,11 @@ function mcpRequest(port, token, message) {
       ...(token === undefined ? {} : { Authorization: `Bearer ${token}` }),
     },
     body: JSON.stringify(message),
+    timeoutMs: bound(5_000),
   });
 }
 
-async function waitForHealthy(name, timeoutMs = 30_000) {
+async function waitForHealthy(name, timeoutMs = bound(30_000)) {
   const deadline = Date.now() + timeoutMs;
   let health;
   while (Date.now() < deadline) {
@@ -279,10 +305,13 @@ async function verifyService(expectedVersion) {
       name,
       "--pull",
       "never",
+      ...platformFlags,
       // The probe is the image's own command; only its schedule is shortened,
-      // so this need not wait out the production interval before the first run.
+      // so this need not wait out the production interval before the first run,
+      // and under emulation its timeout is widened for Node.js's slower start.
       "--health-interval",
       "1s",
+      ...(platform === undefined ? [] : ["--health-timeout", "30s"]),
       "--publish",
       `127.0.0.1:${port}:${containerPort}`,
       ...environmentFlags(variables),
@@ -310,7 +339,7 @@ async function verifyService(expectedVersion) {
     await withDeadline(
       waitForResponseOrExit(listening, observed.exit, "container listener startup"),
       "container listener startup",
-      30_000,
+      bound(30_000),
     ).catch((error) => {
       throw new Error(`${error.message}\n${observed.stdout}${observed.stderr}`, { cause: error });
     });
@@ -327,7 +356,11 @@ async function verifyService(expectedVersion) {
     const command = (await docker(["exec", name, "cat", "/proc/1/cmdline"])).split("\0");
     assert(command[0] === "/usr/bin/tini", `PID 1 is ${command[0]}, not tini`);
 
-    const health = await exchange(port, { method: "GET", path: "/healthz" });
+    const health = await exchange(port, {
+      method: "GET",
+      path: "/healthz",
+      timeoutMs: bound(5_000),
+    });
     assert(health.status === 200, `GET /healthz answered ${health.status}`);
 
     const initialize = {
@@ -377,10 +410,14 @@ async function verifyService(expectedVersion) {
 
     const stopStarted = Date.now();
     await docker(["stop", "--time", String(upstreamTimeoutMs / 1000), name], {
-      timeoutMs: upstreamTimeoutMs + 15_000,
+      timeoutMs: upstreamTimeoutMs + bound(15_000),
     });
     const elapsed = Date.now() - stopStarted;
-    const exit = await withDeadline(observed.exit, "container exit after docker stop", 15_000);
+    const exit = await withDeadline(
+      observed.exit,
+      "container exit after docker stop",
+      bound(15_000),
+    );
     assert(
       exit.code === 0 && exit.signal === null,
       `Container exited ${exit.code} (${exit.signal}) on docker stop, not 0`,
@@ -389,7 +426,7 @@ async function verifyService(expectedVersion) {
     assert(state.ExitCode === 0, `Container state recorded exit code ${state.ExitCode}`);
     assert(state.OOMKilled === false, "Container was killed for memory");
     assert(elapsed < upstreamTimeoutMs, `docker stop took ${elapsed} ms`);
-    await withDeadline(observed.closed, "container output close", 15_000);
+    await withDeadline(observed.closed, "container output close", bound(15_000));
 
     assert(observed.stdout === "", "Container wrote to stdout");
     assert(!observed.stderr.includes(token), "Container wrote its token to stderr");
@@ -411,7 +448,9 @@ try {
   await verifyImageContents();
   await verifyRefusesWithoutToken();
   await verifyService(manifest.version);
-  process.stdout.write(`Image verification passed for ${image}\n`);
+  process.stdout.write(
+    `Image verification passed for ${image}${platform === undefined ? "" : ` (${platform})`}\n`,
+  );
 } finally {
   for (const name of startedContainers) {
     await runDocker(["rm", "--force", name]).catch(() => undefined);
