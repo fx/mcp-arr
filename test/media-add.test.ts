@@ -599,3 +599,45 @@ describe("media_add", () => {
     }
   });
 });
+
+describe("media_add title redaction", () => {
+  const configuredKey = "0123456789abcdef0123456789abcdef";
+
+  it("publishes no credential-bearing URL or configured key a title carried", async () => {
+    const [existing, unadded] = instances.catalog("radarr");
+    if (existing === undefined || unadded === undefined) {
+      throw new Error("the recorded movie lookup holds two titles");
+    }
+    existing.title = "https://user:secret@example.invalid/path";
+    unadded.title = `Example Leak ${configuredKey}`;
+    const environment = { ...allApplicationsEnvironment, RADARR_API_KEY: configuredKey };
+
+    const present = await add({ kind: "movie", id: existingMovie }, movieDefaults, environment);
+    const added = await add({ kind: "movie", id: newMovie }, movieDefaults, environment);
+
+    expect(present.content).toMatchObject({
+      outcome: "already_in_library",
+      title: "[redacted url]",
+    });
+    expect(added.content).toMatchObject({ outcome: "added", title: "Example Leak [redacted id]" });
+    for (const { content, summary } of [present, added]) {
+      for (const leaked of ["user:secret", "secret@", "example.invalid", configuredKey]) {
+        expect(JSON.stringify(content), leaked).not.toContain(leaked);
+        expect(summary, leaked).not.toContain(leaked);
+      }
+    }
+  });
+
+  it("omits a title that is nothing once sanitized and still adds", async () => {
+    const [, unadded] = instances.catalog("radarr");
+    if (unadded !== undefined) {
+      unadded.title = "\u200b";
+    }
+
+    const { result, content } = await add({ kind: "movie", id: newMovie }, movieDefaults);
+
+    expect(result.isError).toBe(false);
+    expect(content.outcome).toBe("added");
+    expect("title" in content).toBe(false);
+  });
+});

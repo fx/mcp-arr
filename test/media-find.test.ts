@@ -338,3 +338,48 @@ describe("the media run path", () => {
     ]);
   });
 });
+
+describe("media_find title redaction", () => {
+  /** The shape every *arr instance generates its API key in: 32 hex characters. */
+  const configuredKey = "0123456789abcdef0123456789abcdef";
+
+  it("publishes no credential-bearing URL or configured key a title carried", async () => {
+    const recorded = instances.catalog("radarr")[1] as Record<string, unknown>;
+    instances.serve("radarr", "movie/lookup", [
+      { ...recorded, tmdbId: 300_001, title: "https://user:secret@example.invalid/path" },
+      { ...recorded, tmdbId: 300_002, title: `Example Leak ${configuredKey}` },
+      { ...recorded, tmdbId: 300_003, title: `Example Glued${configuredKey}Title` },
+    ]);
+
+    const { content, summary } = await find(
+      { text: "Example", kind: "movie" },
+      { ...allApplicationsEnvironment, RADARR_API_KEY: configuredKey },
+    );
+
+    const serialized = JSON.stringify(content);
+    for (const leaked of ["user:secret", "secret@", "example.invalid", configuredKey]) {
+      expect(serialized, leaked).not.toContain(leaked);
+      expect(summary, leaked).not.toContain(leaked);
+    }
+    // The title is kept, with what it must not carry replaced by a marker.
+    expect(content.titles.map((title) => [title.id, title.title])).toEqual([
+      [300_001, "[redacted url]"],
+      [300_002, "Example Leak [redacted id]"],
+      [300_003, "Example [redacted id]"],
+    ]);
+  });
+
+  it("drops a result whose title is nothing once sanitized", async () => {
+    const recorded = instances.catalog("radarr")[1] as Record<string, unknown>;
+    instances.serve("radarr", "movie/lookup", [
+      { ...recorded, tmdbId: 300_004, title: "\u200b\u0000" },
+      { ...recorded, tmdbId: 300_005, title: "Example \u202eKept" },
+    ]);
+
+    const { content } = await find({ text: "Example", kind: "movie" });
+
+    expect(content.titles.map((title) => [title.id, title.title])).toEqual([
+      [300_005, "Example Kept"],
+    ]);
+  });
+});

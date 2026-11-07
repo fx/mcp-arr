@@ -1,3 +1,4 @@
+import { maxTitleLength, safeText } from "../../adapters/activity/parse.js";
 import {
   addMediaPayload,
   type ConfigurationRecord,
@@ -53,10 +54,14 @@ function succeeded(
   resolution: Resolution | undefined,
   warnings: readonly string[] = [],
 ): AddResult {
+  // Upstream text, sanitized exactly as `media_find` sanitizes it, so the two
+  // tools report one title identically. Omitted when nothing survives: the
+  // outcome is what the caller acts on, and the title only describes it.
+  const title = safeText(candidate.title, maxTitleLength);
   return {
     kind: request.kind,
     id: request.id,
-    title: candidate.title,
+    ...(title === undefined ? {} : { title }),
     outcome,
     ...(resolution === undefined ? {} : { resolution }),
     warnings: [...warnings],

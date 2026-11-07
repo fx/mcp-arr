@@ -1,3 +1,4 @@
+import { maxTitleLength, safeText } from "../../adapters/activity/parse.js";
 import type { LookupResult } from "../../adapters/library/model.js";
 import { runLibraryQuery } from "../../adapters/library/service.js";
 import { maxPageSize } from "../schemas/common.js";
@@ -25,15 +26,26 @@ function metadataId(result: LookupResult): number | undefined {
   return id !== undefined && Number.isSafeInteger(id) && id > 0 ? id : undefined;
 }
 
+/**
+ * One lookup result as a found title, or `undefined` for one nothing could be
+ * done with.
+ *
+ * The title is upstream text, so it is published only through the same
+ * sanitizer every other upstream title passes: a metadata source can put a URL
+ * with credentials, a path, or a key-shaped token in a title as readily as in a
+ * status message. A title that is nothing once sanitized is dropped with the
+ * result, like a result with no metadata identifier.
+ */
 function foundTitle(kind: TitleKind, result: LookupResult): FoundTitle | undefined {
   const id = metadataId(result);
-  if (id === undefined || result.title.trim() === "") {
+  const title = safeText(result.title, maxTitleLength);
+  if (id === undefined || title === undefined) {
     return undefined;
   }
   return {
     kind,
     id,
-    title: result.title,
+    title,
     ...(result.year !== undefined && Number.isSafeInteger(result.year) && result.year > 0
       ? { year: result.year }
       : {}),
