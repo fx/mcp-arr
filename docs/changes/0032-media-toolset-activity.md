@@ -93,15 +93,15 @@ What implementing them requires of this change:
     - History since seven days ago, filtered to imports.
     - The calendar for the next fourteen days.
   - Title:
-    - `readQueueDetails` scoped to the library record's id.
+    - Every queue row scoped to the library record's id, read through a new adapter function, `readQueueForMedia(client, mediaId, profile, detail)`, in `src/adapters/activity/media.ts`. It issues the same `queue/details` request `readQueueDetails` does but maps every returned row, where `readQueueDetails` keeps only the one matching a queue item id. Bound it by the same scan bound the activity layer applies elsewhere.
     - The record's own monitored state and file statistics.
     - The next calendar entry.
 - **Grouping by download.** Both `media_status` and `media_fix` group queue rows by the queue item's download identity (`QueueOrigin.downloadIdentity`, read at whatever detail level carries it), so a season pack listed once per episode is one download.
   - A row with no identity is its own group.
   - The classifier never gives such a group the `import` remedy, because its sibling rows cannot be ruled out.
-- **`media_fix`.** Read the title's queue details, group the rows, and take at most the first ten stuck downloads in queue order; count the rest as left for a later call.
+- **`media_fix`.** Read the title's queue rows through `readQueueForMedia`, group them, and take at most the first ten stuck downloads in queue order; count the rest as left for a later call.
   - **Claim first.** For each download, claim it in a process-local in-flight map keyed by application and download identity, or by queue item id for an unidentified row, before reading it. Claiming is a synchronous check-and-set, so two overlapping calls cannot both hold it. A call that finds an item already claimed reports it `none`, already being fixed, and moves on.
-  - **Then read and classify.** Take a fresh focused read and classify the item:
+  - **Then read and classify.** Re-read the title's rows through `readQueueForMedia` once the claim is held, and classify the download from the rows that carry its identity:
     - `replace`: compile `blocklist_and_remove` with replacement search allowed, send it, and release the claim once the request returns.
     - `import`: scan, validate, confirm file absence from the library, then submit the manual import with import mode `auto`. Once the import is accepted, attach the returned command to the claim and keep it. The classifier reports that download `importing` until a refresh of the command through `readCommandRecord` reaches a terminal state or reports the command gone, and only then is the claim released.
     - `none`: report the reason and release the claim.
@@ -126,7 +126,7 @@ What implementing them requires of this change:
   - **Alternatives considered:** Suppressing redownload and starting an explicit search. Rejected for the double-grab risk.
 - **Decision:** Do not give `media` mutations apply records.
   - **Why:** Apply records exist so a retried `arr` apply reference cannot resend a non-idempotent mutation. A `media` call has no reference to retry. Its retry is a new call, and that call re-reads state: a replaced download has left the queue. A re-read alone cannot guard overlapping calls, or an import still queued upstream; the per-download claim above guards both with one small process-local map.
-  - **Alternatives considered:** Recording an apply record per `media` call, keyed by title. Rejected: it would hold a record per call for every remedy, where only an unfinished import needs one, and adds nothing for `replace`, which the re-read already guards.
+  - **Alternatives considered:** Recording an apply record per `media` call, keyed by title. Rejected: it would hold a record per call for every remedy, where the per-download claim already covers both remedies and is held only as long as each needs it.
 - **Decision:** Publish `media_remove` only when enabled, rather than publishing it and refusing it.
   - **Why:** [Tool Contracts](../specs/tool-contracts/#stable-typed-surface) bars advertising an intent the server refuses unconditionally. A tool that is never callable in a deployment does not belong in that deployment's listing.
   - **Alternatives considered:** A `confirm` input. Rejected: a model passes `true` as readily as a person clicks through, so it adds footprint without adding safety.
@@ -141,6 +141,7 @@ What implementing them requires of this change:
 
 - [ ] Report status
   - [ ] Implement title resolution from kind and id, capturing the external-id library read for both applications. Fall back to library matching where the filter is not honored, and record which held in this document.
+  - [ ] Add `readQueueForMedia` to `src/adapters/activity/media.ts`, returning every title-scoped queue row, with fixture-backed tests for both applications, including a season pack listed once per episode.
   - [ ] Implement `classifyDownload` with a test per table row.
   - [ ] Implement `media_status` for the overview and for a title, with bounded lists and cut-off totals.
   - [ ] Capture any fixture the overview needs that the inventory lacks, such as a queue page holding stalled and import-blocked items or an import history window, and register it.
