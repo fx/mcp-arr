@@ -72,9 +72,12 @@ STOPSIGNAL SIGTERM
 
 # Liveness through the unauthenticated /healthz, using the image's own Node.js
 # so no HTTP client is installed for it. It probes loopback when the listener
-# binds every interface, and the configured address otherwise.
+# binds every interface, and the configured address otherwise. node:http takes
+# the address and port as separate options rather than a URL, so every port and
+# address the server accepts — a scoped IPv6 address included — is reachable,
+# and the request is destroyed if it has not answered within four seconds.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD ["node", "-e", "const host = (process.env.ARR_MCP_HTTP_HOST ?? '').trim(); const target = host === '' || host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host.includes(':') ? `[${host}]` : host; const port = (process.env.ARR_MCP_HTTP_PORT ?? '').trim() || '9797'; fetch(`http://${target}:${port}/healthz`, { signal: AbortSignal.timeout(4000) }).then((response) => process.exit(response.status === 200 ? 0 : 1), () => process.exit(1));"]
+  CMD ["node", "-e", "const host = (process.env.ARR_MCP_HTTP_HOST ?? '').trim(); const port = Number((process.env.ARR_MCP_HTTP_PORT ?? '').trim() || '9797'); const request = require('node:http').get({ host: host === '' || host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host, port, path: '/healthz', agent: false }, (response) => process.exit(response.statusCode === 200 ? 0 : 1)); request.on('error', () => process.exit(1)); setTimeout(() => request.destroy(new Error('timed out')), 4000);"]
 
 # OCI metadata. CI's metadata step writes its own labels over these; they are
 # the fallback that lets a hand-built image describe itself. Declared last so
