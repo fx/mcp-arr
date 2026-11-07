@@ -2,7 +2,7 @@
 
 ## Overview
 
-This specification defines queue, history, blocklist, health, command, and job behavior. Queue mutation is modeled as typed state transitions rather than a generic delete operation.
+This specification defines queue, history, blocklist, health, command, and job behavior. Queue mutation is modeled as typed state transitions rather than a generic delete operation. Its requirements govern the `arr` toolset. The `media` toolset acts on the same upstream records under [Media Toolset](../media-toolset/) alone, and none of the requirements here binds a `media` tool.
 
 ## Background
 
@@ -142,3 +142,4 @@ None.
 | 2026-08-25 | Initial desired-state specification created | [0004-activity-diagnostics](../../changes/0004-activity-diagnostics.md) |
 | 2026-08-25 | Queue-resolution implementation planned | [0006-queue-resolution](../../changes/0006-queue-resolution.md) |
 | 2026-08-25 | History/blocklist mutation implementation planned | [0010-history-and-blocklist-mutations](../../changes/0010-history-and-blocklist-mutations.md) |
+| 2026-11-07 | Requirements scoped to the `arr` toolset | [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) |

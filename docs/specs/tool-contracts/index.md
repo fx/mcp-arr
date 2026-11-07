@@ -2,15 +2,18 @@
 
 ## Overview
 
-This specification defines the stable MCP tool surface, shared request/result conventions, plan/apply behavior, opaque references, and error semantics. Domain behavior is owned by the linked feature specifications.
+This specification defines the stable MCP tool surface, how a deployment selects one of its two toolsets, shared request/result conventions, plan/apply behavior, opaque references, and error semantics. Domain behavior is owned by the linked feature specifications.
 
 ## Background
 
 Mirroring upstream HTTP operations produces a large, brittle tool catalog. Conversely, one generic dispatcher hides the same catalog inside an untyped argument object. The desired surface uses a small set of explicitly typed domain tools.
 
+The server offers two such surfaces. The `arr` toolset exposes the applications' own model — fourteen tools with application selection, configuration references, and plan/apply — for operators who know Sonarr, Radarr, and Prowlarr. The `media` toolset, owned by [Media Toolset](../media-toolset/), talks about movies, series, and downloads and makes those choices itself. A process publishes either of them, or both side by side. Unless a requirement here names the `arr` toolset, it applies to every published tool in both. The domain specifications — Library Management, Activity Management, Acquisition and Import, and Configuration Reconciliation — govern the `arr` toolset only.
+
 Related behavior:
 
 - [Architecture](../architecture/)
+- [Media Toolset](../media-toolset/)
 - [Library Management](../library-management/)
 - [Activity Management](../activity-management/)
 - [Acquisition and Import](../acquisition-and-import/)
@@ -18,9 +21,44 @@ Related behavior:
 
 ## Requirements
 
+### Toolset Selection
+
+**Status:** unimplemented. [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) adds the selection with `arr` as its default; [0033-media-default-toolset](../../changes/0033-media-default-toolset.md) makes `media` the default.
+
+- The server MUST publish the toolsets selected at startup by `ARR_MCP_TOOLSET`: `media`, `arr`, or both, written as the comma-separated list `media,arr` in either order or as the alias `all`.
+- `all` MUST stand alone; a list that combines it with a toolset name MUST reject startup.
+- A list that names an unknown toolset, names one twice, or is empty MUST reject startup.
+- When `ARR_MCP_TOOLSET` is absent the server MUST publish the `media` toolset.
+- The published tool list MUST be fixed for the lifetime of the process, and MUST be the same on every transport.
+- Tool names MUST carry their toolset's prefix, `arr_` or `media_`, so no name is published by both toolsets.
+
+#### Scenario: Default toolset
+
+- **GIVEN** `ARR_MCP_TOOLSET` is absent
+- **WHEN** a caller lists tools
+- **THEN** the `media` tools are published and no `arr_` tool is
+
+#### Scenario: Keep the arr toolset
+
+- **GIVEN** `ARR_MCP_TOOLSET` is `arr`
+- **WHEN** a caller lists tools
+- **THEN** exactly the fourteen `arr` tools are published, as they were before the `media` toolset existed
+
+#### Scenario: Both toolsets
+
+- **GIVEN** `ARR_MCP_TOOLSET` is `arr,media`
+- **WHEN** a caller lists tools
+- **THEN** the fourteen `arr` tools and the `media` tools are published together, each exactly as it is when its toolset is selected alone
+
+#### Scenario: Misspelled toolset
+
+- **GIVEN** `ARR_MCP_TOOLSET` is `medai`
+- **WHEN** the server starts
+- **THEN** startup fails naming `ARR_MCP_TOOLSET`, and the value does not appear in the diagnostic
+
 ### Stable Typed Surface
 
-- The server MUST expose `arr_capabilities`, `arr_library_query`, `arr_activity_query`, `arr_release_search`, `arr_import_inspect`, `arr_config_observe`, `arr_job_get`, `arr_search_start`, `arr_release_grab`, `arr_queue_resolve`, `arr_activity_change`, `arr_import_execute`, `arr_library_change`, and `arr_job_cancel`.
+- The `arr` toolset MUST expose `arr_capabilities`, `arr_library_query`, `arr_activity_query`, `arr_release_search`, `arr_import_inspect`, `arr_config_observe`, `arr_job_get`, `arr_search_start`, `arr_release_grab`, `arr_queue_resolve`, `arr_activity_change`, `arr_import_execute`, `arr_library_change`, and `arr_job_cancel`.
 - Each tool MUST publish a closed input schema and a declared output schema.
 - Tool inputs MUST reject unknown properties.
 - Domain variants MUST use typed discriminated unions rather than arbitrary operation names or argument objects.
@@ -73,10 +111,10 @@ This parity is about the argument schema only. Cross-property correlations discl
 ### Bounded Structured Results
 
 - Every successful tool call MUST return schema-conforming structured content and a concise text summary.
-- Collection queries MUST support bounded page size and continuation metadata.
-- Default results MUST omit large nested payloads unless the caller requests a supported detail level.
+- Collection queries in the `arr` toolset MUST support bounded page size and continuation metadata.
+- `arr` toolset results MUST omit large nested payloads by default unless the caller requests a supported detail level. `media` results are bounded by the fixed limits [Media Toolset](../media-toolset/#minimal-footprint) sets instead.
 - Bulk and cross-application results MUST report per-item or per-application outcomes and MUST NOT conceal partial failure.
-- A collection query MUST accept an optional caller-supplied projection naming which parts of a per-application payload to return, and a projected result MUST carry only the named parts and only values the same call would have returned unprojected.
+- A collection query in the `arr` toolset MUST accept an optional caller-supplied projection naming which parts of a per-application payload to return, and a projected result MUST carry only the named parts and only values the same call would have returned unprojected.
 - A projection MUST NOT remove the result envelope, a per-application outcome's own fields, or the field that discriminates the payload, and a projection path matching nothing MUST produce a warning naming the paths that were available rather than failing the call.
 - A projection MUST be bounded in the number of paths it may name and in the length of one path, and both bounds MUST be at least what the tool's own generated path inventory publishes — the largest number of leaf paths any single payload names, and the longest path in any inventory — so no bound can refuse a projection naming exactly what the tool advertises. The path-length bound is a string length and MUST therefore not be published; the count of paths is an item count and MUST be.
 - A projection MUST NOT change the record counts a result reports. Those describe what the query matched, which is what a caller pages on, not what the projection kept.
@@ -110,7 +148,8 @@ This parity is about the argument schema only. Cross-property correlations discl
 
 ### Error Contract
 
-- Tool execution errors MUST use stable error codes for invalid input, unconfigured application, unsupported capability, unavailable application, upstream authentication, upstream rejection, rate limit, timeout, stale reference, stale plan, conflict, partial failure, and unexpected response.
+- Tool execution errors MUST use stable error codes for invalid input, unconfigured application, unsupported capability, unavailable application, upstream authentication, upstream rejection, rate limit, timeout, stale reference, stale plan, conflict, partial failure, unexpected response, not found, and deployment configuration.
+- A failure that only the operator can correct, because the deployment's configuration does not determine a choice the call needs, MUST be reported as `deployment_configuration`, and its remediation MUST say that the operator has to act and name what to change: the environment variable, or the setting on the instance.
 - Recoverable tool errors MUST include a safe remediation hint.
 - An error result's text summary MUST carry the stable error code and the remediation hint, because a caller may see only the summary when a call reports failure.
 - A text summary MUST NOT describe an outcome more favorably than the structured result it accompanies.
@@ -138,7 +177,9 @@ This parity is about the argument schema only. Cross-property correlations discl
 
 ### Plan and Apply
 
-- Every mutation tool MUST accept `mode: "plan"` and `mode: "apply"`.
+The requirements in this section, and in [Opaque References](#opaque-references), [Mutation Receipts and Retry](#mutation-receipts-and-retry), and [Job Projection](#job-projection), govern the `arr` toolset. The `media` toolset acts on each call directly and identifies titles by stable ids; its safety rules are owned by [Media Toolset](../media-toolset/#safety-without-plan-and-apply).
+
+- Every mutation tool in the `arr` toolset MUST accept `mode: "plan"` and `mode: "apply"`.
 - The calling agent MAY choose either mode without an MCP-owned confirmation workflow.
 - Plan mode MUST perform all non-mutating validation available at that time and return requested effects, conditional effects, warnings, read-set fingerprints, and an opaque process-local plan reference.
 - Apply mode MAY accept either a complete direct intent or a compatible plan reference.
@@ -231,15 +272,15 @@ No tool currently accepts a transient secret. The requirements governing one —
 
 ### Architecture
 
-Each public tool delegates to a domain service. An internal operation registry maps typed variants to application adapters, version support, side-effect classification, and tests. The registry does not accept model-defined operations.
+Each public tool delegates to a domain service. An internal operation registry maps the `arr` toolset's typed variants to application adapters, version support, side-effect classification, and tests. The registry does not accept model-defined operations. The `media` tools call the same adapters without going through an `arr` tool.
 
 ### Data Models
 
-Shared result envelopes carry application, status, data, warnings, continuation, and normalized errors. Mutation results additionally carry requested effects, predicted effects, plan or job references, and receipts.
+`arr` result envelopes carry application, status, data, warnings, continuation, and normalized errors. Mutation results additionally carry requested effects, predicted effects, plan or job references, and receipts. `media` results carry the same normalized errors and warnings, keyed by kind rather than by application.
 
 ### API Surface
 
-The fourteen tool names are stable public contracts. The details of upstream HTTP calls remain adapter-private.
+Each toolset's tool names are stable public contracts: the fourteen `arr` names here, and the `media` names in [Media Toolset](../media-toolset/#published-tools). The details of upstream HTTP calls remain adapter-private.
 
 ### Business Logic
 
@@ -276,3 +317,5 @@ None.
 | 2026-08-28 | Mutation output schemas required to admit their own plan-mode envelope | [0026-plan-mode-mutation-envelopes](../../changes/0026-plan-mode-mutation-envelopes.md) |
 | 2026-08-28 | Single-application mutation scope stated and required to be discoverable from the published schema | [0027-single-application-mutation-scope](../../changes/0027-single-application-mutation-scope.md) |
 | 2026-08-28 | Remediation required to be actionable by the caller; a failure in a request the server composed classified as an unexpected response | [0023-radarr-exclusion-route](../../changes/0023-radarr-exclusion-route.md) |
+| 2026-11-07 | Toolset selection added; plan/apply, references, receipts, jobs, and projection scoped to the `arr` toolset; `not_found` and `deployment_configuration` error codes added | [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) |
+| 2026-11-07 | `media` made the default toolset | [0033-media-default-toolset](../../changes/0033-media-default-toolset.md) |

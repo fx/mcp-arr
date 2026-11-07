@@ -6,9 +6,11 @@
 |------|-------------|--------|
 | [Acquisition and Import](specs/acquisition-and-import/) | Release search, grab, automatic search, and guarded manual import workflows | active |
 | [Activity Management](specs/activity-management/) | Queue, history, blocklist, health, command, and job behavior | active |
-| [Architecture](specs/architecture/) | Local stdio runtime, environment configuration, compatibility, and testing contracts | active |
+| [Architecture](specs/architecture/) | Stdio and HTTP runtime, environment configuration, compatibility, and testing contracts | active |
 | [Configuration Reconciliation](specs/configuration-reconciliation/) | Safe observation and reconciliation of upstream application configuration | active |
+| [HTTP Transport](specs/http-transport/) | Remote Streamable HTTP endpoint with a static bearer token, origin validation, and shared process state | active |
 | [Library Management](specs/library-management/) | Sonarr and Radarr library discovery, query, monitoring, files, and mutations | active |
+| [Media Toolset](specs/media-toolset/) | Minimal application-neutral tools to find, add, track, fix, and remove movies and series | active |
 | [Tool Contracts](specs/tool-contracts/) | Stable typed MCP tools, plan/apply, references, errors, receipts, and jobs | active |
 
 ## Changes
@@ -18,6 +20,8 @@ Changes 0011 through 0014 were scheduled ahead of the lower-numbered domain chan
 Changes 0021 through 0028 come from sweeping all fourteen tools against live instances at the recorded minimum versions, which found seven defects the full green test suite did not. 0022 through 0028 are those defects, and each is independent of the others. 0021 is the reason they were invisible: several recorded fixtures describe responses their named instances do not produce, so fixture-backed tests confirmed each adapter against its own assumption.
 
 A corrected fixture is the failing test for the defect it exposes, so each change corrects the fixtures it needs and lands green on its own: 0022 corrects the Sonarr `release` fixture, 0023 both exclusion fixtures, 0028 the Prowlarr `indexerstatus` fixture. 0021 owns the capture procedure, the fixtures no point fix needs, and a sweep across the rest — which is why it is the one change here with prerequisites, landing after every change that corrects a fixture of its own so that sweep can reach each one once it is correct. No change lands with a failing gate.
+
+Changes 0030 through 0033 make the server deployable as a remote service and give it a second, minimal toolset. 0030 is independent of the other three: either toolset runs over either transport. 0031 and 0032 build the `media` toolset as an opt-in. 0033 is the only breaking change of the four: after a live sweep, it makes `media` the default.
 
 | # | Change | Spec | Status | Depends On |
 |---|--------|------|--------|------------|
@@ -50,3 +54,7 @@ A corrected fixture is the failing test for the defect it exposes, so each chang
 | 0027 | [Single-Application Mutation Scope](changes/0027-single-application-mutation-scope.md) | [Tool Contracts](specs/tool-contracts/) | complete | — |
 | 0028 | [Prowlarr Indexer Status Shape](changes/0028-prowlarr-indexer-status-shape.md) | [Architecture](specs/architecture/) | complete | — |
 | 0029 | [Configurable Upstream Timeout](changes/0029-configurable-upstream-timeout.md) | [Architecture](specs/architecture/) | complete | — |
+| 0030 | [Streamable HTTP Transport](changes/0030-streamable-http-transport.md) | [HTTP Transport](specs/http-transport/) | draft | — |
+| 0031 | [Media Toolset — Selection, Find, and Add](changes/0031-media-toolset-library.md) | [Media Toolset](specs/media-toolset/) | draft | — |
+| 0032 | [Media Toolset — Status, Fix, Search Again, and Remove](changes/0032-media-toolset-activity.md) | [Media Toolset](specs/media-toolset/) | draft | 0031 |
+| 0033 | [Media as the Default Toolset](changes/0033-media-default-toolset.md) | [Tool Contracts](specs/tool-contracts/) | draft | 0031, 0032 |

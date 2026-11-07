@@ -2,7 +2,7 @@
 
 ## Overview
 
-This specification defines observable library discovery, query, monitoring, metadata, file, and mutation behavior for Sonarr and Radarr. Prowlarr has no media-library contract in this domain.
+This specification defines observable library discovery, query, monitoring, metadata, file, and mutation behavior for Sonarr and Radarr. Prowlarr has no media-library contract in this domain. Its requirements govern the `arr` toolset. The `media` toolset acts on the same upstream records under [Media Toolset](../media-toolset/) alone, and none of the requirements here binds a `media` tool.
 
 ## Background
 
@@ -138,3 +138,4 @@ None.
 | 2026-08-25 | Library-mutation implementation planned | [0009-library-mutations](../../changes/0009-library-mutations.md) |
 | 2026-08-26 | Calendar entries required to anchor inside the requested window and name their anchor | [0014-calendar-anchoring](../../changes/0014-calendar-anchoring.md) |
 | 2026-08-27 | Earliest in-window candidate fixed as the anchor, and the out-of-window residual case defined | [0014-calendar-anchoring](../../changes/0014-calendar-anchoring.md) |
+| 2026-11-07 | Requirements scoped to the `arr` toolset | [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) |

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This specification defines interactive release search and grab across Sonarr, Radarr, and Prowlarr, plus guarded manual import for Sonarr and Radarr. Search results and import candidates are carried through opaque, expiring references.
+This specification defines interactive release search and grab across Sonarr, Radarr, and Prowlarr, plus guarded manual import for Sonarr and Radarr. Search results and import candidates are carried through opaque, expiring references. Its requirements govern the `arr` toolset. The `media` toolset acts on the same upstream records under [Media Toolset](../media-toolset/) alone, and none of the requirements here binds a `media` tool.
 
 ## Background
 
@@ -150,3 +150,4 @@ None.
 |------|--------|----------|
 | 2026-08-25 | Initial desired-state specification created | [0005-release-search-and-grab](../../changes/0005-release-search-and-grab.md) |
 | 2026-08-25 | Guarded manual-import implementation planned | [0007-manual-import](../../changes/0007-manual-import.md) |
+| 2026-11-07 | Requirements scoped to the `arr` toolset | [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) |
