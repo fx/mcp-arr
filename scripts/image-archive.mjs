@@ -12,11 +12,12 @@ import { assert } from "./verification.mjs";
  *
  *   node scripts/image-archive.mjs check <archive>
  *     Asserts the archive holds one image index of exactly the published
- *     platforms, and prints `digest=<index digest>` for $GITHUB_OUTPUT.
+ *     platforms, annotated with its source and description, and prints
+ *     `digest=<index digest>` for $GITHUB_OUTPUT.
  *
  *   node scripts/image-archive.mjs load <archive> <os>/<arch> <local tag>
  *     Loads that platform's image from the archive into the Docker daemon,
- *     and asserts the loaded image is the archive's.
+ *     and asserts the loaded image has the archive's layers and configuration.
  *
  *   IMAGE_TAGS=<newline-separated tags> \
  *     node scripts/image-archive.mjs publish <archive> <expected digest>
@@ -90,6 +91,13 @@ async function describe(archive) {
     `Archive holds ${descriptor.mediaType}, not an image index`,
   );
   const index = await readBlob(archive, descriptor.digest);
+  for (const name of ["org.opencontainers.image.source", "org.opencontainers.image.description"]) {
+    const annotation = index.annotations?.[name];
+    assert(
+      typeof annotation === "string" && annotation.trim() !== "",
+      `Archive index carries no ${name} annotation`,
+    );
+  }
   const images = await Promise.all(
     (index.manifests ?? []).map(async (entry) => ({
       platform: `${entry.platform?.os}/${entry.platform?.architecture}`,
@@ -110,11 +118,27 @@ async function check(archive) {
   process.stdout.write(`digest=${digest}\n`);
 }
 
+/** JSON with object keys sorted at every depth, so equal values compare equal. */
+function canonical(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonical).join(",")}]`;
+  }
+  if (value !== null && typeof value === "object") {
+    const entries = Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`);
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
 /**
  * skopeo writes the platform's image as a Docker archive, which `docker load`
- * reads on any daemon. The loaded image's ID is its configuration digest — or,
- * on a containerd image store, its manifest digest — so either one ties what
- * the smoke test runs to this archive.
+ * reads on any daemon. The ID the daemon then assigns depends on the
+ * conversion and on its image store, so it proves nothing; what the smoke test
+ * runs is identified instead by its content. The loaded image must carry the
+ * archive configuration's platform, exactly its uncompressed layer digests in
+ * order, and every runtime setting that configuration declares.
  */
 async function load(archive, platform, tag) {
   const { images } = await describe(archive);
@@ -137,11 +161,24 @@ async function load(archive, platform, tag) {
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
-  const loaded = (await run("docker", ["image", "inspect", "--format", "{{.Id}}", tag])).trim();
+  const expected = await readBlob(archive, image.config);
+  const [loaded] = JSON.parse(await run("docker", ["image", "inspect", tag]));
   assert(
-    loaded === image.config || loaded === image.manifest,
-    `Loaded ${tag} is ${loaded}, not the archive's ${platform} image ${image.manifest}`,
+    `${loaded?.Os}/${loaded?.Architecture}` === `${expected.os}/${expected.architecture}`,
+    `Loaded ${tag} is ${loaded?.Os}/${loaded?.Architecture}, not ${expected.os}/${expected.architecture}`,
   );
+  const layers = expected.rootfs?.diff_ids ?? [];
+  assert(layers.length > 0, `Archive's ${platform} configuration names no layers`);
+  assert(
+    canonical(loaded.RootFS?.Layers) === canonical(layers),
+    `Loaded ${tag} does not carry the archive's ${platform} layers`,
+  );
+  for (const [key, value] of Object.entries(expected.config ?? {})) {
+    assert(
+      canonical(loaded.Config?.[key]) === canonical(value),
+      `Loaded ${tag} has a different ${key} than the archive's ${platform} configuration`,
+    );
+  }
   process.stdout.write(`Loaded ${platform} image ${image.manifest} as ${tag}\n`);
 }
 
