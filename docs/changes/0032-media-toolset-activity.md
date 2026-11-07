@@ -165,18 +165,13 @@ Accepted while the captures wait: every `media` call that names a title reads th
 
 ## Open Questions
 
-The spec carries two behavioral questions: upgrades, and the stalled-download threshold. This change adds one more, for the user to decide.
+The spec carries two behavioral questions: upgrades, and the stalled-download threshold.
 
-- **A file appearing between the last check and the import.** The `import` remedy imports only into movies and episodes the library's records show no file for. `media_fix` narrows the time in which that can stop being true:
-  - it claims every movie or episode an import is for, so two fixes never import into the same one at once;
-  - it refuses while another download for one of them is being imported;
-  - it reads the library's records once more after every file is recovered, immediately before the import is sent.
+Resolved:
 
-  It cannot close the gap entirely. In the seconds between that final read and the instance running the import, a file can still appear for an approved movie or episode, from the instance's own automatic import of another download. The manual import the instance offers has no option that refuses to replace an existing file. The options are:
-  1. Keep the `import` remedy with this narrow residual, and amend the spec to accept it.
-  2. Withdraw the `import` remedy until the instance offers a no-replace guarantee. A blocked import would then get remedy `none`, with the reason "importing these files needs a person".
-
-  Default if no decision is made: option 2, the conservative one.
+- **A file appearing between the last check and the import.** Decision: keep the `import` remedy; the spec's [Fix](../specs/media-toolset/#fix) requirements now accept the one residual it cannot close. In the seconds between `media_fix`'s final read of the library's records and the instance running the import, a file can still appear for an approved movie or episode, from the instance's own automatic import of another download, and the instance's manual import has no option that refuses to replace an existing file.
+  - **Why:** the race needs a second download of the same movie or episode to be imported automatically inside that window, and the instance treats the result as an upgrade. Withdrawing the remedy would remove the fix for the most common stuck state, a completed download whose import is blocked.
+  - **Mitigations, which stay:** `media_fix` claims every movie or episode an import is for, so two fixes never import into the same one at once; it refuses while another download for one of them is being imported; and it reads the library's records once more after every file is recovered, immediately before the import is sent.
 
 ## References
 
