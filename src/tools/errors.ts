@@ -23,6 +23,8 @@ export const toolErrorCodes = [
   "conflict",
   "partial_failure",
   "unexpected_response",
+  "not_found",
+  "deployment_configuration",
 ] as const;
 
 export type ToolErrorCode = (typeof toolErrorCodes)[number];
@@ -121,6 +123,17 @@ const toolErrorPolicies: Readonly<Record<ToolErrorCode, ToolErrorPolicy>> = {
     recoverable: false,
     remediation: "Check the application version against arr_capabilities and report the mismatch.",
     provesNoEffect: false,
+  },
+  not_found: {
+    recoverable: true,
+    remediation: "Search for the title again and use an id the search returned.",
+    provesNoEffect: true,
+  },
+  deployment_configuration: {
+    recoverable: false,
+    remediation:
+      "The server's operator has to change its configuration before this call can succeed.",
+    provesNoEffect: true,
   },
 };
 

@@ -58,6 +58,29 @@ describe("tool error contract", () => {
     expect(proven).not.toContain("partial_failure");
   });
 
+  it("offers a title search again for an id the metadata source does not know", () => {
+    const policy = toolErrorPolicy("not_found");
+
+    // The caller supplied the id, so the caller can correct it.
+    expect(policy.recoverable).toBe(true);
+    expect(policy.remediation).toBe(
+      "Search for the title again and use an id the search returned.",
+    );
+    // Nothing was found to act on, so nothing can have been changed.
+    expect(toolErrorProvesNoEffect("not_found")).toBe(true);
+  });
+
+  it("tells the caller a deployment configuration failure is the operator's to fix", () => {
+    const policy = toolErrorPolicy("deployment_configuration");
+
+    // No argument the caller can send changes what the deployment decides.
+    expect(policy.recoverable).toBe(false);
+    expect(policy.remediation).toContain("operator");
+    expect(policy.remediation).toContain("configuration");
+    // Every such failure adds nothing, which is what lets it settle as failed.
+    expect(toolErrorProvesNoEffect("deployment_configuration")).toBe(true);
+  });
+
   it("omits the application rather than serializing an undefined field", () => {
     const error = createToolError({ code: "invalid_input", message: "bad arguments" });
     expect("application" in error).toBe(false);

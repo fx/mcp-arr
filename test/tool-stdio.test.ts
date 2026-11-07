@@ -125,17 +125,20 @@ const propertyKeyPattern = /^[a-zA-Z0-9_.-]{1,64}$/u;
  *
  * Every session pays this before making a single call, so its size is part of
  * the contract rather than an implementation detail. The number is a recorded
- * measurement plus a margin, not a budget somebody chose: it was read off a
- * spawned server at 54,495 bytes, with the length bounds stripped from every
+ * measurement plus a margin, not a budget somebody chose: it was last read off
+ * a spawned server at 54,865 bytes, with the length bounds stripped from every
  * published input schema and restated as one sentence in six of their
  * descriptions, and with the five collection queries each publishing the
- * projection argument and its own sentence describing it.
+ * projection argument and its own sentence describing it. It was re-measured
+ * when the shared error vocabulary gained `not_found` and
+ * `deployment_configuration`, and did not move: the published envelope carries
+ * its errors unconstrained, so no code reaches the listing.
  *
  * The margin is sized against what it has to catch. The cheapest way for the
  * bulk to come back is one tool publishing its payload schema again, and the
  * smallest of those is `arr_job_get`'s at 1,483 bytes — so a margin under that
  * cannot hide even the least expensive regression, while still leaving room for
- * a tool description or a few payload fields. The 905 bytes here are well
+ * a tool description or a few payload fields. The 535 bytes here are well
  * inside it.
  *
  * The number moves in both directions, and lowering it is as deliberate as
