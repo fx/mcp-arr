@@ -200,7 +200,7 @@ Library records are returned with an opaque `reference`. That reference — not 
 
 ## Media tools
 
-The server has a second, much smaller toolset for callers that want to find, add, follow, and fix movies and TV series without knowing how Sonarr, Radarr, and Prowlarr divide the work. It talks about movies and series rather than applications, and it picks the quality profile and root folder itself. It is opt-in for now: the fourteen `arr` tools stay the default until the `media` toolset has been verified against live instances.
+The server has a second, much smaller toolset for callers that want to find, add, follow, and fix movies and TV series without knowing how Sonarr, Radarr, and Prowlarr divide the work. It talks about movies and series rather than applications, and it picks the quality profile and root folder itself. It is opt-in for now: all six of its tools are implemented, but the fourteen `arr` tools stay the default until the `media` toolset has been verified against live instances, and some of the instance answers its newest tools depend on have not yet been recorded from one.
 
 `ARR_MCP_TOOLSET` selects what the server publishes, and is read once at startup. It applies to both transports alike: a remote service publishes exactly the tools the same settings publish over stdio. It accepts:
 
