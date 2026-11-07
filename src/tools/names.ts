@@ -48,6 +48,22 @@ export type ToolName = (typeof toolNames)[number];
 
 const mutationToolNameSet: ReadonlySet<string> = new Set(mutationToolNames);
 
+/**
+ * The `media` toolset's names, kept apart from the `arr` lists above.
+ *
+ * Nothing about the operation registry or the capability report applies to
+ * them, so {@link ToolName} stays the `arr` names alone and every structure
+ * keyed by it is unaffected. Only the tools that are implemented are listed: a
+ * deployment that selects `media` must never be offered a tool that refuses
+ * unconditionally.
+ */
+export const mediaToolNames = ["media_find", "media_add"] as const;
+
+export type MediaToolName = (typeof mediaToolNames)[number];
+
+/** Every name either toolset can publish. The two prefixes keep them disjoint. */
+export type PublishedToolName = ToolName | MediaToolName;
+
 export function isMutationToolName(name: ToolName): name is MutationToolName {
   return mutationToolNameSet.has(name);
 }

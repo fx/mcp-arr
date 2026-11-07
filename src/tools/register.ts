@@ -1,8 +1,17 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { z } from "zod";
+import type { ToolsetSelection } from "../config/environment.js";
 import { type ToolDefinition, toolDefinitions } from "./definitions.js";
 import type { ToolContext } from "./dispatch.js";
 import { createToolError } from "./errors.js";
+import type { MediaContext } from "./media/context.js";
+import {
+  type MediaResult,
+  type MediaToolDefinition,
+  mediaToolDefinitions,
+} from "./media/definitions.js";
+import { callError } from "./media/errors.js";
 import { acceptsProjection, projectEnvelope, readProjection } from "./projection.js";
 import { buildToolResult, summarizeToolResult, type ToolResult } from "./results.js";
 import { publishedResultSchema } from "./schemas/publish-results.js";
@@ -24,11 +33,45 @@ function fallbackResult(reason: string): ToolResult<never> {
 }
 
 function conformingContent(
-  definition: ToolDefinition,
-  result: ToolResult<unknown>,
+  outputSchema: z.ZodType,
+  result: unknown,
 ): Record<string, unknown> | undefined {
-  const parsed = definition.outputSchema.safeParse(result);
+  const parsed = outputSchema.safeParse(result);
   return parsed.success && isRecord(parsed.data) ? parsed.data : undefined;
+}
+
+interface Settled<TResult> {
+  readonly result: TResult;
+  readonly structuredContent: Record<string, unknown> | undefined;
+}
+
+/**
+ * Runs one handler and holds what it returns to the tool's own declared output
+ * schema, shared by both toolsets.
+ *
+ * A handler that throws, or returns something its schema rejects, is replaced
+ * by the tool's fallback envelope, whose message is static: a thrown value's
+ * own message may carry a URL, a response body, or a configured API key.
+ */
+async function settle<TResult>(
+  name: string,
+  outputSchema: z.ZodType,
+  run: () => Promise<TResult>,
+  fallback: (reason: string) => TResult,
+): Promise<Settled<TResult>> {
+  let result: TResult;
+  try {
+    result = await run();
+  } catch {
+    result = fallback(`${name}: the call failed unexpectedly`);
+  }
+
+  let structuredContent = conformingContent(outputSchema, result);
+  if (structuredContent === undefined) {
+    result = fallback(`${name}: produced a non-conforming result`);
+    structuredContent = conformingContent(outputSchema, result);
+  }
+  return { result, structuredContent };
 }
 
 /**
@@ -49,18 +92,14 @@ export async function runTool(
   context: ToolContext,
   input: unknown,
 ): Promise<CallToolResult> {
-  let result: ToolResult<unknown>;
-  try {
-    result = await definition.handle(context, input);
-  } catch {
-    result = fallbackResult(`${definition.name}: the call failed unexpectedly`);
-  }
-
-  let structuredContent = conformingContent(definition, result);
-  if (structuredContent === undefined) {
-    result = fallbackResult(`${definition.name}: produced a non-conforming result`);
-    structuredContent = conformingContent(definition, result);
-  }
+  const settled = await settle<ToolResult<unknown>>(
+    definition.name,
+    definition.outputSchema,
+    () => definition.handle(context, input),
+    fallbackResult,
+  );
+  let result = settled.result;
+  let structuredContent = settled.structuredContent;
 
   const projection = readProjection(input);
   if (
@@ -90,21 +129,80 @@ export async function runTool(
   };
 }
 
-export function registerTools(server: McpServer, context: ToolContext): void {
-  for (const definition of toolDefinitions) {
-    server.registerTool(
-      definition.name,
-      {
-        title: definition.title,
-        description: definition.description,
-        inputSchema: definition.inputSchema,
-        // Broadened for publication only. The tool's own schema keeps
-        // validating every envelope above, and is what the payload's published
-        // path inventory is generated from.
-        outputSchema: publishedResultSchema(definition.outputSchema),
-        annotations: definition.annotations,
-      },
-      (input: unknown) => runTool(definition, context, input),
-    );
+/**
+ * Runs one `media` tool through the same settle path.
+ *
+ * A `media` result has no overall status of its own: it failed exactly when
+ * it carries an error, and a list of unavailable kinds beside found titles is
+ * a success that says what it could not reach. Its summary is one line.
+ */
+export async function runMediaTool(
+  definition: MediaToolDefinition,
+  context: MediaContext,
+  input: unknown,
+): Promise<CallToolResult> {
+  const { result, structuredContent } = await settle<MediaResult>(
+    definition.name,
+    definition.outputSchema,
+    () => definition.handle(context, input),
+    (reason) => definition.failure(callError("unexpected_response", reason)),
+  );
+  return {
+    content: [{ type: "text", text: definition.summarize(result) }],
+    ...(structuredContent === undefined ? {} : { structuredContent }),
+    isError: result.errors.length > 0,
+  };
+}
+
+/** What a `media` deployment adds titles with when nothing was configured. */
+const noMediaDefaults: MediaContext["defaults"] = { movie: {}, series: {} };
+
+/**
+ * Registers every tool of each selected toolset, `arr` first, so a listing of
+ * both is the `arr` listing followed by the `media` one. The two name lists
+ * carry different prefixes, so registering both needs no conflict handling.
+ */
+export function registerTools(
+  server: McpServer,
+  context: ToolContext,
+  toolsets: ToolsetSelection,
+): void {
+  if (toolsets.names.includes("arr")) {
+    for (const definition of toolDefinitions) {
+      server.registerTool(
+        definition.name,
+        {
+          title: definition.title,
+          description: definition.description,
+          inputSchema: definition.inputSchema,
+          // Broadened for publication only. The tool's own schema keeps
+          // validating every envelope above, and is what the payload's published
+          // path inventory is generated from.
+          outputSchema: publishedResultSchema(definition.outputSchema),
+          annotations: definition.annotations,
+        },
+        (input: unknown) => runTool(definition, context, input),
+      );
+    }
+  }
+
+  if (toolsets.names.includes("media")) {
+    const mediaContext: MediaContext = {
+      registry: context.registry,
+      defaults: toolsets.media ?? noMediaDefaults,
+    };
+    for (const definition of mediaToolDefinitions) {
+      server.registerTool(
+        definition.name,
+        {
+          title: definition.title,
+          description: definition.description,
+          inputSchema: definition.inputSchema,
+          outputSchema: definition.publishedOutputSchema,
+          annotations: definition.annotations,
+        },
+        (input: unknown) => runMediaTool(definition, mediaContext, input),
+      );
+    }
   }
 }

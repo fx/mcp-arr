@@ -96,6 +96,15 @@ const allowedFiles = [
   "dist/tools/jobs.js",
   "dist/tools/library-change.js",
   "dist/tools/library.js",
+  "dist/tools/media/add.js",
+  "dist/tools/media/context.js",
+  "dist/tools/media/definitions.js",
+  "dist/tools/media/errors.js",
+  "dist/tools/media/find.js",
+  "dist/tools/media/kinds.js",
+  "dist/tools/media/probe.js",
+  "dist/tools/media/resolution.js",
+  "dist/tools/media/schemas.js",
   "dist/tools/names.js",
   "dist/tools/operations.js",
   "dist/tools/projection.js",
@@ -136,14 +145,20 @@ const configurationVariables = [
   "ARR_MCP_HTTP_HOST",
   "ARR_MCP_HTTP_PORT",
   "ARR_MCP_AUTH_TOKEN",
+  "ARR_MCP_TOOLSET",
+  "ARR_MCP_MEDIA_MOVIE_QUALITY_PROFILE",
+  "ARR_MCP_MEDIA_MOVIE_ROOT_FOLDER",
+  "ARR_MCP_MEDIA_SERIES_QUALITY_PROFILE",
+  "ARR_MCP_MEDIA_SERIES_ROOT_FOLDER",
 ];
 /**
  * The server rejects startup without a complete instance pair. Every inherited
  * variable the server reads is dropped — the instance pairs, the upstream
- * timeout, and the transport settings alike — so a developer's own settings
- * cannot change the verification, and these placeholders point at the reserved
- * `.invalid` domain, which is never contacted because the verifier only
- * initializes the MCP session.
+ * timeout, the transport settings, the toolset selection, and the media
+ * defaults alike — so a developer's own settings cannot change the
+ * verification, and these placeholders point at the reserved `.invalid`
+ * domain, which is never contacted because the verifier only initializes the
+ * MCP session.
  */
 const instanceEnvironment = {
   ...Object.fromEntries(

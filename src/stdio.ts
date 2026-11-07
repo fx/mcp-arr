@@ -1,7 +1,7 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { type AdapterRegistry, createAdapterRegistry } from "./adapters/registry.js";
-import type { EnvironmentConfiguration } from "./config/environment.js";
+import type { EnvironmentConfiguration, ToolsetSelection } from "./config/environment.js";
 import type { Runtime } from "./process.js";
 import { createServer } from "./server.js";
 import { createWorkflowState, type WorkflowState } from "./state/workflow.js";
@@ -14,7 +14,7 @@ export interface ConnectableServer {
 }
 
 export interface StdioRuntimeDependencies {
-  createServer: (context: ToolContext) => ConnectableServer;
+  createServer: (context: ToolContext, toolsets: ToolsetSelection) => ConnectableServer;
   createTransport: () => Transport;
   createRegistry: (configuration: EnvironmentConfiguration) => AdapterRegistry;
   createOperations: () => ToolContext["operations"];
@@ -38,11 +38,14 @@ export function createStdioRuntime(
   dependencies: StdioRuntimeDependencies = defaultDependencies,
 ): Runtime {
   const registry = dependencies.createRegistry(configuration);
-  const server = dependencies.createServer({
-    registry,
-    operations: dependencies.createOperations(),
-    state: dependencies.createState(),
-  });
+  const server = dependencies.createServer(
+    {
+      registry,
+      operations: dependencies.createOperations(),
+      state: dependencies.createState(),
+    },
+    configuration.toolsets,
+  );
   const transport = dependencies.createTransport();
   let startPromise: Promise<void> | undefined;
   let closePromise: Promise<void> | undefined;

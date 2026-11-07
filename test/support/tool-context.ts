@@ -6,7 +6,11 @@ import {
 } from "../../src/adapters/configuration/domains.js";
 import { createAdapterRegistry } from "../../src/adapters/registry.js";
 import { type ApplicationId, applicationDescriptors } from "../../src/applications.js";
-import { type EnvironmentRecord, parseEnvironment } from "../../src/config/environment.js";
+import {
+  type EnvironmentRecord,
+  parseEnvironment,
+  type ToolsetSelection,
+} from "../../src/config/environment.js";
 import type { FetchLike, UpstreamClient } from "../../src/http/client.js";
 import { createWorkflowState, type WorkflowState } from "../../src/state/workflow.js";
 import type { ToolContext } from "../../src/tools/dispatch.js";
@@ -325,6 +329,9 @@ export const sampleBranchInputs: Readonly<Record<ToolName, readonly Record<strin
   ],
   arr_job_cancel: [{ mode: "apply", job: sampleReferences.job }, planApplyArguments],
 };
+
+/** The selection a process that names no toolset publishes today. */
+export const arrToolset: ToolsetSelection = { names: ["arr"] };
 
 export interface TestContextOptions {
   readonly environment?: EnvironmentRecord;
