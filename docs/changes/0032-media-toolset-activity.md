@@ -5,7 +5,7 @@
 Complete the `media` toolset with `media_status`, `media_fix`, `media_search_again`, and the opt-in `media_remove`. With these, a caller can see what is downloading and what is stuck, fix a stuck download in one call, ask for another search, and, where the operator allows it, remove a title, all without knowing any *arr concept. The [Media Toolset spec](../specs/media-toolset/) owns the behavior.
 
 **Spec:** [Media Toolset](../specs/media-toolset/)
-**Status:** draft
+**Status:** in-progress
 **Depends On:** 0031
 
 ## Motivation
@@ -142,20 +142,23 @@ What implementing them requires of this change:
 ## Tasks
 
 - [ ] Report status
-  - [ ] Implement title resolution from kind and id, capturing the external-id library read for both applications. Fall back to library matching where the filter is not honored, and record which held in this document.
-  - [ ] Add `readQueueForMedia` to `src/adapters/activity/media.ts`, returning every title-scoped queue row, with fixture-backed tests for both applications, including a season pack listed once per episode.
-  - [ ] Implement `classifyDownload` with a test per table row.
-  - [ ] Implement `media_status` for the overview and for a title, with bounded lists and cut-off totals.
-  - [ ] Capture any fixture the overview needs that the inventory lacks, such as a queue page holding stalled and import-blocked items or an import history window, and register it.
+  - [x] Implement title resolution from kind and id. `readLibraryTitleByExternalId` in `src/adapters/library/titles.ts` sends the external-id filter (`series?tvdbId=`, `movie?tmdbId=`) and always matches the id locally, so the answer is the same whether or not the instance honours the filter. Which route holds on the supported versions is not yet established: the live instances were unreachable from the implementing environment, and the capture below records it.
+  - [ ] Capture the filtered library reads `series?tvdbId=` and `movie?tmdbId=` from live instances, register them, and record here which held. Pending: the live instances were unreachable from the implementing environment; the lookup is covered by the recorded unfiltered `series` and `movie` fixtures and by inline filtered answers.
+  - [x] Add `readQueueForMedia` to `src/adapters/activity/media.ts`, returning every title-scoped queue row, with fixture-backed tests for both applications over the recorded `queue/details`, and inline tests for a season pack listed once per episode and a row with no download identity.
+  - [ ] Capture a `queue/details` fixture holding a season pack listed once per episode, and register it. Pending, for the same reason; the season pack is covered by inline rows built over the recorded row.
+  - [x] Implement `classifyDownload` with a test per table row.
+  - [x] Implement `media_status` for the overview and for a title, with bounded lists and cut-off totals.
+  - [ ] Capture a `queue` fixture holding a stalled and an import-blocked download, and a `history/since` fixture, and register them. Pending, for the same reason; stalled and failed rows are covered inline over the recorded queue rows, and `history/since` is answered in tests with the recorded `history` records, which are the same resource.
 - [ ] Fix stuck downloads
-  - [ ] Implement `media_fix` with per-item re-read, the `replace` remedy through the existing compiler, the `import` remedy with library file-absence confirmation, the per-download in-flight claim covering both remedies, the ten-item bound with a remainder count, and per-item outcomes.
-  - [ ] Add the agreement, non-action, state-change, and flag tests from the Testing Requirements above.
-- [ ] Search again and remove
-  - [ ] Implement `media_search_again` with missing-only selection, sending `MoviesSearch` or `EpisodeSearch` for exactly the missing released ids, sending nothing when none qualify, and refusing a title not in the library with `conflict`.
-  - [ ] Parse `ARR_MCP_MEDIA_ALLOW_REMOVE` and implement `media_remove`, registered only when enabled.
-  - [ ] Extend `test/media-stdio.test.ts` to list all six tools with removal enabled and five without, and re-measure the recorded listing ceiling.
-  - [ ] Add the new variable to the environment filters and every new `dist/**` file to the packed-file inventory.
-  - [ ] Document the four tools and `ARR_MCP_MEDIA_ALLOW_REMOVE` in the README's "Media tools" section, and update the spec's status note.
+  - [x] Implement `media_fix` with per-item re-read, the `replace` remedy through the existing compiler, the `import` remedy with library file-absence confirmation, the per-download in-flight claim covering both remedies, the ten-item bound with a remainder count, and per-item outcomes. The claims live in the workflow state, so the stdio session and every HTTP request share them.
+  - [x] Add the agreement, non-action, state-change, and flag tests from the Testing Requirements above.
+  - [ ] Capture a `command/{id}` fixture for a `ManualImport` while it is queued and once it has ended, and a `manualimport` scan of an import-blocked download, and register them. Pending, for the same reason; the refresh is covered by the recorded `command` records served by id and by inline command states, and the import scan by inline rows built over the recorded `manualimport` rows.
+- [x] Search again and remove
+  - [x] Implement `media_search_again` with missing-only selection, sending `MoviesSearch` or `EpisodeSearch` for exactly the missing released ids, sending nothing when none qualify, and refusing a title not in the library with `conflict`.
+  - [x] Parse `ARR_MCP_MEDIA_ALLOW_REMOVE` and implement `media_remove`, registered only when enabled.
+  - [x] Extend `test/media-stdio.test.ts` to list all six tools with removal enabled and five without, and re-measure the recorded listing ceiling: 11,649 bytes with all six tools published, recorded at a ceiling of 11,800. Fitting it under the specification's 12,000 bytes took publishing every `media` tool's output schema from plain leaves — validation keeps every bound — and dropping the annotation title that repeated each tool's own.
+  - [x] Add the new variable to the environment filters and every new `dist/**` file to the packed-file inventory.
+  - [x] Document the four tools and `ARR_MCP_MEDIA_ALLOW_REMOVE` in the README's "Media tools" section, and update the spec's status note.
 
 ## Open Questions
 
