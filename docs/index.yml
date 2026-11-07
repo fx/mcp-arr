@@ -12,15 +12,23 @@ specs:
     status: active
   - name: architecture
     path: specs/architecture/
-    description: Local stdio runtime, environment configuration, compatibility, and testing contracts
+    description: Stdio and HTTP runtime, environment configuration, compatibility, and testing contracts
     status: active
   - name: configuration-reconciliation
     path: specs/configuration-reconciliation/
     description: Safe observation and reconciliation of upstream application configuration
     status: active
+  - name: http-transport
+    path: specs/http-transport/
+    description: Remote Streamable HTTP endpoint with a static bearer token, origin validation, and shared process state
+    status: active
   - name: library-management
     path: specs/library-management/
     description: Sonarr and Radarr library discovery, query, monitoring, files, and mutations
+    status: active
+  - name: media-toolset
+    path: specs/media-toolset/
+    description: Minimal application-neutral tools to find, add, track, fix, and remove movies and series
     status: active
   - name: tool-contracts
     path: specs/tool-contracts/
@@ -236,3 +244,31 @@ changes:
     spec: architecture
     status: complete
     depends_on: []
+  - id: "0030"
+    name: streamable-http-transport
+    path: changes/0030-streamable-http-transport.md
+    description: Serve MCP over stateless Streamable HTTP behind one static bearer token, with stdio kept as the default
+    spec: http-transport
+    status: draft
+    depends_on: []
+  - id: "0031"
+    name: media-toolset-library
+    path: changes/0031-media-toolset-library.md
+    description: Add the startup toolset selection and the opt-in media_find and media_add tools
+    spec: media-toolset
+    status: draft
+    depends_on: []
+  - id: "0032"
+    name: media-toolset-activity
+    path: changes/0032-media-toolset-activity.md
+    description: Complete the media toolset with status, fix, search again, and opt-in remove
+    spec: media-toolset
+    status: draft
+    depends_on: ["0031"]
+  - id: "0033"
+    name: media-default-toolset
+    path: changes/0033-media-default-toolset.md
+    description: Make media the default toolset after a live sweep, keeping arr behind ARR_MCP_TOOLSET=arr
+    spec: tool-contracts
+    status: draft
+    depends_on: ["0031", "0032"]

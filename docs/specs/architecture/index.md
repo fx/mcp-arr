@@ -2,15 +2,17 @@
 
 ## Overview
 
-This specification defines the project-level contract for a local TypeScript MCP server that manages Sonarr, Radarr, and Prowlarr through their HTTP APIs. The server does not yet exist; this document describes the desired architecture that the linked change documents will implement.
+This specification defines the project-level contract for a TypeScript MCP server that manages Sonarr, Radarr, and Prowlarr through their HTTP APIs. It runs either as a local process a host launches over stdio, or as a long-lived remote service over Streamable HTTP that holds the instance credentials so its clients never see them.
 
 ## Background
 
-The repository currently contains only documentation scaffolding. The design replaces a prior-art pattern in which every upstream endpoint becomes a separate MCP tool and all behavior accumulates in one source file.
+The design replaces a prior-art pattern in which every upstream endpoint becomes a separate MCP tool and all behavior accumulates in one source file.
 
 The feature contracts are split across:
 
 - [Tool Contracts](../tool-contracts/)
+- [Media Toolset](../media-toolset/)
+- [HTTP Transport](../http-transport/)
 - [Library Management](../library-management/)
 - [Activity Management](../activity-management/)
 - [Acquisition and Import](../acquisition-and-import/)
@@ -25,15 +27,19 @@ The feature contracts are split across:
 
 #### Scenario: Start the packaged server
 
-- **GIVEN** a supported Node.js runtime and valid environment configuration
+- **GIVEN** a supported Node.js runtime and valid environment configuration with no transport selected
 - **WHEN** the configured MCP command is launched
 - **THEN** the process starts an MCP server over stdio without requiring any other local service
 
-### Stdio-Only Transport
+### Transports
 
-- The initial server MUST expose MCP exclusively through stdio.
-- The initial server MUST NOT open an HTTP, SSE, WebSocket, or other network listener.
-- The server MUST reserve stdout for MCP protocol messages.
+**Status:** the HTTP transport is unimplemented; [0030-streamable-http-transport](../../changes/0030-streamable-http-transport.md) adds it.
+
+- The server MUST expose MCP through exactly one transport per process, selected at startup by `ARR_MCP_TRANSPORT`, whose accepted values are `stdio` and `http`.
+- When `ARR_MCP_TRANSPORT` is absent the server MUST use stdio.
+- Over stdio the server MUST NOT open any network listener, and MUST reserve stdout for MCP protocol messages.
+- Over HTTP the server MUST behave as [HTTP Transport](../http-transport/) specifies, and MUST NOT open any listener other than the one that specification defines.
+- The server MUST NOT open an SSE-only, WebSocket, or other network listener on either transport.
 - Diagnostics MAY be written to stderr.
 
 #### Scenario: Diagnostic output
@@ -41,6 +47,12 @@ The feature contracts are split across:
 - **GIVEN** an upstream request fails
 - **WHEN** the server emits a diagnostic
 - **THEN** the diagnostic is written without corrupting stdout protocol framing
+
+#### Scenario: Unknown transport
+
+- **GIVEN** `ARR_MCP_TRANSPORT` is `websocket`
+- **WHEN** the server starts
+- **THEN** startup fails naming `ARR_MCP_TRANSPORT`, and no MCP session or listener is opened
 
 ### Environment-Only Instance Configuration
 
@@ -51,12 +63,21 @@ The feature contracts are split across:
 - The server MUST reject startup when no application is configured.
 - Environment configuration MUST be read at process startup and MUST NOT require a configuration file, database, setup UI, or runtime configuration endpoint.
 - Tool inputs MUST NOT select arbitrary upstream base URLs.
+- Settings that are not instance connection settings — the transport, the toolset, the HTTP listener and its bearer token, and the `media` toolset's defaults — MUST likewise be read only from the environment at startup. The specification that owns each one owns its name, accepted values, and default: [Transports](#transports), [Tool Contracts — Toolset Selection](../tool-contracts/#toolset-selection), [HTTP Transport — Listener Configuration](../http-transport/#listener-configuration), and [Media Toolset — Deployment Defaults](../media-toolset/#deployment-defaults).
+- A required setting that is absent, or any setting whose value is empty or not one the owning specification accepts, MUST reject startup with a problem that names the setting and MUST NOT include its value.
+- A setting that applies only to a transport or toolset the process has not selected MUST reject startup in the same way, so a deployment that forgot a selection fails with a diagnostic instead of starting in a mode nobody intended.
 
 #### Scenario: Configure only Sonarr
 
 - **GIVEN** `SONARR_URL` and `SONARR_API_KEY` are set and both variable pairs for the other applications are absent
 - **WHEN** the server starts
 - **THEN** Sonarr capabilities are available and Radarr/Prowlarr capabilities are reported as unconfigured
+
+#### Scenario: A setting for a transport that is not selected
+
+- **GIVEN** `ARR_MCP_AUTH_TOKEN` is set and `ARR_MCP_TRANSPORT` is absent
+- **WHEN** the server starts
+- **THEN** startup fails naming `ARR_MCP_AUTH_TOKEN` as a setting that requires the HTTP transport, and its value does not appear
 
 #### Scenario: Reject an incomplete pair
 
@@ -119,6 +140,7 @@ The feature contracts are split across:
 
 - MCP-owned plans, opaque references, job projections, and receipts MUST be held in process memory only.
 - The server MUST NOT require a database or write runtime state to configuration files.
+- A process MUST hold exactly one set of this state, shared by every client the process serves on its transport.
 - Process-local references MUST become invalid after server restart.
 - Upstream application state MUST remain the authority for reconciliation after local state loss.
 
@@ -132,7 +154,8 @@ The feature contracts are split across:
 
 - Every exported behavior MUST have automated tests at the narrowest practical level.
 - Adapter behavior MUST be covered by sanitized, version-labelled upstream fixtures.
-- MCP tools MUST have protocol-level stdio integration tests for schemas, results, errors, and stdout cleanliness.
+- MCP tools MUST have protocol-level stdio integration tests for schemas, results, errors, and stdout cleanliness, for each toolset.
+- The HTTP transport MUST have protocol-level integration tests against a real listener for authentication, origin validation, statelessness, and the absence of every credential from responses and diagnostics.
 - Mutations MUST have tests for direct apply, planned apply, stale plans, retries, partial failure, and redaction.
 - The full build, type check, lint, and test suite MUST run in CI and failures MUST block merge.
 - Committed tests MUST NOT be focused, skipped, or dependent on live personal *arr instances.
@@ -168,6 +191,12 @@ The feature contracts are split across:
 - **WHEN** the host installs the published package and launches its command with instance environment variables
 - **THEN** the MCP server starts over stdio exactly as it does from a local build
 
+#### Scenario: Run the published package as a remote service
+
+- **GIVEN** a host with a supported Node.js runtime and no checkout of this project
+- **WHEN** an operator launches the published package's command with instance variables, the HTTP transport, and a bearer token
+- **THEN** the server listens for MCP over HTTP exactly as it does from a local build
+
 #### Scenario: Release awaits a human
 
 - **GIVEN** the automated release process has prepared a pending release for the accumulated commits
@@ -180,6 +209,8 @@ The feature contracts are split across:
 
 The server is organized around transport, typed tool handlers, workflow services, an internal semantic operation registry, application adapters, and an upstream HTTP boundary. The semantic registry is an implementation inventory and policy source; it is not exposed as a generic dispatcher tool.
 
+Transport and toolset are independent choices made at startup. Either toolset runs over either transport, and both sit over the same adapters, upstream client, and workflow state.
+
 All local state is ephemeral. Long-running upstream commands are projected into process-local job records while the upstream application remains authoritative.
 
 ### Data Models
@@ -188,7 +219,7 @@ The cross-cutting model includes configured application identity, application ve
 
 ### API Surface
 
-The only inbound runtime surface is MCP over stdio. Outbound calls target the configured Sonarr API v3, Radarr API v3, or Prowlarr API v1 base path.
+The inbound runtime surface is MCP over stdio, or MCP over the HTTP endpoint plus its health path defined by [HTTP Transport](../http-transport/#api-surface). Outbound calls target the configured Sonarr API v3, Radarr API v3, or Prowlarr API v1 base path.
 
 ### Business Logic
 
@@ -196,8 +227,9 @@ Startup validates environment pairs, probes each configured instance, and regist
 
 ## Constraints
 
-- The initial deployment is local and single-user.
-- Multi-instance applications, remote MCP transport, OAuth, RBAC, databases, local configuration files, and configuration UI are outside scope.
+- Every deployment serves a single operator. Over HTTP, every client holding the bearer token acts with the same authority.
+- A deployment runs as one process, because runtime state is process memory; see [HTTP Transport — Constraints](../http-transport/#constraints).
+- Multi-instance applications, OAuth, multiple users, RBAC, databases, local configuration files, and configuration UI are outside scope.
 - Runtime state does not survive process restart.
 - Upstream APIs contain dynamic and occasionally incomplete contracts, so OpenAPI alone is not authoritative.
 
@@ -222,3 +254,5 @@ None.
 | 2026-08-28 | Unmodelled shapes in fields a result does not depend on required to be dropped rather than fail the result | [0022-upstream-field-shape-tolerance](../../changes/0022-upstream-field-shape-tolerance.md) |
 | 2026-08-28 | Upstream payloads barred from being required to carry a member no result reads | [0028-prowlarr-indexer-status-shape](../../changes/0028-prowlarr-indexer-status-shape.md) |
 | 2026-08-29 | Upstream request timeout required to be configurable, defaulted to 30 000 ms, and bounded | [0029-configurable-upstream-timeout](../../changes/0029-configurable-upstream-timeout.md) |
+| 2026-11-07 | Stdio-only transport replaced by a startup transport selection with Streamable HTTP; state shared across a process's clients; single-operator and single-process constraints stated | [0030-streamable-http-transport](../../changes/0030-streamable-http-transport.md) |
+| 2026-11-07 | Non-instance settings, including the toolset and its defaults, required to come from the environment | [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) |
