@@ -51,6 +51,8 @@ Additionally, because `media_fix` acts without a plan:
 - A test MUST prove the `import` remedy is refused when the library's record for a mapped movie or episode reports a file, or cannot say, even though the scan reports every candidate importable and no existing file.
 - A test MUST prove that two `media_fix` calls for the same stuck download, sequential and concurrent, send one replacement between them, and submit one import between them while its command is unfinished.
 - A test MUST prove that `media_fix` on a title with more than ten stuck downloads acts on ten and reports the remainder count.
+- A test MUST prove that a season pack listed as several queue rows sharing one download identity is reported once by `media_status`, and is replaced or imported once by `media_fix`, both within one call and across concurrent calls.
+- A test MUST prove that a row with no download identity is never given the `import` remedy.
 - A test MUST prove that a concurrent duplicate `media_remove` reports `not_in_library`.
 - A test MUST prove `media_search_again` sends only ids with no file, and sends nothing for a title whose scope has nothing missing.
 
@@ -94,8 +96,11 @@ What implementing them requires of this change:
     - `readQueueDetails` scoped to the library record's id.
     - The record's own monitored state and file statistics.
     - The next calendar entry.
-- **`media_fix`.** Read the title's queue details, and take at most the first ten stuck items in queue order; count the rest as left for a later call.
-  - **Claim first.** For each item, claim it in a process-local in-flight map keyed by application and queue item id before reading it. Claiming is a synchronous check-and-set, so two overlapping calls cannot both hold it. A call that finds an item already claimed reports it `none`, already being fixed, and moves on.
+- **Grouping by download.** Both `media_status` and `media_fix` group queue rows by the queue item's download identity (`QueueOrigin.downloadIdentity`, read at whatever detail level carries it), so a season pack listed once per episode is one download.
+  - A row with no identity is its own group.
+  - The classifier never gives such a group the `import` remedy, because its sibling rows cannot be ruled out.
+- **`media_fix`.** Read the title's queue details, group the rows, and take at most the first ten stuck downloads in queue order; count the rest as left for a later call.
+  - **Claim first.** For each download, claim it in a process-local in-flight map keyed by application and download identity, or by queue item id for an unidentified row, before reading it. Claiming is a synchronous check-and-set, so two overlapping calls cannot both hold it. A call that finds an item already claimed reports it `none`, already being fixed, and moves on.
   - **Then read and classify.** Take a fresh focused read and classify the item:
     - `replace`: compile `blocklist_and_remove` with replacement search allowed, send it, and release the claim once the request returns.
     - `import`: scan, validate, confirm file absence from the library, then submit the manual import with import mode `auto`. Once the import is accepted, attach the returned command to the claim and keep it. The classifier reports that download `importing` until a refresh of the command through `readCommandRecord` reaches a terminal state or reports the command gone, and only then is the claim released.

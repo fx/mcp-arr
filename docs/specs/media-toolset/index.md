@@ -151,6 +151,7 @@ Setting any of these variables while the `arr` toolset is selected, or setting o
 ### Status
 
 - `media_status` MUST accept either nothing, for an overview, or a title's kind and id, for that title.
+- A download the applications list once per episode it covers, such as a season pack, MUST be reported as one download, identified by the download rather than by any one of its rows.
 - Every download it reports MUST carry its title, which for an episode includes its season and episode numbers, and exactly one state: `queued`, `downloading`, `waiting`, `importing`, or `stuck`.
 - A `downloading` download MUST also carry its progress as a whole percentage, and a `stuck` download MUST also carry a one-sentence reason and the remedy `media_fix` would apply to it if state did not change: `replace`, `import`, or `none`.
 - A download for which this process has started an import that has not yet finished MUST be reported `importing`.
@@ -173,7 +174,8 @@ Setting any of these variables while the `arr` toolset is selected, or setting o
 
 ### Fix
 
-- `media_fix` MUST accept a title's kind and id and MUST act on the title's downloads that are `stuck` when the call re-reads them, at most 10 per call, in the order the queue lists them.
+- `media_fix` MUST accept a title's kind and id and MUST act on the title's downloads that are `stuck` when the call re-reads them, at most 10 per call, in the order the queue lists them, acting once per download however many episode rows the applications list for it.
+- Where the applications do not identify which rows belong to one download, the remedy for those rows MUST NOT be `import`.
 - A `stuck` download whose remedy is `replace` MUST be blocklisted, removed from the download client together with its downloaded data, and replaced by the application's own search for another release.
 - A `stuck` download whose remedy is `import` MUST have its import started, and that remedy MUST apply only when every file the download holds is importable without any correction and the library's own records show no file for any movie or episode those files map to.
 - Where the library's records cannot establish that a mapped movie or episode has no file, the remedy MUST be `none`.
@@ -281,7 +283,7 @@ And the remedy for a `stuck` download:
 
 `media_add` reuses the `arr` toolset's lookup-by-id and duplicate detection, so an add can never create a second record for a title. Its idempotency comes from that state check rather than from an apply record: repeating an add finds the record the first call made.
 
-`media_fix` gets the same property from a per-download claim plus its re-read. Before acting on a download, a call claims it in process memory, and a concurrent call that finds the claim leaves the download alone; so two overlapping calls cannot both act on one download, whichever remedy applies. A replacement's claim lasts until its removal request has returned, after which the download has left the queue and a later call's re-read finds nothing to act on. An import's claim lasts longer, because starting one only queues work upstream and until it runs the download still looks stuck: the claim is held, and the download reported `importing`, until the upstream work is seen to finish. A repeated or concurrent call therefore cannot act twice on the same download within one process lifetime. After a restart that memory is gone. By then the first import has normally finished, and the library-file check refuses to import files into movies or episodes the library now holds; the residual case, a restart while an import is still queued upstream, is accepted.
+`media_fix` gets the same property from a per-download claim plus its re-read. Before acting on a download, a call claims it in process memory, keyed by the download rather than by any one queue row, since a season pack is listed once per episode, and a concurrent call that finds the claim leaves the download alone; so two overlapping calls cannot both act on one download, whichever remedy applies. A replacement's claim lasts until its removal request has returned, after which the download has left the queue and a later call's re-read finds nothing to act on. An import's claim lasts longer, because starting one only queues work upstream and until it runs the download still looks stuck: the claim is held, and the download reported `importing`, until the upstream work is seen to finish. A repeated or concurrent call therefore cannot act twice on the same download within one process lifetime. After a restart that memory is gone. By then the first import has normally finished, and the library-file check refuses to import files into movies or episodes the library now holds; the residual case, a restart while an import is still queued upstream, is accepted.
 
 Whether a mapped movie or episode already has a file is read from the library's own movie and episode records, never from the import scan. The scan's own existing-file marker depends on fields the supported versions do not send; see [tasks](../../tasks.md).
 
