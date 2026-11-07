@@ -113,6 +113,51 @@ Before exposing it:
 
 On `SIGTERM` or `SIGINT` the server stops accepting connections, lets requests already in progress finish for no longer than the request timeout above, and exits.
 
+## Run with Docker
+
+A container image of the same published package is at `ghcr.io/fx/mcp-arr`:
+
+| Tag | What it is |
+|---|---|
+| `latest`, `X.Y.Z`, `X.Y` | A release, published when its npm package is |
+| `main`, `sha-<commit>` | A development build of the default branch; never a release |
+
+The image runs the remote service above: it selects the HTTP transport and listens on `0.0.0.0:9797`. It holds no token and no instance, so give it both, exactly as the sections above describe:
+
+```sh
+export SONARR_API_KEY=replace-with-your-api-key
+export ARR_MCP_AUTH_TOKEN="$(openssl rand -hex 32)"
+docker run -d --name mcp-arr \
+  -p 127.0.0.1:9797:9797 \
+  -e SONARR_URL=https://sonarr.example.invalid \
+  -e SONARR_API_KEY \
+  -e ARR_MCP_AUTH_TOKEN \
+  ghcr.io/fx/mcp-arr:latest
+```
+
+`-e NAME` with no value passes the variable through from your shell, so the API key and the token stay off the command line and the token is still there to give your clients. The port is published on the host's loopback only, for a reverse proxy on the same host; see the list below before publishing it anywhere else. Without `ARR_MCP_AUTH_TOKEN` and at least one instance pair the container exits at once with a message naming what is missing. Or with Compose, reading the values from the environment it runs in:
+
+```yaml
+services:
+  mcp-arr:
+    image: ghcr.io/fx/mcp-arr:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9797:9797"
+    environment:
+      SONARR_URL: https://sonarr.example.invalid
+      SONARR_API_KEY: ${SONARR_API_KEY}
+      ARR_MCP_AUTH_TOKEN: ${ARR_MCP_AUTH_TOKEN}
+    # Longer than the request timeout, so requests in progress can finish.
+    stop_grace_period: 35s
+```
+
+- **Health.** The image's health check calls `/healthz` with its own Node.js, so `docker ps` reports the container `healthy` once it is serving.
+- **Non-root.** It runs as uid `1000`, the base image's `node` user, under `tini`.
+- **TLS and one replica still apply.** Everything in [Before exposing it](#run-as-a-remote-service) holds for the container: put it behind a TLS-terminating reverse proxy, and run exactly one container — never two replicas behind one URL, nor a rolling update that overlaps the old one.
+- **Stopping.** `docker stop` sends `SIGTERM` and waits ten seconds by default before killing; give it at least the request timeout (`--stop-timeout`, or `stop_grace_period` as above) so a request in progress is not cut off.
+- **HTTP only.** The image is for the remote service. To run over stdio, use `npx -y mcp-arr` as in [Configure your host](#configure-your-host).
+
 ## Verify a connection
 
 Call `arr_capabilities` first. It contacts each configured instance and reports, per application:
