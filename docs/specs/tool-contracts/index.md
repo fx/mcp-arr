@@ -149,7 +149,7 @@ This parity is about the argument schema only. Cross-property correlations discl
 ### Error Contract
 
 - Tool execution errors MUST use stable error codes for invalid input, unconfigured application, unsupported capability, unavailable application, upstream authentication, upstream rejection, rate limit, timeout, stale reference, stale plan, conflict, partial failure, unexpected response, not found, and deployment configuration.
-- A failure that only the operator can correct, because the deployment's configuration does not determine a choice the call needs, MUST be reported as `deployment_configuration`, and its remediation MUST say that the operator has to act and name the setting.
+- A failure that only the operator can correct, because the deployment's configuration does not determine a choice the call needs, MUST be reported as `deployment_configuration`, and its remediation MUST say that the operator has to act and name what to change: the environment variable, or the setting on the instance.
 - Recoverable tool errors MUST include a safe remediation hint.
 - An error result's text summary MUST carry the stable error code and the remediation hint, because a caller may see only the summary when a call reports failure.
 - A text summary MUST NOT describe an outcome more favorably than the structured result it accompanies.

@@ -85,8 +85,8 @@ The toolset exists to be the smallest surface that manages a library across the 
 
 - Where a folder variable is absent and the instance has exactly one root folder, that one MUST be used; where it is absent and the instance has several, `media_add` MUST fail with `deployment_configuration`.
 - For a call that names no `resolution`, the same rule MUST decide the quality profile: the configured one, else the only one, else `deployment_configuration`. A call that names a `resolution` has its profile chosen by [Resolution](#resolution) instead, and an absent profile variable is then no failure.
-- A variable that names a profile or folder the instance does not have MUST fail every `media_add` for that kind with `deployment_configuration`, whether or not the call names a `resolution`, so a stale setting is reported rather than silently bypassed.
-- Every `deployment_configuration` failure MUST carry a remediation naming the variable the operator has to set or correct, and MUST add nothing.
+- A variable that names a profile or folder the instance does not have MUST fail every `media_add` that would add a title of that kind with `deployment_configuration`, whether or not the call names a `resolution`, so a stale setting is reported rather than silently bypassed. An add of a title already in the library consults no default and succeeds with `already_in_library` as [Add](#add) requires.
+- A `deployment_configuration` failure caused by one of these variables MUST carry a remediation naming the variable the operator has to set or correct, and every `deployment_configuration` failure MUST add nothing.
 - These defaults MUST be resolved against the instance when a title is added, not at startup, so an instance that is unreachable when the server starts does not prevent it from starting.
 - `ARR_MCP_MEDIA_ALLOW_REMOVE` MUST accept exactly `true` and `false`.
 
