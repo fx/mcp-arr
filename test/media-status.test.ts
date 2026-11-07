@@ -194,11 +194,14 @@ describe("media_status for one title", () => {
     expect(claims.importOf(key)).toBeUndefined();
   });
 
-  it("refuses a kind without an id", async () => {
-    const { content, result } = await status({ kind: "series" });
+  it("refuses a kind without an id, and an id without a kind, before any request", async () => {
+    for (const input of [{ kind: "series" }, { id: 100_001 }, { kind: "series", id: 0 }]) {
+      const { content, result } = await status(input);
 
-    expect(result.isError).toBe(true);
-    expect(content.errors.map((error) => error.code)).toEqual(["invalid_input"]);
+      expect(result.isError, JSON.stringify(input)).toBe(true);
+      expect(content.errors.map((error) => error.code)).toEqual(["invalid_input"]);
+    }
+    expect(instances.requests).toEqual([]);
   });
 });
 

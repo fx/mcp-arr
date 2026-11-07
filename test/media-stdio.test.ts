@@ -103,7 +103,7 @@ const removalEnabled = { ARR_MCP_MEDIA_ALLOW_REMOVE: "true" };
  * The most the `media` listing may cost on the wire, in bytes.
  *
  * A recorded measurement plus a margin, as the `arr` listing's ceiling is: it
- * was read off a spawned server at 11,671 bytes with all six `media` tools
+ * was read off a spawned server at 11,791 bytes with all six `media` tools
  * published, `media_remove` included, which is the listing the Media Toolset
  * specification caps at 12,000 bytes.
  *
@@ -111,7 +111,7 @@ const removalEnabled = { ARR_MCP_MEDIA_ALLOW_REMOVE: "true" };
  * which the test computes from the listing itself — so a regression that
  * publishes one tool twice, or republishes one in full, cannot hide under it.
  */
-const mediaListingByteCeiling = 11_800;
+const mediaListingByteCeiling = 11_900;
 
 /** The Media Toolset specification's cap on the complete listing. */
 const mediaListingSpecificationCap = 12_000;
@@ -198,7 +198,9 @@ describe("media toolset over stdio", () => {
     expect(
       (tools[0]?.inputSchema?.properties as Record<string, Record<string, unknown>>)?.text?.pattern,
     ).toBe("\\S");
-    // The rules between properties are stated from the union that validates.
+    // The rules between properties are stated from the unions that validate.
+    const statusTool = tools.find((tool) => tool.name === "media_status");
+    expect(statusTool?.inputSchema?.description).toContain("- no arguments\n- kind, id");
     const searchAgain = tools.find((tool) => tool.name === "media_search_again");
     expect(searchAgain?.inputSchema?.description).toContain(
       "- kind=movie, id\n- kind=series, id; optional season\n- kind=series, id, season, episode",

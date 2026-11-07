@@ -246,11 +246,10 @@ export const mediaToolDefinitions: readonly MediaToolDefinition[] = [
     name: "media_find",
     title: "Find movies and TV series",
     description:
-      `Search for movies and TV series by name. Returns up to ${maxFoundTitlesPerKind} matches ` +
-      "per kind, best first, each with the kind and id every other media tool takes, its year " +
-      "when known, and whether it is already in the library. Searches every kind this server " +
-      "serves unless kind is given; a kind that cannot be searched is listed as unavailable " +
-      "beside the matches of the others. Changes nothing.",
+      `Search movies and TV series by name: up to ${maxFoundTitlesPerKind} matches per kind, ` +
+      "best first, each with the kind and id the other media tools take, its year when known, " +
+      "and whether it is in the library. Searches every kind unless kind is given; one that " +
+      "cannot be searched is listed as unavailable. Changes nothing.",
     inputSchema: findInputSchema,
     outputSchema: findOutputSchema,
     publishedOutputSchema: findPublishedOutputSchema,
@@ -271,11 +270,10 @@ export const mediaToolDefinitions: readonly MediaToolDefinition[] = [
     name: "media_add",
     title: "Add a movie or TV series",
     description:
-      "Add a movie or series by the kind and id media_find returned, monitored, and start a " +
-      "search for it. resolution asks for a target picture size; the nearest this server " +
-      "offers is used, the lower one on a tie, and the result reports it. For a series, " +
-      "episodes chooses all of them or only those not yet aired. A title already in the " +
-      "library is left exactly as it is and reported as already_in_library.",
+      "Add a movie or series by the kind and id media_find returned, monitored, and search " +
+      "for it. resolution asks for a picture size; the nearest offered is used, the lower on " +
+      "a tie, and reported. For a series, episodes picks all or only those not yet aired. A " +
+      "title already in the library is left as it is and reported already_in_library.",
     inputSchema: addInputSchema,
     outputSchema: addOutputSchema,
     publishedOutputSchema: addPublishedOutputSchema,
@@ -310,21 +308,26 @@ export const mediaToolDefinitions: readonly MediaToolDefinition[] = [
     name: "media_status",
     title: "Status of downloads and titles",
     description:
-      "No arguments: downloads, imports of the last 7 days, and what is due in 14. A kind " +
-      "and id: that title in the library and its downloads. A stuck download names the " +
-      `remedy media_fix would apply. Lists hold ${maxListedEntries}, with *_total when cut.`,
+      "Overview: downloads, imports of the last 7 days, what is due in 14. Or one title " +
+      "and its downloads. A stuck one names media_fix's remedy. Lists hold " +
+      `${maxListedEntries}, with *_total when cut.`,
     inputSchema: statusInputSchema,
     outputSchema: statusOutputSchema,
     publishedOutputSchema: statusPublishedOutputSchema,
     annotations: readOnly,
 
     async handle(context: MediaContext, input: unknown): Promise<MediaResult> {
+      // The schema's two forms already refuse a kind without an id, and an
+      // id without a kind.
       const parsed = statusInputSchema.safeParse(input);
-      if (!parsed.success || (parsed.data.kind === undefined) !== (parsed.data.id === undefined)) {
+      if (!parsed.success) {
         return bareFailure(invalidInput());
       }
-      const { kind, id } = parsed.data;
-      return readStatus(context, kind === undefined || id === undefined ? undefined : { kind, id });
+      const request = parsed.data;
+      return readStatus(
+        context,
+        "kind" in request ? { kind: request.kind, id: request.id } : undefined,
+      );
     },
     failure: bareFailure,
     summarize: summarizeStatus,
@@ -334,8 +337,8 @@ export const mediaToolDefinitions: readonly MediaToolDefinition[] = [
     name: "media_fix",
     title: "Fix stuck downloads",
     description:
-      `Fix up to ${maxListedEntries} stuck downloads of one title. A failed or stalled one is ` +
-      "removed with its data, its release blocked, and another sought; a finished one is " +
+      `Fix up to ${maxListedEntries} stuck downloads of one title: a failed or stalled one is ` +
+      "removed with its data, its release blocked, another sought; a finished one is " +
       "imported if nothing needs correcting and the library lacks its files.",
     inputSchema: fixInputSchema,
     outputSchema: fixOutputSchema,

@@ -187,11 +187,13 @@ export const remedies = ["replace", "import", "none"] as const;
 
 export type Remedy = (typeof remedies)[number];
 
-export const statusInputSchema = objectInput(
-  z.strictObject({
-    kind: titleKindSchema.optional(),
-    id: titleIdSchema.optional(),
-  }),
+/**
+ * Two forms: nothing, for the overview, or a title's kind and id together.
+ * The rule that neither comes without the other is what the forms are, so the
+ * published description states it from the same union that validates.
+ */
+export const statusInputSchema = variantUnion(
+  z.union([z.strictObject({}), z.strictObject({ kind: titleKindSchema, id: titleIdSchema })]),
 );
 
 /** One download, named by the title it is for rather than by any of its rows. */
