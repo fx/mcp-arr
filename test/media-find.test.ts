@@ -442,3 +442,48 @@ describe("media_find exact-key redaction", () => {
     expect(content.titles.map((title) => title.title)).toEqual(["Example [redacted key] Crossed"]);
   });
 });
+
+describe("media_find redaction across token boundaries", () => {
+  const configuredKey = "Plain-Key-Value-77";
+  const titles: readonly (readonly [string, string])[] = [
+    ["key as the user", `https://${configuredKey}:private-password@internal.example/path`],
+    ["key as the password", `https://user:${configuredKey}@internal.example/path`],
+    ["key in a query string", `https://internal.example/feed?apikey=${configuredKey}&x=1`],
+    [
+      "key beside a secret-shaped token",
+      `Example ${configuredKey}0123456789abcdef0123456789abcdef`,
+    ],
+  ];
+
+  it("redacts a URL carrying the key whole, leaking neither key, password, nor host", async () => {
+    const recorded = instances.catalog("radarr")[1] as Record<string, unknown>;
+    instances.serve(
+      "radarr",
+      "movie/lookup",
+      titles.map(([, title], index) => ({ ...recorded, tmdbId: 320_000 + index, title })),
+    );
+
+    const { content, summary } = await find(
+      { text: "Example", kind: "movie" },
+      { ...allApplicationsEnvironment, RADARR_API_KEY: configuredKey },
+    );
+
+    expect(content.titles.map((title) => title.title)).toEqual([
+      "[redacted url]",
+      "[redacted url]",
+      "[redacted url]",
+      "Example [redacted id]",
+    ]);
+    for (const text of [JSON.stringify(content), summary]) {
+      for (const leaked of [
+        configuredKey,
+        "private-password",
+        "internal.example",
+        "apikey",
+        "user:",
+      ]) {
+        expect(text.toLowerCase(), leaked).not.toContain(leaked.toLowerCase());
+      }
+    }
+  });
+});

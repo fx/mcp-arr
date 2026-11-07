@@ -79,7 +79,7 @@ export interface AdapterRegistry {
    * The text with every configured API key taken out, or `undefined` where it
    * cannot be published at all. See {@link withholdSecrets}.
    */
-  withholdSecrets(text: string): string | undefined;
+  withholdSecrets(text: string, marker?: string): string | undefined;
 }
 
 /** What a configured secret becomes where it appeared in published text. */
@@ -107,12 +107,17 @@ function escapePattern(value: string): string {
  * operator may have set a short or hand-written key that no credential shape
  * would match. Matching ignores case, since an upstream source may well have
  * changed it. A secret of at least {@link minimumMarkableSecretLength}
- * characters is replaced by {@link redactedSecretMarker}; text that carries a
+ * characters is replaced by `marker`, {@link redactedSecretMarker} unless the
+ * caller needs another; text that carries a
  * shorter one, anywhere, is withheld whole and answers `undefined`, for the
  * reason that constant gives. Longer secrets are taken first, so one that
  * contains another is not left half-replaced.
  */
-export function withholdSecrets(text: string, secrets: readonly string[]): string | undefined {
+export function withholdSecrets(
+  text: string,
+  secrets: readonly string[],
+  marker: string = redactedSecretMarker,
+): string | undefined {
   let withheld = text;
   const ordered = [...new Set(secrets.filter((secret) => secret !== ""))].sort(
     (left, right) => right.length - left.length,
@@ -125,7 +130,7 @@ export function withholdSecrets(text: string, secrets: readonly string[]): strin
     if (secret.length < minimumMarkableSecretLength) {
       return undefined;
     }
-    withheld = withheld.replace(pattern, redactedSecretMarker);
+    withheld = withheld.replace(pattern, () => marker);
   }
   return withheld;
 }
@@ -241,8 +246,8 @@ export function createAdapterRegistry(
       );
     },
 
-    withholdSecrets(text: string): string | undefined {
-      return withholdSecrets(text, secrets);
+    withholdSecrets(text: string, marker?: string): string | undefined {
+      return withholdSecrets(text, secrets, marker);
     },
   };
 }

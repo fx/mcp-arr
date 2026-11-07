@@ -851,3 +851,32 @@ describe("media_add exact-key redaction", () => {
     expect(summary).not.toContain("key-123");
   });
 });
+
+describe("media_add redaction across token boundaries", () => {
+  const configuredKey = "Plain-Key-Value-77";
+
+  for (const [label, title] of [
+    ["key as the user", `https://${configuredKey}:private-password@internal.example/path`],
+    ["key as the password", `https://user:${configuredKey}@internal.example/path`],
+    ["key in a query string", `https://internal.example/feed?apikey=${configuredKey}&x=1`],
+  ] as const) {
+    it(`redacts a URL carrying the key whole: ${label}`, async () => {
+      const [, unadded] = instances.catalog("radarr");
+      if (unadded !== undefined) {
+        unadded.title = title;
+      }
+
+      const { content, summary } = await add({ kind: "movie", id: newMovie }, movieDefaults, {
+        ...allApplicationsEnvironment,
+        RADARR_API_KEY: configuredKey,
+      });
+
+      expect(content).toMatchObject({ outcome: "added", title: "[redacted url]" });
+      for (const text of [JSON.stringify(content), summary]) {
+        for (const leaked of [configuredKey, "private-password", "internal.example", "apikey"]) {
+          expect(text.toLowerCase(), leaked).not.toContain(leaked.toLowerCase());
+        }
+      }
+    });
+  }
+});
