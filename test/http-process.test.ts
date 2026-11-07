@@ -13,6 +13,7 @@ import { type ObservedChildProcess, observeChildProcess } from "../scripts/child
 import { isCleanTermination } from "../scripts/platform-command.mjs";
 import { instanceEnvironment, startFixtureInstance } from "./support/instance-server.js";
 import { serverEnvironment, withDeadline } from "./support/spawned-stdio.js";
+import { startStagedUpstream } from "./support/staged-upstream.js";
 
 /**
  * The built server in HTTP mode, launched the way a container launches it:
@@ -235,6 +236,47 @@ describe("built HTTP process", () => {
       `mcp-arr: listening on http://127.0.0.1:${String(server.port)}/mcp with the arr toolset\n`,
     );
     expect(server.observed.stderr).not.toContain(token);
+  }, 15_000);
+
+  it("on SIGTERM during a multi-stage call, exits within the upstream timeout", async () => {
+    // The probe is answered just inside its deadline, so the library read that
+    // follows starts with a fresh one reaching far past the drain.
+    const timeoutMs = 2_000;
+    const upstream = await startStagedUpstream(1_800);
+    cleanups.push(() => upstream.close());
+    const server = spawnHttpServer(
+      {
+        SONARR_URL: upstream.url,
+        SONARR_API_KEY: "sonarr-staged-key",
+        ARR_UPSTREAM_TIMEOUT_MS: String(timeoutMs),
+      },
+      await freePort(),
+    );
+    await server.listening;
+
+    const inProgress = post(
+      server.port,
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "arr_library_query", arguments: { view: "series" } },
+      }),
+    ).catch((error: unknown) => error);
+    await expect.poll(() => upstream.received.length, { timeout: 3_000 }).toBe(1);
+    const signalledAt = Date.now();
+    expect(server.kill("SIGTERM")).toBe(true);
+    const exit = await withDeadline(server.observed.closed, "SIGTERM exit", 8_000);
+    const elapsed = Date.now() - signalledAt;
+    await inProgress;
+
+    expect(isCleanTermination(exit)).toBe(true);
+    expect(upstream.received).toHaveLength(2);
+    expect(elapsed).toBeLessThan(timeoutMs + 700);
+    expect(upstream.open()).toBe(0);
+    expect(server.observed.stderr).toBe(
+      `mcp-arr: listening on http://127.0.0.1:${String(server.port)}/mcp with the arr toolset\n`,
+    );
   }, 15_000);
 
   it("exits 1 naming the address and port when the port is taken", async () => {

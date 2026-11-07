@@ -24,6 +24,7 @@ import {
   instanceEnvironment,
   startFixtureInstance,
 } from "./support/instance-server.js";
+import { startStagedUpstream } from "./support/staged-upstream.js";
 
 /**
  * The HTTP transport over real sockets, against a recorded upstream.
@@ -356,6 +357,78 @@ describe("HTTP transport lifecycle", () => {
     expect(exchange.headers.connection).toBe("close");
     expect(message).toMatchObject({ id: 1, result: { isError: false } });
     await expect(closed).resolves.toBeUndefined();
+  });
+
+  it("aborts a later stage of a call at the drain deadline, so nothing outlives close", async () => {
+    // The probe is answered just before its own deadline, so the library read
+    // that follows starts with a fresh one that would run well past the drain.
+    const upstream = await startStagedUpstream(700);
+    cleanups.push(() => upstream.close());
+    const harness = await startHarness(
+      { SONARR_URL: upstream.url, SONARR_API_KEY: "sonarr-staged-key" },
+      1_000,
+    );
+
+    const inProgress = harness
+      .call(1, "tools/call", {
+        name: "arr_library_query",
+        arguments: { view: "series", applications: ["sonarr"] },
+      })
+      .catch((error: unknown) => error);
+    await expect.poll(() => upstream.received.length, { timeout: 2_000 }).toBe(1);
+    const startedAt = Date.now();
+    await harness.runtime.close();
+    const elapsed = Date.now() - startedAt;
+
+    expect(upstream.received).toEqual([
+      expect.stringMatching(/^\/api\/v3\/system\/status/u),
+      expect.stringMatching(/^\/api\/v3\/series/u),
+    ]);
+    expect(elapsed).toBeLessThan(1_500);
+    // The outbound read was abandoned with the inbound connection, not left
+    // to run out its own deadline.
+    await expect.poll(() => upstream.open(), { timeout: 200, interval: 10 }).toBe(0);
+    await inProgress;
+    expect(upstream.received).toHaveLength(2);
+    expect(harness.stderr).toHaveLength(1);
+  });
+
+  it("refuses to start an upstream request once the drain deadline has passed", async () => {
+    const sonarr = await fixture("sonarr");
+    let connects = 0;
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let reached: unknown;
+    const harness = await startHarness(instanceEnvironment([sonarr]), 200, {
+      // A server whose connection completes only after the drain deadline,
+      // and which then tries to reach the instance.
+      createServer: (context) => ({
+        connect: async () => {
+          connects += 1;
+          await held;
+          reached = await context.registry
+            .adapter("sonarr")
+            ?.client.get("system/status")
+            .catch((error: unknown) => error);
+        },
+        close: async () => undefined,
+      }),
+    });
+
+    const hung = harness
+      .send({ headers: mcpHeaders(), body: requestBody(1, "tools/list") })
+      .catch((error: unknown) => error);
+    await expect.poll(() => connects, { timeout: 2_000 }).toBe(1);
+    await harness.runtime.close();
+    release();
+    await hung;
+    await expect.poll(() => reached, { timeout: 1_000 }).toBeDefined();
+
+    expect(reached).toMatchObject({ name: "UpstreamError", kind: "unavailable" });
+    expect(String((reached as Error).message)).not.toContain(sonarr.apiKey);
+    expect(sonarr.requests).toEqual([]);
   });
 
   it("abandons a request still in progress at the upstream deadline", async () => {

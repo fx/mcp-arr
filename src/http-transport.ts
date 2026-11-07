@@ -78,7 +78,15 @@ export interface HttpRuntime extends Runtime {
 export interface HttpRuntimeDependencies {
   createServer: (context: ToolContext) => ConnectableServer;
   createTransport: () => RequestTransport;
-  createRegistry: (configuration: EnvironmentConfiguration) => AdapterRegistry;
+  /**
+   * The signal aborts at the end of shutdown, and every upstream request the
+   * registry makes from then on — or still has in flight — must be abandoned
+   * with it.
+   */
+  createRegistry: (
+    configuration: EnvironmentConfiguration,
+    shutdown: AbortSignal,
+  ) => AdapterRegistry;
   createOperations: () => ToolContext["operations"];
   /**
    * Built once per runtime and shared by every request, which is what lets a
@@ -103,7 +111,8 @@ export const defaultHttpRuntimeDependencies: HttpRuntimeDependencies = {
   // interface's optional members.
   createTransport: () =>
     new StreamableHTTPServerTransport({ enableJsonResponse: true }) as RequestTransport,
-  createRegistry: (configuration) => createAdapterRegistry(configuration),
+  createRegistry: (configuration, shutdown) =>
+    createAdapterRegistry(configuration, { signal: shutdown }),
   createOperations: () => createOperationRegistry(),
   createState: () => createWorkflowState(),
   writeStderr: (message) => {
@@ -262,7 +271,12 @@ export function createHttpRuntime(
   dependencies: HttpRuntimeDependencies = defaultHttpRuntimeDependencies,
 ): HttpRuntime {
   const { host, port } = configuration.transport;
-  const registry = dependencies.createRegistry(configuration);
+  // Ends every upstream request when shutdown gives up waiting. Closing the
+  // listener's connections ends nothing a tool is doing: a call whose client
+  // is gone keeps running, and each request it makes gets a fresh upstream
+  // deadline, so only this bounds how long a call can keep the process alive.
+  const shutdown = new AbortController();
+  const registry = dependencies.createRegistry(configuration, shutdown.signal);
   const context: ToolContext = {
     registry,
     operations: dependencies.createOperations(),
@@ -446,6 +460,7 @@ export function createHttpRuntime(
         closing = true;
         await startPromise?.catch(() => undefined);
         if (!listening) {
+          shutdown.abort();
           return;
         }
         const drained = new Promise<void>((resolve) => {
@@ -461,6 +476,11 @@ export function createHttpRuntime(
         });
         await Promise.race([drained, deadline]);
         clearTimeout(timer);
+        // Whichever came first, nothing still running is answering anyone who
+        // is waiting: a drained listener has no client left, and the deadline
+        // is the promise. Upstream work is abandoned and the connections it
+        // was answering are closed in the same turn.
+        shutdown.abort();
         httpServer.closeAllConnections();
         await drained;
       })();
