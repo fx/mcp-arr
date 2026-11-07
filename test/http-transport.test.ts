@@ -13,18 +13,21 @@ import {
   createFailedAuthenticationThrottle,
   createHttpRuntime,
   defaultHttpRuntimeDependencies,
+  describeToolsets,
   type HttpEnvironmentConfiguration,
   type HttpRuntime,
   type HttpRuntimeDependencies,
   readPresentedCredential,
 } from "../src/http-transport.js";
 import { createManualClock, type ManualClock } from "../src/state/clock.js";
+import { mediaToolNames, toolNames } from "../src/tools/names.js";
 import {
   type FixtureInstance,
   type FixtureInstanceOptions,
   instanceEnvironment,
   startFixtureInstance,
 } from "./support/instance-server.js";
+import { spawnBuiltServer } from "./support/spawned-stdio.js";
 import { startStagedUpstream } from "./support/staged-upstream.js";
 
 /**
@@ -1130,5 +1133,79 @@ describe("HTTP transport credential leakage", () => {
     expect(harness.stderr).toEqual([
       `mcp-arr: listening on http://127.0.0.1:${String(harness.port)}/mcp with the arr toolset\n`,
     ]);
+  });
+});
+
+describe("HTTP transport toolset selection", () => {
+  it("names the selected toolsets in its words", () => {
+    expect(describeToolsets(["arr"])).toBe("the arr toolset");
+    expect(describeToolsets(["media"])).toBe("the media toolset");
+    expect(describeToolsets(["arr", "media"])).toBe("the arr and media toolsets");
+  });
+
+  /** The tools the built stdio server publishes for the same selection. */
+  async function stdioTools(selection: EnvironmentRecord): Promise<unknown[]> {
+    const child = spawnBuiltServer({
+      SONARR_URL: "https://sonarr.example.invalid/sonarr",
+      SONARR_API_KEY: "sonarr-secret-key",
+      ...selection,
+    });
+    try {
+      await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
+      const listed = (await child.request(2, "tools/list")) as { result?: { tools?: unknown[] } };
+      await child.terminateGracefully();
+      return listed.result?.tools ?? [];
+    } finally {
+      await child.forceCleanup().catch(() => undefined);
+    }
+  }
+
+  for (const [label, selection, names, words] of [
+    ["media", { ARR_MCP_TOOLSET: "media" }, [...mediaToolNames], "the media toolset"],
+    [
+      "all",
+      { ARR_MCP_TOOLSET: "all" },
+      [...toolNames, ...mediaToolNames],
+      "the arr and media toolsets",
+    ],
+    [
+      "media,arr with defaults",
+      { ARR_MCP_TOOLSET: "media,arr", ARR_MCP_MEDIA_MOVIE_QUALITY_PROFILE: "Example HD" },
+      [...toolNames, ...mediaToolNames],
+      "the arr and media toolsets",
+    ],
+  ] as const) {
+    it(`publishes the ${label} selection exactly as stdio does and names it at startup`, async () => {
+      const sonarr = await fixture("sonarr");
+      const harness = await startHarness({ ...instanceEnvironment([sonarr]), ...selection });
+
+      expect(harness.stderr).toEqual([
+        `mcp-arr: listening on http://127.0.0.1:${String(harness.port)}/mcp with ${words}\n`,
+      ]);
+      const listed = await harness.call(1, "tools/list");
+      expect(listed.exchange.status).toBe(200);
+      const tools = (listed.message.result as { tools: { name: string }[] }).tools;
+      expect(tools.map((tool) => tool.name)).toEqual(names);
+      expect(tools).toEqual(await stdioTools(selection));
+    }, 15_000);
+  }
+
+  it("answers a media tool call over HTTP", async () => {
+    const sonarr = await fixture("sonarr");
+    const harness = await startHarness({
+      ...instanceEnvironment([sonarr]),
+      ARR_MCP_TOOLSET: "media",
+    });
+
+    const found = await harness.call(1, "tools/call", {
+      name: "media_find",
+      arguments: { text: "Example", kind: "series" },
+    });
+
+    expect(found.exchange.status).toBe(200);
+    const result = (found.message as ToolCallMessage).result;
+    expect(result?.isError).toBe(false);
+    expect(result?.content?.[0]?.text).toBe("media_find: found 2 title(s) (series 2)");
+    expect(sonarr.requests).toContain("series/lookup");
   });
 });

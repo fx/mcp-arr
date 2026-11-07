@@ -13,6 +13,7 @@ import { type AdapterRegistry, createAdapterRegistry } from "./adapters/registry
 import type {
   EnvironmentConfiguration,
   HttpTransportConfiguration,
+  ToolsetName,
   ToolsetSelection,
 } from "./config/environment.js";
 import type { Runtime } from "./process.js";
@@ -300,6 +301,17 @@ function readBoundedBody(request: IncomingMessage): Promise<Buffer | undefined> 
  * over that one context — the pinned SDK cannot reuse a stateless transport,
  * and nothing but the context needs to outlive a request.
  */
+/**
+ * The selected toolsets as the startup line names them: "the arr toolset",
+ * "the media toolset", or "the arr and media toolsets". Built from the closed
+ * toolset names, so it can carry nothing an operator wrote.
+ */
+export function describeToolsets(names: readonly ToolsetName[]): string {
+  return names.length === 1
+    ? `the ${names.join("")} toolset`
+    : `the ${names.slice(0, -1).join(", ")} and ${names.at(-1) ?? ""} toolsets`;
+}
+
 export function createHttpRuntime(
   configuration: HttpEnvironmentConfiguration,
   dependencies: HttpRuntimeDependencies = defaultHttpRuntimeDependencies,
@@ -478,7 +490,7 @@ export function createHttpRuntime(
           const bound = httpServer.address() as AddressInfo;
           dependencies.writeStderr(
             `mcp-arr: listening on http://${formatAuthority(host, bound.port)}${mcpPath} ` +
-              "with the arr toolset\n",
+              `with ${describeToolsets(configuration.toolsets.names)}\n`,
           );
           // The listener is what keeps this process alive now. A closed or
           // absent stdin must neither hold it open nor end it.

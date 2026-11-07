@@ -74,7 +74,7 @@ export ARR_MCP_AUTH_TOKEN="$(openssl rand -hex 32)"
 npx -y mcp-arr
 ```
 
-On startup it writes one line to stderr naming where it listens, and serves:
+On startup it writes one line to stderr naming where it listens and which toolsets it publishes (see [Media tools](#media-tools)), and serves:
 
 - `POST /mcp` — MCP over Streamable HTTP. Every request must carry `Authorization: Bearer <token>`.
 - `GET /healthz` — `200` while the process accepts requests. It needs no token, contacts no instance, and names nothing about the deployment, so it is safe for an orchestrator's liveness probe.
@@ -202,7 +202,7 @@ Library records are returned with an opaque `reference`. That reference — not 
 
 The server has a second, much smaller toolset for callers that want to find and add movies and TV series without knowing how Sonarr, Radarr, and Prowlarr divide the work. It talks about movies and series rather than applications, and it picks the quality profile and root folder itself. It is opt-in for now: the fourteen `arr` tools stay the default until the `media` toolset is complete and has been verified against live instances.
 
-`ARR_MCP_TOOLSET` selects what the server publishes, and is read once at startup:
+`ARR_MCP_TOOLSET` selects what the server publishes, and is read once at startup. It applies to both transports alike: a remote service publishes exactly the tools the same settings publish over stdio. It accepts:
 
 - absent, or `arr` — the fourteen `arr_` tools above, exactly as before
 - `media` — only the `media_` tools

@@ -11,6 +11,7 @@ import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { type ObservedChildProcess, observeChildProcess } from "../scripts/child-process.mjs";
 import { isCleanTermination } from "../scripts/platform-command.mjs";
+import { mediaToolNames, toolNames } from "../src/tools/names.js";
 import { instanceEnvironment, startFixtureInstance } from "./support/instance-server.js";
 import { serverEnvironment, withDeadline } from "./support/spawned-stdio.js";
 import { startStagedUpstream } from "./support/staged-upstream.js";
@@ -155,6 +156,31 @@ const capabilitiesCall = JSON.stringify({
 });
 
 describe("built HTTP process", () => {
+  it("publishes the selected toolsets and names them at startup", async () => {
+    const sonarr = await startFixtureInstance("sonarr");
+    cleanups.push(() => sonarr.close());
+    const server = spawnHttpServer(
+      { ...instanceEnvironment([sonarr]), ARR_MCP_TOOLSET: "all" },
+      await freePort(),
+    );
+    await server.listening;
+
+    const listed = await post(
+      server.port,
+      JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    );
+    expect(listed.status).toBe(200);
+    const tools = (JSON.parse(listed.body) as { result: { tools: { name: string }[] } }).result
+      .tools;
+    expect(tools.map((tool) => tool.name)).toEqual([...toolNames, ...mediaToolNames]);
+
+    expect(server.kill("SIGTERM")).toBe(true);
+    await withDeadline(server.observed.closed, "SIGTERM exit", 5_000);
+    expect(server.observed.stderr).toBe(
+      `mcp-arr: listening on http://127.0.0.1:${String(server.port)}/mcp with the arr and media toolsets\n`,
+    );
+  }, 15_000);
+
   it("serves a tool call with the token, refuses a wrong one, and exits on SIGTERM", async () => {
     const sonarr = await startFixtureInstance("sonarr");
     cleanups.push(() => sonarr.close());
