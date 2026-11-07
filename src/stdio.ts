@@ -2,6 +2,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { type AdapterRegistry, createAdapterRegistry } from "./adapters/registry.js";
 import type { EnvironmentConfiguration } from "./config/environment.js";
+import type { Runtime } from "./process.js";
 import { createServer } from "./server.js";
 import { createWorkflowState, type WorkflowState } from "./state/workflow.js";
 import type { ToolContext } from "./tools/dispatch.js";
@@ -9,13 +10,6 @@ import { createOperationRegistry } from "./tools/operations.js";
 
 export interface ConnectableServer {
   connect(transport: Transport): Promise<void>;
-  close(): Promise<void>;
-}
-
-export interface StdioRuntime {
-  /** Version-aware adapters for the configured applications. */
-  readonly registry: AdapterRegistry;
-  start(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -42,7 +36,7 @@ const defaultDependencies: StdioRuntimeDependencies = {
 export function createStdioRuntime(
   configuration: EnvironmentConfiguration,
   dependencies: StdioRuntimeDependencies = defaultDependencies,
-): StdioRuntime {
+): Runtime {
   const registry = dependencies.createRegistry(configuration);
   const server = dependencies.createServer({
     registry,

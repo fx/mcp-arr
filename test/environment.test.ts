@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import { applicationDescriptors } from "../src/applications.js";
 import {
+  authTokenVariable,
   ConfigurationError,
+  defaultHttpHost,
+  defaultHttpPort,
   type EnvironmentRecord,
   findInstance,
+  httpHostVariable,
+  httpPortVariable,
   loadEnvironment,
   parseEnvironment,
+  transportVariable,
 } from "../src/config/environment.js";
 import { defaultUpstreamTimeoutMs } from "../src/http/client.js";
 
@@ -20,6 +26,18 @@ const timeoutProblem =
   "ARR_UPSTREAM_TIMEOUT_MS must be a whole number of milliseconds between 1 and 600000";
 /** A configured timeout the parser refuses, used to prove it is never echoed. */
 const rejectedTimeout = "999999999";
+
+/** A usable bearer token: 64 hexadecimal characters, as `openssl rand -hex 32` prints. */
+const token = "0123456789abcdef".repeat(4);
+const httpEnvironment: EnvironmentRecord = {
+  ...sonarrEnvironment,
+  ARR_MCP_TRANSPORT: "http",
+  ARR_MCP_AUTH_TOKEN: token,
+};
+const tokenProblem =
+  "ARR_MCP_AUTH_TOKEN must be 32 to 4096 characters from the RFC 6750 b64token alphabet";
+const portProblem = "ARR_MCP_HTTP_PORT must be a whole number from 1 to 65535";
+const hostProblem = "ARR_MCP_HTTP_HOST must be an IPv4 or IPv6 address";
 
 function expectProblems(env: EnvironmentRecord): readonly string[] {
   try {
@@ -255,6 +273,227 @@ describe("parseEnvironment", () => {
   });
 });
 
+describe("parseEnvironment transport selection", () => {
+  it("names the variables it reads", () => {
+    expect([transportVariable, httpHostVariable, httpPortVariable, authTokenVariable]).toEqual([
+      "ARR_MCP_TRANSPORT",
+      "ARR_MCP_HTTP_HOST",
+      "ARR_MCP_HTTP_PORT",
+      "ARR_MCP_AUTH_TOKEN",
+    ]);
+  });
+
+  it("selects stdio when no transport is named, or when stdio is", () => {
+    expect(parseEnvironment(sonarrEnvironment).transport).toEqual({ kind: "stdio" });
+    expect(
+      parseEnvironment({ ...sonarrEnvironment, ARR_MCP_TRANSPORT: " stdio " }).transport,
+    ).toEqual({ kind: "stdio" });
+  });
+
+  it("selects http with the loopback default address and the default port", () => {
+    expect(parseEnvironment(httpEnvironment).transport).toEqual({
+      kind: "http",
+      host: "127.0.0.1",
+      port: 9797,
+      token,
+    });
+    expect(defaultHttpHost).toBe("127.0.0.1");
+    expect(defaultHttpPort).toBe(9797);
+  });
+
+  it("accepts IPv4 and IPv6 listener addresses", () => {
+    for (const host of ["0.0.0.0", "192.0.2.10", "::", "::1", "2001:db8::1"]) {
+      expect(parseEnvironment({ ...httpEnvironment, ARR_MCP_HTTP_HOST: host }).transport).toEqual({
+        kind: "http",
+        host,
+        port: defaultHttpPort,
+        token,
+      });
+    }
+  });
+
+  it("rejects a listener address that is not an IP address", () => {
+    for (const host of [
+      "localhost",
+      "mcp.example.invalid",
+      "[::1]",
+      "127.0.0.1:9797",
+      "256.0.0.1",
+    ]) {
+      expect(expectProblems({ ...httpEnvironment, ARR_MCP_HTTP_HOST: host })).toEqual([
+        hostProblem,
+      ]);
+    }
+  });
+
+  it("accepts both ends of the port range and surrounding whitespace", () => {
+    for (const [value, port] of [
+      ["1", 1],
+      ["65535", 65_535],
+      [" 8443 ", 8_443],
+    ] as const) {
+      expect(parseEnvironment({ ...httpEnvironment, ARR_MCP_HTTP_PORT: value }).transport).toEqual({
+        kind: "http",
+        host: defaultHttpHost,
+        port,
+        token,
+      });
+    }
+  });
+
+  it("rejects every port spelling that is not a whole number from 1 to 65535", () => {
+    for (const value of ["0", "65536", "-1", "+80", "80.0", "1e3", "0x50", "eighty", "80 80"]) {
+      expect(expectProblems({ ...httpEnvironment, ARR_MCP_HTTP_PORT: value })).toEqual([
+        portProblem,
+      ]);
+    }
+  });
+
+  it("accepts tokens of the bounding lengths drawn from the whole b64token alphabet", () => {
+    for (const value of [
+      "a".repeat(32),
+      "a".repeat(4096),
+      "AZaz09-._~+/AZaz09-._~+/AZaz09==",
+      `${"x".repeat(30)}==`,
+    ]) {
+      expect(parseEnvironment({ ...httpEnvironment, ARR_MCP_AUTH_TOKEN: value }).transport).toEqual(
+        { kind: "http", host: defaultHttpHost, port: defaultHttpPort, token: value },
+      );
+    }
+  });
+
+  it("rejects a token that is too short, too long, or outside the alphabet, without echoing it", () => {
+    const rejected = [
+      "s".repeat(20),
+      "s".repeat(31),
+      "s".repeat(4097),
+      `${"s".repeat(31)} s`,
+      `${"s".repeat(31)}"`,
+      `${"s".repeat(31)},`,
+      `${"s".repeat(31)}é`,
+      // Each folds to an ASCII letter under Unicode case-insensitive matching.
+      `${"s".repeat(31)}\u212A`,
+      `${"s".repeat(31)}\u017F`,
+      `=${"s".repeat(31)}`,
+      `${"s".repeat(16)}=${"s".repeat(16)}`,
+    ];
+    for (const value of rejected) {
+      const problems = expectProblems({ ...httpEnvironment, ARR_MCP_AUTH_TOKEN: value });
+      expect(problems).toEqual([tokenProblem]);
+      expect(problems.join("\n")).not.toContain(value.slice(0, 20));
+    }
+  });
+
+  it("requires a token under http and names the variable", () => {
+    const { ARR_MCP_AUTH_TOKEN: _omitted, ...withoutToken } = httpEnvironment;
+
+    expect(expectProblems(withoutToken)).toEqual([
+      "ARR_MCP_AUTH_TOKEN is required when ARR_MCP_TRANSPORT is http",
+    ]);
+  });
+
+  it("rejects present-but-empty transport settings", () => {
+    expect(expectProblems({ ...sonarrEnvironment, ARR_MCP_TRANSPORT: " " })).toEqual([
+      "ARR_MCP_TRANSPORT is set but empty",
+    ]);
+    expect(
+      expectProblems({
+        ...httpEnvironment,
+        ARR_MCP_HTTP_HOST: "",
+        ARR_MCP_HTTP_PORT: "\t",
+        ARR_MCP_AUTH_TOKEN: "",
+      }),
+    ).toEqual([
+      "ARR_MCP_HTTP_HOST is set but empty",
+      "ARR_MCP_HTTP_PORT is set but empty",
+      "ARR_MCP_AUTH_TOKEN is set but empty",
+    ]);
+  });
+
+  it("rejects an unknown transport by name and reports nothing about the HTTP settings", () => {
+    for (const value of ["websocket", "HTTP", "sse", "http,stdio"]) {
+      const problems = expectProblems({
+        ...sonarrEnvironment,
+        ARR_MCP_TRANSPORT: value,
+        ARR_MCP_HTTP_PORT: "not-a-port",
+      });
+      expect(problems).toEqual(["ARR_MCP_TRANSPORT must be stdio or http"]);
+      expect(problems.join("\n")).not.toContain(value);
+    }
+  });
+
+  it("rejects each HTTP setting under stdio, empty ones included, without echoing it", () => {
+    for (const transport of [undefined, "stdio"]) {
+      const env: EnvironmentRecord = {
+        ...sonarrEnvironment,
+        ...(transport === undefined ? {} : { ARR_MCP_TRANSPORT: transport }),
+        ARR_MCP_HTTP_HOST: "",
+        ARR_MCP_HTTP_PORT: "9797",
+        ARR_MCP_AUTH_TOKEN: token,
+      };
+      const problems = expectProblems(env);
+      expect(problems).toEqual([
+        "ARR_MCP_HTTP_HOST requires ARR_MCP_TRANSPORT=http",
+        "ARR_MCP_HTTP_PORT requires ARR_MCP_TRANSPORT=http",
+        "ARR_MCP_AUTH_TOKEN requires ARR_MCP_TRANSPORT=http",
+      ]);
+      expect(problems.join("\n")).not.toContain(token);
+    }
+    expect(expectProblems({ ...sonarrEnvironment, ARR_MCP_AUTH_TOKEN: token })).toEqual([
+      "ARR_MCP_AUTH_TOKEN requires ARR_MCP_TRANSPORT=http",
+    ]);
+  });
+
+  it("reports transport problems after the instance, missing-application, and timeout ones", () => {
+    expect(
+      expectProblems({
+        RADARR_URL: "https://radarr.example.invalid",
+        ARR_UPSTREAM_TIMEOUT_MS: "abc",
+        ARR_MCP_TRANSPORT: "http",
+        ARR_MCP_HTTP_HOST: "localhost",
+        ARR_MCP_HTTP_PORT: "0",
+      }),
+    ).toEqual([
+      "RADARR_API_KEY is required when RADARR_URL is set",
+      timeoutProblem,
+      hostProblem,
+      portProblem,
+      "ARR_MCP_AUTH_TOKEN is required when ARR_MCP_TRANSPORT is http",
+    ]);
+
+    const problems = expectProblems({ PATH: "/usr/bin", ARR_MCP_TRANSPORT: "websocket" });
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toContain("no application is configured");
+    expect(problems[1]).toBe("ARR_MCP_TRANSPORT must be stdio or http");
+  });
+
+  it("never exposes a transport setting's value in the error, message, or serialized form", () => {
+    const rejectedToken = "short-secret-token";
+    let thrown: ConfigurationError | undefined;
+    try {
+      parseEnvironment({
+        ...sonarrEnvironment,
+        ARR_MCP_TRANSPORT: "http",
+        ARR_MCP_HTTP_HOST: "listener.example.invalid",
+        ARR_MCP_HTTP_PORT: "70000",
+        ARR_MCP_AUTH_TOKEN: rejectedToken,
+      });
+    } catch (error) {
+      thrown = error as ConfigurationError;
+    }
+
+    expect(thrown).toBeInstanceOf(ConfigurationError);
+    const serialized = `${thrown?.message ?? ""}\n${thrown?.stack ?? ""}\n${JSON.stringify({
+      ...thrown,
+      problems: thrown?.problems,
+    })}`;
+    for (const value of [rejectedToken, "listener.example.invalid", "70000", sonarrKey]) {
+      expect(serialized).not.toContain(value);
+    }
+    expect(thrown?.problems).toEqual([hostProblem, portProblem, tokenProblem]);
+  });
+});
+
 describe("loadEnvironment", () => {
   it("accepts an injected record", () => {
     expect(
@@ -280,6 +519,11 @@ describe("loadEnvironment", () => {
     // process environment: a developer who exports the timeout for their own
     // instances would otherwise decide what this test observes.
     vi.stubEnv("ARR_UPSTREAM_TIMEOUT_MS", undefined);
+    // The transport settings for the same reason: one left exported would
+    // reject the stdio configuration this case expects.
+    for (const name of [transportVariable, httpHostVariable, httpPortVariable, authTokenVariable]) {
+      vi.stubEnv(name, undefined);
+    }
 
     try {
       expect(() => loadEnvironment()).toThrow(ConfigurationError);
