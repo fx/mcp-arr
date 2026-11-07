@@ -78,6 +78,7 @@ To be recorded by the live sweep.
 - [ ] Sweep the `media` toolset against live instances
   - [ ] Exercise each `media` tool, and each reachable table row, against live instances at the recorded minimum versions, and record the results in Findings.
   - [ ] Fix, or file a change document for, every defect found.
+  - [ ] Capture `qualityprofile` fixtures with populated `items`, including a cutoff group, for both applications, and re-verify the resolution reader against them (moved from 0031).
 - [ ] Make `media` the default
   - [ ] Change the default in `src/config/environment.ts` and pin it with a test.
   - [ ] Select `arr` explicitly in `test/support/spawned-stdio.ts`, `test/stdio-process.test.ts`, `test/tool-protocol.test.ts`, any other test the new default breaks, and `scripts/verify-package.mjs`, and assert the default listing in the package verifier.

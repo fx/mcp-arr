@@ -198,6 +198,49 @@ Every mutation tool accepts `mode: "plan"` and `mode: "apply"`. Prowlarr has no 
 
 Library records are returned with an opaque `reference`. That reference — not an upstream identifier — is what the views that take a parent (`seasons`, `episodes`, `episode_files`, `movie_files`) and the identifier filter (`media`) accept, so read the parent view first and pass the reference back. References are held in memory, expire after fifteen minutes, and do not survive a restart; a stale one is reported as `stale_reference` and is recovered by repeating the query that produced it.
 
+## Media tools
+
+The server has a second, much smaller toolset for callers that want to find and add movies and TV series without knowing how Sonarr, Radarr, and Prowlarr divide the work. It talks about movies and series rather than applications, and it picks the quality profile and root folder itself. It is opt-in for now: the fourteen `arr` tools stay the default until the `media` toolset is complete and has been verified against live instances.
+
+`ARR_MCP_TOOLSET` selects what the server publishes, and is read once at startup:
+
+- absent, or `arr` — the fourteen `arr_` tools above, exactly as before
+- `media` — only the `media_` tools
+- `media,arr` in either order, or `all` — both toolsets side by side, each tool exactly as it is on its own
+
+Anything else — an unknown name, a name given twice, an empty entry, or `all` combined with a name — fails startup with a message naming the variable but never the value you set.
+
+With only `media` selected, `arr_capabilities` is not published; a kind whose instance cannot be reached is reported by the `media` tools themselves.
+
+Two tools are published so far:
+
+- `media_find` — takes `text`, 1 to 200 characters, and an optional `kind` of `movie` or `series`, and searches every kind this server serves when `kind` is absent. It returns at most five titles per kind, best match first, each with its `kind`, its `id` (the TMDB id of a movie, the TVDB id of a series), its `title`, its `year` when known, and `in_library`. A kind that cannot be searched — its instance is down, say — is listed under `unavailable` beside the other kind's titles rather than failing the call. It changes nothing.
+- `media_add` — takes the `kind` and `id` a find returned, an optional `resolution`, and, for a series only, an optional `episodes` of `all` (the default) or `future`. It adds the title monitored and starts a search for it, and reports `added`. A title already in the library is left exactly as it is and reported `already_in_library`, including when another call added it a moment earlier, so adding twice never creates a duplicate.
+
+`resolution` is one of `480p`, `576p`, `720p`, `1080p`, and `2160p`. A profile's resolution is that of its cutoff quality, or the highest in its cutoff group. The server uses a profile whose resolution is the one asked for or, where none is, the nearest, the lower of two equally near winning; among several it prefers the configured default, then the profile allowing the fewest qualities, then the name that sorts first. The result reports the resolution the title now targets, so you can see when the request was not met exactly.
+
+New titles are added with these defaults, which are accepted only when `media` is selected:
+
+| Variable | Meaning |
+|---|---|
+| `ARR_MCP_MEDIA_MOVIE_QUALITY_PROFILE` | Quality profile name for new movies |
+| `ARR_MCP_MEDIA_MOVIE_ROOT_FOLDER` | Root folder path for new movies |
+| `ARR_MCP_MEDIA_SERIES_QUALITY_PROFILE` | Quality profile name for new series |
+| `ARR_MCP_MEDIA_SERIES_ROOT_FOLDER` | Root folder path for new series |
+
+Each is optional. Where a variable is absent and the instance has exactly one root folder or quality profile, that one is used; where it has several, an add fails with `deployment_configuration` naming the variable to set — unless the call names a `resolution`, which chooses the profile by itself. A variable that names a profile or folder the instance does not have fails every add of that kind the same way, so a stale setting is reported rather than bypassed. Names and paths are matched exactly as written. The defaults are checked when a title is added rather than at startup, so an instance that is down when the server starts does not stop it from starting.
+
+```json
+{
+  "env": {
+    "ARR_MCP_TOOLSET": "media",
+    "ARR_MCP_MEDIA_MOVIE_QUALITY_PROFILE": "HD-1080p",
+    "ARR_MCP_MEDIA_SERIES_QUALITY_PROFILE": "HD-1080p",
+    "ARR_MCP_MEDIA_SERIES_ROOT_FOLDER": "/tv"
+  }
+}
+```
+
 ## Development
 
 This section is for working on the server itself. Running it does not require any of it.

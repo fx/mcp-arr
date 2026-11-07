@@ -5,7 +5,7 @@
 Introduce the startup toolset selection and the first two `media` tools, `media_find` and `media_add`. A deployment can then opt into a surface that finds and adds movies and series without knowing Sonarr, Radarr, quality profiles, or root folders. `arr` stays the default here; [0033](./0033-media-default-toolset.md) flips it. [Media Toolset](../specs/media-toolset/) owns the tools' behavior, and [Tool Contracts — Toolset Selection](../specs/tool-contracts/#toolset-selection) owns the selection.
 
 **Spec:** [Media Toolset](../specs/media-toolset/)
-**Status:** draft
+**Status:** complete
 **Depends On:** —
 
 ## Motivation
@@ -92,6 +92,17 @@ What implementing them requires of this change:
   - **Why:** Flipping is the breaking change, and it should land only after every `media` tool exists and has passed a live sweep. Earlier sweeps found defects that a green suite missed, so the flip waits for the same evidence.
   - **Alternatives considered:** Flipping in this change. Rejected: a host that upgraded would lose the `arr` tools for a toolset that cannot yet report status or fix anything.
 
+### Implementation Notes
+
+Choices the specs left open, made the safe way when this change was implemented:
+
+- A `media_find` call that could search no kind at all fails with each kind's error in `errors` rather than listing every kind as unavailable in a successful result.
+- "Nearest" resolution is measured in steps of the five-step ladder, so 1080p is as near to 720p as to 2160p and the lower wins.
+- A create the instance did not confirm, or that failed in a way that does not prove nothing happened, is settled by re-reading the candidate: a title now in the library is reported `added`. A refusal that proves nothing happened and a title now in the library is `already_in_library`.
+- A configured root folder or quality profile is matched exactly as written, so a trailing separator or a different case is reported as `deployment_configuration` rather than guessed at.
+- `ARR_MCP_TOOLSET` entries are trimmed and matched case-sensitively. A media default for a kind whose application is not configured is accepted at startup, because an add of that kind is refused for that reason before any default is read.
+- Error messages and remediations are chosen from static tables by kind and code; an upstream failure's own message, which names the application and route, is not carried.
+
 ### Non-Goals
 
 - `media_status`, `media_fix`, `media_search_again`, `media_remove`, and `ARR_MCP_MEDIA_ALLOW_REMOVE`, which belong to [0032](./0032-media-toolset-activity.md).
@@ -100,21 +111,21 @@ What implementing them requires of this change:
 
 ## Tasks
 
-- [ ] Select a toolset at startup and publish `media_find` and `media_add`
-  - [ ] Parse `ARR_MCP_TOOLSET` as a comma-separated set of `media` and `arr`, and the four profile and folder variables, in `src/config/environment.ts`, with an interim default of `arr`. Cover every accepted and rejected value — each order of both, `all`, `all` combined with a name, a duplicate, an unknown name, an empty list — and the cross-toolset rejection in `test/environment.test.ts`.
-  - [ ] Thread the toolset through `createServer` and `registerTools`, and add `mediaToolNames` to `src/tools/names.ts`.
-  - [ ] Add `not_found` and `deployment_configuration` to `src/tools/errors.ts` with their remediation policies and tests, then re-measure and update the `arr` listing ceiling in `test/tool-stdio.test.ts`.
-  - [ ] Implement `media_find` in `src/tools/media/`, with its input and output schemas, summary, and per-kind unavailability.
-  - [ ] Implement `media_add` in `src/tools/media/`, with default resolution, duplicate short-circuit, and search on add.
-  - [ ] Capture any fixture these tools read that the inventory does not already hold. Candidates are `series/lookup` and `movie/lookup` by `tvdb:` and `tmdb:` term, and `qualityprofile` and `rootfolder` with more than one record. Use `scripts/capture-fixture.mjs` and register each in `test/fixture-contract.test.ts`.
-  - [ ] Implement the resolution-to-profile choice as a pure function and unit-test every rule in [Resolution](../specs/media-toolset/#resolution): exact match, nearest with the lower-wins tie, the default preference, fewest allowed qualities, name order, cutoff groups, and no profile with a resolution.
-  - [ ] Capture `qualityprofile` fixtures with populated `items`, including a cutoff group, for both applications, and register them.
-  - [ ] Add unit tests for both tools over fixtures, covering every scenario in [Find](../specs/media-toolset/#find), [Add](../specs/media-toolset/#add), [Resolution](../specs/media-toolset/#resolution), [Media Identity](../specs/media-toolset/#media-identity), and [Deployment Defaults](../specs/media-toolset/#deployment-defaults).
-  - [ ] Add `test/media-stdio.test.ts`. It spawns the built server with `ARR_MCP_TOOLSET=media`, lists tools, asserts the forbidden-term scan and a recorded listing ceiling at or under 12 000 bytes, and calls both tools. It also spawns with `ARR_MCP_TOOLSET=media,arr` and with `all` and asserts, for each, that the listing is exactly the union of the two toolsets' listings, each tool's definition unchanged.
-  - [ ] Add the new variables to `configurationVariables` in `test/support/spawned-stdio.ts` and to the filter list in `scripts/verify-package.mjs`, and add every new `dist/**` file to the packed-file inventory.
-- [ ] Document the opt-in toolset
-  - [ ] Add a "Media tools" section to `README.md`. It explains `ARR_MCP_TOOLSET=media`, `media,arr`, and `all`, the two tools, the `resolution` input, and the default variables, and states that `arr` is the default until the toolset is complete.
-  - [ ] Update the status notes in [Media Toolset](../specs/media-toolset/) and [Tool Contracts — Toolset Selection](../specs/tool-contracts/#toolset-selection) to say what has landed.
+- [x] Select a toolset at startup and publish `media_find` and `media_add`
+  - [x] Parse `ARR_MCP_TOOLSET` as a comma-separated set of `media` and `arr`, and the four profile and folder variables, in `src/config/environment.ts`, with an interim default of `arr`. Cover every accepted and rejected value — each order of both, `all`, `all` combined with a name, a duplicate, an unknown name, an empty list — and the cross-toolset rejection in `test/environment.test.ts`.
+  - [x] Thread the toolset through `createServer` and `registerTools`, and add `mediaToolNames` to `src/tools/names.ts`.
+  - [x] Add `not_found` and `deployment_configuration` to `src/tools/errors.ts` with their remediation policies and tests, then re-measure and update the `arr` listing ceiling in `test/tool-stdio.test.ts`.
+  - [x] Implement `media_find` in `src/tools/media/`, with its input and output schemas, summary, and per-kind unavailability.
+  - [x] Implement `media_add` in `src/tools/media/`, with default resolution, duplicate short-circuit, and search on add.
+  - [x] Capture any fixture these tools read that the inventory does not already hold. Candidates are `series/lookup` and `movie/lookup` by `tvdb:` and `tmdb:` term, and `qualityprofile` and `rootfolder` with more than one record. Use `scripts/capture-fixture.mjs` and register each in `test/fixture-contract.test.ts`. None was needed: the inventory already holds every route these tools read, with both lookups carrying a title in the library and one that is not, and Sonarr's `rootfolder` and both `qualityprofile` fixtures carrying several records.
+  - [x] Implement the resolution-to-profile choice as a pure function and unit-test every rule in [Resolution](../specs/media-toolset/#resolution): exact match, nearest with the lower-wins tie, the default preference, fewest allowed qualities, name order, cutoff groups, and no profile with a resolution.
+  - ~~Capture `qualityprofile` fixtures with populated `items`, including a cutoff group, for both applications, and register them.~~ Moved to [0033](./0033-media-default-toolset.md) — live instances unreachable from the implementing environment. Until then the reader is tested over inline bodies in the documented shape, and tolerates any other shape by giving that profile no resolution.
+  - [x] Add unit tests for both tools over fixtures, covering every scenario in [Find](../specs/media-toolset/#find), [Add](../specs/media-toolset/#add), [Resolution](../specs/media-toolset/#resolution), [Media Identity](../specs/media-toolset/#media-identity), and [Deployment Defaults](../specs/media-toolset/#deployment-defaults).
+  - [x] Add `test/media-stdio.test.ts`. It spawns the built server with `ARR_MCP_TOOLSET=media`, lists tools, asserts the forbidden-term scan and a recorded listing ceiling at or under 12 000 bytes, and calls both tools. It also spawns with `ARR_MCP_TOOLSET=media,arr` and with `all` and asserts, for each, that the listing is exactly the union of the two toolsets' listings, each tool's definition unchanged.
+  - [x] Add the new variables to `configurationVariables` in `test/support/spawned-stdio.ts` and to the filter list in `scripts/verify-package.mjs`, and add every new `dist/**` file to the packed-file inventory.
+- [x] Document the opt-in toolset
+  - [x] Add a "Media tools" section to `README.md`. It explains `ARR_MCP_TOOLSET=media`, `media,arr`, and `all`, the two tools, the `resolution` input, and the default variables, and states that `arr` is the default until the toolset is complete.
+  - [x] Update the status notes in [Media Toolset](../specs/media-toolset/) and [Tool Contracts — Toolset Selection](../specs/tool-contracts/#toolset-selection) to say what has landed.
 
 ## Open Questions
 

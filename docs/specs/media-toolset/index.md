@@ -4,7 +4,7 @@
 
 This specification defines the `media` toolset: the smallest set of tools that manages a media library across the supported applications, talking about movies, TV series, and downloads rather than about Sonarr, Radarr, and Prowlarr. Inputs and results carry only what a caller needs for its next step. A caller finds a title, adds it, asks how it is going, and asks for a stuck download to be fixed. The server decides which application handles the request, which quality profile and root folder to use, and which upstream steps to run. Which toolset a process publishes, and the conventions every published tool shares, are owned by [Tool Contracts](../tool-contracts/).
 
-**Status:** unimplemented. [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) implements `media_find` and `media_add` with the identity, footprint, and default rules they need; [0032-media-toolset-activity](../../changes/0032-media-toolset-activity.md) implements the other four tools; [0033-media-default-toolset](../../changes/0033-media-default-toolset.md) makes this the default toolset.
+**Status:** partially implemented. [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) implemented `media_find` and `media_add` with the identity, footprint, and default rules they need, published when `ARR_MCP_TOOLSET` selects `media`; until the rest lands the toolset publishes only those two, so it offers no tool that refuses unconditionally. [0032-media-toolset-activity](../../changes/0032-media-toolset-activity.md) implements the other four tools; [0033-media-default-toolset](../../changes/0033-media-default-toolset.md) makes this the default toolset.
 
 ## Background
 
