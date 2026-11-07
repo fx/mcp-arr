@@ -126,7 +126,7 @@ Setting any of these variables while the `arr` toolset is selected, or setting o
 
 - `media_add` MUST accept a title's kind and id and, for a series only, an optional `episodes` choice of `all` or `future`, defaulting to `all`.
 - `media_add` MUST add the title with the [deployment defaults](#deployment-defaults), monitored, with every other new-record setting taken from the metadata the application's own lookup proposes, and MUST start a search for its missing media.
-- Adding a title already in the library MUST succeed with the outcome `already_in_library`, MUST NOT change the existing record, and MUST NOT start a search.
+- Adding a title already in the library MUST succeed with the outcome `already_in_library`, MUST NOT change the existing record, and MUST NOT start a search, including when the title was added by another call between this call's check and its add.
 - An id the metadata source does not know MUST fail with `not_found`.
 - The result MUST carry the title and exactly one outcome, `added` or `already_in_library`.
 
@@ -173,15 +173,16 @@ Setting any of these variables while the `arr` toolset is selected, or setting o
 
 ### Fix
 
-- `media_fix` MUST accept a title's kind and id and MUST act on every download of that title that is `stuck` when the call re-reads it.
+- `media_fix` MUST accept a title's kind and id and MUST act on the title's downloads that are `stuck` when the call re-reads them, at most 10 per call, in the order the queue lists them.
 - A `stuck` download whose remedy is `replace` MUST be blocklisted, removed from the download client together with its downloaded data, and replaced by the application's own search for another release.
 - A `stuck` download whose remedy is `import` MUST have its import started, and that remedy MUST apply only when every file the download holds is importable without any correction and the library's own records show no file for any movie or episode those files map to.
 - Where the library's records cannot establish that a mapped movie or episode has no file, the remedy MUST be `none`.
 - A `stuck` download whose remedy is `none` MUST be left untouched.
 - `media_fix` MUST NOT delete or replace any file already in the library, MUST NOT act on a download in any state other than `stuck`, and MUST NOT act on any other title's downloads.
 - `media_fix` MUST re-read each download immediately before acting on it, and MUST decide its remedy from that reading rather than from any earlier status result.
-- The result MUST carry, for each stuck download, its title and either the action taken, `replaced` or `import_started`, or `none` with a one-sentence reason; a title with nothing stuck MUST produce an empty list.
-- Calling `media_fix` again, including concurrently, MUST NOT repeat an action on a download it already replaced or whose import it started and has not seen finish.
+- The result MUST carry, for each download the call considered, its title and either the action taken, `replaced` or `import_started`, or `none` with a one-sentence reason, and MUST carry how many stuck downloads it left for a later call; a title with nothing stuck MUST produce an empty list.
+- While one call in this process is acting on a download, or has started an import for it that has not been seen to finish, no other `media_fix` call MUST act on that download; a call that meets such a download MUST report it `none` with a reason saying it is already being fixed.
+- Calling `media_fix` again, sequentially or concurrently, MUST NOT repeat an action on a download already replaced or whose import was started and has not been seen to finish.
 
 #### Scenario: Replace a failed download
 
@@ -225,7 +226,7 @@ Setting any of these variables while the `arr` toolset is selected, or setting o
 
 - `media_remove` MUST accept a title's kind and id and an optional `delete_files` flag that defaults to `false`.
 - It MUST remove the title from the library, MUST delete the title's files only when `delete_files` is `true`, and MUST NOT exclude the title from future additions.
-- Removing a title that is not in the library MUST succeed with the outcome `not_in_library` and change nothing.
+- Removing a title that is not in the library, including one another call removed in the meantime, MUST succeed with the outcome `not_in_library` and change nothing.
 - The result MUST carry the title, exactly one outcome, `removed` or `not_in_library`, and whether files were deleted.
 
 #### Scenario: Remove and keep the files
@@ -280,7 +281,7 @@ And the remedy for a `stuck` download:
 
 `media_add` reuses the `arr` toolset's lookup-by-id and duplicate detection, so an add can never create a second record for a title. Its idempotency comes from that state check rather than from an apply record: repeating an add finds the record the first call made.
 
-`media_fix` gets most of the same property from its re-read: a download it replaced has left the queue, so repeating the call finds nothing to act on. An import is different, because starting one only queues work upstream, and until it runs the download still looks stuck. So the process claims each download before starting its import, and treats that download as `importing` until the upstream work is seen to finish. A repeated or concurrent call therefore cannot start the same import twice within one process lifetime. After a restart that memory is gone. By then the first import has normally finished, and the library-file check refuses to import files into movies or episodes the library now holds; the residual case, a restart while an import is still queued upstream, is accepted.
+`media_fix` gets the same property from a per-download claim plus its re-read. Before acting on a download, a call claims it in process memory, and a concurrent call that finds the claim leaves the download alone; so two overlapping calls cannot both act on one download, whichever remedy applies. A replacement's claim lasts until its removal request has returned, after which the download has left the queue and a later call's re-read finds nothing to act on. An import's claim lasts longer, because starting one only queues work upstream and until it runs the download still looks stuck: the claim is held, and the download reported `importing`, until the upstream work is seen to finish. A repeated or concurrent call therefore cannot act twice on the same download within one process lifetime. After a restart that memory is gone. By then the first import has normally finished, and the library-file check refuses to import files into movies or episodes the library now holds; the residual case, a restart while an import is still queued upstream, is accepted.
 
 Whether a mapped movie or episode already has a file is read from the library's own movie and episode records, never from the import scan. The scan's own existing-file marker depends on fields the supported versions do not send; see [tasks](../../tasks.md).
 

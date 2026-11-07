@@ -49,7 +49,9 @@ Additionally, because `media_fix` acts without a plan:
 - A test MUST prove that a download whose state changes between `media_status` and `media_fix` is judged from the fix-time reading.
 - A test MUST prove that a `replace` remedy sends the queue removal with removal from the client and blocklisting enabled and replacement search allowed. It MUST also show that no request deletes or replaces a library file.
 - A test MUST prove the `import` remedy is refused when the library's record for a mapped movie or episode reports a file, or cannot say, even though the scan reports every candidate importable and no existing file.
-- A test MUST prove that two `media_fix` calls for the same stuck download, sequential and concurrent, submit one import between them while its command is unfinished.
+- A test MUST prove that two `media_fix` calls for the same stuck download, sequential and concurrent, send one replacement between them, and submit one import between them while its command is unfinished.
+- A test MUST prove that `media_fix` on a title with more than ten stuck downloads acts on ten and reports the remainder count.
+- A test MUST prove that a concurrent duplicate `media_remove` reports `not_in_library`.
 - A test MUST prove `media_search_again` sends only ids with no file, and sends nothing for a title whose scope has nothing missing.
 
 ### Functional requirements
@@ -92,16 +94,16 @@ What implementing them requires of this change:
     - `readQueueDetails` scoped to the library record's id.
     - The record's own monitored state and file statistics.
     - The next calendar entry.
-- **`media_fix`.** Read the title's queue details. For each item, take a fresh focused read and classify it:
-  - `replace`: compile `blocklist_and_remove` with replacement search allowed, and send it.
-  - `import`: scan, validate, confirm file absence from the library, then submit the manual import with import mode `auto`.
-    - Before submitting, claim the download in a process-local in-flight map keyed by application and queue item id. A concurrent call that finds the claim skips the item.
-    - Once the import is accepted, attach the returned command to the claim. If submission fails, release the claim.
-    - From then on the classifier reports that download `importing`, until a refresh of the command through `readCommandRecord` reaches a terminal state or reports the command gone. So neither a repeated nor a concurrent call submits it twice.
-  - Before acting on any item, consult that record. An item with an unfinished import from this process is skipped, not re-imported.
-  - `none`: report the reason.
+- **`media_fix`.** Read the title's queue details, and take at most the first ten stuck items in queue order; count the rest as left for a later call.
+  - **Claim first.** For each item, claim it in a process-local in-flight map keyed by application and queue item id before reading it. Claiming is a synchronous check-and-set, so two overlapping calls cannot both hold it. A call that finds an item already claimed reports it `none`, already being fixed, and moves on.
+  - **Then read and classify.** Take a fresh focused read and classify the item:
+    - `replace`: compile `blocklist_and_remove` with replacement search allowed, send it, and release the claim once the request returns.
+    - `import`: scan, validate, confirm file absence from the library, then submit the manual import with import mode `auto`. Once the import is accepted, attach the returned command to the claim and keep it. The classifier reports that download `importing` until a refresh of the command through `readCommandRecord` reaches a terminal state or reports the command gone, and only then is the claim released.
+    - `none`: report the reason and release the claim.
+  - If any upstream request fails, release the claim and report the failure as that item's outcome.
   
   Items are handled one at a time, each with its own outcome, as queue resolution already does.
+- **Concurrent removals.** A `media_remove` whose delete finds no record reports `not_in_library`.
 - **`media_search_again`.** Never issue a whole-title command, because `SeriesSearch` and `SeasonSearch` also search episodes that already have files and can grab upgrades.
   - For a movie, read the movie record. If it has no file and is released, send `MoviesSearch` for that one movie; otherwise send nothing.
   - For a series, read its episodes within the scope (all, one season, or one episode). Keep the released episodes with no file, and send one `EpisodeSearch` for exactly those ids. If none qualify, send nothing.
@@ -118,7 +120,7 @@ What implementing them requires of this change:
   - **Why:** Blocklisting with replacement search allowed is the application's built-in "try another release" path. A separate search command would race it and could grab twice.
   - **Alternatives considered:** Suppressing redownload and starting an explicit search. Rejected for the double-grab risk.
 - **Decision:** Do not give `media` mutations apply records.
-  - **Why:** Apply records exist so a retried `arr` apply reference cannot resend a non-idempotent mutation. A `media` call has no reference to retry. Its retry is a new call, and that call re-reads state: a replaced download has left the queue. The one remedy a re-read cannot see completed is an import that is still queued upstream, and the in-flight claim above guards exactly that with one small process-local map.
+  - **Why:** Apply records exist so a retried `arr` apply reference cannot resend a non-idempotent mutation. A `media` call has no reference to retry. Its retry is a new call, and that call re-reads state: a replaced download has left the queue. A re-read alone cannot guard overlapping calls, or an import still queued upstream; the per-download claim above guards both with one small process-local map.
   - **Alternatives considered:** Recording an apply record per `media` call, keyed by title. Rejected: it would hold a record per call for every remedy, where only an unfinished import needs one, and adds nothing for `replace`, which the re-read already guards.
 - **Decision:** Publish `media_remove` only when enabled, rather than publishing it and refusing it.
   - **Why:** [Tool Contracts](../specs/tool-contracts/#stable-typed-surface) bars advertising an intent the server refuses unconditionally. A tool that is never callable in a deployment does not belong in that deployment's listing.
@@ -138,7 +140,7 @@ What implementing them requires of this change:
   - [ ] Implement `media_status` for the overview and for a title, with bounded lists and cut-off totals.
   - [ ] Capture any fixture the overview needs that the inventory lacks, such as a queue page holding stalled and import-blocked items or an import history window, and register it.
 - [ ] Fix stuck downloads
-  - [ ] Implement `media_fix` with per-item re-read, the `replace` remedy through the existing compiler, the `import` remedy with library file-absence confirmation and the in-flight claim on the started import, and per-item outcomes.
+  - [ ] Implement `media_fix` with per-item re-read, the `replace` remedy through the existing compiler, the `import` remedy with library file-absence confirmation, the per-download in-flight claim covering both remedies, the ten-item bound with a remainder count, and per-item outcomes.
   - [ ] Add the agreement, non-action, state-change, and flag tests from the Testing Requirements above.
 - [ ] Search again and remove
   - [ ] Implement `media_search_again` with missing-only selection, sending `MoviesSearch` or `EpisodeSearch` for exactly the missing released ids, sending nothing when none qualify, and refusing a title not in the library with `conflict`.

@@ -41,6 +41,7 @@ Additionally:
 - A test MUST assert the [Minimal Footprint](../specs/media-toolset/#minimal-footprint) listing over stdio against a measured, recorded ceiling, in the way `test/tool-stdio.test.ts` records the `arr` listing's. The ceiling's margin over the measurement MUST be smaller than the smallest single `media` tool's published definition, so a regression that republishes one tool cannot hide beneath it.
 - A test MUST scan every published `media` tool's name, title, description, and input and output schemas for the terms [Published Tools](../specs/media-toolset/#published-tools) forbids, case-insensitively. Its word list MUST be written out in the test rather than derived from code.
 - A test MUST prove `media_add` cannot create a duplicate. An add of a title already in the library MUST send no write request upstream.
+- A test MUST prove that an add the application refuses because the title was added between this call's check and its create reports `already_in_library`.
 
 ### Functional requirements
 
@@ -74,6 +75,7 @@ What implementing them requires of this change:
   2. If it already has a library record, return `already_in_library` and send nothing.
   3. Otherwise resolve the profile and folder through `readConfigurationRecords`, matching by name or path the way `matchConfiguration` already does: the configured value if set, the only record if there is one, otherwise `deployment_configuration`.
   4. Build the payload with `addMediaPayload` and send it with `createMedia`, setting search-on-add to true. Monitoring maps `all` and `future` onto Sonarr's monitor options, and movies always use the movie-only option.
+  5. If the application refuses the create, re-read the candidate. If it now has a library record, another call added it in the meantime, so report `already_in_library`. Otherwise report the refusal.
 - **Error codes.** Add `not_found` and `deployment_configuration` to `toolErrorCodes` in `src/tools/errors.ts`, with remediation policies. `deployment_configuration`'s remediation tells the caller that the operator must set the named variable.
 
 ### Decisions
