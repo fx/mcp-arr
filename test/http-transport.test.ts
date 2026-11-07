@@ -1237,7 +1237,8 @@ describe("HTTP transport toolset selection", () => {
     const blocked = rows.find((row) => row.id === 502);
     const key = `sonarr\u0000id:${downloadIdentity(String(blocked?.downloadId))}`;
     state.downloadClaims.tryClaim(key);
-    state.downloadClaims.markImporting(key, {
+    state.downloadClaims.markPending(key, {
+      action: "import",
       application: "sonarr",
       commandId: "3001",
       attemptedAt: Date.now(),
@@ -1271,5 +1272,49 @@ describe("HTTP transport toolset selection", () => {
     expect(sonarr.queueResolutions).toEqual([]);
     expect(sonarr.commands).toEqual([]);
     expect(sonarr.requests).toContain("command/3001");
+  });
+
+  it("holds a replacement whose answer was lost across HTTP requests", async () => {
+    const sonarr = await fixture("sonarr");
+    const state = createWorkflowState();
+    const harness = await startHarness(
+      { ...instanceEnvironment([sonarr]), ARR_MCP_TOOLSET: "media" },
+      5_000,
+      { createState: () => state },
+    );
+    const rows = await activityFixture<Record<string, unknown>[]>("sonarr", "queue/details");
+    const blocked = rows.find((row) => row.id === 502);
+    const key = `sonarr\u0000id:${downloadIdentity(String(blocked?.downloadId))}`;
+    state.downloadClaims.tryClaim(key);
+    state.downloadClaims.markPending(key, {
+      action: "replace",
+      application: "sonarr",
+      attemptedAt: state.clock.now(),
+      mediaId: 12,
+      episodeIds: [],
+    });
+
+    const status = await harness.call(1, "tools/call", {
+      name: "media_status",
+      arguments: { kind: "series", id: 100001 },
+    });
+    const fixed = await harness.call(2, "tools/call", {
+      name: "media_fix",
+      arguments: { kind: "series", id: 100001 },
+    });
+
+    expect((status.message as ToolCallMessage).result?.structuredContent?.downloads).toEqual([
+      expect.objectContaining({
+        state: "stuck",
+        remedy: "none",
+        reason: "It is already being fixed.",
+      }),
+      expect.objectContaining({ state: "downloading" }),
+    ]);
+    expect((fixed.message as ToolCallMessage).result?.structuredContent?.downloads).toEqual([
+      expect.objectContaining({ action: "none", reason: "It is already being fixed." }),
+    ]);
+    expect(sonarr.queueResolutions).toEqual([]);
+    expect(state.downloadClaims.size).toBe(1);
   });
 });

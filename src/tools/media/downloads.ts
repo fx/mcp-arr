@@ -23,7 +23,7 @@ import {
   readLibraryTitleById,
 } from "../../adapters/library/titles.js";
 import type { ApplicationAdapter } from "../../adapters/registry.js";
-import type { ClaimedImport } from "../../state/download-claims.js";
+import type { PendingAction, PendingOutcome } from "../../state/download-claims.js";
 import type { UpstreamCommandObservation } from "../../state/jobs.js";
 import type { MediaContext } from "./context.js";
 import { kindRoutes, type TitleKind } from "./kinds.js";
@@ -122,6 +122,7 @@ export const downloadReasons = {
   checkFailed: "Its files could not be checked because a request failed.",
   targetBeingFixed: "Another download for the same movie or episode is being fixed.",
   targetImporting: "Another download for the same movie or episode is being imported.",
+  alreadyFixing: "It is already being fixed.",
   queueIncomplete: "This title's queue is too long to read in full, so it is left alone.",
 } as const;
 
@@ -199,15 +200,24 @@ const statePrecedence: readonly DownloadState[] = [
  *
  * A download this process has started an import for is `importing` until that
  * import is seen to finish, whatever its rows say: until it runs, the rows
- * still look stuck. Otherwise the most pressing row decides the state, and a
+ * still look stuck. One this process may have replaced, whose answer was lost,
+ * is stuck with no remedy, because it is already being fixed. Otherwise the most pressing row decides the state, and a
  * stuck download's remedy is decided over all of its stuck rows — an
  * unreachable downloader blocks everything, a failed or stalled row means the
  * release is replaced, and only a download whose every stuck row is a blocked
  * import, and whose rows are identified, may be imported.
  */
-export function classifyDownload(download: Download, importClaimed: boolean): Classification {
-  if (importClaimed) {
+export function classifyDownload(
+  download: Download,
+  pending: PendingAction | undefined,
+): Classification {
+  if (pending === "import") {
     return { state: "importing" };
+  }
+  if (pending === "replace") {
+    // Replaced, perhaps: the answer was lost, so nothing more is done to it
+    // until a complete read shows whether it left the queue.
+    return { state: "stuck", remedy: "none", reason: downloadReasons.alreadyFixing };
   }
   const verdicts = download.rows.map(rowVerdict);
   const state =
@@ -400,7 +410,7 @@ export function importingOthers(
   return downloads.filter(
     (other) =>
       other.key !== download.key &&
-      classifyDownload(other, importClaimed(context, other.key)).state === "importing",
+      classifyDownload(other, pendingAction(context, other.key)).state === "importing",
   );
 }
 
@@ -533,10 +543,10 @@ export async function judgeDownload(
   kind: TitleKind,
   mediaId: number,
   download: Download,
-  importClaimed: boolean,
+  pending: PendingAction | undefined,
   guard: ImportGuard,
 ): Promise<Judgement> {
-  const classified = classifyDownload(download, importClaimed);
+  const classified = classifyDownload(download, pending);
   if (classified.state !== "stuck" || classified.remedy !== "import") {
     return classified;
   }
@@ -575,13 +585,13 @@ function commandEnded(observation: UpstreamCommandObservation): boolean {
 const refreshConcurrency = 4;
 
 /**
- * How long an import whose answer was lost is held with no evidence either
- * way, from when it was sent. Long enough for a queued import to run on an
+ * How long an import or a replacement whose answer was lost is held with no
+ * evidence either way, from when it was sent. Long enough for a queued import to run on an
  * instance working through its backlog; short enough that a lost answer
  * cannot hold a download, and a place in the bounded map, for the life of
  * the process.
  */
-export const uncertainImportHoldMs = 30 * 60 * 1000;
+export const uncertainHoldMs = 30 * 60 * 1000;
 
 /**
  * How long after an import whose answer was lost the instance's command list
@@ -593,7 +603,7 @@ export const uncertainCommandWindowMs = 2 * 60 * 1000;
 /** Whether the library's records show a file for every movie or episode an import is for. */
 async function everyTargetHasFile(
   adapter: ApplicationAdapter,
-  claimed: ClaimedImport,
+  claimed: PendingOutcome,
 ): Promise<boolean> {
   if (claimed.application === "radarr") {
     const record = await readLibraryTitleById(adapter.client, "radarr", claimed.mediaId);
@@ -623,10 +633,10 @@ async function uncertainImportSettled(
   context: MediaContext,
   adapter: ApplicationAdapter,
   key: string,
-  claimed: ClaimedImport,
+  claimed: PendingOutcome,
 ): Promise<boolean> {
   const age = context.clock.now() - claimed.attemptedAt;
-  if (age >= uncertainImportHoldMs) {
+  if (age >= uncertainHoldMs) {
     return true;
   }
   if (claimed.application !== "sonarr" && claimed.application !== "radarr") {
@@ -668,13 +678,48 @@ async function uncertainImportSettled(
   }
 }
 
-/** Whether one claimed import has ended, or is gone; doubt keeps it. */
-async function importEnded(
+/**
+ * Whether a replacement whose answer was lost is settled: a read of the
+ * title's whole queue no longer lists the download, or the hold bound has
+ * passed. A read cut short, or one that failed, is no evidence. A download
+ * still listed when the bound passes was evidently not removed, so acting on
+ * it again is acting on it for the first time.
+ */
+async function uncertainReplacementSettled(
   context: MediaContext,
   adapter: ApplicationAdapter,
   key: string,
-  claimed: ClaimedImport,
+  claimed: PendingOutcome,
 ): Promise<boolean> {
+  if (context.clock.now() - claimed.attemptedAt >= uncertainHoldMs) {
+    return true;
+  }
+  if (claimed.application !== "sonarr" && claimed.application !== "radarr") {
+    return false;
+  }
+  try {
+    const rows = await readQueueForMedia(
+      adapter.client,
+      claimed.mediaId,
+      profileFor(claimed.application),
+      "summary",
+    );
+    return !rows.truncated && !groupDownloads(rows.items).some((download) => download.key === key);
+  } catch {
+    return false;
+  }
+}
+
+/** Whether what one claim is waiting on is over, or shown never to have happened; doubt keeps it. */
+async function pendingSettled(
+  context: MediaContext,
+  adapter: ApplicationAdapter,
+  key: string,
+  claimed: PendingOutcome,
+): Promise<boolean> {
+  if (claimed.action === "replace") {
+    return uncertainReplacementSettled(context, adapter, key, claimed);
+  }
   if (claimed.commandId === undefined) {
     return uncertainImportSettled(context, adapter, key, claimed);
   }
@@ -687,9 +732,10 @@ async function importEnded(
 }
 
 /**
- * Reads back every import this process started on one kind's instance, and
- * releases each claim whose import has ended, is gone, or — for one whose
- * answer was lost — is shown to be over or never to have arrived.
+ * Reads back everything this process is waiting on for one kind's instance,
+ * and releases each claim whose import has ended or is gone, or — for an
+ * import or a replacement whose answer was lost — is shown to be over or
+ * never to have happened.
  *
  * It walks the claims themselves rather than the queue, because a finished
  * import's download normally leaves the queue, and a claim found only through
@@ -699,29 +745,32 @@ async function importEnded(
  * second import start; the map's bound, and the hold bound on an import whose
  * answer was lost, cap what doubt can hold. Both `media_status` and
  * `media_fix` run it before they judge anything, so within a call whether a
- * download is being imported is {@link importClaimed}.
+ * download is waited on is {@link pendingAction}.
  */
-export async function refreshImports(
+export async function refreshPending(
   context: MediaContext,
   adapter: ApplicationAdapter,
 ): Promise<void> {
   const pending = context.claims
-    .imports()
+    .pending()
     .filter(([, claimed]) => claimed.application === adapter.application);
   for (let index = 0; index < pending.length; index += refreshConcurrency) {
     await Promise.all(
       pending.slice(index, index + refreshConcurrency).map(async ([key, claimed]) => {
-        if (await importEnded(context, adapter, key, claimed)) {
-          context.claims.releaseImport(key, claimed);
+        if (await pendingSettled(context, adapter, key, claimed)) {
+          context.claims.releasePending(key, claimed);
         }
       }),
     );
   }
 }
 
-/** Whether this process has an unfinished import for a download, as last refreshed. */
-export function importClaimed(context: MediaContext, key: string): boolean {
-  return context.claims.importOf(key) !== undefined;
+/**
+ * What this process is still waiting on for a download, as last refreshed:
+ * an unfinished import, a replacement whose answer was lost, or nothing.
+ */
+export function pendingAction(context: MediaContext, key: string): PendingAction | undefined {
+  return context.claims.pendingOf(key)?.action;
 }
 
 /** Season and episode numbers, by the episode's own identifier. */

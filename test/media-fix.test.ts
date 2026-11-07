@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { defaultScanLimit } from "../src/adapters/library/paging.js";
 import { createManualClock, type ManualClock } from "../src/state/clock.js";
 import { createDownloadClaims, type DownloadClaims } from "../src/state/download-claims.js";
-import { downloadReasons, targetKey, uncertainImportHoldMs } from "../src/tools/media/downloads.js";
+import { downloadReasons, targetKey, uncertainHoldMs } from "../src/tools/media/downloads.js";
 import { fixReasons } from "../src/tools/media/fix.js";
 import type { FixResult, StatusResult } from "../src/tools/media/schemas.js";
 import {
@@ -439,15 +439,13 @@ describe("media_fix replacing a download", () => {
     ]);
   });
 
-  it("releases the claim when the request fails, so a later call can act", async () => {
+  it("releases the claim when the instance refused the replacement outright", async () => {
     instances.state("sonarr").queue = [failedRow(502, "one")];
-    let failures = 1;
+    let refusals = 1;
     instances.intercept((request) => {
-      if (request.method === "DELETE" && failures > 0) {
-        failures -= 1;
-        return new Response(JSON.stringify({ message: "an instance-side failure" }), {
-          status: 500,
-        });
+      if (request.method === "DELETE" && refusals > 0) {
+        refusals -= 1;
+        return new Response(JSON.stringify([{ errorMessage: "refused" }]), { status: 400 });
       }
       return undefined;
     });
@@ -462,7 +460,7 @@ describe("media_fix replacing a download", () => {
         reason: fixReasons.requestFailed,
       },
     ]);
-    expect(failed.content.errors.map((error) => error.code)).toEqual(["unexpected_response"]);
+    expect(failed.content.errors.map((error) => error.code)).toEqual(["upstream_rejection"]);
     expect(claims.size).toBe(0);
 
     const retried = await fix();
@@ -482,8 +480,9 @@ describe("media_fix replacing a download", () => {
     const lost = await fix();
     const again = await fix();
 
-    expect(lost.content.downloads?.[0]?.reason).toBe(fixReasons.requestFailed);
+    expect(lost.content.downloads?.[0]?.reason).toBe(fixReasons.replaceUncertain);
     expect(again.content.downloads).toEqual([]);
+    expect(claims.size).toBe(0);
     expect(instances.mutations().map(describeRequest)).toEqual(["DELETE queue/502"]);
   });
 
@@ -638,7 +637,7 @@ describe("media_fix importing a download", () => {
     await status({ kind: "series", id: 100_002 });
     expect(claims.size).toBe(0);
 
-    expect(claims.imports()).toEqual([]);
+    expect(claims.pending()).toEqual([]);
   });
 
   it("frees room in a full claim map once finished imports are read back", async () => {
@@ -900,7 +899,7 @@ describe("media_fix with an import whose answer was lost", () => {
       action: "none",
       reason: fixReasons.importUncertain,
     });
-    expect(claims.imports().map(([, claimed]) => claimed.commandId)).toEqual([undefined]);
+    expect(claims.pending().map(([, claimed]) => claimed.commandId)).toEqual([undefined]);
     expect((await status()).content.downloads?.[0]).toMatchObject({ state: "importing" });
 
     clock.advance(5 * 60 * 1000);
@@ -965,14 +964,14 @@ describe("media_fix with an import whose answer was lost", () => {
     loseImportAnswer(true);
     await fix();
 
-    clock.advance(uncertainImportHoldMs - 1);
+    clock.advance(uncertainHoldMs - 1);
     await status();
     expect(claims.size).toBe(1);
 
     clock.advance(1);
     await status();
     expect(claims.size).toBe(0);
-    expect(uncertainImportHoldMs).toBe(30 * 60 * 1000);
+    expect(uncertainHoldMs).toBe(30 * 60 * 1000);
   });
 
   it("releases the claim when the instance refused the import outright", async () => {
@@ -1092,5 +1091,116 @@ describe("media_fix concludes nothing from a read cut short", () => {
       "this title has more queue entries than could be read, so remaining counts only those read",
     ]);
     expect(instances.mutations()).toEqual([]);
+  });
+});
+
+describe("media_fix with a replacement whose answer was lost", () => {
+  /**
+   * Lets the instance accept the replacement and lose the answer, with the
+   * download still listed for a while, as a queue slow to show a removal is.
+   */
+  function loseReplacementAnswer(answer: () => Response | never): void {
+    instances.intercept((request) => (request.method === "DELETE" ? answer() : undefined));
+  }
+
+  function deletes(): number {
+    return instances.mutations().filter((request) => request.method === "DELETE").length;
+  }
+
+  beforeEach(() => {
+    instances.state("sonarr").queue = [failedRow(502, "one")];
+  });
+
+  it("holds the claim and sends no second replacement, sequential or concurrent", async () => {
+    loseReplacementAnswer(() => {
+      throw new TypeError("fetch failed");
+    });
+
+    const first = await fix();
+    expect(first.content.downloads?.[0]).toMatchObject({
+      action: "none",
+      reason: fixReasons.replaceUncertain,
+    });
+    expect(claims.pending().map(([, outcome]) => outcome.action)).toEqual(["replace"]);
+    expect((await status()).content.downloads?.[0]).toMatchObject({
+      state: "stuck",
+      remedy: "none",
+      reason: fixReasons.alreadyFixing,
+    });
+
+    const again = await fix();
+    const [left, right] = await Promise.all([fix(), fix()]);
+    for (const call of [again, left, right]) {
+      expect(call.content.downloads?.[0]?.reason).toBe(fixReasons.alreadyFixing);
+    }
+    expect(deletes()).toBe(1);
+  });
+
+  it("holds the claim across contexts that share the process's claims, as HTTP requests do", async () => {
+    loseReplacementAnswer(() => new Response("not json", { status: 200 }));
+    const shared = createDownloadClaims();
+
+    await fix(undefined, shared);
+    await Promise.all([fix(undefined, shared), fix(undefined, shared)]);
+
+    expect(deletes()).toBe(1);
+    expect(shared.size).toBe(1);
+  });
+
+  it("holds the claim after an instance-side failure, which proves nothing", async () => {
+    loseReplacementAnswer(() => new Response("{}", { status: 500 }));
+
+    await fix();
+    await fix();
+
+    expect(deletes()).toBe(1);
+    expect(claims.size).toBe(1);
+  });
+
+  it("releases the claim once a complete read shows the download gone, and not before", async () => {
+    loseReplacementAnswer(() => {
+      throw new TypeError("fetch failed");
+    });
+    await fix();
+
+    // Still listed, past the bound of a read: no evidence yet.
+    instances.state("sonarr").queue = [
+      ...Array.from({ length: defaultScanLimit + 1 }, (_, index) => ({
+        ...blocked,
+        id: 20_000 + index,
+        downloadId: `filler-${index}`,
+        status: "downloading",
+        trackedDownloadState: "downloading",
+        trackedDownloadStatus: "ok",
+      })),
+      failedRow(502, "one"),
+    ];
+    await status();
+    expect(claims.size).toBe(1);
+
+    instances.state("sonarr").queue = [];
+    await status({ kind: "series", id: 100_002 });
+    expect(claims.size).toBe(0);
+  });
+
+  it("releases the claim at the hold bound, and a download still listed then is acted on", async () => {
+    let answers = 0;
+    loseReplacementAnswer(() => {
+      answers += 1;
+      if (answers === 1) {
+        throw new TypeError("fetch failed");
+      }
+      return new Response(null, { status: 200 });
+    });
+    await fix();
+
+    clock.advance(uncertainHoldMs - 1);
+    await fix();
+    expect(deletes()).toBe(1);
+
+    clock.advance(1);
+    const after = await fix();
+    expect(after.content.downloads?.[0]?.action).toBe("replaced");
+    expect(deletes()).toBe(2);
   });
 });

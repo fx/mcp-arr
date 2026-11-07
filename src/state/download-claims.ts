@@ -9,8 +9,8 @@ import type { ApplicationId } from "../applications.js";
  * claims a download before it reads it, with a synchronous check-and-set, so
  * two overlapping calls cannot both hold it; the claim is released once a
  * replacement's request has returned, and an import's claim is kept until the
- * import is seen to finish — or, where the answer to the import was lost, until
- * there is evidence either way.
+ * import is seen to finish. Where the answer to either was lost, the claim is
+ * kept until there is evidence of what happened, or a bound passes.
  *
  * An import also claims every movie or episode it is for, so two downloads can
  * never be imported into the same one at once. Those claims belong to the
@@ -25,20 +25,27 @@ import type { ApplicationId } from "../applications.js";
 /** The most downloads that may be claimed at once. */
 export const maxDownloadClaims = 1_000;
 
-/** The import a claim is waiting on. */
-export interface ClaimedImport {
+/** The two actions whose outcome a claim can be left waiting on. */
+export type PendingAction = "import" | "replace";
+
+/**
+ * What a claim is waiting on: an import that was started, or an action that
+ * was sent and whose answer was lost, so whether it took effect is not known.
+ */
+export interface PendingOutcome {
+  readonly action: PendingAction;
   readonly application: ApplicationId;
   /**
-   * The upstream command identifier the import was accepted as, or
-   * `undefined` where the request was sent and no usable answer came back, so
-   * whether the import started is not known.
+   * The upstream command identifier an import was accepted as, or `undefined`
+   * where the request was sent and no usable answer came back. A replacement
+   * has no command, so it is held only when its answer was lost.
    */
   readonly commandId?: string | undefined;
-  /** When the import was sent, by the context's clock. */
+  /** When the action was sent, by the context's clock. */
   readonly attemptedAt: number;
   /** The library record the download is filed under. */
   readonly mediaId: number;
-  /** The episodes it imports into; empty for a movie. */
+  /** The episodes an import is for; empty for a movie and for a replacement. */
   readonly episodeIds: readonly number[];
 }
 
@@ -49,22 +56,22 @@ export interface DownloadClaims {
   tryClaim(key: string): ClaimAttempt;
   /** Releases a claim, whatever it held, and every target it claimed. */
   release(key: string): void;
-  /** Keeps a held claim for the import it started. */
-  markImporting(key: string, claimed: ClaimedImport): void;
-  /** The import a claim is waiting on, where it is waiting on one. */
-  importOf(key: string): ClaimedImport | undefined;
+  /** Keeps a held claim until the outcome of what it sent is known. */
+  markPending(key: string, claimed: PendingOutcome): void;
+  /** What a claim is waiting on, where it is waiting on anything. */
+  pendingOf(key: string): PendingOutcome | undefined;
   /**
-   * Releases a claim only while it is still waiting on this very import, so a
-   * refresh that finished late cannot release a claim another call has since
-   * taken.
+   * Releases a claim only while it is still waiting on this very outcome, so
+   * a refresh that finished late cannot release a claim another call has
+   * since taken.
    */
-  releaseImport(key: string, claimed: ClaimedImport): void;
+  releasePending(key: string, claimed: PendingOutcome): void;
   /**
-   * Every claim waiting on an import, whatever its download now looks like —
+   * Every claim waiting on an outcome, whatever its download now looks like —
    * including one whose download has left the queue, which no read of the
    * queue would ever name again.
    */
-  imports(): readonly (readonly [key: string, claimed: ClaimedImport])[];
+  pending(): readonly (readonly [key: string, claimed: PendingOutcome])[];
   /**
    * Claims every target for the download a held claim names, all or none: it
    * fails, claiming nothing, when another download holds any of them.
@@ -78,7 +85,7 @@ export interface DownloadClaims {
 
 type Claim =
   | { readonly kind: "acting" }
-  | { readonly kind: "importing"; readonly import: ClaimedImport };
+  | { readonly kind: "pending"; readonly outcome: PendingOutcome };
 
 export function createDownloadClaims(maxEntries = maxDownloadClaims): DownloadClaims {
   const claims = new Map<string, Claim>();
@@ -105,22 +112,22 @@ export function createDownloadClaims(maxEntries = maxDownloadClaims): DownloadCl
     release(key) {
       drop(key);
     },
-    markImporting(key, claimed) {
-      claims.set(key, { kind: "importing", import: claimed });
+    markPending(key, claimed) {
+      claims.set(key, { kind: "pending", outcome: claimed });
     },
-    importOf(key) {
+    pendingOf(key) {
       const claim = claims.get(key);
-      return claim?.kind === "importing" ? claim.import : undefined;
+      return claim?.kind === "pending" ? claim.outcome : undefined;
     },
-    releaseImport(key, claimed) {
+    releasePending(key, claimed) {
       const claim = claims.get(key);
-      if (claim?.kind === "importing" && claim.import === claimed) {
+      if (claim?.kind === "pending" && claim.outcome === claimed) {
         drop(key);
       }
     },
-    imports() {
+    pending() {
       return [...claims].flatMap(([key, claim]) =>
-        claim.kind === "importing" ? [[key, claim.import] as const] : [],
+        claim.kind === "pending" ? [[key, claim.outcome] as const] : [],
       );
     },
     tryClaimTargets(owner, wanted) {

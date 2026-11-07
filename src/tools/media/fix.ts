@@ -3,6 +3,7 @@ import { compileQueueTransition } from "../../adapters/activity/transitions.js";
 import { type ImportFileRequest, submitManualImport } from "../../adapters/import/execute.js";
 import { readEpisodeStates } from "../../adapters/library/titles.js";
 import type { ApplicationAdapter } from "../../adapters/registry.js";
+import type { UpstreamQuery } from "../../http/client.js";
 import { toolErrorProvesNoEffect } from "../errors.js";
 import type { MediaContext } from "./context.js";
 import {
@@ -13,11 +14,11 @@ import {
   type EpisodeNumbers,
   episodeNumbersOf,
   groupDownloads,
-  importClaimed,
   importingOthers,
   judgeDownload,
   libraryFileProblem,
-  refreshImports,
+  pendingAction,
+  refreshPending,
 } from "./downloads.js";
 import {
   distinctErrors,
@@ -32,13 +33,15 @@ import { resolveTitle } from "./titles.js";
 
 /** The one sentence each outcome of a fix that did nothing is explained with. */
 export const fixReasons = {
-  alreadyFixing: "It is already being fixed.",
+  alreadyFixing: downloadReasons.alreadyFixing,
   tooManyFixes: "Too many fixes are in progress; try again later.",
   noLongerStuck: "It is no longer stuck.",
   notReplaceable: "It cannot be replaced by this server.",
   requestFailed: "The change could not be made because a request failed.",
   importUncertain:
     "Its import may have started but no answer came back, so it is not started again until that is known.",
+  replaceUncertain:
+    "It may have been replaced but no answer came back, so it is not replaced again until that is known.",
 } as const;
 
 /**
@@ -111,7 +114,7 @@ async function startImport(
     if (!sent || toolErrorProvesNoEffect(failure.code)) {
       throw error;
     }
-    claims.markImporting(key, { application, attemptedAt, mediaId, episodeIds });
+    claims.markPending(key, { action: "import", application, attemptedAt, mediaId, episodeIds });
     scope.errors.push(failure);
     return none(fixReasons.importUncertain);
   }
@@ -119,7 +122,8 @@ async function startImport(
     claims.release(key);
     return none(gained ?? downloadReasons.changed);
   }
-  claims.markImporting(key, {
+  claims.markPending(key, {
+    action: "import",
     application,
     commandId: submission.command.upstreamId,
     attemptedAt,
@@ -130,6 +134,45 @@ async function startImport(
 }
 
 /**
+ * Sends one replacement and releases the download's claim, unless the answer
+ * leaves whether it took effect unknown.
+ *
+ * A refusal that proves nothing was done is thrown for {@link fixOne} to
+ * release. A lost answer, or one that could not be read, may follow a removal
+ * that happened, and a download whose removal has not yet shown in the queue
+ * still looks stuck; so the claim is kept, waiting on that replacement, until
+ * a complete read of the title's queue shows the download gone or the hold
+ * bound passes — the same rule an import whose answer was lost is held by.
+ */
+async function replace(
+  scope: FixScope,
+  key: string,
+  action: { readonly path: string; readonly query: UpstreamQuery },
+): Promise<Outcome> {
+  const { context, adapter, kind, mediaId } = scope;
+  const attemptedAt = context.clock.now();
+  try {
+    await adapter.client.delete(action.path, action.query);
+  } catch (error) {
+    const failure = mediaErrorFor(kind, error);
+    if (toolErrorProvesNoEffect(failure.code)) {
+      throw error;
+    }
+    context.claims.markPending(key, {
+      action: "replace",
+      application: kindRoutes[kind].application,
+      attemptedAt,
+      mediaId,
+      episodeIds: [],
+    });
+    scope.errors.push(failure);
+    return none(fixReasons.replaceUncertain);
+  }
+  context.claims.release(key);
+  return { action: "replaced" };
+}
+
+/**
  * Acts on one download, holding its claim for exactly as long as the remedy
  * needs it.
  *
@@ -137,14 +180,16 @@ async function startImport(
  * reading, so a download that recovered, left the queue, or changed in any way
  * since the call began is decided as it is now. A replacement's claim is
  * released when its request returns; an import's is kept, with the command it
- * started, until a later call sees that command finish. Any failure releases
- * the claim and is reported as this download's outcome.
+ * started, until a later call sees that command finish. A failure that proves
+ * nothing was done releases the claim; one after which the action may have
+ * taken effect keeps it, waiting on that outcome. Either is reported as this
+ * download's outcome.
  */
 async function fixOne(scope: FixScope, download: Download): Promise<Outcome> {
   const { context, adapter, kind, mediaId } = scope;
   const claims = context.claims;
   const key = download.key;
-  if (importClaimed(context, key)) {
+  if (pendingAction(context, key) !== undefined) {
     return none(fixReasons.alreadyFixing);
   }
   const attempt = claims.tryClaim(key);
@@ -173,7 +218,7 @@ async function fixOne(scope: FixScope, download: Download): Promise<Outcome> {
     }
     // An import claims every movie or episode it is for, with the download's
     // own claim, before the library is asked whether they have a file.
-    const judgement = await judgeDownload(adapter, kind, mediaId, current, false, {
+    const judgement = await judgeDownload(adapter, kind, mediaId, current, undefined, {
       others: importingOthers(context, downloads, current),
       complete: !fresh.truncated,
       reserve: (targets) => claims.tryClaimTargets(key, targets),
@@ -209,10 +254,7 @@ async function fixOne(scope: FixScope, download: Download): Promise<Outcome> {
         }
         return none(fixReasons.notReplaceable);
       }
-      const action = compiled.transition.action;
-      await adapter.client.delete(action.path, action.query);
-      claims.release(key);
-      return { action: "replaced" };
+      return await replace(scope, key, compiled.transition.action);
     }
 
     if (judgement.remedy === "import") {
@@ -251,7 +293,7 @@ export async function fixTitle(context: MediaContext, request: FixRequest): Prom
   }
   const adapter = resolved.adapter;
   const application = kindRoutes[kind].application;
-  await refreshImports(context, adapter);
+  await refreshPending(context, adapter);
 
   let downloads: Download[];
   let truncated = false;
@@ -267,7 +309,9 @@ export async function fixTitle(context: MediaContext, request: FixRequest): Prom
   } catch (error) {
     return { ...named, warnings: [], errors: [mediaErrorFor(kind, error)] };
   }
-  const stuck = downloads.filter((download) => classifyDownload(download, false).state === "stuck");
+  const stuck = downloads.filter(
+    (download) => classifyDownload(download, undefined).state === "stuck",
+  );
   const considered = stuck.slice(0, maxListedEntries);
 
   const warnings: string[] = truncated ? [truncatedQueueWarning] : [];

@@ -1,13 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
-  type ClaimedImport,
   createDownloadClaims,
   maxDownloadClaims,
+  type PendingOutcome,
 } from "../src/state/download-claims.js";
 import { createWorkflowState } from "../src/state/workflow.js";
 
-function started(commandId: string | undefined): ClaimedImport {
-  return { application: "sonarr", commandId, attemptedAt: 0, mediaId: 12, episodeIds: [1003] };
+function started(commandId: string | undefined): PendingOutcome {
+  return {
+    action: "import",
+    application: "sonarr",
+    commandId,
+    attemptedAt: 0,
+    mediaId: 12,
+    episodeIds: [1003],
+  };
 }
 
 describe("download claims", () => {
@@ -27,17 +34,17 @@ describe("download claims", () => {
     const claims = createDownloadClaims();
     const first = started("7001");
     claims.tryClaim("key");
-    claims.markImporting("key", first);
+    claims.markPending("key", first);
 
-    expect(claims.importOf("key")).toBe(first);
+    expect(claims.pendingOf("key")).toBe(first);
     expect(claims.tryClaim("key")).toBe("held");
 
     // A refresh of a different import cannot release this one.
-    claims.releaseImport("key", started("7001"));
-    expect(claims.importOf("key")).toBe(first);
+    claims.releasePending("key", started("7001"));
+    expect(claims.pendingOf("key")).toBe(first);
 
-    claims.releaseImport("key", first);
-    expect(claims.importOf("key")).toBeUndefined();
+    claims.releasePending("key", first);
+    expect(claims.pendingOf("key")).toBeUndefined();
     expect(claims.tryClaim("key")).toBe("claimed");
   });
 
@@ -45,32 +52,32 @@ describe("download claims", () => {
     const claims = createDownloadClaims();
     const uncertain = started(undefined);
     claims.tryClaim("key");
-    claims.markImporting("key", uncertain);
+    claims.markPending("key", uncertain);
 
-    expect(claims.importOf("key")?.commandId).toBeUndefined();
+    expect(claims.pendingOf("key")?.commandId).toBeUndefined();
     expect(claims.tryClaim("key")).toBe("held");
-    expect(claims.imports()).toEqual([["key", uncertain]]);
+    expect(claims.pending()).toEqual([["key", uncertain]]);
   });
 
   it("lists every claim waiting on an import, and no other", () => {
     const claims = createDownloadClaims();
     claims.tryClaim("acting");
     claims.tryClaim("importing");
-    claims.markImporting("importing", started("9"));
+    claims.markPending("importing", started("9"));
 
-    expect(claims.imports()).toEqual([["importing", started("9")]]);
+    expect(claims.pending()).toEqual([["importing", started("9")]]);
   });
 
   it("does not release a claim another call took after an import ended", () => {
     const claims = createDownloadClaims();
     const ended = started("1");
     claims.tryClaim("key");
-    claims.markImporting("key", ended);
-    claims.releaseImport("key", ended);
+    claims.markPending("key", ended);
+    claims.releasePending("key", ended);
     expect(claims.tryClaim("key")).toBe("claimed");
 
     // A second refresh of the ended import arrives late.
-    claims.releaseImport("key", ended);
+    claims.releasePending("key", ended);
     expect(claims.tryClaim("key")).toBe("held");
   });
 
@@ -96,10 +103,10 @@ describe("download claims", () => {
     const importing = started("5");
     claims.tryClaim("one");
     claims.tryClaimTargets("one", ["episode:1"]);
-    claims.markImporting("one", importing);
+    claims.markPending("one", importing);
 
     expect(claims.targetHeldByOther("two", "episode:1")).toBe(true);
-    claims.releaseImport("one", importing);
+    claims.releasePending("one", importing);
     expect(claims.targetHeldByOther("two", "episode:1")).toBe(false);
   });
 

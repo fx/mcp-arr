@@ -168,7 +168,7 @@ const tableRows: readonly {
 describe("classifyDownload", () => {
   for (const entry of tableRows) {
     it(`classifies ${entry.name}`, async () => {
-      const classified = classifyDownload(await download(row(entry.fields)), false);
+      const classified = classifyDownload(await download(row(entry.fields)), undefined);
 
       expect(classified.state).toBe(entry.state);
       if (classified.state === "stuck") {
@@ -179,7 +179,7 @@ describe("classifyDownload", () => {
   }
 
   it("gives a blocked import a provisional import remedy", async () => {
-    expect(classifyDownload(await download(base(502)), false)).toEqual({
+    expect(classifyDownload(await download(base(502)), undefined)).toEqual({
       state: "stuck",
       remedy: "import",
       provisional: true,
@@ -189,14 +189,14 @@ describe("classifyDownload", () => {
       trackedDownloadState: "importPending",
       trackedDownloadStatus: "warning",
     });
-    expect(classifyDownload(await download(pendingWithWarning), false)).toMatchObject({
+    expect(classifyDownload(await download(pendingWithWarning), undefined)).toMatchObject({
       remedy: "import",
     });
   });
 
   it("never gives a row with no download identity the import remedy", async () => {
     const { downloadId: _dropped, ...unidentified } = base(502);
-    expect(classifyDownload(await download(unidentified), false)).toEqual({
+    expect(classifyDownload(await download(unidentified), undefined)).toEqual({
       state: "stuck",
       remedy: "none",
       reason: downloadReasons.unidentified,
@@ -204,7 +204,7 @@ describe("classifyDownload", () => {
   });
 
   it("reports a download this process is importing as importing, whatever its rows say", async () => {
-    expect(classifyDownload(await download(base(502)), true)).toEqual({ state: "importing" });
+    expect(classifyDownload(await download(base(502)), "import")).toEqual({ state: "importing" });
   });
 
   it("decides a download's state from its most pressing row", async () => {
@@ -226,7 +226,7 @@ describe("classifyDownload", () => {
       [[row({ status: "queued" }, 1)], "queued"],
     ];
     for (const [rows, state] of cases) {
-      expect(classifyDownload(await download(...rows), false).state).toBe(state);
+      expect(classifyDownload(await download(...rows), undefined).state).toBe(state);
     }
   });
 
@@ -245,11 +245,11 @@ describe("classifyDownload", () => {
       3,
     );
 
-    expect(classifyDownload(await download(unavailable, failed), false)).toMatchObject({
+    expect(classifyDownload(await download(unavailable, failed), undefined)).toMatchObject({
       remedy: "none",
       reason: downloadReasons.unavailable,
     });
-    expect(classifyDownload(await download(failed, blocked), false)).toMatchObject({
+    expect(classifyDownload(await download(failed, blocked), undefined)).toMatchObject({
       remedy: "replace",
     });
   });
@@ -330,7 +330,7 @@ describe("judgeDownload", () => {
   const open: ImportGuard = { others: [], complete: true, reserve: () => true };
 
   async function judged(guard: ImportGuard = open) {
-    return judgeDownload(adapter, "series", 12, await download(base(502)), false, guard);
+    return judgeDownload(adapter, "series", 12, await download(base(502)), undefined, guard);
   }
 
   it("refuses while another download being imported covers a mapped episode", async () => {

@@ -172,7 +172,8 @@ describe("media_status for one title", () => {
   it("reports a download this process is importing as importing until the import ends", async () => {
     const key = `sonarr\u0000id:${downloadIdentity(String(queueRow("sonarr", 502).downloadId))}`;
     claims.tryClaim(key);
-    claims.markImporting(key, {
+    claims.markPending(key, {
+      action: "import",
       application: "sonarr",
       commandId: "7001",
       attemptedAt: clock.now(),
@@ -188,7 +189,7 @@ describe("media_status for one title", () => {
       episodes: "S02E01",
       state: "importing",
     });
-    expect(claims.importOf(key)).toBeDefined();
+    expect(claims.pendingOf(key)).toBeDefined();
 
     instances.state("sonarr").commands.set(7001, {
       id: 7001,
@@ -198,7 +199,7 @@ describe("media_status for one title", () => {
     });
     const ended = await status({ kind: "series", id: 100_001 });
     expect(ended.content.downloads?.[0]).toMatchObject({ state: "stuck" });
-    expect(claims.importOf(key)).toBeUndefined();
+    expect(claims.pendingOf(key)).toBeUndefined();
   });
 
   it("refuses a kind without an id, and an id without a kind, before any request", async () => {

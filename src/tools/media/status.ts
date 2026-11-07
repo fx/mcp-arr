@@ -18,6 +18,7 @@ import {
 } from "../../adapters/library/titles.js";
 import type { ApplicationAdapter } from "../../adapters/registry.js";
 import type { UpstreamClient } from "../../http/client.js";
+import type { PendingAction } from "../../state/download-claims.js";
 import { maxPageSize } from "../schemas/common.js";
 import type { MediaContext } from "./context.js";
 import {
@@ -30,11 +31,11 @@ import {
   episodesLabel,
   groupDownloads,
   type ImportGuard,
-  importClaimed,
   importingOthers,
   type Judgement,
   judgeDownload,
-  refreshImports,
+  pendingAction,
+  refreshPending,
   reportDownload,
 } from "./downloads.js";
 import {
@@ -175,7 +176,7 @@ async function judgeForStatus(
   siblings: { readonly downloads: readonly Download[]; readonly complete: boolean },
   warnings: string[],
 ): Promise<Judgement> {
-  const claimed = importClaimed(context, download.key);
+  const claimed = pendingAction(context, download.key);
   // Status acts on nothing, so it reserves nothing: it asks only whether a
   // fix would find another download holding one of the import's targets.
   const guard: ImportGuard = {
@@ -304,7 +305,7 @@ async function overviewOfKind(
     return served;
   }
   const adapter = served.adapter;
-  await refreshImports(context, adapter);
+  await refreshPending(context, adapter);
   const application = kindRoutes[kind].application;
   const profile = profileFor(application);
   const now = context.clock.now();
@@ -352,7 +353,7 @@ async function overviewOfKind(
       if (record?.externalId === undefined) {
         continue;
       }
-      const claimed = importClaimed(context, download.key);
+      const claimed = pendingAction(context, download.key);
       candidates.push({
         kind,
         adapter,
@@ -467,7 +468,7 @@ async function overviewOfKind(
  * refuses it. Only the state decides the order, and a provisional `import` is
  * stuck either way.
  */
-function provisionalJudgement(download: Download, claimed: boolean): Judgement {
+function provisionalJudgement(download: Download, claimed: PendingAction | undefined): Judgement {
   const classified = classifyDownload(download, claimed);
   if (classified.state === "stuck" && classified.remedy === "import") {
     return { state: "stuck", remedy: "import", reason: downloadReasons.importable, files: [] };
@@ -620,7 +621,7 @@ async function titleStatus(
     return { kind, id, in_library: false, warnings: [], errors: [] };
   }
   const adapter = resolved.adapter;
-  await refreshImports(context, adapter);
+  await refreshPending(context, adapter);
   const application = kindRoutes[kind].application;
   const now = context.clock.now();
   const warnings: string[] = [];
