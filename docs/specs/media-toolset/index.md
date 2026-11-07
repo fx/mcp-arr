@@ -152,7 +152,7 @@ Setting any of these variables while the `arr` toolset is selected, or setting o
 
 - `media_status` MUST accept either nothing, for an overview, or a title's kind and id, for that title.
 - A download the applications list once per episode it covers, such as a season pack, MUST be reported as one download, identified by the download rather than by any one of its rows.
-- Every download it reports MUST carry its title, which for an episode includes its season and episode numbers, and exactly one state: `queued`, `downloading`, `waiting`, `importing`, or `stuck`.
+- Every download it reports MUST carry the movie or series title, for a series download an `episodes` label naming every episode it covers as comma-separated runs (`S02E03`, `S02E01–E10`, `S01E09–E10, S02E01`), and exactly one state: `queued`, `downloading`, `waiting`, `importing`, or `stuck`.
 - A `downloading` download MUST also carry its progress as a whole percentage, and a `stuck` download MUST also carry a one-sentence reason and the remedy `media_fix` would apply to it if state did not change: `replace`, `import`, or `none`.
 - A download for which this process has started an import that has not yet finished MUST be reported `importing`.
 - The overview MUST carry the kinds this deployment serves, its downloads, the titles imported in the last 7 days with their dates, and the titles or episodes due in the next 14 days with their dates.
@@ -182,7 +182,7 @@ Setting any of these variables while the `arr` toolset is selected, or setting o
 - A `stuck` download whose remedy is `none` MUST be left untouched.
 - `media_fix` MUST NOT delete or replace any file already in the library, MUST NOT act on a download in any state other than `stuck`, and MUST NOT act on any other title's downloads.
 - `media_fix` MUST re-read each download immediately before acting on it, and MUST decide its remedy from that reading rather than from any earlier status result.
-- The result MUST carry, for each download the call considered, its title and either the action taken, `replaced` or `import_started`, or `none` with a one-sentence reason, and MUST carry how many stuck downloads it left for a later call; a title with nothing stuck MUST produce an empty list.
+- The result MUST carry, for each download the call considered, its title and `episodes` label exactly as [Status](#status) reports them, and either the action taken, `replaced` or `import_started`, or `none` with a one-sentence reason, and MUST carry how many stuck downloads it left for a later call; a title with nothing stuck MUST produce an empty list.
 - While one call in this process is acting on a download, or has started an import for it that has not been seen to finish, no other `media_fix` call MUST act on that download; a call that meets such a download MUST report it `none` with a reason saying it is already being fixed.
 - Calling `media_fix` again, sequentially or concurrently, MUST NOT repeat an action on a download already replaced or whose import was started and has not been seen to finish.
 
@@ -291,7 +291,7 @@ Whether a mapped movie or episode already has a file is read from the library's 
 
 The `arr` toolset's plan and apply exist so a caller can inspect effects before committing to them. The `media` toolset trades that for a narrower set of effects, each of which is either additive or confined to a download that is already failing:
 
-- Nothing in the default toolset deletes or replaces a library file. `media_fix` removes only a stuck download and its incomplete data from the download client, and imports only into movies and episodes the library has no file for.
+- Without `media_remove`, which is published only when the operator enables it, no `media` tool deletes or replaces a library file. `media_fix` removes only a stuck download and its incomplete data from the download client, and imports only into movies and episodes the library has no file for.
 - Removal from the library exists only when the operator enables it, and deletes files only when the call asks.
 - Every remedy is decided from a reading taken immediately before it is applied.
 

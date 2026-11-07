@@ -53,7 +53,7 @@ The [HTTP Transport spec](../specs/http-transport/) owns the variables, defaults
 
 ### Approach
 
-- **Configuration.** Extend `EnvironmentConfiguration` in `src/config/environment.ts` with a `transport` discriminated union: `{ kind: "stdio" }` or `{ kind: "http", host, port, token, allowedOrigins }`. Each variable follows the `parseUpstreamTimeout` pattern: an exported name constant, `readVariable`, and problems accumulated into the shared list. HTTP variables found under stdio push one problem each. Like the timeout, all of this is parsed after the missing-application check, so no new problem hides that diagnostic.
+- **Configuration.** Extend `EnvironmentConfiguration` in `src/config/environment.ts` with a `transport` discriminated union: `{ kind: "stdio" }` or `{ kind: "http", host, port, token }`. Each variable follows the `parseUpstreamTimeout` pattern: an exported name constant, `readVariable`, and problems accumulated into the shared list. HTTP variables found under stdio push one problem each. Like the timeout, all of this is parsed after the missing-application check, so no new problem hides that diagnostic.
 - **Runtime.** Add `src/http-transport.ts` beside `src/stdio.ts`. It exports `createHttpRuntime(configuration, dependencies)`, which returns the same `start()`/`close()` shape. Rename `StdioRuntime` to `Runtime` and have `src/process.ts` choose a runtime by `configuration.transport.kind`. `src/http/` keeps its current meaning, the upstream client, so the inbound listener does not go there.
 - **Request pipeline.** A `node:http` server runs the checks in the spec's [refusal order](../specs/http-transport/#refusal-order), and only a request that passes all of them reaches MCP handling. That step creates a fresh SDK Streamable HTTP server transport with no session id generator and JSON responses enabled, and a fresh `createServer(context)`. It connects the two, hands over the already-read body, and closes both when the response finishes.
 - **Token comparison.** Hash the configured token and the presented one with SHA-256 and compare the digests with `crypto.timingSafeEqual`. Equal-length digests make the comparison constant-time whatever the presented length.
@@ -77,9 +77,9 @@ The [HTTP Transport spec](../specs/http-transport/) owns the variables, defaults
 - **Decision:** Default the port to 9797.
   - **Why:** It avoids the ports the supported applications use by default (8989, 7878, 9696) and the ports common neighbors in a media stack use (8080 for download clients' web interfaces, 5055, 6767, 8686, 8787). This prevents a collision on a host that runs the whole stack.
   - **Alternatives considered:** 3000 and 8080. Rejected: both are among the most commonly occupied ports on such hosts.
-- **Decision:** Refuse an origin-bearing request unless it is explicitly allowed, and do not validate `Host`.
-  - **Why:** Non-browser MCP clients send no `Origin`, so the default refuses only browsers. That is exactly the DNS-rebinding vector the protocol requires servers to guard against. Every MCP request also needs the bearer token, which a rebinding page does not have. A `Host` allow-list would only add a setting that breaks deployments behind proxies that rewrite `Host`.
-  - **Alternatives considered:** A required public-URL setting validating both `Host` and `Origin`. Rejected for the proxy breakage and the extra required setting.
+- **Decision:** Refuse every origin-bearing request, offer no origin allow-list, and do not validate `Host`.
+  - **Why:** Non-browser MCP clients send no `Origin`, so this refuses only browsers. An allow-list would be useless without cross-origin preflight handling too, which is surface no supported client needs. That is exactly the DNS-rebinding vector the protocol requires servers to guard against. Every MCP request also needs the bearer token, which a rebinding page does not have. A `Host` allow-list would only add a setting that breaks deployments behind proxies that rewrite `Host`.
+  - **Alternatives considered:** A required public-URL setting validating both `Host` and `Origin`. Rejected for the proxy breakage and the extra required setting. An origin allow-list with preflight handling, for clients running in a browser, was also rejected: it is surface no supported client needs.
 - **Decision:** Answer every request with JSON, never server-sent events.
   - **Why:** No tool emits progress or server-to-client requests, so an event stream would carry exactly one message and only add proxy buffering problems.
   - **Alternatives considered:** The SDK's SSE default. Rejected for that reason.
@@ -95,7 +95,7 @@ The [HTTP Transport spec](../specs/http-transport/) owns the variables, defaults
 ## Tasks
 
 - [ ] Serve MCP over Streamable HTTP
-  - [ ] Parse `ARR_MCP_TRANSPORT`, `ARR_MCP_HTTP_HOST`, `ARR_MCP_HTTP_PORT`, `ARR_MCP_AUTH_TOKEN`, and `ARR_MCP_HTTP_ALLOWED_ORIGINS` in `src/config/environment.ts`. Reject HTTP settings under stdio. Cover every accepted and rejected value in `test/environment.test.ts`, including that no rejected value is echoed.
+  - [ ] Parse `ARR_MCP_TRANSPORT`, `ARR_MCP_HTTP_HOST`, `ARR_MCP_HTTP_PORT`, and `ARR_MCP_AUTH_TOKEN` in `src/config/environment.ts`. Reject HTTP settings under stdio. Cover every accepted and rejected value in `test/environment.test.ts`, including that no rejected value is echoed.
   - [ ] Rename `StdioRuntime` to `Runtime` and select the runtime in `src/process.ts` by transport, keeping `test/process.test.ts` and `test/stdio.test.ts` green.
   - [ ] Add `src/http-transport.ts` with the request pipeline, per-request server construction over shared context, the throttle, the body bound, the health path, and the lifecycle.
   - [ ] Add `test/http-transport.test.ts`. It starts the runtime on an ephemeral port through its dependencies and covers every requirement and scenario in the spec over real sockets, with an upstream stub that records whether any request was sent.

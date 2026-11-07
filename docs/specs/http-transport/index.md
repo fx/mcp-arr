@@ -30,11 +30,9 @@ Related behavior:
   | `ARR_MCP_HTTP_HOST` | Address the listener binds to | `127.0.0.1` |
   | `ARR_MCP_HTTP_PORT` | TCP port the listener binds to | `9797` |
   | `ARR_MCP_AUTH_TOKEN` | The bearer token every MCP request must present | none; required |
-  | `ARR_MCP_HTTP_ALLOWED_ORIGINS` | Comma-separated exact origins whose browser requests are accepted | none; every request carrying an `Origin` is refused |
 
 - `ARR_MCP_HTTP_PORT` MUST be a whole number from 1 to 65535.
 - `ARR_MCP_AUTH_TOKEN` MUST be required when the HTTP transport is selected, and MUST consist of at least 32 and at most 4096 characters drawn only from the RFC 6750 `b64token` alphabet.
-- Each entry of `ARR_MCP_HTTP_ALLOWED_ORIGINS` MUST be an absolute `http` or `https` origin with no path, query, or fragment.
 A missing token, an unusable value, or any of these variables set while stdio is selected rejects startup as [Architecture — Environment-Only Instance Configuration](../architecture/#environment-only-instance-configuration) requires.
 
 - A listener that cannot bind MUST reject startup with a diagnostic naming the address and port, and the process MUST exit with a nonzero status.
@@ -54,7 +52,8 @@ A missing token, an unusable value, or any of these variables set while stdio is
 ### MCP Endpoint
 
 - The server MUST serve MCP on exactly one endpoint path, `/mcp`, and MUST conform there to the Streamable HTTP binding of the protocol revisions the server negotiates.
-- The endpoint MUST be stateless: it MUST NOT mint, require, or echo a protocol session identifier, and every request MUST be answerable on its own, including one that was not preceded on the same connection by an initialization exchange.
+- The endpoint MUST be stateless: it MUST NOT mint, require, or echo a protocol session identifier.
+- Clients perform the initialization exchange the negotiated revision requires, and the server MUST answer it; but no later request MUST be refused because the server instance answering it did not itself see that exchange, since each request is answered by an instance built for that request alone.
 - Every response to a JSON-RPC request MUST be a single `application/json` body; the server MUST NOT open a server-sent event stream.
 - `GET` and `DELETE` on the endpoint MUST be answered with `405 Method Not Allowed`.
 - A request body larger than 1 MiB MUST be refused with `413 Content Too Large` without being parsed.
@@ -62,8 +61,8 @@ A missing token, an unusable value, or any of these variables set while stdio is
 
 #### Scenario: Call a tool without a session
 
-- **GIVEN** an authenticated client that has never sent an initialization request to this process
-- **WHEN** it posts a protocol version negotiation followed, in separate requests, by `tools/list` and `tools/call`
+- **GIVEN** an authenticated client
+- **WHEN** it posts an initialization request, and then, in separate requests on new connections, `tools/list` and `tools/call`
 - **THEN** each request is answered with a JSON body, and no response carries a session identifier
 
 #### Scenario: A client probes for OAuth metadata
@@ -86,7 +85,7 @@ A missing token, an unusable value, or any of these variables set while stdio is
 
 #### Scenario: Disallowed origin and wrong token
 
-- **GIVEN** no allowed origins are configured
+- **GIVEN** the server is running with a configured token
 - **WHEN** a browser posts to `/mcp` with an `Origin` header and a wrong bearer token
 - **THEN** the server answers `403`, and the failure is not counted toward the throttle
 
@@ -126,12 +125,14 @@ A missing token, an unusable value, or any of these variables set while stdio is
 
 ### Origin Validation
 
-- A request carrying an `Origin` header whose value is not exactly one of the configured allowed origins MUST be answered with `403 Forbidden`.
+- A request carrying an `Origin` header MUST be answered with `403 Forbidden`.
 - A request without an `Origin` header MUST NOT be refused for its absence.
+
+MCP clients that run as native processes or on a hosted service's own servers send no `Origin`; only a page running in a browser does. Refusing every origin-bearing request is therefore the protocol's DNS-rebinding guard with no setting to get wrong, and it makes clients that run inside a browser unsupported: such a client would also need cross-origin preflight handling, which this endpoint does not provide.
 
 #### Scenario: A web page tries to reach the server
 
-- **GIVEN** no allowed origins are configured
+- **GIVEN** the server is running with a configured token
 - **WHEN** a browser page posts to `/mcp` with `Origin: https://attacker.example`
 - **THEN** the server answers `403`, and no tool runs even if the request carried the correct token
 
@@ -196,7 +197,7 @@ The checks run in the order [Refusal Order](#refusal-order) fixes, and only a re
 - **Single replica.** Workflow state is process memory, so the service runs as one process. Two processes behind one URL would each reject the other's references, and a rolling deploy briefly runs two. Deployments stop the old process before starting the new one.
 - **TLS is the deployment's job.** The listener speaks plain HTTP. A deployment reachable from anywhere other than the same host puts it behind a TLS-terminating reverse proxy; otherwise the bearer token crosses the network in clear text.
 - **Throttling behind a proxy is per proxy.** Because forwarded headers are not trusted, every client behind one reverse proxy shares one peer address and one throttle. Token entropy, not throttling, is the defense against guessing; throttling only bounds the noise. A proxy in front can do its own per-client limiting.
-- OAuth, OAuth discovery metadata, dynamic client registration, multiple tokens, per-client permissions, sessions, server-sent event streams, and persistent state are outside scope.
+- OAuth, OAuth discovery metadata, dynamic client registration, multiple tokens, per-client permissions, sessions, server-sent event streams, clients running inside a browser, cross-origin preflight handling, and persistent state are outside scope.
 
 ## Open Questions
 
