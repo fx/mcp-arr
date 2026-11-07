@@ -153,6 +153,7 @@ const configurationVariables = [
   "ARR_MCP_MEDIA_MOVIE_ROOT_FOLDER",
   "ARR_MCP_MEDIA_SERIES_QUALITY_PROFILE",
   "ARR_MCP_MEDIA_SERIES_ROOT_FOLDER",
+  "ARR_MCP_MEDIA_ALLOW_REMOVE",
 ];
 /**
  * The server rejects startup without a complete instance pair. Every inherited

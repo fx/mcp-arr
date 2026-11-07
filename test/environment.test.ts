@@ -10,6 +10,7 @@ import {
   httpHostVariable,
   httpPortVariable,
   loadEnvironment,
+  mediaAllowRemoveVariable,
   mediaDefaultVariableNames,
   parseEnvironment,
   transportVariable,
@@ -724,6 +725,63 @@ describe("toolset selection", () => {
   });
 });
 
+describe("media removal setting", () => {
+  function selection(extra: EnvironmentRecord) {
+    return parseEnvironment({ ...sonarrEnvironment, ARR_MCP_TOOLSET: "media", ...extra }).toolsets;
+  }
+
+  it("is absent unless set, and reads exactly true and false", () => {
+    expect(selection({}).mediaAllowRemove).toBeUndefined();
+    expect(selection({ ARR_MCP_MEDIA_ALLOW_REMOVE: "true" }).mediaAllowRemove).toBe(true);
+    expect(selection({ ARR_MCP_MEDIA_ALLOW_REMOVE: " false " }).mediaAllowRemove).toBe(false);
+    expect(
+      parseEnvironment({
+        ...sonarrEnvironment,
+        ARR_MCP_TOOLSET: "all",
+        ARR_MCP_MEDIA_ALLOW_REMOVE: "true",
+      }).toolsets,
+    ).toEqual({
+      names: ["arr", "media"],
+      media: { movie: {}, series: {} },
+      mediaAllowRemove: true,
+    });
+  });
+
+  it("rejects any other value without echoing it", () => {
+    for (const value of ["TRUE", "yes", "1", "sk-secret-value"]) {
+      const problems = expectProblems({
+        ...sonarrEnvironment,
+        ARR_MCP_TOOLSET: "media",
+        [mediaAllowRemoveVariable]: value,
+      });
+      expect(problems, value).toEqual(["ARR_MCP_MEDIA_ALLOW_REMOVE must be true or false"]);
+      expect(problems.join("\n")).not.toContain(value);
+    }
+    expect(
+      expectProblems({
+        ...sonarrEnvironment,
+        ARR_MCP_TOOLSET: "media",
+        ARR_MCP_MEDIA_ALLOW_REMOVE: " ",
+      }),
+    ).toEqual(["ARR_MCP_MEDIA_ALLOW_REMOVE is set but empty"]);
+  });
+
+  it("rejects the setting when media is not selected, even an empty one", () => {
+    for (const toolset of [undefined, "arr"]) {
+      for (const value of ["true", "false", ""]) {
+        expect(
+          expectProblems({
+            ...sonarrEnvironment,
+            ...(toolset === undefined ? {} : { ARR_MCP_TOOLSET: toolset }),
+            ARR_MCP_MEDIA_ALLOW_REMOVE: value,
+          }),
+          `${String(toolset)} ${value}`,
+        ).toEqual(["ARR_MCP_MEDIA_ALLOW_REMOVE requires ARR_MCP_TOOLSET to select media"]);
+      }
+    }
+  });
+});
+
 describe("loadEnvironment", () => {
   it("accepts an injected record", () => {
     expect(
@@ -755,7 +813,7 @@ describe("loadEnvironment", () => {
       vi.stubEnv(name, undefined);
     }
     vi.stubEnv("ARR_MCP_TOOLSET", undefined);
-    for (const variable of mediaDefaultVariableNames) {
+    for (const variable of [...mediaDefaultVariableNames, mediaAllowRemoveVariable]) {
       vi.stubEnv(variable, undefined);
     }
 
