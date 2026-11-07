@@ -33,8 +33,6 @@ The feature contracts are split across:
 
 ### Transports
 
-**Status:** the HTTP transport is unimplemented; [0030-streamable-http-transport](../../changes/0030-streamable-http-transport.md) adds it.
-
 - The server MUST expose MCP through exactly one transport per process, selected at startup by `ARR_MCP_TRANSPORT`, whose accepted values are `stdio` and `http`.
 - When `ARR_MCP_TRANSPORT` is absent the server MUST use stdio.
 - Over stdio the server MUST NOT open any network listener, and MUST reserve stdout for MCP protocol messages.

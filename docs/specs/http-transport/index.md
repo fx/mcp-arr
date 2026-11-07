@@ -4,8 +4,6 @@
 
 This specification defines the optional Streamable HTTP transport, which lets an operator run the server as a long-lived remote service. Remote MCP clients reach it over HTTP with a single static bearer token. The Sonarr, Radarr, and Prowlarr API keys stay in the server's own environment and never reach a client. Stdio remains the default transport; the selection rule and everything common to both transports are owned by [Architecture](../architecture/).
 
-**Status:** unimplemented. [0030-streamable-http-transport](../../changes/0030-streamable-http-transport.md) implements this specification.
-
 ## Background
 
 Over stdio, every MCP host that wants this server has to hold the instance URLs and API keys itself, because it launches the process with them in its environment. That rules out hosted clients, clients on another machine, and any setup where the person using the tools should not hold the keys.

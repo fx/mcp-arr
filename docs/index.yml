@@ -249,7 +249,7 @@ changes:
     path: changes/0030-streamable-http-transport.md
     description: Serve MCP over stateless Streamable HTTP behind one static bearer token, with stdio kept as the default
     spec: http-transport
-    status: draft
+    status: complete
     depends_on: []
   - id: "0031"
     name: media-toolset-library

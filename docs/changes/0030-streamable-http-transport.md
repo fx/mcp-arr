@@ -5,7 +5,7 @@
 Let an operator run the server as a remote service over Streamable HTTP, protected by one static bearer token, so MCP clients can use the configured Sonarr, Radarr, and Prowlarr instances without ever holding their API keys. Stdio remains the default. The [HTTP Transport spec](../specs/http-transport/) owns the endpoint's behavior; [Architecture](../specs/architecture/#transports) owns the transport selection.
 
 **Spec:** [HTTP Transport](../specs/http-transport/)
-**Status:** draft
+**Status:** complete
 **Depends On:** —
 
 ## Motivation
@@ -69,6 +69,7 @@ The [HTTP Transport spec](../specs/http-transport/) owns the variables, defaults
 - **Decision:** Measure per-request server construction before optimizing it.
   - **Why:** `registerTools` builds every published schema each time it runs. If the measured cost per request matters next to the upstream calls a tool makes, precompute the published definitions once at startup and register those. Until a measurement says so, the simpler code wins.
   - **Alternatives considered:** Precomputing up front, deferred until a measurement justifies it.
+  - **Measurement:** Building a server with the full `arr` toolset over a context for all three applications took 0.21 to 0.26 ms per construction (Node.js 24, warm, five runs of 2,000 constructions each). That is noise beside the upstream calls a tool makes, which take milliseconds to seconds, so each request keeps building its own server and nothing is precomputed.
 - **Decision:** Use `node:http` with the SDK's Node transport, and add no direct dependency.
   - **Why:** The pipeline is five checks and one handoff. Express is installed only as a dependency of the SDK, and building on it would make it this package's dependency without declaring it. A declared dependency is a new supply-chain surface the request does not need.
   - **Alternatives considered:**
@@ -94,25 +95,25 @@ The [HTTP Transport spec](../specs/http-transport/) owns the variables, defaults
 
 ## Tasks
 
-- [ ] Serve MCP over Streamable HTTP
-  - [ ] Parse `ARR_MCP_TRANSPORT`, `ARR_MCP_HTTP_HOST`, `ARR_MCP_HTTP_PORT`, and `ARR_MCP_AUTH_TOKEN` in `src/config/environment.ts`. Reject HTTP settings under stdio. Cover every accepted and rejected value in `test/environment.test.ts`, including that no rejected value is echoed.
-  - [ ] Rename `StdioRuntime` to `Runtime` and select the runtime in `src/process.ts` by transport, keeping `test/process.test.ts` and `test/stdio.test.ts` green.
-  - [ ] Add `src/http-transport.ts` with the request pipeline, per-request server construction over shared context, the throttle, the body bound, the health path, and the lifecycle.
-  - [ ] Add `test/http-transport.test.ts`. It starts the runtime on an ephemeral port through its dependencies and covers every requirement and scenario in the spec over real sockets, with an upstream stub that records whether any request was sent.
-  - [ ] Add a spawned-process test that starts the built server with the HTTP transport, calls a tool with the token, sends `SIGTERM` during a call, and asserts that the process exits. Assert that stderr carries only the startup diagnostic and holds no credential.
-  - [ ] Measure per-request server construction on the full `arr` toolset, and record the measurement and the resulting decision in this document.
-  - [ ] Add the new variables to `configurationVariables` in `test/support/spawned-stdio.ts` and to the filter list in `scripts/verify-package.mjs`.
-  - [ ] Add `dist/http-transport.js` to the packed-file inventory in `scripts/verify-package.mjs`.
-- [ ] Verify and document the packaged HTTP mode
-  - [ ] Extend `scripts/verify-package.mjs` to launch the installed executable with the HTTP transport on an ephemeral port. It asserts `200` from `/healthz`, `401` without a token, a successful initialization with the token, and a clean exit on `SIGTERM`.
-  - [ ] Add a "Run as a remote service" section to `README.md`. It covers:
+- [x] Serve MCP over Streamable HTTP
+  - [x] Parse `ARR_MCP_TRANSPORT`, `ARR_MCP_HTTP_HOST`, `ARR_MCP_HTTP_PORT`, and `ARR_MCP_AUTH_TOKEN` in `src/config/environment.ts`. Reject HTTP settings under stdio. Cover every accepted and rejected value in `test/environment.test.ts`, including that no rejected value is echoed.
+  - [x] Rename `StdioRuntime` to `Runtime` and select the runtime in `src/process.ts` by transport, keeping `test/process.test.ts` and `test/stdio.test.ts` green.
+  - [x] Add `src/http-transport.ts` with the request pipeline, per-request server construction over shared context, the throttle, the body bound, the health path, and the lifecycle.
+  - [x] Add `test/http-transport.test.ts`. It starts the runtime on an ephemeral port through its dependencies and covers every requirement and scenario in the spec over real sockets, with an upstream stub that records whether any request was sent.
+  - [x] Add a spawned-process test that starts the built server with the HTTP transport, calls a tool with the token, sends `SIGTERM` during a call, and asserts that the process exits. Assert that stderr carries only the startup diagnostic and holds no credential.
+  - [x] Measure per-request server construction on the full `arr` toolset, and record the measurement and the resulting decision in this document.
+  - [x] Add the new variables to `configurationVariables` in `test/support/spawned-stdio.ts` and to the filter list in `scripts/verify-package.mjs`.
+  - [x] Add `dist/http-transport.js` to the packed-file inventory in `scripts/verify-package.mjs`.
+- [x] Verify and document the packaged HTTP mode
+  - [x] Extend `scripts/verify-package.mjs` to launch the installed executable with the HTTP transport on an ephemeral port. It asserts `200` from `/healthz`, `401` without a token, a successful initialization with the token, and a clean exit on `SIGTERM`.
+  - [x] Add a "Run as a remote service" section to `README.md`. It covers:
     - the variables and their defaults;
     - a client configuration that sends the bearer header;
     - TLS at a reverse proxy;
     - the single-replica, stop-then-start constraint;
     - token rotation by restart.
-  - [ ] Change the README's "supports MCP over stdio only" statement, and update `description` and `keywords` in `package.json`.
-  - [ ] Remove the unimplemented status notes from [HTTP Transport](../specs/http-transport/) and [Architecture — Transports](../specs/architecture/#transports).
+  - [x] Change the README's "supports MCP over stdio only" statement, and update `description` and `keywords` in `package.json`.
+  - [x] Remove the unimplemented status notes from [HTTP Transport](../specs/http-transport/) and [Architecture — Transports](../specs/architecture/#transports).
 
 ## Open Questions
 
