@@ -13,9 +13,10 @@ import { assert, exchange, freePort, withDeadline } from "./verification.mjs";
  *
  *   node scripts/verify-image.mjs <local image tag> [--platform <os>/<arch>]
  *
- * `--platform` runs an image built for another platform than the host's, under
- * the emulation CI registers, and asserts the image is built for it. Emulation
- * is several times slower, so every bound is widened for it.
+ * `--platform` runs the image for that platform and asserts the image is built
+ * for it. When it is not the Docker daemon's own platform the image runs under
+ * the emulation CI registers, which is several times slower, so every bound is
+ * widened, and PID 1 is the emulator running the image's entrypoint.
  *
  * It is not part of the test suite because it needs a Docker daemon, and the
  * suite must run anywhere without one; the Docker workflow is where it runs.
@@ -34,11 +35,12 @@ if (
   );
 }
 const platformFlags = platform === undefined ? [] : ["--platform", platform];
-const emulationSlowdown = platform === undefined ? 1 : 5;
+/** Whether the image runs under emulation; settled from the daemon before any check runs. */
+let emulated = false;
 
 /** A bound on a wait, widened when the image runs under emulation. */
 function bound(ms) {
-  return ms * emulationSlowdown;
+  return emulated ? ms * 5 : ms;
 }
 
 const canonicalRepository = "https://github.com/fx/mcp-arr";
@@ -157,6 +159,11 @@ async function verifyImageConfiguration() {
   assert(
     config.Labels?.["org.opencontainers.image.source"] === canonicalRepository,
     `Image source label is not ${canonicalRepository}`,
+  );
+  const description = config.Labels?.["org.opencontainers.image.description"];
+  assert(
+    typeof description === "string" && description.trim() !== "",
+    "Image description label is empty",
   );
 }
 
@@ -311,7 +318,7 @@ async function verifyService(expectedVersion) {
       // and under emulation its timeout is widened for Node.js's slower start.
       "--health-interval",
       "1s",
-      ...(platform === undefined ? [] : ["--health-timeout", "30s"]),
+      ...(emulated ? ["--health-timeout", "30s"] : []),
       "--publish",
       `127.0.0.1:${port}:${containerPort}`,
       ...environmentFlags(variables),
@@ -353,8 +360,12 @@ async function verifyService(expectedVersion) {
       uids.length === 4 && uids.every((value) => value === runtimeUid),
       `PID 1 runs with uids ${uids.join(" ")}, not ${runtimeUid}`,
     );
+    // Under user-mode emulation the kernel starts the registered emulator,
+    // which is then PID 1 with the guest's entrypoint as its first argument.
     const command = (await docker(["exec", name, "cat", "/proc/1/cmdline"])).split("\0");
-    assert(command[0] === "/usr/bin/tini", `PID 1 is ${command[0]}, not tini`);
+    const guest =
+      emulated && /(?:^|\/)qemu-[^/]+$/u.test(command[0] ?? "") ? command[1] : command[0];
+    assert(guest === "/usr/bin/tini", `PID 1 runs ${command.join(" ")}, not tini`);
 
     const health = await exchange(port, {
       method: "GET",
@@ -443,6 +454,10 @@ async function verifyService(expectedVersion) {
 }
 
 try {
+  const daemonPlatform = (
+    await docker(["version", "--format", "{{.Server.Os}}/{{.Server.Arch}}"])
+  ).trim();
+  emulated = platform !== undefined && platform !== daemonPlatform;
   const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
   await verifyImageConfiguration();
   await verifyImageContents();
