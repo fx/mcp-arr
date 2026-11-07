@@ -42,17 +42,26 @@ export async function freePort() {
   return port;
 }
 
-/** One request on a connection of its own, read to the end. */
-export function exchange(port, { method, path, headers = {}, body }) {
+/**
+ * One request on a connection of its own, read to the end. A listener that
+ * accepts and then never finishes answering fails the exchange at the
+ * deadline, and the request is destroyed rather than left holding the socket.
+ */
+export function exchange(port, { method, path, headers = {}, body, timeoutMs = 5_000 }) {
   return new Promise((resolve, reject) => {
+    let timer;
+    const settle = (finish, value) => {
+      clearTimeout(timer);
+      finish(value);
+    };
     const request = httpRequest(
       { host: "127.0.0.1", port, method, path, headers, agent: false },
       (response) => {
         const chunks = [];
         response.on("data", (chunk) => chunks.push(chunk));
-        response.once("error", reject);
+        response.once("error", (error) => settle(reject, error));
         response.once("end", () =>
-          resolve({
+          settle(resolve, {
             status: response.statusCode,
             headers: response.headers,
             body: Buffer.concat(chunks).toString("utf8"),
@@ -60,7 +69,11 @@ export function exchange(port, { method, path, headers = {}, body }) {
         );
       },
     );
-    request.once("error", reject);
+    timer = setTimeout(() => {
+      reject(new Error(`${method} ${path} did not complete within ${timeoutMs} ms`));
+      request.destroy();
+    }, timeoutMs);
+    request.once("error", (error) => settle(reject, error));
     request.end(body);
   });
 }
