@@ -5,7 +5,7 @@
 Ship a container image of the published package and publish it to the GitHub Container Registry from CI. The image is built by installing the same tarball `npm publish` uploads, runs the Streamable HTTP service from [0030](./0030-streamable-http-transport.md) as a non-root user under `tini`, and carries no credential. CI builds it once, for both platforms, into one archive, smoke-tests each platform's image loaded from that archive, and only then copies that archive, unchanged, to the registry: development images from every push to `main`, release images only after a maintainer-merged release has been published to npm.
 
 **Spec:** [Architecture](../specs/architecture/#packaging-and-release)
-**Status:** in-progress
+**Status:** complete
 **Depends On:** 0030
 
 ## Motivation
@@ -122,7 +122,7 @@ The [Architecture — Packaging and Release](../specs/architecture/#packaging-an
 - [x] Document and specify
   - [x] Add "Run with Docker" to `README.md`
   - [x] Add the container image requirements and scenarios to [Architecture — Packaging and Release](../specs/architecture/#packaging-and-release), with a changelog row
-- [ ] CI builds and smoke-tests the image on this PR
+- [x] CI builds and smoke-tests the image on this PR — both platforms built into one archive, and the amd64 and emulated arm64 images loaded from it and verified; the publish job's copy to GHCR runs only on a push to `main` and is verified after merge
 
 ## Open Questions
 

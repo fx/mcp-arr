@@ -277,5 +277,5 @@ changes:
     path: changes/0034-container-image.md
     description: Publish a non-root container image of the packed package to GHCR, verified before every push
     spec: architecture
-    status: in-progress
+    status: complete
     depends_on: ["0030"]
