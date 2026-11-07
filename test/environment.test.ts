@@ -10,6 +10,7 @@ import {
   httpHostVariable,
   httpPortVariable,
   loadEnvironment,
+  mediaDefaultVariableNames,
   parseEnvironment,
   transportVariable,
 } from "../src/config/environment.js";
@@ -494,6 +495,235 @@ describe("parseEnvironment transport selection", () => {
   });
 });
 
+describe("toolset selection", () => {
+  const unknownToolset =
+    "ARR_MCP_TOOLSET names an unknown toolset; use arr, media, a comma-separated list of them, or all";
+  const duplicateToolset = "ARR_MCP_TOOLSET names a toolset more than once";
+  const allAlone = "ARR_MCP_TOOLSET must name all on its own";
+  const emptyEntry = "ARR_MCP_TOOLSET has an empty entry";
+  const mediaVariables = [
+    "ARR_MCP_MEDIA_MOVIE_QUALITY_PROFILE",
+    "ARR_MCP_MEDIA_MOVIE_ROOT_FOLDER",
+    "ARR_MCP_MEDIA_SERIES_QUALITY_PROFILE",
+    "ARR_MCP_MEDIA_SERIES_ROOT_FOLDER",
+  ] as const;
+  const noDefaults = { movie: {}, series: {} };
+
+  function selected(toolset: string | undefined, extra: EnvironmentRecord = {}) {
+    return parseEnvironment({
+      ...sonarrEnvironment,
+      ...(toolset === undefined ? {} : { ARR_MCP_TOOLSET: toolset }),
+      ...extra,
+    }).toolsets;
+  }
+
+  it("publishes only the arr toolset when no selection is made, until the default changes", () => {
+    expect(selected(undefined)).toEqual({ names: ["arr"] });
+  });
+
+  it("accepts each toolset alone", () => {
+    expect(selected("arr")).toEqual({ names: ["arr"] });
+    expect(selected("media")).toEqual({ names: ["media"], media: noDefaults });
+  });
+
+  it("accepts both toolsets in either order and reports them in registration order", () => {
+    for (const value of ["arr,media", "media,arr", " media , arr "]) {
+      expect(selected(value), value).toEqual({ names: ["arr", "media"], media: noDefaults });
+    }
+  });
+
+  it("accepts all as both toolsets", () => {
+    expect(selected("all")).toEqual({ names: ["arr", "media"], media: noDefaults });
+    expect(selected("  all ")).toEqual({ names: ["arr", "media"], media: noDefaults });
+  });
+
+  it("rejects an empty selection", () => {
+    expect(expectProblems({ ...sonarrEnvironment, ARR_MCP_TOOLSET: "" })).toEqual([
+      "ARR_MCP_TOOLSET is set but empty",
+    ]);
+    expect(expectProblems({ ...sonarrEnvironment, ARR_MCP_TOOLSET: "  " })).toEqual([
+      "ARR_MCP_TOOLSET is set but empty",
+    ]);
+  });
+
+  it("rejects a list with an empty entry", () => {
+    for (const value of ["arr,", ",media", "arr,,media", ","]) {
+      expect(expectProblems({ ...sonarrEnvironment, ARR_MCP_TOOLSET: value }), value).toEqual([
+        emptyEntry,
+      ]);
+    }
+  });
+
+  it("rejects an unknown toolset, matching names exactly", () => {
+    for (const value of ["medai", "Media", "ARR", "arr,medai", "everything"]) {
+      expect(expectProblems({ ...sonarrEnvironment, ARR_MCP_TOOLSET: value }), value).toEqual([
+        unknownToolset,
+      ]);
+    }
+  });
+
+  it("rejects a toolset named twice", () => {
+    for (const value of ["arr,arr", "media,media", "media,arr,media"]) {
+      expect(expectProblems({ ...sonarrEnvironment, ARR_MCP_TOOLSET: value }), value).toEqual([
+        duplicateToolset,
+      ]);
+    }
+  });
+
+  it("rejects all combined with anything, itself included", () => {
+    for (const value of ["all,arr", "media,all"]) {
+      expect(expectProblems({ ...sonarrEnvironment, ARR_MCP_TOOLSET: value }), value).toEqual([
+        allAlone,
+      ]);
+    }
+    expect(expectProblems({ ...sonarrEnvironment, ARR_MCP_TOOLSET: "all,all" })).toEqual([
+      duplicateToolset,
+      allAlone,
+    ]);
+  });
+
+  it("never echoes the selection it rejects", () => {
+    const secret = "sk-not-a-toolset-1234";
+    const problems = expectProblems({ ...sonarrEnvironment, ARR_MCP_TOOLSET: `arr,${secret}` });
+
+    expect(problems.join("\n")).not.toContain(secret);
+    expect(problems.join("\n")).toContain("ARR_MCP_TOOLSET");
+  });
+
+  it("reads every media default when media is selected", () => {
+    expect(
+      selected("media", {
+        ARR_MCP_MEDIA_MOVIE_QUALITY_PROFILE: " Example Movie Profile ",
+        ARR_MCP_MEDIA_MOVIE_ROOT_FOLDER: "/media/example/movies",
+        ARR_MCP_MEDIA_SERIES_QUALITY_PROFILE: "Example HD",
+        ARR_MCP_MEDIA_SERIES_ROOT_FOLDER: "/media/example/series",
+      }),
+    ).toEqual({
+      names: ["media"],
+      media: {
+        movie: { qualityProfile: "Example Movie Profile", rootFolder: "/media/example/movies" },
+        series: { qualityProfile: "Example HD", rootFolder: "/media/example/series" },
+      },
+    });
+  });
+
+  it("accepts a default for a kind whose application is not configured", () => {
+    // Defaults are resolved when a title is added, and an add of a kind that
+    // is not served is refused for that reason before any default is read.
+    expect(
+      selected("all", { ARR_MCP_MEDIA_MOVIE_ROOT_FOLDER: "/media/example/movies" }).media,
+    ).toEqual({ movie: { rootFolder: "/media/example/movies" }, series: {} });
+  });
+
+  it("rejects an empty media default when media is selected", () => {
+    for (const variable of mediaVariables) {
+      expect(
+        expectProblems({ ...sonarrEnvironment, ARR_MCP_TOOLSET: "media", [variable]: " " }),
+        variable,
+      ).toEqual([`${variable} is set but empty`]);
+    }
+  });
+
+  it("rejects a media default when media is not selected, even an empty one", () => {
+    for (const toolset of [undefined, "arr"]) {
+      for (const variable of mediaVariables) {
+        for (const value of ["Example HD", ""]) {
+          expect(
+            expectProblems({
+              ...sonarrEnvironment,
+              ...(toolset === undefined ? {} : { ARR_MCP_TOOLSET: toolset }),
+              [variable]: value,
+            }),
+            `${String(toolset)} ${variable}`,
+          ).toEqual([`${variable} requires ARR_MCP_TOOLSET to select media`]);
+        }
+      }
+    }
+  });
+
+  it("names every misplaced media default at once without echoing a value", () => {
+    const problems = expectProblems({
+      ...sonarrEnvironment,
+      ARR_MCP_MEDIA_MOVIE_QUALITY_PROFILE: "Secret Movie Profile",
+      ARR_MCP_MEDIA_SERIES_ROOT_FOLDER: "/secret/series",
+    });
+
+    expect(problems).toEqual([
+      "ARR_MCP_MEDIA_MOVIE_QUALITY_PROFILE requires ARR_MCP_TOOLSET to select media",
+      "ARR_MCP_MEDIA_SERIES_ROOT_FOLDER requires ARR_MCP_TOOLSET to select media",
+    ]);
+    expect(problems.join("\n")).not.toContain("Secret");
+  });
+
+  it("reports only the selection's own problem when the selection is unusable", () => {
+    expect(
+      expectProblems({
+        ...sonarrEnvironment,
+        ARR_MCP_TOOLSET: "medai",
+        ARR_MCP_MEDIA_MOVIE_ROOT_FOLDER: "/media/example/movies",
+      }),
+    ).toEqual([unknownToolset]);
+  });
+
+  it("reports a selection problem after every instance and timeout problem", () => {
+    expect(
+      expectProblems({
+        RADARR_URL: "https://radarr.example.invalid",
+        ARR_UPSTREAM_TIMEOUT_MS: "abc",
+        ARR_MCP_TOOLSET: "medai",
+      }),
+    ).toEqual([
+      "RADARR_API_KEY is required when RADARR_URL is set",
+      timeoutProblem,
+      unknownToolset,
+    ]);
+  });
+
+  it("reports a misplaced transport setting before a misplaced media default, echoing neither", () => {
+    const listenerToken = "t".repeat(40);
+    const problems = expectProblems({
+      ...sonarrEnvironment,
+      ARR_MCP_AUTH_TOKEN: listenerToken,
+      ARR_MCP_MEDIA_SERIES_ROOT_FOLDER: "/secret/series",
+    });
+
+    expect(problems).toEqual([
+      "ARR_MCP_AUTH_TOKEN requires ARR_MCP_TRANSPORT=http",
+      "ARR_MCP_MEDIA_SERIES_ROOT_FOLDER requires ARR_MCP_TOOLSET to select media",
+    ]);
+    expect(problems.join("\n")).not.toContain(listenerToken);
+    expect(problems.join("\n")).not.toContain("/secret/series");
+  });
+
+  it("reads the toolset selection and its defaults identically under either transport", () => {
+    const media = {
+      ARR_MCP_TOOLSET: "all",
+      ARR_MCP_MEDIA_MOVIE_QUALITY_PROFILE: "Example HD",
+    };
+    const stdio = parseEnvironment({ ...sonarrEnvironment, ...media });
+    const http = parseEnvironment({
+      ...sonarrEnvironment,
+      ...media,
+      ARR_MCP_TRANSPORT: "http",
+      ARR_MCP_AUTH_TOKEN: "t".repeat(40),
+    });
+
+    expect(http.toolsets).toEqual(stdio.toolsets);
+    expect(stdio.toolsets).toEqual({
+      names: ["arr", "media"],
+      media: { movie: { qualityProfile: "Example HD" }, series: {} },
+    });
+  });
+
+  it("still reports the missing application when the selection is unusable too", () => {
+    const problems = expectProblems({ ARR_MCP_TOOLSET: "medai" });
+
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toContain("no application is configured");
+    expect(problems[1]).toBe(unknownToolset);
+  });
+});
+
 describe("loadEnvironment", () => {
   it("accepts an injected record", () => {
     expect(
@@ -523,6 +753,10 @@ describe("loadEnvironment", () => {
     // reject the stdio configuration this case expects.
     for (const name of [transportVariable, httpHostVariable, httpPortVariable, authTokenVariable]) {
       vi.stubEnv(name, undefined);
+    }
+    vi.stubEnv("ARR_MCP_TOOLSET", undefined);
+    for (const variable of mediaDefaultVariableNames) {
+      vi.stubEnv(variable, undefined);
     }
 
     try {

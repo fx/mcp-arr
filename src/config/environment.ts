@@ -48,6 +48,58 @@ const minimumUpstreamTimeoutMs = 1;
  */
 const maximumUpstreamTimeoutMs = 600_000;
 
+/** The variable that selects which toolsets a process publishes. */
+export const toolsetVariable = "ARR_MCP_TOOLSET";
+
+/**
+ * The toolsets a process can publish, in the order they are registered. A
+ * selection is always reported in this order, whatever order the operator
+ * wrote it in, so `media,arr` and `arr,media` publish the same listing.
+ */
+export const toolsetNames = ["arr", "media"] as const;
+
+export type ToolsetName = (typeof toolsetNames)[number];
+
+/** The spelling that selects every toolset, and that must stand alone. */
+const allToolsetsAlias = "all";
+
+/**
+ * What an absent selection publishes.
+ *
+ * `arr` for now, deliberately departing from Tool Contracts, which makes
+ * `media` the default: flipping it is the breaking change, and it waits until
+ * the whole `media` toolset exists and has been verified against live
+ * instances. Until then a process that names no toolset publishes exactly what
+ * it published before the selection existed.
+ */
+const defaultToolsets: readonly ToolsetName[] = ["arr"];
+
+/**
+ * The deployment defaults the `media` toolset adds new titles with, one
+ * quality profile and one root folder per kind of title.
+ */
+export const mediaDefaultVariables = {
+  movie: {
+    qualityProfile: "ARR_MCP_MEDIA_MOVIE_QUALITY_PROFILE",
+    rootFolder: "ARR_MCP_MEDIA_MOVIE_ROOT_FOLDER",
+  },
+  series: {
+    qualityProfile: "ARR_MCP_MEDIA_SERIES_QUALITY_PROFILE",
+    rootFolder: "ARR_MCP_MEDIA_SERIES_ROOT_FOLDER",
+  },
+} as const;
+
+export type MediaDefaultKind = keyof typeof mediaDefaultVariables;
+export type MediaDefaultSetting = keyof (typeof mediaDefaultVariables)[MediaDefaultKind];
+
+/** Every `media` default variable, in a fixed order authored here. */
+export const mediaDefaultVariableNames: readonly string[] = [
+  mediaDefaultVariables.movie.qualityProfile,
+  mediaDefaultVariables.movie.rootFolder,
+  mediaDefaultVariables.series.qualityProfile,
+  mediaDefaultVariables.series.rootFolder,
+];
+
 /**
  * One application's resolved connection settings.
  *
@@ -85,8 +137,31 @@ export type TransportConfiguration =
 /** The HTTP member of {@link TransportConfiguration}. */
 export type HttpTransportConfiguration = Extract<TransportConfiguration, { readonly kind: "http" }>;
 
+/**
+ * One kind's configured defaults. Each is a name or path as the operator wrote
+ * it, and each is resolved against the instance only when a title is added, so
+ * an instance that is unreachable at startup cannot stop the server starting.
+ */
+export interface MediaKindDefaults {
+  /** The quality profile name new titles of this kind are added with. */
+  readonly qualityProfile?: string | undefined;
+  /** The root folder path new titles of this kind are added under. */
+  readonly rootFolder?: string | undefined;
+}
+
+export type MediaDefaults = Readonly<Record<MediaDefaultKind, MediaKindDefaults>>;
+
+export interface ToolsetSelection {
+  /** Never empty, and always in {@link toolsetNames} order. */
+  readonly names: readonly ToolsetName[];
+  /** Present exactly when `media` is selected. */
+  readonly media?: MediaDefaults | undefined;
+}
+
 export interface EnvironmentConfiguration {
   readonly instances: readonly InstanceConfiguration[];
+  /** Which toolsets this process publishes, fixed for its lifetime. */
+  readonly toolsets: ToolsetSelection;
   /**
    * The deadline, in milliseconds, every outbound upstream request is given.
    * Always present: an absent variable resolves to the default rather than to
@@ -310,12 +385,112 @@ function parseTransport(env: EnvironmentRecord, problems: string[]): TransportCo
   return { kind: "http", host, port, token };
 }
 
+function isToolsetName(value: string): value is ToolsetName {
+  return (toolsetNames as readonly string[]).includes(value);
+}
+
+/**
+ * Reads the toolset selection, or `undefined` where the value is unusable.
+ *
+ * Entries are trimmed and matched exactly. Each kind of mistake is reported
+ * once, by naming the variable and what is wrong with it, and never by quoting
+ * an entry: an unknown name is as likely to be a pasted secret as a typo.
+ */
+function parseToolsetNames(
+  env: EnvironmentRecord,
+  problems: string[],
+): readonly ToolsetName[] | undefined {
+  const state = readVariable(env, toolsetVariable);
+  if (state.kind === "absent") {
+    return defaultToolsets;
+  }
+  if (state.kind === "empty") {
+    problems.push(`${toolsetVariable} is set but empty`);
+    return undefined;
+  }
+
+  const entries = state.value.split(",").map((entry) => entry.trim());
+  const found = new Set<string>();
+  const mistakes = new Set<string>();
+  for (const entry of entries) {
+    if (entry === "") {
+      mistakes.add(`${toolsetVariable} has an empty entry`);
+    } else if (entry !== allToolsetsAlias && !isToolsetName(entry)) {
+      mistakes.add(
+        `${toolsetVariable} names an unknown toolset; use ${toolsetNames.join(", ")}, ` +
+          `a comma-separated list of them, or ${allToolsetsAlias}`,
+      );
+    } else if (found.has(entry)) {
+      mistakes.add(`${toolsetVariable} names a toolset more than once`);
+    }
+    found.add(entry);
+  }
+  if (found.has(allToolsetsAlias) && entries.length > 1) {
+    mistakes.add(`${toolsetVariable} must name ${allToolsetsAlias} on its own`);
+  }
+  if (mistakes.size > 0) {
+    problems.push(...mistakes);
+    return undefined;
+  }
+
+  return found.has(allToolsetsAlias)
+    ? toolsetNames
+    : toolsetNames.filter((name) => found.has(name));
+}
+
+/**
+ * Reads the toolset selection and, when `media` is in it, that toolset's
+ * deployment defaults.
+ *
+ * A default set while `media` is not selected is refused even when it is
+ * empty, because a deployment that forgot the selection should fail with a
+ * diagnostic rather than start publishing something nobody intended. That
+ * check is skipped when the selection itself is unusable: whether the setting
+ * belongs is then unknowable, and the selection's own problem is the one the
+ * operator has to fix first.
+ *
+ * The values themselves are free text and are not checked against anything at
+ * startup. They name a profile and a folder on an instance, and the instance is
+ * consulted only when a title is added.
+ */
+function parseToolsets(env: EnvironmentRecord, problems: string[]): ToolsetSelection {
+  const names = parseToolsetNames(env, problems);
+  if (names === undefined) {
+    return { names: defaultToolsets };
+  }
+  if (!names.includes("media")) {
+    for (const variable of mediaDefaultVariableNames) {
+      if (env[variable] !== undefined) {
+        problems.push(`${variable} requires ${toolsetVariable} to select media`);
+      }
+    }
+    return { names };
+  }
+
+  const read = (variable: string): string | undefined => {
+    const state = readVariable(env, variable);
+    if (state.kind === "empty") {
+      problems.push(`${variable} is set but empty`);
+    }
+    return state.kind === "value" ? state.value : undefined;
+  };
+  const kindDefaults = (kind: MediaDefaultKind): MediaKindDefaults => {
+    const qualityProfile = read(mediaDefaultVariables[kind].qualityProfile);
+    const rootFolder = read(mediaDefaultVariables[kind].rootFolder);
+    return {
+      ...(qualityProfile === undefined ? {} : { qualityProfile }),
+      ...(rootFolder === undefined ? {} : { rootFolder }),
+    };
+  };
+  return { names, media: { movie: kindDefaults("movie"), series: kindDefaults("series") } };
+}
+
 /**
  * Reads the six supported instance variables and the optional upstream timeout
  * from an injected environment record, then the transport selection and its
- * listener settings. Each application is optional, but an incomplete, empty,
- * or invalid pair rejects startup, as does an unusable timeout or transport
- * setting.
+ * listener settings, then the toolset selection and its defaults. Each
+ * application is optional, but an incomplete, empty, or invalid pair rejects
+ * startup, as does an unusable timeout, transport setting, or selection.
  *
  * @throws {ConfigurationError} when no application is usable.
  */
@@ -338,14 +513,16 @@ export function parseEnvironment(env: EnvironmentRecord): EnvironmentConfigurati
   // reported, so a timeout problem recorded earlier would suppress it and an
   // environment with neither an application nor a usable timeout would be told
   // only about the timeout. Recording it here keeps both and keeps an unusable
-  // value fatal. The transport settings follow it, last, for the same reason.
+  // value fatal. The transport settings follow it, and the toolset selection
+  // follows those, last, for the same reason.
   const upstreamTimeoutMs = parseUpstreamTimeout(env, problems);
   const transport = parseTransport(env, problems);
+  const toolsets = parseToolsets(env, problems);
   if (problems.length > 0) {
     throw new ConfigurationError(problems);
   }
 
-  return { instances, upstreamTimeoutMs, transport };
+  return { instances, upstreamTimeoutMs, transport, toolsets };
 }
 
 export function loadEnvironment(env: EnvironmentRecord = process.env): EnvironmentConfiguration {
