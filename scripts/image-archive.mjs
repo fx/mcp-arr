@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, mkdtemp, readFile, rm } from "node:fs/promises";
+import { lstat, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -52,6 +52,50 @@ async function run(command, args, { encoding = "utf8", timeoutMs = 600_000 } = {
 
 function sha256(bytes) {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+/**
+ * Refuses an archive holding anything but regular files and directories,
+ * before it is extracted. A symbolic link, hard link, device, or FIFO has no
+ * place in an OCI layout, and a link is how a member could stand in for a
+ * file outside the archive — or, during extraction, be written through to
+ * one. GNU tar's verbose listing starts each member with its type.
+ */
+async function assertPlainMembers(archive) {
+  for (const line of (await run("tar", ["-tvf", archive])).split("\n")) {
+    assert(
+      line === "" || line.startsWith("-") || line.startsWith("d"),
+      `Archive holds a member that is not a regular file or directory: ${line}`,
+    );
+  }
+}
+
+/**
+ * The same rule over the extracted tree, read with lstat so nothing is
+ * followed: every entry below the root is a directory or a regular file with
+ * a single link. With no link anywhere in the tree, no path read from it can
+ * resolve outside it.
+ */
+async function assertPlainTree(root, directory = root) {
+  for (const entry of await readdir(directory)) {
+    const file = path.join(directory, entry);
+    const stats = await lstat(file);
+    if (stats.isDirectory()) {
+      await assertPlainTree(root, file);
+      continue;
+    }
+    assert(
+      stats.isFile() && stats.nlink === 1,
+      `Archive member ${path.relative(root, file)} is not a plain regular file`,
+    );
+  }
+}
+
+/** A path in the extracted layout that must be of one kind, checked without following it. */
+async function assertKind(layout, name, kind) {
+  const stats = await lstat(path.join(layout, name)).catch(() => undefined);
+  const matches = kind === "directory" ? stats?.isDirectory() : stats?.isFile();
+  assert(matches === true, `Archive ${name} is missing or is not a ${kind}`);
 }
 
 /**
@@ -115,7 +159,12 @@ async function verifyLayer(layout, descriptor, label) {
 async function describe(archive) {
   const layout = await mkdtemp(path.join(tmpdir(), "mcp-arr-layout-"));
   try {
+    await assertPlainMembers(archive);
     await run("tar", ["-xf", archive, "-C", layout]);
+    await assertPlainTree(layout);
+    await assertKind(layout, "index.json", "regular file");
+    await assertKind(layout, "blobs", "directory");
+    await assertKind(layout, path.join("blobs", "sha256"), "directory");
     const top = JSON.parse(await readFile(path.join(layout, "index.json"), "utf8"));
     assert(
       Array.isArray(top.manifests) && top.manifests.length === 1,
@@ -158,6 +207,9 @@ async function describe(archive) {
     );
     return { digest: descriptor.digest, images };
   } finally {
+    // A directory member can carry a mode that denies its own owner, which
+    // would make the removal fail and mask the error that ended the check.
+    await run("chmod", ["-R", "u+rwX", layout]).catch(() => undefined);
     await rm(layout, { recursive: true, force: true });
   }
 }
