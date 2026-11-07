@@ -88,7 +88,7 @@ The toolset exists to be the smallest surface that manages a library across the 
 - These defaults MUST be resolved against the instance when a title is added, not at startup, so an instance that is unreachable when the server starts does not prevent it from starting.
 - `ARR_MCP_MEDIA_ALLOW_REMOVE` MUST accept exactly `true` and `false`.
 
-Setting any of these variables while the `arr` toolset is selected, or setting one to an unusable value, rejects startup as [Architecture — Environment-Only Instance Configuration](../architecture/#environment-only-instance-configuration) requires.
+Setting any of these variables while the `media` toolset is not selected, or setting one to an unusable value, rejects startup as [Architecture — Environment-Only Instance Configuration](../architecture/#environment-only-instance-configuration) requires.
 
 #### Scenario: One root folder needs no configuration
 
@@ -101,6 +101,28 @@ Setting any of these variables while the `arr` toolset is selected, or setting o
 - **GIVEN** the series instance has two quality profiles and `ARR_MCP_MEDIA_SERIES_QUALITY_PROFILE` is absent
 - **WHEN** a caller adds a series
 - **THEN** nothing is added, and the call fails with `deployment_configuration` naming `ARR_MCP_MEDIA_SERIES_QUALITY_PROFILE`
+
+### Resolution
+
+A caller asks for a resolution, never for a quality profile. The server turns one into the other.
+
+- The accepted resolutions MUST be `480p`, `576p`, `720p`, `1080p`, and `2160p`.
+- A quality profile's resolution MUST be the resolution of its cutoff quality, or of the highest-resolution quality in its cutoff group. A profile whose cutoff has no known resolution has no resolution, and MUST NOT be chosen by resolution.
+- Asked for a resolution, the server MUST choose among the profiles of the title's kind whose resolution equals it. Where none does, it MUST choose among those whose resolution is nearest to it, and the lower of two equally near resolutions wins.
+- Among several candidates, the server MUST prefer the [deployment default](#deployment-defaults) profile when it is one of them, then the profile allowing the fewest qualities, then the profile whose name sorts first.
+- Where no profile of the kind has a resolution, a request for one MUST fail with `deployment_configuration`, with a remediation saying the operator has to give a quality profile a cutoff with a known resolution.
+
+#### Scenario: Ask for 4K
+
+- **GIVEN** the movie instance has profiles whose cutoffs are 720p, 1080p, and 2160p
+- **WHEN** a caller adds a movie with `resolution: "2160p"`
+- **THEN** the 2160p profile is used, and the result reports `2160p`
+
+#### Scenario: Nearest available
+
+- **GIVEN** the series instance's profiles have cutoffs of 720p and 1080p only
+- **WHEN** a caller adds a series with `resolution: "2160p"`
+- **THEN** the 1080p profile is used, and the result reports `1080p`, so the caller can see the request was not met exactly
 
 ### Find
 
@@ -124,11 +146,13 @@ Setting any of these variables while the `arr` toolset is selected, or setting o
 
 ### Add
 
-- `media_add` MUST accept a title's kind and id and, for a series only, an optional `episodes` choice of `all` or `future`, defaulting to `all`.
+- `media_add` MUST accept a title's kind and id, an optional `resolution`, and, for a series only, an optional `episodes` choice of `all` or `future`, defaulting to `all`.
+- With `resolution`, the quality profile MUST be the one [Resolution](#resolution) chooses; without it, the deployment default.
 - `media_add` MUST add the title with the [deployment defaults](#deployment-defaults), monitored, with every other new-record setting taken from the metadata the application's own lookup proposes, and MUST start a search for its missing media.
 - Adding a title already in the library MUST succeed with the outcome `already_in_library`, MUST NOT change the existing record, and MUST NOT start a search, including when the title was added by another call between this call's check and its add.
 - An id the metadata source does not know MUST fail with `not_found`.
-- The result MUST carry the title and exactly one outcome, `added` or `already_in_library`.
+- The result MUST carry the title, exactly one outcome, `added` or `already_in_library`, and the resolution of the profile the title now has when that profile has one.
+- An add of a title already in the library MUST NOT change its profile, whatever `resolution` asked for; the result reports the existing profile's resolution, so the caller can see it differs.
 
 #### Scenario: Add a movie
 
@@ -153,10 +177,11 @@ Setting any of these variables while the `arr` toolset is selected, or setting o
 - `media_status` MUST accept either nothing, for an overview, or a title's kind and id, for that title.
 - A download the applications list once per episode it covers, such as a season pack, MUST be reported as one download, identified by the download rather than by any one of its rows.
 - Every download it reports MUST carry the movie or series title, for a series download an `episodes` label naming every episode it covers as comma-separated runs (`S02E03`, `S02E01–E10`, `S01E09–E10, S02E01`), and exactly one state: `queued`, `downloading`, `waiting`, `importing`, or `stuck`.
+- A download MUST carry its release's resolution when the release's quality names one.
 - A `downloading` download MUST also carry its progress as a whole percentage, and a `stuck` download MUST also carry a one-sentence reason and the remedy `media_fix` would apply to it if state did not change: `replace`, `import`, or `none`.
 - A download for which this process has started an import that has not yet finished MUST be reported `importing`.
 - The overview MUST carry the kinds this deployment serves, its downloads, the titles imported in the last 7 days with their dates, and the titles or episodes due in the next 14 days with their dates.
-- A title's status MUST carry `in_library`; for a title in the library it MUST also carry whether it is monitored, how many of its released movies or episodes the library has and lacks, its downloads, and its next due date when one is known.
+- A title's status MUST carry `in_library`; for a title in the library it MUST also carry whether it is monitored, the resolution its profile targets when it has one, the distinct resolutions of the files the library holds for it, how many of its released movies or episodes the library has and lacks, its downloads, and its next due date when one is known.
 - Every list in a status result MUST hold at most 10 entries, and a list cut short MUST carry the total it was cut from.
 - `media_status` MUST NOT change any upstream state.
 
@@ -306,6 +331,8 @@ The `arr` toolset's plan and apply exist so a caller can inspect effects before 
 - Adding a title always starts a search for it, and adding never chooses monitoring finer than all or future episodes. A caller who needs anything else uses the `arr` toolset.
 
 ## Open Questions
+
+- **Changing a title's resolution.** `media_add` never changes an existing title's profile, and no `media` tool can. Default: not offered. A deployment that publishes both toolsets lets a caller use `arr_library_change`; otherwise removal and re-adding, where removal is enabled, is the only route.
 
 - **Upgrades.** `media_search_again` searches for media the title lacks. Searching for better versions of media it already has, the cutoff-unmet search, is not offered. Default: not offered until a caller asks for it.
 - **Stalled-download threshold.** A client warning is treated as stuck as soon as the application reports it. Some stalls recover on their own. Default: no grace period; revisit if live use shows premature replacements.

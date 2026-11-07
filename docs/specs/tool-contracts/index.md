@@ -8,7 +8,7 @@ This specification defines the stable MCP tool surface, how a deployment selects
 
 Mirroring upstream HTTP operations produces a large, brittle tool catalog. Conversely, one generic dispatcher hides the same catalog inside an untyped argument object. The desired surface uses a small set of explicitly typed domain tools.
 
-The server offers two such surfaces. The `arr` toolset exposes the applications' own model — fourteen tools with application selection, configuration references, and plan/apply — for operators who know Sonarr, Radarr, and Prowlarr. The `media` toolset, owned by [Media Toolset](../media-toolset/), talks about movies, series, and downloads and makes those choices itself. A process publishes one of them. Unless a requirement here names the `arr` toolset, it applies to every published tool in both. The domain specifications — Library Management, Activity Management, Acquisition and Import, and Configuration Reconciliation — govern the `arr` toolset only.
+The server offers two such surfaces. The `arr` toolset exposes the applications' own model — fourteen tools with application selection, configuration references, and plan/apply — for operators who know Sonarr, Radarr, and Prowlarr. The `media` toolset, owned by [Media Toolset](../media-toolset/), talks about movies, series, and downloads and makes those choices itself. A process publishes either of them, or both side by side. Unless a requirement here names the `arr` toolset, it applies to every published tool in both. The domain specifications — Library Management, Activity Management, Acquisition and Import, and Configuration Reconciliation — govern the `arr` toolset only.
 
 Related behavior:
 
@@ -25,7 +25,8 @@ Related behavior:
 
 **Status:** unimplemented. [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) adds the selection with `arr` as its default; [0033-media-default-toolset](../../changes/0033-media-default-toolset.md) makes `media` the default.
 
-- The server MUST publish exactly one toolset per process, selected at startup by `ARR_MCP_TOOLSET`, whose accepted values are `media` and `arr`.
+- The server MUST publish the toolsets selected at startup by `ARR_MCP_TOOLSET`: `media`, `arr`, or both, written as the comma-separated list `media,arr` in either order.
+- A list that names an unknown toolset, names one twice, or is empty MUST reject startup.
 - When `ARR_MCP_TOOLSET` is absent the server MUST publish the `media` toolset.
 - The published tool list MUST be fixed for the lifetime of the process, and MUST be the same on every transport.
 - Tool names MUST carry their toolset's prefix, `arr_` or `media_`, so no name is published by both toolsets.
@@ -41,6 +42,12 @@ Related behavior:
 - **GIVEN** `ARR_MCP_TOOLSET` is `arr`
 - **WHEN** a caller lists tools
 - **THEN** exactly the fourteen `arr` tools are published, as they were before the `media` toolset existed
+
+#### Scenario: Both toolsets
+
+- **GIVEN** `ARR_MCP_TOOLSET` is `arr,media`
+- **WHEN** a caller lists tools
+- **THEN** the fourteen `arr` tools and the `media` tools are published together, each exactly as it is when its toolset is selected alone
 
 #### Scenario: Misspelled toolset
 

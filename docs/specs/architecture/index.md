@@ -210,7 +210,7 @@ The feature contracts are split across:
 
 The server is organized around transport, typed tool handlers, workflow services, an internal semantic operation registry, application adapters, and an upstream HTTP boundary. The semantic registry is an implementation inventory and policy source; it is not exposed as a generic dispatcher tool.
 
-Transport and toolset are independent choices made at startup. Either toolset runs over either transport, and both sit over the same adapters, upstream client, and workflow state.
+Transport and toolset are independent choices made at startup. Either toolset, or both together, runs over either transport, and every tool sits over the same adapters, upstream client, and workflow state.
 
 All local state is ephemeral. Long-running upstream commands are projected into process-local job records while the upstream application remains authoritative.
 

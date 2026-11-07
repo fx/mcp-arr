@@ -86,6 +86,7 @@ What implementing them requires of this change:
   - Add `classifyDownload(item: QueueItem): { state, reason?, remedy? }` in `src/tools/media/`, implementing the spec's two tables from `QueueEvidence`.
   - The `import` remedy needs a scan, so the classifier answers "import, if the scan and the library confirm". `media_status` and `media_fix` both run `scanTrackedDownload` and `validateForImport` before reporting or applying it. Neither ever reports `import` on the classifier's word alone.
   - File absence comes from the library, not the scan. For every movie or episode the candidates map to, read the library's own record and require that it reports no file. The scan's `existingLibraryFile` is not consulted: it is derived from `episodeFileId`/`movieFileId` on manual-import rows, which neither supported version sends (the open backlog entry in `docs/tasks.md`). A record that cannot be read, or that does not say whether it has a file, makes the remedy `none`.
+- **Download resolution.** Read queue rows at a detail level that carries the release's quality, and report its resolution where the quality names one.
 - **`media_status`.**
   - Overview:
     - One bounded queue page per configured kind through `readQueue`, sorted as today.
@@ -94,7 +95,8 @@ What implementing them requires of this change:
     - The calendar for the next fourteen days.
   - Title:
     - Every queue row scoped to the library record's id, read through a new adapter function, `readQueueForMedia(client, mediaId, profile, detail)`, in `src/adapters/activity/media.ts`. It issues the same `queue/details` request `readQueueDetails` does but maps every returned row, where `readQueueDetails` keeps only the one matching a queue item id. Bound it by the same scan bound the activity layer applies elsewhere.
-    - The record's own monitored state and file statistics.
+    - The record's own monitored state, file statistics, and profile, whose resolution is derived by the same function [0031](./0031-media-toolset-library.md) uses for `media_add`.
+    - The distinct resolutions of its files, from the quality each movie or episode file record carries.
     - The next calendar entry.
 - **Grouping by download.** Both `media_status` and `media_fix` group queue rows by the queue item's download identity (`QueueOrigin.downloadIdentity`, read at whatever detail level carries it), so a season pack listed once per episode is one download.
   - A row with no identity is its own group.
