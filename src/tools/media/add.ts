@@ -218,11 +218,15 @@ function chooseDefaults(
  * already in the library; anything else — an answer that never arrived, or one
  * that confirmed nothing — leaves this call as the likeliest author, so it is
  * reported as added.
+ *
+ * Either way the resolution is read from the record the re-read found, never
+ * taken from the profile this call chose: with the create unconfirmed, nothing
+ * says that profile is the one the title now has, and a concurrent add may
+ * well have used another.
  */
 async function settleUnconfirmed(
   adapter: ApplicationAdapter,
   request: AddRequest,
-  chosen: ChosenDefaults,
   profiles: readonly QualityProfileRecord[],
   failure: MediaError | undefined,
 ): Promise<AddResult> {
@@ -231,17 +235,10 @@ async function settleUnconfirmed(
   if (candidate?.existingId === undefined) {
     return failed(failure ?? mediaError(request.kind, "unexpected_response"));
   }
-  if (failure !== undefined && toolErrorProvesNoEffect(failure.code)) {
-    const existing = await existingResolution(adapter, request.kind, candidate, profiles);
-    return succeeded(
-      request,
-      candidate,
-      "already_in_library",
-      existing.resolution,
-      existing.warnings,
-    );
-  }
-  return succeeded(request, candidate, "added", chosen.profile.resolution);
+  const outcome =
+    failure !== undefined && toolErrorProvesNoEffect(failure.code) ? "already_in_library" : "added";
+  const existing = await existingResolution(adapter, request.kind, candidate, profiles);
+  return succeeded(request, candidate, outcome, existing.resolution, existing.warnings);
 }
 
 /**
@@ -309,10 +306,20 @@ export async function addTitle(context: MediaContext, request: AddRequest): Prom
     created = await createMedia(adapter.client, route.application, payload);
   } catch (error) {
     const failure = mediaErrorFor(kind, error);
-    return settleUnconfirmed(adapter, request, chosen.value, profiles.value, failure);
+    return settleUnconfirmed(adapter, request, profiles.value, failure);
   }
   if (created === undefined) {
-    return settleUnconfirmed(adapter, request, chosen.value, profiles.value, undefined);
+    return settleUnconfirmed(adapter, request, profiles.value, undefined);
   }
-  return succeeded(request, candidate, "added", chosen.value.profile.resolution);
+  // A confirmed create is described by the record the instance returned, and
+  // that record's own profile is the one reported. It is the profile this call
+  // sent unless the instance says otherwise.
+  const createdProfileId = profileIdOf(created.qualityProfileId);
+  const createdProfile =
+    createdProfileId === undefined || createdProfileId === chosen.value.profile.profile.id
+      ? chosen.value.profile.profile
+      : profiles.value.find((profile) => profile.id === createdProfileId);
+  return createdProfile === undefined
+    ? succeeded(request, candidate, "added", undefined, [unreadResolutionWarning])
+    : succeeded(request, candidate, "added", profileResolution(createdProfile));
 }

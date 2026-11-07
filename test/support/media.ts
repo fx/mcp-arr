@@ -47,8 +47,15 @@ export interface MediaInstances {
   failRoute(application: MediaApplication, route: string, status: number, method?: string): void;
   /** Makes every request to one instance fail as an unreachable host does. */
   stop(application: MediaApplication): void;
-  /** Adds a title to the library behind this server's back, as another call would. */
-  addBehindOurBack(application: MediaApplication, metadataId: number): void;
+  /**
+   * Adds a title to the library behind this server's back, as another call
+   * would, with the quality profile that call chose when one is named.
+   */
+  addBehindOurBack(
+    application: MediaApplication,
+    metadataId: number,
+    qualityProfileId?: number,
+  ): void;
   /**
    * Runs once a create arrives, before the instance answers it. A test uses it
    * to make the title appear between this call's check and its create.
@@ -56,6 +63,13 @@ export interface MediaInstances {
   beforeCreate(hook: (() => void) | undefined): void;
   /** Accepts creates but answers with no body, so nothing confirms them. */
   silenceCreates(application: MediaApplication): void;
+  /**
+   * Decides every create as usual, then drops the connection instead of
+   * answering, as a lost reply does: the caller cannot tell whether it acted.
+   */
+  loseCreateAnswers(application: MediaApplication): void;
+  /** Answers every confirmed create with these fields over the record it made. */
+  answerCreatesWith(application: MediaApplication, fields: Record<string, unknown>): void;
   /** The current lookup list of one instance. */
   catalog(application: MediaApplication): readonly Record<string, unknown>[];
   /** Writes sent upstream, of any method other than GET. */
@@ -123,6 +137,8 @@ export async function createMediaInstances(): Promise<MediaInstances> {
   const failures = new Map<string, number>();
   const stopped = new Set<ApplicationId>();
   const silenced = new Set<ApplicationId>();
+  const lostAnswers = new Set<ApplicationId>();
+  const createAnswers = new Map<ApplicationId, Record<string, unknown>>();
   let createHook: (() => void) | undefined;
   let nextId = 500;
 
@@ -132,6 +148,7 @@ export async function createMediaInstances(): Promise<MediaInstances> {
   const addToLibrary = (
     application: MediaApplication,
     metadataId: number,
+    qualityProfileId: unknown,
   ): Record<string, unknown> => {
     const entry = catalog(application).find(
       (record) => record[metadataFields[application]] === metadataId,
@@ -141,6 +158,11 @@ export async function createMediaInstances(): Promise<MediaInstances> {
     }
     nextId += 1;
     entry.id = nextId;
+    // A library record carries the profile it was added with, and the lookup
+    // reports it for a title in the library.
+    if (typeof qualityProfileId === "number") {
+      entry.qualityProfileId = qualityProfileId;
+    }
     return entry;
   };
 
@@ -192,6 +214,9 @@ export async function createMediaInstances(): Promise<MediaInstances> {
         (record) => record[metadataFields[application]] === metadataId,
       );
       if (typeof entry?.id === "number" && entry.id > 0) {
+        if (lostAnswers.has(application)) {
+          throw new TypeError("fetch failed");
+        }
         return jsonResponse(
           [
             {
@@ -202,11 +227,20 @@ export async function createMediaInstances(): Promise<MediaInstances> {
           400,
         );
       }
-      const created = addToLibrary(application, metadataId as number);
+      const created = addToLibrary(
+        application,
+        metadataId as number,
+        isRecord(rawBody) ? rawBody.qualityProfileId : undefined,
+      );
+      if (lostAnswers.has(application)) {
+        throw new TypeError("fetch failed");
+      }
       if (silenced.has(application)) {
         return new Response(null, { status: 201 });
       }
-      return jsonResponse({ ...(rawBody as object), id: created.id }, 201);
+      const answered = createAnswers.get(application) ?? {};
+      Object.assign(created, answered);
+      return jsonResponse({ ...(rawBody as object), ...answered, id: created.id }, 201);
     }
 
     const recordMatch = new RegExp(`^${recordRoutes[application]}/(\\d+)$`, "u").exec(route);
@@ -240,14 +274,20 @@ export async function createMediaInstances(): Promise<MediaInstances> {
     stop(application) {
       stopped.add(application);
     },
-    addBehindOurBack(application, metadataId) {
-      addToLibrary(application, metadataId);
+    addBehindOurBack(application, metadataId, qualityProfileId) {
+      addToLibrary(application, metadataId, qualityProfileId);
     },
     beforeCreate(hook) {
       createHook = hook;
     },
     silenceCreates(application) {
       silenced.add(application);
+    },
+    loseCreateAnswers(application) {
+      lostAnswers.add(application);
+    },
+    answerCreatesWith(application, fields) {
+      createAnswers.set(application, fields);
     },
     catalog,
     writes: () => requests.filter((request) => request.method !== "GET"),

@@ -686,3 +686,131 @@ describe("media_add new-record settings", () => {
     ).toEqual(["addOptions", "qualityProfileId", "rootFolderPath"]);
   });
 });
+
+describe("media_add reports the resolution of the record it describes", () => {
+  const cases = [
+    {
+      application: "radarr",
+      kind: "movie",
+      id: newMovie,
+      defaults: movieDefaults,
+      route: "qualityprofile",
+      profiles: [
+        qualityProfileBody(1, "Example HD", 720),
+        qualityProfileBody(2, "Example Bluray", 2160),
+      ],
+    },
+    {
+      application: "sonarr",
+      kind: "series",
+      id: newSeries,
+      defaults: seriesDefaults,
+      route: "qualityprofile",
+      profiles: [
+        qualityProfileBody(1, "Example HD", 2160),
+        qualityProfileBody(2, "Example SD", 480),
+      ],
+    },
+  ] as const;
+
+  it("reports the profile another call added the title with when this create's answer was lost", async () => {
+    for (const { application, kind, id, defaults, route, profiles } of cases) {
+      instances.serve(application, route, profiles);
+      instances.loseCreateAnswers(application);
+      // Another call adds the title first, with the profile this one would
+      // not choose for 2160p.
+      const otherProfile = kind === "movie" ? 1 : 2;
+      instances.beforeCreate(() => {
+        instances.beforeCreate(undefined);
+        instances.addBehindOurBack(application, id, otherProfile);
+      });
+
+      const { result, content } = await add({ kind, id, resolution: "2160p" }, defaults);
+
+      expect(result.isError, kind).toBe(false);
+      expect(content.outcome, kind).toBe("added");
+      expect(content.resolution, kind).toBe(kind === "movie" ? "720p" : "480p");
+      expect(content.warnings, kind).toEqual([]);
+    }
+  });
+
+  it("reports the profile this call's own create used when its answer was lost", async () => {
+    for (const { application, kind, id, defaults, route, profiles } of cases) {
+      instances.serve(application, route, profiles);
+      instances.loseCreateAnswers(application);
+
+      const { content } = await add({ kind, id, resolution: "2160p" }, defaults);
+
+      expect(content).toMatchObject({ outcome: "added", resolution: "2160p" });
+    }
+  });
+
+  it("reports the profile a confirmed create's own record carries", async () => {
+    for (const { application, kind, id, defaults, route, profiles } of cases) {
+      instances.serve(application, route, profiles);
+      instances.answerCreatesWith(application, { qualityProfileId: kind === "movie" ? 1 : 2 });
+
+      const { content } = await add({ kind, id, resolution: "2160p" }, defaults);
+
+      expect(content, kind).toMatchObject({
+        outcome: "added",
+        resolution: kind === "movie" ? "720p" : "480p",
+      });
+    }
+  });
+
+  it("omits the resolution with a warning when a confirmed record's profile is unknown", async () => {
+    for (const { application, kind, id, defaults, route, profiles } of cases) {
+      instances.serve(application, route, profiles);
+      instances.answerCreatesWith(application, { qualityProfileId: 99 });
+
+      const { content } = await add({ kind, id, resolution: "2160p" }, defaults);
+
+      expect(content.outcome, kind).toBe("added");
+      expect(content.resolution, kind).toBeUndefined();
+      expect(content.warnings, kind).toEqual([
+        "the resolution this title already targets could not be read, so none is reported",
+      ]);
+    }
+  });
+
+  it("omits the resolution with a warning when the re-read record's profile is unknown", async () => {
+    for (const { application, kind, id, defaults, route, profiles } of cases) {
+      instances.serve(application, route, profiles);
+      instances.silenceCreates(application);
+      instances.beforeCreate(() => {
+        instances.beforeCreate(undefined);
+        instances.addBehindOurBack(application, id, 99);
+      });
+
+      const { result, content } = await add({ kind, id, resolution: "2160p" }, defaults);
+
+      // Another call's create won the race; this one was refused.
+      expect(result.isError, kind).toBe(false);
+      expect(content.outcome, kind).toBe("already_in_library");
+      expect(content.resolution, kind).toBeUndefined();
+      expect(content.warnings, kind).toEqual([
+        "the resolution this title already targets could not be read, so none is reported",
+      ]);
+    }
+  });
+
+  it("omits the resolution with a warning when an unconfirmed create's record names an unknown profile", async () => {
+    for (const { application, kind, id, defaults, route, profiles } of cases) {
+      instances.serve(application, route, profiles);
+      instances.loseCreateAnswers(application);
+      instances.beforeCreate(() => {
+        instances.beforeCreate(undefined);
+        instances.addBehindOurBack(application, id, 99);
+      });
+
+      const { content } = await add({ kind, id, resolution: "2160p" }, defaults);
+
+      expect(content.outcome, kind).toBe("added");
+      expect(content.resolution, kind).toBeUndefined();
+      expect(content.warnings, kind).toEqual([
+        "the resolution this title already targets could not be read, so none is reported",
+      ]);
+    }
+  });
+});
