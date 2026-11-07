@@ -305,11 +305,15 @@ async function verifyService(expectedVersion) {
   });
 
   try {
+    // A container that never listens is diagnosed by what it and the Docker
+    // CLI wrote, which is the only evidence a CI run leaves behind.
     await withDeadline(
       waitForResponseOrExit(listening, observed.exit, "container listener startup"),
       "container listener startup",
       30_000,
-    );
+    ).catch((error) => {
+      throw new Error(`${error.message}\n${observed.stdout}${observed.stderr}`, { cause: error });
+    });
     assert(stderr === startupLine, `Container startup line was ${JSON.stringify(stderr)}`);
 
     const uid = (await docker(["exec", name, "id", "-u"])).trim();
