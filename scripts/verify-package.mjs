@@ -1,5 +1,8 @@
 import { execFile, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
+import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -306,6 +309,166 @@ async function verifyInstalledProcess(binPath, cwd, expectedVersion) {
   }
 }
 
+/** A loopback port that was free a moment ago: bound, read, and released. */
+async function freePort() {
+  const probe = createNetServer();
+  await new Promise((resolve, reject) => {
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", resolve);
+  });
+  const { port } = probe.address();
+  await new Promise((resolve) => probe.close(resolve));
+  return port;
+}
+
+/** One request on a connection of its own, read to the end. */
+function exchange(port, { method, path, headers = {}, body }) {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(
+      { host: "127.0.0.1", port, method, path, headers, agent: false },
+      (response) => {
+        const chunks = [];
+        response.on("data", (chunk) => chunks.push(chunk));
+        response.once("error", reject);
+        response.once("end", () =>
+          resolve({
+            status: response.statusCode,
+            headers: response.headers,
+            body: Buffer.concat(chunks).toString("utf8"),
+          }),
+        );
+      },
+    );
+    request.once("error", reject);
+    request.end(body);
+  });
+}
+
+/**
+ * Starts the installed executable with the HTTP transport, with stdin ignored
+ * as a container without an attached stdin starts it, and holds it to the
+ * listener's contract: an unauthenticated health check, a challenge without
+ * the token, a stateless initialization with it, a single startup line that
+ * carries no credential, and a clean exit on SIGTERM.
+ */
+async function verifyInstalledHttpProcess(binPath, cwd, expectedVersion) {
+  const port = await freePort();
+  const token = randomBytes(32).toString("hex");
+  const invocation = createPlatformCommand(binPath, []);
+  const child = spawn(invocation.executable, invocation.args, {
+    cwd,
+    env: {
+      ...instanceEnvironment,
+      ARR_MCP_TRANSPORT: "http",
+      ARR_MCP_HTTP_PORT: String(port),
+      ARR_MCP_AUTH_TOKEN: token,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const startupLine = `mcp-arr: listening on http://127.0.0.1:${port}/mcp with the arr toolset\n`;
+  let resolveListening;
+  const listening = new Promise((resolve) => {
+    resolveListening = resolve;
+  });
+  let stderr = "";
+  const observed = observeChildProcess(child, {
+    onStderrChunk: (chunk) => {
+      stderr += chunk.toString("utf8");
+      if (stderr.includes("\n")) {
+        resolveListening();
+      }
+    },
+  });
+
+  try {
+    await withDeadline(
+      waitForResponseOrExit(listening, observed.exit, "installed HTTP listener startup"),
+      "installed HTTP listener startup",
+    );
+
+    const health = await exchange(port, { method: "GET", path: "/healthz" });
+    assert(health.status === 200, `Installed HTTP health check answered ${health.status}`);
+
+    const initialize = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: LATEST_PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: { name: "package-verifier", version: "1.0.0" },
+      },
+    });
+    const mcpHeaders = {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+    };
+    const challenged = await exchange(port, {
+      method: "POST",
+      path: "/mcp",
+      headers: mcpHeaders,
+      body: initialize,
+    });
+    assert(
+      challenged.status === 401,
+      `Installed HTTP bin answered ${challenged.status} without a token`,
+    );
+    assert(
+      challenged.headers["www-authenticate"] === 'Bearer realm="mcp-arr"',
+      "Installed HTTP bin did not challenge for a bearer token",
+    );
+
+    const initialized = await exchange(port, {
+      method: "POST",
+      path: "/mcp",
+      headers: { ...mcpHeaders, Authorization: `Bearer ${token}` },
+      body: initialize,
+    });
+    assert(
+      initialized.status === 200,
+      `Installed HTTP bin answered ${initialized.status} to initialize`,
+    );
+    assert(
+      initialized.headers["content-type"] === "application/json",
+      "Installed HTTP bin did not answer initialize with JSON",
+    );
+    assert(
+      initialized.headers["mcp-session-id"] === undefined,
+      "Installed HTTP bin minted a session identifier",
+    );
+    const response = JSON.parse(initialized.body);
+    assert(
+      response.jsonrpc === "2.0" && response.id === 1,
+      "Installed HTTP bin returned the wrong ID",
+    );
+    assert(
+      response.result?.serverInfo?.name === "mcp-arr",
+      "Installed HTTP bin returned the wrong server",
+    );
+    assert(
+      response.result?.serverInfo?.version === expectedVersion,
+      `Installed HTTP bin reported version ${response.result?.serverInfo?.version}, not the installed manifest version ${expectedVersion}`,
+    );
+
+    assert(child.kill("SIGTERM"), "Installed HTTP bin did not accept SIGTERM");
+    const exit = await withDeadline(observed.exit, "installed HTTP bin shutdown");
+    assert(isCleanTermination(exit), "Installed HTTP bin did not terminate cleanly");
+    await withDeadline(observed.closed, "installed HTTP bin stream close");
+
+    assert(observed.stdout === "", "Installed HTTP bin wrote to stdout");
+    assert(!observed.stderr.includes(token), "Installed HTTP bin wrote its token to stderr");
+    assert(
+      observed.stderr === startupLine,
+      "Installed HTTP bin wrote something other than its startup line to stderr",
+    );
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+    }
+    await withDeadline(observed.closed, "installed HTTP bin cleanup").catch(() => undefined);
+  }
+}
+
 let temporaryRoot;
 try {
   temporaryRoot = await mkdtemp(path.join(tmpdir(), "mcp-arr-package-"));
@@ -366,6 +529,7 @@ try {
     process.platform === "win32" ? "mcp-arr.cmd" : "mcp-arr",
   );
   await verifyInstalledProcess(binPath, consumerDirectory, installedManifest.version);
+  await verifyInstalledHttpProcess(binPath, consumerDirectory, installedManifest.version);
   process.stdout.write("Package verification passed\n");
 } finally {
   if (temporaryRoot !== undefined) {
