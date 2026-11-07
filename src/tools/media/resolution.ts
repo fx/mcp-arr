@@ -26,7 +26,7 @@ const resolutionPixels: Readonly<Record<Resolution, number>> = {
   "2160p": 2160,
 };
 
-function resolutionOf(pixels: number | undefined): Resolution | undefined {
+export function resolutionOf(pixels: number | undefined): Resolution | undefined {
   return resolutions.find((resolution) => resolutionPixels[resolution] === pixels);
 }
 

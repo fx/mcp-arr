@@ -5,17 +5,38 @@ import { addTitle } from "./add.js";
 import type { MediaContext } from "./context.js";
 import { callError, type MediaError } from "./errors.js";
 import { findTitles, maxFoundTitlesPerKind } from "./find.js";
+import { fixTitle } from "./fix.js";
 import { titleKinds } from "./kinds.js";
+import { removeTitle } from "./remove.js";
 import {
   type AddResult,
   addInputSchema,
   addOutputSchema,
   addPublishedOutputSchema,
   type FindResult,
+  type FixResult,
   findInputSchema,
   findOutputSchema,
   findPublishedOutputSchema,
+  fixInputSchema,
+  fixOutputSchema,
+  fixPublishedOutputSchema,
+  maxListedEntries,
+  type RemoveResult,
+  removeInputSchema,
+  removeOutputSchema,
+  removePublishedOutputSchema,
+  type SearchAgainResult,
+  type StatusResult,
+  searchAgainInputSchema,
+  searchAgainOutputSchema,
+  searchAgainPublishedOutputSchema,
+  statusInputSchema,
+  statusOutputSchema,
+  statusPublishedOutputSchema,
 } from "./schemas.js";
+import { searchAgain } from "./search-again.js";
+import { readStatus } from "./status.js";
 
 /** What every `media` result carries beside its own fields. */
 export interface MediaResult {
@@ -38,6 +59,12 @@ export interface MediaToolDefinition {
   failure(error: MediaError): MediaResult;
   /** The one-line text summary, built only from values the result carries. */
   summarize(result: MediaResult): string;
+  /**
+   * Whether nothing succeeded, which is what marks an MCP result as an error.
+   * A result that carries an error beside what did succeed — one kind that
+   * could not be read, one download that could not be fixed — is not one.
+   */
+  failed(result: MediaResult): boolean;
 }
 
 /**
@@ -109,6 +136,105 @@ function addFailure(error: MediaError): AddResult {
   return { warnings: [], errors: [error] };
 }
 
+function errorSummary(name: string, result: MediaResult): string {
+  return `${name}: error; errors: ${describeErrors(result.errors)}${describeWarnings(result)}`;
+}
+
+/** The errors beside a result that otherwise succeeded, for its summary. */
+function describeSideErrors(result: MediaResult): string {
+  return result.errors.length === 0 ? "" : `; errors: ${describeErrors(result.errors)}`;
+}
+
+const hasErrors = (result: MediaResult): boolean => result.errors.length > 0;
+
+/** Failed when it carries no title and no downloads: nothing was read. */
+function statusFailed(result: MediaResult): boolean {
+  const status = result as StatusResult;
+  return (
+    result.errors.length > 0 && status.in_library === undefined && status.downloads === undefined
+  );
+}
+
+function summarizeStatus(result: MediaResult): string {
+  const status = result as StatusResult;
+  if (statusFailed(result)) {
+    return errorSummary("media_status", result);
+  }
+  const downloads = status.downloads ?? [];
+  const stuck = downloads.filter((download) => download.state === "stuck").length;
+  const shown = `${downloads.length} download(s) shown (${stuck} stuck)`;
+  const tail = `${describeSideErrors(result)}${describeWarnings(result)}`;
+  if (status.kinds !== undefined) {
+    return (
+      `media_status: ${shown}, ${(status.imported ?? []).length} imported, ` +
+      `${(status.upcoming ?? []).length} upcoming${tail}`
+    );
+  }
+  if (status.in_library === false) {
+    return `media_status: ${status.kind ?? ""} ${status.id ?? ""} not in library${tail}`;
+  }
+  return (
+    `media_status: ${status.kind ?? ""} ${status.id ?? ""} in library, ` +
+    `${status.have ?? 0} had, ${status.missing ?? 0} missing, ${shown}${tail}`
+  );
+}
+
+function fixFailed(result: MediaResult): boolean {
+  const fix = result as FixResult;
+  return (
+    result.errors.length > 0 &&
+    !(fix.downloads ?? []).some((download) => download.action !== "none")
+  );
+}
+
+function summarizeFix(result: MediaResult): string {
+  const fix = result as FixResult;
+  if (fix.downloads === undefined) {
+    return errorSummary("media_fix", result);
+  }
+  const count = (action: string) =>
+    fix.downloads?.filter((download) => download.action === action).length ?? 0;
+  return (
+    `media_fix: ${fix.kind ?? ""} ${fix.id ?? ""}: ${count("replaced")} replaced, ` +
+    `${count("import_started")} import(s) started, ${count("none")} left alone, ` +
+    `${fix.remaining ?? 0} remaining${describeSideErrors(result)}${describeWarnings(result)}`
+  );
+}
+
+function summarizeSearchAgain(result: MediaResult): string {
+  const search = result as SearchAgainResult;
+  if (result.errors.length > 0 || search.searched === undefined) {
+    return errorSummary("media_search_again", result);
+  }
+  const scope =
+    search.season === undefined
+      ? ""
+      : ` season ${search.season}${search.episode === undefined ? "" : ` episode ${search.episode}`}`;
+  return `media_search_again: searched for ${search.searched} in ${search.kind ?? ""} ${search.id ?? ""}${scope}${describeWarnings(result)}`;
+}
+
+function summarizeRemove(result: MediaResult): string {
+  const removal = result as RemoveResult;
+  if (result.errors.length > 0 || removal.outcome === undefined) {
+    return errorSummary("media_remove", result);
+  }
+  const files =
+    removal.outcome === "removed"
+      ? removal.files_deleted
+        ? ", files deleted"
+        : ", files kept"
+      : "";
+  return `media_remove: ${removal.outcome} ${removal.kind ?? ""} ${removal.id ?? ""}${files}${describeWarnings(result)}`;
+}
+
+function bareFailure(error: MediaError): MediaResult {
+  return { warnings: [], errors: [error] };
+}
+
+/**
+ * No annotation repeats the tool's title: a host shows the tool's own title
+ * first, and the listing the specification caps would carry it twice.
+ */
 const readOnly: ToolAnnotations = {
   readOnlyHint: true,
   idempotentHint: true,
@@ -128,7 +254,7 @@ export const mediaToolDefinitions: readonly MediaToolDefinition[] = [
     inputSchema: findInputSchema,
     outputSchema: findOutputSchema,
     publishedOutputSchema: findPublishedOutputSchema,
-    annotations: { title: "Find movies and TV series", ...readOnly },
+    annotations: readOnly,
 
     async handle(context: MediaContext, input: unknown): Promise<MediaResult> {
       const parsed = findInputSchema.safeParse(input);
@@ -139,6 +265,7 @@ export const mediaToolDefinitions: readonly MediaToolDefinition[] = [
     },
     failure: findFailure,
     summarize: summarizeFind,
+    failed: hasErrors,
   },
   {
     name: "media_add",
@@ -153,7 +280,6 @@ export const mediaToolDefinitions: readonly MediaToolDefinition[] = [
     outputSchema: addOutputSchema,
     publishedOutputSchema: addPublishedOutputSchema,
     annotations: {
-      title: "Add a movie or TV series",
       readOnlyHint: false,
       destructiveHint: false,
       // Repeating an add finds the record the first call made and changes
@@ -178,5 +304,128 @@ export const mediaToolDefinitions: readonly MediaToolDefinition[] = [
     },
     failure: addFailure,
     summarize: summarizeAdd,
+    failed: hasErrors,
+  },
+  {
+    name: "media_status",
+    title: "Status of downloads and titles",
+    description:
+      "No arguments: downloads, imports of the last 7 days, and what is due in 14. A kind " +
+      "and id: that title in the library and its downloads. A stuck download names the " +
+      `remedy media_fix would apply. Lists hold ${maxListedEntries}, with *_total when cut.`,
+    inputSchema: statusInputSchema,
+    outputSchema: statusOutputSchema,
+    publishedOutputSchema: statusPublishedOutputSchema,
+    annotations: readOnly,
+
+    async handle(context: MediaContext, input: unknown): Promise<MediaResult> {
+      const parsed = statusInputSchema.safeParse(input);
+      if (!parsed.success || (parsed.data.kind === undefined) !== (parsed.data.id === undefined)) {
+        return bareFailure(invalidInput());
+      }
+      const { kind, id } = parsed.data;
+      return readStatus(context, kind === undefined || id === undefined ? undefined : { kind, id });
+    },
+    failure: bareFailure,
+    summarize: summarizeStatus,
+    failed: statusFailed,
+  },
+  {
+    name: "media_fix",
+    title: "Fix stuck downloads",
+    description:
+      `Fix up to ${maxListedEntries} stuck downloads of one title. A failed or stalled one is ` +
+      "removed with its data, its release blocked, and another sought; a finished one is " +
+      "imported if nothing needs correcting and the library lacks its files.",
+    inputSchema: fixInputSchema,
+    outputSchema: fixOutputSchema,
+    publishedOutputSchema: fixPublishedOutputSchema,
+    annotations: {
+      readOnlyHint: false,
+      // A replacement deletes a download's data from the downloader.
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+
+    async handle(context: MediaContext, input: unknown): Promise<MediaResult> {
+      const parsed = fixInputSchema.safeParse(input);
+      if (!parsed.success) {
+        return bareFailure(invalidInput());
+      }
+      return fixTitle(context, parsed.data);
+    },
+    failure: bareFailure,
+    summarize: summarizeFix,
+    failed: fixFailed,
+  },
+  {
+    name: "media_search_again",
+    title: "Search again for missing media",
+    description:
+      "Search again for the released movie, or released episodes, the library has no file " +
+      "for; for a series, season and then episode narrow it. Nothing the library has is " +
+      "searched for. Reports how many were.",
+    inputSchema: searchAgainInputSchema,
+    outputSchema: searchAgainOutputSchema,
+    publishedOutputSchema: searchAgainPublishedOutputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+
+    async handle(context: MediaContext, input: unknown): Promise<MediaResult> {
+      const parsed = searchAgainInputSchema.safeParse(input);
+      if (!parsed.success) {
+        return bareFailure(invalidInput());
+      }
+      const request = parsed.data;
+      // A movie has no seasons, and an episode is named within its season.
+      const scoped = request.season !== undefined || request.episode !== undefined;
+      if (
+        (request.kind === "movie" && scoped) ||
+        (request.episode !== undefined && request.season === undefined)
+      ) {
+        return bareFailure(invalidInput());
+      }
+      return searchAgain(context, request);
+    },
+    failure: bareFailure,
+    summarize: summarizeSearchAgain,
+    failed: hasErrors,
+  },
+  {
+    name: "media_remove",
+    title: "Remove a title from the library",
+    description:
+      "Remove a movie or series from the library, deleting its files only if delete_files " +
+      "is true. It can be added again later.",
+    inputSchema: removeInputSchema,
+    outputSchema: removeOutputSchema,
+    publishedOutputSchema: removePublishedOutputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      // Removing again finds nothing to remove and changes nothing.
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+
+    async handle(context: MediaContext, input: unknown): Promise<MediaResult> {
+      const parsed = removeInputSchema.safeParse(input);
+      if (!parsed.success) {
+        return bareFailure(invalidInput());
+      }
+      return removeTitle(context, {
+        kind: parsed.data.kind,
+        id: parsed.data.id,
+        deleteFiles: parsed.data.delete_files,
+      });
+    },
+    failure: bareFailure,
+    summarize: summarizeRemove,
+    failed: hasErrors,
   },
 ];

@@ -211,3 +211,28 @@ export function deploymentError(kind: TitleKind, problem: DeploymentProblem): Me
     remediation,
   };
 }
+
+/**
+ * A title that has to be in the library for the call to mean anything, and is
+ * not. The remediation names the tool that puts it there.
+ */
+export function notInLibraryError(kind: TitleKind): MediaError {
+  return {
+    code: "conflict",
+    message: `that ${kindRoutes[kind].singular} is not in the library`,
+    recoverable: toolErrorPolicy("conflict").recoverable,
+    remediation: "Add it with media_add first.",
+  };
+}
+
+/** One of each distinct failure, in the order they were first met. */
+export function distinctErrors(errors: readonly MediaError[]): MediaError[] {
+  const seen = new Map<string, MediaError>();
+  for (const error of errors) {
+    const key = `${error.code}\u0000${error.message}\u0000${error.remediation}`;
+    if (!seen.has(key)) {
+      seen.set(key, error);
+    }
+  }
+  return [...seen.values()];
+}

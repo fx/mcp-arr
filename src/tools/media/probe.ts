@@ -5,7 +5,12 @@ import { type MediaError, mediaError } from "./errors.js";
 import { kindRoutes, type TitleKind } from "./kinds.js";
 
 export type KindAdapter =
-  | { readonly ok: true; readonly adapter: ApplicationAdapter }
+  | {
+      readonly ok: true;
+      readonly adapter: ApplicationAdapter;
+      /** The version the instance answered with, for the checks that gate on one. */
+      readonly version: string;
+    }
   | { readonly ok: false; readonly error: MediaError };
 
 /**
@@ -25,7 +30,7 @@ export async function kindAdapter(context: MediaContext, kind: TitleKind): Promi
   const capability = await adapter.probe();
   switch (capability.status) {
     case "available":
-      return { ok: true, adapter };
+      return { ok: true, adapter, version: capability.version };
     case "unsupported":
       return { ok: false, error: mediaError(kind, "unsupported_capability") };
     case "unavailable":

@@ -12,6 +12,7 @@ import {
   mediaToolDefinitions,
 } from "./media/definitions.js";
 import { callError } from "./media/errors.js";
+import { publishedMediaToolNames } from "./names.js";
 import { acceptsProjection, projectEnvelope, readProjection } from "./projection.js";
 import { buildToolResult, summarizeToolResult, type ToolResult } from "./results.js";
 import { publishedResultSchema } from "./schemas/publish-results.js";
@@ -132,9 +133,9 @@ export async function runTool(
 /**
  * Runs one `media` tool through the same settle path.
  *
- * A `media` result has no overall status of its own: it failed exactly when
- * it carries an error, and a list of unavailable kinds beside found titles is
- * a success that says what it could not reach. Its summary is one line.
+ * A `media` result has no overall status of its own: each tool says when
+ * nothing succeeded, and a result that names what it could not reach beside
+ * what it could is a success. Its summary is one line.
  */
 export async function runMediaTool(
   definition: MediaToolDefinition,
@@ -150,7 +151,7 @@ export async function runMediaTool(
   return {
     content: [{ type: "text", text: definition.summarize(result) }],
     ...(structuredContent === undefined ? {} : { structuredContent }),
-    isError: result.errors.length > 0,
+    isError: definition.failed(result),
   };
 }
 
@@ -190,8 +191,16 @@ export function registerTools(
     const mediaContext: MediaContext = {
       registry: context.registry,
       defaults: toolsets.media ?? noMediaDefaults,
+      claims: context.state.downloadClaims,
+      clock: context.state.clock,
     };
+    // `media_remove` is published only where the operator enabled it, so no
+    // deployment lists a tool that refuses unconditionally.
+    const published = publishedMediaToolNames(toolsets.mediaAllowRemove === true);
     for (const definition of mediaToolDefinitions) {
+      if (!published.includes(definition.name)) {
+        continue;
+      }
       server.registerTool(
         definition.name,
         {

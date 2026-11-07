@@ -11,7 +11,7 @@ import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { type ObservedChildProcess, observeChildProcess } from "../scripts/child-process.mjs";
 import { isCleanTermination } from "../scripts/platform-command.mjs";
-import { mediaToolNames, toolNames } from "../src/tools/names.js";
+import { publishedMediaToolNames, toolNames } from "../src/tools/names.js";
 import { instanceEnvironment, startFixtureInstance } from "./support/instance-server.js";
 import { serverEnvironment, withDeadline } from "./support/spawned-stdio.js";
 import { startStagedUpstream } from "./support/staged-upstream.js";
@@ -172,7 +172,10 @@ describe("built HTTP process", () => {
     expect(listed.status).toBe(200);
     const tools = (JSON.parse(listed.body) as { result: { tools: { name: string }[] } }).result
       .tools;
-    expect(tools.map((tool) => tool.name)).toEqual([...toolNames, ...mediaToolNames]);
+    expect(tools.map((tool) => tool.name)).toEqual([
+      ...toolNames,
+      ...publishedMediaToolNames(false),
+    ]);
 
     expect(server.kill("SIGTERM")).toBe(true);
     await withDeadline(server.observed.closed, "SIGTERM exit", 5_000);

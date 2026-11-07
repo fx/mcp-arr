@@ -8,6 +8,7 @@ import {
 import { type AddressInfo, connect, createServer as createNetServer } from "node:net";
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it } from "vitest";
+import { downloadIdentity } from "../src/adapters/activity/parse.js";
 import { type EnvironmentRecord, parseEnvironment } from "../src/config/environment.js";
 import {
   createFailedAuthenticationThrottle,
@@ -20,7 +21,9 @@ import {
   readPresentedCredential,
 } from "../src/http-transport.js";
 import { createManualClock, type ManualClock } from "../src/state/clock.js";
-import { mediaToolNames, toolNames } from "../src/tools/names.js";
+import { createWorkflowState } from "../src/state/workflow.js";
+import { publishedMediaToolNames, toolNames } from "../src/tools/names.js";
+import { activityFixture } from "./support/activity.js";
 import {
   type FixtureInstance,
   type FixtureInstanceOptions,
@@ -1161,17 +1164,22 @@ describe("HTTP transport toolset selection", () => {
   }
 
   for (const [label, selection, names, words] of [
-    ["media", { ARR_MCP_TOOLSET: "media" }, [...mediaToolNames], "the media toolset"],
+    [
+      "media",
+      { ARR_MCP_TOOLSET: "media" },
+      [...publishedMediaToolNames(false)],
+      "the media toolset",
+    ],
     [
       "all",
       { ARR_MCP_TOOLSET: "all" },
-      [...toolNames, ...mediaToolNames],
+      [...toolNames, ...publishedMediaToolNames(false)],
       "the arr and media toolsets",
     ],
     [
       "media,arr with defaults",
       { ARR_MCP_TOOLSET: "media,arr", ARR_MCP_MEDIA_MOVIE_QUALITY_PROFILE: "Example HD" },
-      [...toolNames, ...mediaToolNames],
+      [...toolNames, ...publishedMediaToolNames(false)],
       "the arr and media toolsets",
     ],
   ] as const) {
@@ -1207,5 +1215,55 @@ describe("HTTP transport toolset selection", () => {
     expect(result?.isError).toBe(false);
     expect(result?.content?.[0]?.text).toBe("media_find: found 2 title(s) (series 2)");
     expect(sonarr.requests).toContain("series/lookup");
+  });
+
+  it("shares the process's download claims between HTTP requests", async () => {
+    const sonarr = await fixture("sonarr");
+    const state = createWorkflowState();
+    let created = 0;
+    const harness = await startHarness(
+      { ...instanceEnvironment([sonarr]), ARR_MCP_TOOLSET: "media" },
+      5_000,
+      {
+        createState: () => {
+          created += 1;
+          return state;
+        },
+      },
+    );
+    // An import this process started for the recorded blocked download, whose
+    // command the instance reports still running.
+    const rows = await activityFixture<Record<string, unknown>[]>("sonarr", "queue/details");
+    const blocked = rows.find((row) => row.id === 502);
+    const key = `sonarr\u0000id:${downloadIdentity(String(blocked?.downloadId))}`;
+    state.downloadClaims.tryClaim(key);
+    state.downloadClaims.markImporting(key, { application: "sonarr", commandId: "3001" });
+
+    const status = await harness.call(1, "tools/call", {
+      name: "media_status",
+      arguments: { kind: "series", id: 100001 },
+    });
+    const fixed = await harness.call(2, "tools/call", {
+      name: "media_fix",
+      arguments: { kind: "series", id: 100001 },
+    });
+
+    const statusContent = (status.message as ToolCallMessage).result?.structuredContent;
+    expect(statusContent?.downloads).toEqual([
+      expect.objectContaining({ episodes: "S02E01", state: "importing" }),
+      expect.objectContaining({ episodes: "S01E01", state: "downloading" }),
+    ]);
+    expect((fixed.message as ToolCallMessage).result?.structuredContent?.downloads).toEqual([
+      {
+        title: "Example Series",
+        episodes: "S02E01",
+        action: "none",
+        reason: "It is already being fixed.",
+      },
+    ]);
+    expect(created).toBe(1);
+    expect(sonarr.queueResolutions).toEqual([]);
+    expect(sonarr.commands).toEqual([]);
+    expect(sonarr.requests).toContain("command/3001");
   });
 });
