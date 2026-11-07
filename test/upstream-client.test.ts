@@ -1,3 +1,4 @@
+import { getEventListeners } from "node:events";
 import { describe, expect, it } from "vitest";
 import { describeUpstreamPathProblem, type UpstreamPathProblem } from "../src/config/base-url.js";
 import {
@@ -23,7 +24,7 @@ interface Call {
 
 function harness(
   respond: (call: Call) => Promise<Response> | Response,
-  options: { timeoutMs?: number; baseUrl?: string } = {},
+  options: { timeoutMs?: number; baseUrl?: string; signal?: AbortSignal } = {},
 ): { client: UpstreamClient; calls: Call[] } {
   const calls: Call[] = [];
   const fetchImpl: FetchLike = async (url, init) => {
@@ -41,6 +42,7 @@ function harness(
       apiKey,
       timeoutMs: options.timeoutMs,
       fetch: fetchImpl,
+      signal: options.signal,
     }),
   };
 }
@@ -189,6 +191,80 @@ describe("createUpstreamClient", () => {
     expect(error.kind).toBe("timeout");
     expect(error.message).toContain("timed out after 5ms");
     expect(calls[0]?.init.signal?.aborted).toBe(true);
+  });
+
+  it("abandons a request in flight, body included, when the client's signal aborts", async () => {
+    const abandon = new AbortController();
+    let arrived: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      arrived = resolve;
+    });
+    const { client, calls } = harness(
+      (call) =>
+        new Promise<Response>((_resolve, reject) => {
+          arrived();
+          call.init.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+            once: true,
+          });
+        }),
+      { signal: abandon.signal },
+    );
+
+    const pending = captureError(client.get("system/status"));
+    await started;
+    abandon.abort();
+    const error = await pending;
+    expect(error.kind).toBe("unavailable");
+    expect(error.message).not.toContain(apiKey);
+    expect(error.message).not.toContain("sonarr.example.invalid");
+    expect(calls[0]?.init.signal?.aborted).toBe(true);
+
+    // A body still arriving is abandoned the same way.
+    const bodyAbandon = new AbortController();
+    const streaming = harness(
+      (call) =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              call.init.signal?.addEventListener("abort", () =>
+                controller.error(new Error("aborted")),
+              );
+            },
+          }),
+        ),
+      { signal: bodyAbandon.signal },
+    );
+    const reading = captureError(streaming.client.get("series"));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    bodyAbandon.abort();
+    expect((await reading).kind).toBe("unavailable");
+  });
+
+  it("starts no request once the client's signal has aborted", async () => {
+    const abandon = new AbortController();
+    abandon.abort();
+    const { client, calls } = harness(() => json({ version: "4.0.19.2979" }), {
+      signal: abandon.signal,
+    });
+
+    const error = await captureError(client.put("series/12", { id: 12 }));
+    expect(error.kind).toBe("unavailable");
+    expect(calls).toEqual([]);
+  });
+
+  it("holds no listener on the client's signal once a request settles", async () => {
+    const shared = new AbortController();
+    const { client } = harness(() => json({ version: "4.0.19.2979" }), {
+      signal: shared.signal,
+    });
+
+    for (let request = 0; request < 20; request += 1) {
+      await client.get("system/status");
+    }
+    await captureError(
+      harness(() => json({}, 500), { signal: shared.signal }).client.get("system/status"),
+    );
+    expect(getEventListeners(shared.signal, "abort")).toHaveLength(0);
   });
 
   it("reports an unreadable or non-JSON success body as an unexpected response", async () => {

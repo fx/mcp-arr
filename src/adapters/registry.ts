@@ -66,6 +66,8 @@ export interface ApplicationAdapter {
 
 export interface AdapterRegistryDependencies {
   readonly fetch?: FetchLike | undefined;
+  /** Abandons every upstream request the registry's clients make, as the client's own `signal` does. */
+  readonly signal?: AbortSignal | undefined;
 }
 
 export interface AdapterRegistry {
@@ -151,6 +153,7 @@ export function createAdapterRegistry(
       apiKey: instance.apiKey,
       timeoutMs: configuration.upstreamTimeoutMs,
       fetch: dependencies.fetch,
+      signal: dependencies.signal,
     });
 
   for (const descriptor of applicationDescriptors) {

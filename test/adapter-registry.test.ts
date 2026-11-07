@@ -280,6 +280,38 @@ describe("createAdapterRegistry", () => {
       failure: { kind: "timeout", message: expect.stringContaining("timed out after 5ms") },
     });
   });
+
+  it("gives every client it builds the signal that abandons its requests", async () => {
+    const abandon = new AbortController();
+    let fetched = 0;
+    const registry = createAdapterRegistry(parseEnvironment(allApplicationsEnvironment), {
+      fetch: (_url, init) => {
+        fetched += 1;
+        return new Promise((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+            once: true,
+          });
+        });
+      },
+      signal: abandon.signal,
+    });
+
+    const probing = registry.probe();
+    await expect.poll(() => fetched).toBe(3);
+    abandon.abort();
+    const capabilities = await probing;
+    expect(capabilities.map((capability) => capability.status)).toEqual([
+      "unavailable",
+      "unavailable",
+      "unavailable",
+    ]);
+
+    // And nothing is sent once it has aborted.
+    await expect(registry.adapter("radarr")?.client.get("movie")).rejects.toMatchObject({
+      kind: "unavailable",
+    });
+    expect(fetched).toBe(3);
+  });
 });
 
 describe("createApplicationAdapter", () => {

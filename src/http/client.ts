@@ -15,6 +15,16 @@ export interface UpstreamClientOptions {
   readonly apiKey: string;
   readonly timeoutMs?: number | undefined;
   readonly fetch?: FetchLike | undefined;
+  /**
+   * Abandons every request this client makes once it aborts — one in flight,
+   * its body included, and any started afterwards. It is the process's way of
+   * ending upstream work at shutdown, which a request's own deadline cannot
+   * do: each request gets a fresh one, so a call that makes several in turn
+   * would otherwise outlast the process's promise to exit. An abandoned
+   * request fails like an unreachable instance, and like every other failure
+   * here names the route and nothing else.
+   */
+  readonly signal?: AbortSignal | undefined;
 }
 
 export type UpstreamQueryValue = string | number | boolean;
@@ -289,11 +299,20 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
       controller.abort();
     }, timeoutMs);
     timer.unref();
+    // Held only while this request runs, so a client that outlives many
+    // requests never accumulates listeners on the one signal they share.
+    const abandon = (): void => {
+      controller.abort();
+    };
+    options.signal?.addEventListener("abort", abandon, { once: true });
 
     const fail = (kind: UpstreamErrorKind): UpstreamError =>
       new UpstreamError(kind, { application, operation: path, timeoutMs });
 
     try {
+      if (options.signal?.aborted === true) {
+        throw fail("unavailable");
+      }
       let response: Response;
       try {
         response = await fetchImpl(url, {
@@ -400,6 +419,7 @@ export function createUpstreamClient(options: UpstreamClientOptions): UpstreamCl
       }
     } finally {
       clearTimeout(timer);
+      options.signal?.removeEventListener("abort", abandon);
     }
   };
 
