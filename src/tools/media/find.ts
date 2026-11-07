@@ -1,4 +1,3 @@
-import { maxTitleLength, safeText } from "../../adapters/activity/parse.js";
 import type { LookupResult } from "../../adapters/library/model.js";
 import { runLibraryQuery } from "../../adapters/library/service.js";
 import { maxPageSize } from "../schemas/common.js";
@@ -6,6 +5,7 @@ import type { MediaContext } from "./context.js";
 import { type MediaError, mediaError, mediaErrorForCode } from "./errors.js";
 import { kindRoutes, type TitleKind, titleKinds } from "./kinds.js";
 import { configuredKinds, kindAdapter } from "./probe.js";
+import { publishedText } from "./published-text.js";
 import type { FindResult, FoundTitle } from "./schemas.js";
 
 /** The most titles `media_find` returns for one kind. */
@@ -30,15 +30,19 @@ function metadataId(result: LookupResult): number | undefined {
  * One lookup result as a found title, or `undefined` for one nothing could be
  * done with.
  *
- * The title is upstream text, so it is published only through the same
- * sanitizer every other upstream title passes: a metadata source can put a URL
- * with credentials, a path, or a key-shaped token in a title as readily as in a
- * status message. A title that is nothing once sanitized is dropped with the
- * result, like a result with no metadata identifier.
+ * The title is upstream text, so it is published only through
+ * {@link publishedText}: a metadata source can put a URL with credentials, a
+ * path, or a configured key in a title as readily as in a status message. A
+ * title with nothing publishable left is dropped with the result, like a result
+ * with no metadata identifier.
  */
-function foundTitle(kind: TitleKind, result: LookupResult): FoundTitle | undefined {
+function foundTitle(
+  context: MediaContext,
+  kind: TitleKind,
+  result: LookupResult,
+): FoundTitle | undefined {
   const id = metadataId(result);
-  const title = safeText(result.title, maxTitleLength);
+  const title = publishedText(context, result.title);
   if (id === undefined || title === undefined) {
     return undefined;
   }
@@ -83,7 +87,7 @@ async function searchKind(
     return { ok: false, error: mediaError(kind, "unexpected_response") };
   }
   const titles = outcome.data.items
-    .map((result) => foundTitle(kind, result))
+    .map((result) => foundTitle(context, kind, result))
     .filter((title): title is FoundTitle => title !== undefined)
     .slice(0, maxFoundTitlesPerKind);
   return { ok: true, titles };

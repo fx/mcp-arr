@@ -619,7 +619,7 @@ describe("media_add title redaction", () => {
       outcome: "already_in_library",
       title: "[redacted url]",
     });
-    expect(added.content).toMatchObject({ outcome: "added", title: "Example Leak [redacted id]" });
+    expect(added.content).toMatchObject({ outcome: "added", title: "Example Leak [redacted key]" });
     for (const { content, summary } of [present, added]) {
       for (const leaked of ["user:secret", "secret@", "example.invalid", configuredKey]) {
         expect(JSON.stringify(content), leaked).not.toContain(leaked);
@@ -812,5 +812,42 @@ describe("media_add reports the resolution of the record it describes", () => {
         "the resolution this title already targets could not be read, so none is reported",
       ]);
     }
+  });
+});
+
+describe("media_add exact-key redaction", () => {
+  it("removes a configured key that matches no credential shape from the title", async () => {
+    const [, unadded] = instances.catalog("radarr");
+    if (unadded !== undefined) {
+      unadded.title = "Example Plain-Key-Value-77 Title";
+    }
+
+    const { content, summary } = await add({ kind: "movie", id: newMovie }, movieDefaults, {
+      ...allApplicationsEnvironment,
+      RADARR_API_KEY: "Plain-Key-Value-77",
+    });
+
+    expect(content).toMatchObject({ outcome: "added", title: "Example [redacted key] Title" });
+    expect(JSON.stringify(content)).not.toContain("Plain-Key-Value-77");
+    expect(summary).not.toContain("Plain-Key-Value-77");
+  });
+
+  it("omits a title carrying a key too short to mark, such as key-123, and still reports the add", async () => {
+    const existing = instances.catalog("sonarr").find((record) => Number(record.id) > 0);
+    if (existing !== undefined) {
+      existing.title = "Example key-123 Leak";
+    }
+
+    const { result, content, summary } = await add(
+      { kind: "series", id: existingSeries },
+      seriesDefaults,
+      { ...allApplicationsEnvironment, SONARR_API_KEY: "key-123" },
+    );
+
+    expect(result.isError).toBe(false);
+    expect(content.outcome).toBe("already_in_library");
+    expect("title" in content).toBe(false);
+    expect(JSON.stringify(content)).not.toContain("key-123");
+    expect(summary).not.toContain("key-123");
   });
 });

@@ -103,6 +103,7 @@ const allowedFiles = [
   "dist/tools/media/find.js",
   "dist/tools/media/kinds.js",
   "dist/tools/media/probe.js",
+  "dist/tools/media/published-text.js",
   "dist/tools/media/resolution.js",
   "dist/tools/media/schemas.js",
   "dist/tools/names.js",

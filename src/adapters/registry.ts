@@ -75,6 +75,59 @@ export interface AdapterRegistry {
   adapter(application: ApplicationId): ApplicationAdapter | undefined;
   /** Probes every configured application; one failure never affects another. */
   probe(): Promise<readonly ApplicationCapability[]>;
+  /**
+   * The text with every configured API key taken out, or `undefined` where it
+   * cannot be published at all. See {@link withholdSecrets}.
+   */
+  withholdSecrets(text: string): string | undefined;
+}
+
+/** What a configured secret becomes where it appeared in published text. */
+export const redactedSecretMarker = "[redacted key]";
+
+/**
+ * The shortest secret a marker may stand in for.
+ *
+ * Marking where a secret appeared tells a reader where its characters were,
+ * and for a short secret that is most of the secret: replacing a three-letter
+ * key in an ordinary title leaves the surrounding letters to say what it was.
+ * Text carrying a shorter one is withheld whole instead.
+ */
+export const minimumMarkableSecretLength = 8;
+
+function escapePattern(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+/**
+ * Takes every occurrence of the given secrets out of a piece of text.
+ *
+ * This is an exact-value rule, beside the shape rules the upstream text
+ * sanitizer applies, because a configured key need not look like one: an
+ * operator may have set a short or hand-written key that no credential shape
+ * would match. Matching ignores case, since an upstream source may well have
+ * changed it. A secret of at least {@link minimumMarkableSecretLength}
+ * characters is replaced by {@link redactedSecretMarker}; text that carries a
+ * shorter one, anywhere, is withheld whole and answers `undefined`, for the
+ * reason that constant gives. Longer secrets are taken first, so one that
+ * contains another is not left half-replaced.
+ */
+export function withholdSecrets(text: string, secrets: readonly string[]): string | undefined {
+  let withheld = text;
+  const ordered = [...new Set(secrets.filter((secret) => secret !== ""))].sort(
+    (left, right) => right.length - left.length,
+  );
+  for (const secret of ordered) {
+    const pattern = new RegExp(escapePattern(secret), "giu");
+    if (!pattern.test(withheld)) {
+      continue;
+    }
+    if (secret.length < minimumMarkableSecretLength) {
+      return undefined;
+    }
+    withheld = withheld.replace(pattern, redactedSecretMarker);
+  }
+  return withheld;
 }
 
 /**
@@ -156,6 +209,10 @@ export function createAdapterRegistry(
       signal: dependencies.signal,
     });
 
+  // Every configured key, held only so text can be checked against them. They
+  // leave this closure as markers and never as values.
+  const secrets = configuration.instances.map((instance) => instance.apiKey);
+
   for (const descriptor of applicationDescriptors) {
     const instance = findInstance(configuration, descriptor.id);
     if (instance === undefined) {
@@ -182,6 +239,10 @@ export function createAdapterRegistry(
             : adapter.probe();
         }),
       );
+    },
+
+    withholdSecrets(text: string): string | undefined {
+      return withholdSecrets(text, secrets);
     },
   };
 }

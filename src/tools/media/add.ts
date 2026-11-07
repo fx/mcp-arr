@@ -1,4 +1,3 @@
-import { maxTitleLength, safeText } from "../../adapters/activity/parse.js";
 import {
   addMediaPayload,
   type ConfigurationRecord,
@@ -22,6 +21,7 @@ import {
 } from "./errors.js";
 import { kindRoutes, type TitleKind } from "./kinds.js";
 import { kindAdapter } from "./probe.js";
+import { publishedText } from "./published-text.js";
 import {
   chooseProfile,
   profileResolution,
@@ -54,14 +54,12 @@ function succeeded(
   resolution: Resolution | undefined,
   warnings: readonly string[] = [],
 ): AddResult {
-  // Upstream text, sanitized exactly as `media_find` sanitizes it, so the two
-  // tools report one title identically. Omitted when nothing survives: the
-  // outcome is what the caller acts on, and the title only describes it.
-  const title = safeText(candidate.title, maxTitleLength);
+  // Upstream text, published by `addTitle` alone, at the one exit every
+  // outcome passes through.
   return {
     kind: request.kind,
     id: request.id,
-    ...(title === undefined ? {} : { title }),
+    title: candidate.title,
     outcome,
     ...(resolution === undefined ? {} : { resolution }),
     warnings: [...warnings],
@@ -242,7 +240,20 @@ async function settleUnconfirmed(
 }
 
 /**
- * Adds one title, or reports that it is already in the library.
+ * Adds one title, or reports that it is already in the library, publishing its
+ * title through {@link publishedText} as `media_find` does, so the two tools
+ * report one title identically. A title with nothing publishable left is
+ * omitted: the outcome is what the caller acts on, and the title only
+ * describes it.
+ */
+export async function addTitle(context: MediaContext, request: AddRequest): Promise<AddResult> {
+  const { title: upstreamTitle, ...result } = await settleAdd(context, request);
+  const title = upstreamTitle === undefined ? undefined : publishedText(context, upstreamTitle);
+  return title === undefined ? result : { ...result, title };
+}
+
+/**
+ * Decides one add, carrying the title exactly as the lookup reported it.
  *
  * The duplicate check runs first and on its own: a title already present is
  * reported without consulting any default and without sending anything, so
@@ -250,7 +261,7 @@ async function settleUnconfirmed(
  * an existing record. Defaults are resolved against the instance only for a
  * title that is genuinely new, and a problem with them adds nothing.
  */
-export async function addTitle(context: MediaContext, request: AddRequest): Promise<AddResult> {
+async function settleAdd(context: MediaContext, request: AddRequest): Promise<AddResult> {
   const kind = request.kind;
   const route = kindRoutes[kind];
   const served = await kindAdapter(context, kind);

@@ -364,8 +364,10 @@ describe("media_find title redaction", () => {
     // The title is kept, with what it must not carry replaced by a marker.
     expect(content.titles.map((title) => [title.id, title.title])).toEqual([
       [300_001, "[redacted url]"],
-      [300_002, "Example Leak [redacted id]"],
-      [300_003, "Example [redacted id]"],
+      // The configured key is known exactly, so it is named as a key rather
+      // than caught by the identifier shape.
+      [300_002, "Example Leak [redacted key]"],
+      [300_003, "Example Glued[redacted key]Title"],
     ]);
   });
 
@@ -381,5 +383,62 @@ describe("media_find title redaction", () => {
     expect(content.titles.map((title) => [title.id, title.title])).toEqual([
       [300_005, "Example Kept"],
     ]);
+  });
+});
+
+describe("media_find exact-key redaction", () => {
+  it("removes a configured key that matches no credential shape from a title", async () => {
+    const configuredKey = "Plain-Key-Value-77";
+    const recorded = instances.catalog("radarr")[1] as Record<string, unknown>;
+    instances.serve("radarr", "movie/lookup", [
+      { ...recorded, tmdbId: 310_001, title: `Example ${configuredKey} Title` },
+      { ...recorded, tmdbId: 310_002, title: `Example Glued${configuredKey.toUpperCase()}` },
+    ]);
+
+    const { content, summary } = await find(
+      { text: "Example", kind: "movie" },
+      { ...allApplicationsEnvironment, RADARR_API_KEY: configuredKey },
+    );
+
+    expect(content.titles.map((title) => title.title)).toEqual([
+      "Example [redacted key] Title",
+      "Example Glued[redacted key]",
+    ]);
+    for (const text of [JSON.stringify(content), summary]) {
+      expect(text.toLowerCase()).not.toContain(configuredKey.toLowerCase());
+    }
+  });
+
+  it("withholds a title carrying a key too short to mark, such as key-123", async () => {
+    const recorded = instances.catalog("sonarr")[1] as Record<string, unknown>;
+    instances.serve("sonarr", "series/lookup", [
+      { ...recorded, tvdbId: 410_001, title: "Example key-123 Leak" },
+      { ...recorded, tvdbId: 410_002, title: "Example Clean" },
+    ]);
+
+    const { content, summary } = await find(
+      { text: "Example", kind: "series" },
+      { ...allApplicationsEnvironment, SONARR_API_KEY: "key-123" },
+    );
+
+    expect(content.titles.map((title) => [title.id, title.title])).toEqual([
+      [410_002, "Example Clean"],
+    ]);
+    expect(JSON.stringify(content)).not.toContain("key-123");
+    expect(summary).not.toContain("key-123");
+  });
+
+  it("redacts another kind's configured key as well", async () => {
+    const recorded = instances.catalog("radarr")[1] as Record<string, unknown>;
+    instances.serve("radarr", "movie/lookup", [
+      { ...recorded, tmdbId: 310_003, title: "Example Series-Key-Value Crossed" },
+    ]);
+
+    const { content } = await find(
+      { text: "Example", kind: "movie" },
+      { ...allApplicationsEnvironment, SONARR_API_KEY: "Series-Key-Value" },
+    );
+
+    expect(content.titles.map((title) => title.title)).toEqual(["Example [redacted key] Crossed"]);
   });
 });
