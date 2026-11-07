@@ -181,8 +181,14 @@ The feature contracts are split across:
 - The published package MUST declare its license and the repository it was built from.
 - Release versions MUST be derived from the merged commit history rather than edited by hand, and the version, changelog, and git tag MUST agree.
 - A release MUST NOT be published from a commit whose standing quality gates have not passed.
-- Publishing MUST require an explicit human action; automation MUST NOT publish a release on its own.
+- Publishing a release MUST require an explicit human action; automation MUST NOT publish a release on its own.
 - Publishing MUST NOT depend on a long-lived registry credential stored in the repository.
+- The server MUST also be distributed as a container image in the project's container registry, built by installing the same packed package the npm registry receives, so the image runs the published artifact and contains no sources, tests, or fixtures.
+- An image tagged with a release version or as the latest release MUST be published only for a release a maintainer merged, and only after that release's standing quality gates have passed.
+- Images built from the default branch MAY be published automatically as development images; a development image is not a release, and MUST NOT carry a release version tag or the latest tag.
+- An image MUST NOT be published for a commit unless the image built from that commit first passed a smoke test of the running container, and a pull request MUST NOT publish an image.
+- The image MUST run the server as a non-root user and MUST default to the HTTP transport listening on every interface of the container.
+- The image MUST NOT contain a bearer token, an instance URL, an API key, or any other credential; the operator supplies them when the container starts, and the server's startup rejections apply unchanged.
 
 #### Scenario: Install and run without the repository
 
@@ -201,6 +207,30 @@ The feature contracts are split across:
 - **GIVEN** the automated release process has prepared a pending release for the accumulated commits
 - **WHEN** no maintainer has approved it
 - **THEN** nothing is published to the registry and the pending release remains available for review
+
+#### Scenario: A merged release publishes its image
+
+- **GIVEN** a maintainer merges the pending release and its package is published to the npm registry
+- **WHEN** the release's container image passes its smoke test
+- **THEN** the image is published tagged with the release version and as the latest release, and reports the same version as the npm package
+
+#### Scenario: A development image is never a release
+
+- **GIVEN** a commit lands on the default branch without a release
+- **WHEN** its container image passes its smoke test and is published
+- **THEN** it is tagged with the branch and the commit only, and no release version tag or latest tag moves
+
+#### Scenario: A pull request builds but never publishes
+
+- **GIVEN** a pull request changes the image or the package
+- **WHEN** its image is built and smoke-tested
+- **THEN** nothing is pushed to the container registry and no registry credential is used
+
+#### Scenario: The image starts only with operator credentials
+
+- **GIVEN** the container image is started without a bearer token
+- **WHEN** the server starts inside it
+- **THEN** startup fails naming the missing variable without echoing any configured value, and no listener is opened
 
 ## Design
 
@@ -255,3 +285,4 @@ None.
 | 2026-08-29 | Upstream request timeout required to be configurable, defaulted to 30 000 ms, and bounded | [0029-configurable-upstream-timeout](../../changes/0029-configurable-upstream-timeout.md) |
 | 2026-11-07 | Stdio-only transport replaced by a startup transport selection with Streamable HTTP; state shared across a process's clients; single-operator and single-process constraints stated | [0030-streamable-http-transport](../../changes/0030-streamable-http-transport.md) |
 | 2026-11-07 | Non-instance settings, including the toolset and its defaults, required to come from the environment | [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) |
+| 2026-11-07 | Container image distribution added: built from the packed package, release images only from a merged release, development images never tagged as a release, non-root, and no credentials baked in | [0034-container-image](../../changes/0034-container-image.md) |

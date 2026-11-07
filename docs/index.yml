@@ -272,3 +272,10 @@ changes:
     spec: tool-contracts
     status: draft
     depends_on: ["0031", "0032"]
+  - id: "0034"
+    name: container-image
+    path: changes/0034-container-image.md
+    description: Publish a non-root container image of the packed package to GHCR, verified before every push
+    spec: architecture
+    status: in-progress
+    depends_on: ["0030"]
