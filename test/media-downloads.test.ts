@@ -327,7 +327,7 @@ describe("judgeDownload", () => {
     instances.state("sonarr").queue = [base(502)];
   });
 
-  const open: ImportGuard = { others: [], reserve: () => true };
+  const open: ImportGuard = { others: [], complete: true, reserve: () => true };
 
   async function judged(guard: ImportGuard = open) {
     return judgeDownload(adapter, "series", 12, await download(base(502)), false, guard);
@@ -343,9 +343,18 @@ describe("judgeDownload", () => {
       trackedDownloadStatus: "ok",
     });
 
-    expect(await judged({ others: [importing], reserve: () => true })).toMatchObject({
+    expect(
+      await judged({ others: [importing], complete: true, reserve: () => true }),
+    ).toMatchObject({
       remedy: "none",
       reason: downloadReasons.targetImporting,
+    });
+  });
+
+  it("refuses when the title's queue could not be read in full", async () => {
+    expect(await judged({ ...open, complete: false })).toMatchObject({
+      remedy: "none",
+      reason: downloadReasons.queueIncomplete,
     });
   });
 
@@ -353,6 +362,7 @@ describe("judgeDownload", () => {
     const reserved: string[][] = [];
     const judgement = await judged({
       others: [],
+      complete: true,
       reserve: (targets) => {
         reserved.push([...targets]);
         return false;

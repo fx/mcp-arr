@@ -104,8 +104,6 @@ interface Candidate {
   readonly judgement: Judgement;
   /** The download's place in its own queue read. */
   readonly position: number;
-  /** Every download of the same kind the same read found, this one included. */
-  readonly siblings: readonly Download[];
 }
 
 /** The most history pages the overview reads looking for the week's imports. */
@@ -169,14 +167,15 @@ async function judgeForStatus(
   kind: TitleKind,
   mediaId: number,
   download: Download,
-  siblings: readonly Download[],
+  siblings: { readonly downloads: readonly Download[]; readonly complete: boolean },
   warnings: string[],
 ): Promise<Judgement> {
   const claimed = importClaimed(context, download.key);
   // Status acts on nothing, so it reserves nothing: it asks only whether a
   // fix would find another download holding one of the import's targets.
   const guard: ImportGuard = {
-    others: importingOthers(context, siblings, download),
+    others: importingOthers(context, siblings.downloads, download),
+    complete: siblings.complete,
     reserve: (targets) =>
       targets.every((target) => !context.claims.targetHeldByOther(download.key, target)),
   };
@@ -188,6 +187,44 @@ async function judgeForStatus(
     }
     return { state: "stuck", remedy: "none", reason: downloadReasons.checkFailed };
   }
+}
+
+/**
+ * Judges a listed download whose remedy may be `import` against the title's
+ * own queue, read the way `media_fix` reads it, so the overview reports the
+ * remedy a fix would apply: the queue page the overview listed it from holds
+ * every title's rows and stops at its bound, and is not the read a fix
+ * decides from.
+ */
+async function judgeListedImport(
+  context: MediaContext,
+  candidate: Candidate,
+  warnings: string[],
+): Promise<Judgement> {
+  let siblings: { readonly downloads: readonly Download[]; readonly complete: boolean };
+  try {
+    const rows = await readQueueForMedia(
+      candidate.adapter.client,
+      candidate.record.id,
+      profileFor(kindRoutes[candidate.kind].application),
+      "summary",
+    );
+    siblings = { downloads: groupDownloads(rows.items), complete: !rows.truncated };
+  } catch {
+    if (!warnings.includes(uncheckedWarning)) {
+      warnings.push(uncheckedWarning);
+    }
+    return { state: "stuck", remedy: "none", reason: downloadReasons.checkFailed };
+  }
+  return judgeForStatus(
+    context,
+    candidate.adapter,
+    candidate.kind,
+    candidate.record.id,
+    candidate.download,
+    siblings,
+    warnings,
+  );
 }
 
 /** Downloads ordered stuck first, then by kind, then as their queues listed them. */
@@ -279,8 +316,7 @@ async function overviewOfKind(
     }
 
     const candidates: Candidate[] = [];
-    const grouped = groupDownloads(associated);
-    for (const [position, download] of grouped.entries()) {
+    for (const [position, download] of groupDownloads(associated).entries()) {
       const record = recordOf(download.rows[0]?.context.mediaId);
       if (record?.externalId === undefined) {
         continue;
@@ -296,7 +332,6 @@ async function overviewOfKind(
         // Provisional: an `import` is confirmed only for a listed download.
         judgement: provisionalJudgement(download, claimed),
         position,
-        siblings: grouped,
       });
     }
     const unread = page.hasMore ? Math.max(0, summary.totalCount - page.items.length) : 0;
@@ -471,15 +506,7 @@ async function overview(context: MediaContext): Promise<StatusResult> {
   for (const candidate of listed) {
     const judgement =
       candidate.judgement.state === "stuck" && candidate.judgement.remedy === "import"
-        ? await judgeForStatus(
-            context,
-            candidate.adapter,
-            candidate.kind,
-            candidate.record.id,
-            candidate.download,
-            candidate.siblings,
-            warnings,
-          )
+        ? await judgeListedImport(context, candidate, warnings)
         : candidate.judgement;
     const episodes =
       candidate.kind === "series"
@@ -647,7 +674,7 @@ async function titleStatus(
       kind,
       record.id,
       download,
-      downloads,
+      { downloads, complete: !rows.truncated },
       warnings,
     );
     reported.push(

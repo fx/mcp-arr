@@ -122,6 +122,7 @@ export const downloadReasons = {
   checkFailed: "Its files could not be checked because a request failed.",
   targetBeingFixed: "Another download for the same movie or episode is being fixed.",
   targetImporting: "Another download for the same movie or episode is being imported.",
+  queueIncomplete: "This title's queue is too long to read in full, so it is left alone.",
 } as const;
 
 const failedStates = new Set(["failed", "failed_pending"]);
@@ -357,6 +358,12 @@ function fileRequest(candidate: ImportCandidate, mediaId: number): ImportFileReq
  */
 export interface ImportGuard {
   readonly others: readonly Download[];
+  /**
+   * Whether `others` came from a read of the title's whole queue. One cut
+   * short by its bound cannot rule out another download for the same movie or
+   * episode, so it refuses the import.
+   */
+  readonly complete: boolean;
   reserve(targets: readonly string[]): boolean;
 }
 
@@ -459,6 +466,9 @@ async function confirmImport(
     mapped.push(...targets);
   }
 
+  if (!guard.complete) {
+    return { ok: false, reason: downloadReasons.queueIncomplete };
+  }
   if (coveredByOthers(application, mediaId, mapped, guard.others)) {
     return { ok: false, reason: downloadReasons.targetImporting };
   }
@@ -606,7 +616,8 @@ async function everyTargetHasFile(
  * never arrived: its download has left the queue, the library has a file for
  * everything it was for, or — once the request has had time to arrive — the
  * instance lists no unfinished import at all. Past the hold bound it is
- * released for want of evidence. A read that fails is no evidence.
+ * released for want of evidence. A read that fails is no evidence, and nor is
+ * an absence from a read that stopped at its bound.
  */
 async function uncertainImportSettled(
   context: MediaContext,
@@ -628,7 +639,9 @@ async function uncertainImportSettled(
       profileFor(claimed.application),
       "summary",
     );
-    if (!groupDownloads(rows.items).some((download) => download.key === key)) {
+    // Absence counts only from a read that covered the whole answer: a read
+    // the scan bound cut short says nothing about the rows beyond it.
+    if (!rows.truncated && !groupDownloads(rows.items).some((download) => download.key === key)) {
       return true;
     }
     if (await everyTargetHasFile(adapter, claimed)) {
@@ -642,11 +655,14 @@ async function uncertainImportSettled(
       { offset: 0, pageSize: defaultScanLimit },
       claimed.application,
     );
-    return !commands.items.some(
+    const unfinished = commands.items.some(
       (command) =>
         command.name === manualImportCommandName &&
         (command.status === "queued" || command.status === "started"),
     );
+    // The same rule: no unfinished import is evidence only in a complete list.
+    const complete = !commands.hasMore && (commands.warnings?.length ?? 0) === 0;
+    return !unfinished && complete;
   } catch {
     return false;
   }

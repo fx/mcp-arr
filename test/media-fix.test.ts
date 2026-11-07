@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { defaultScanLimit } from "../src/adapters/library/paging.js";
 import { createManualClock, type ManualClock } from "../src/state/clock.js";
 import { createDownloadClaims, type DownloadClaims } from "../src/state/download-claims.js";
 import { downloadReasons, targetKey, uncertainImportHoldMs } from "../src/tools/media/downloads.js";
@@ -985,5 +986,111 @@ describe("media_fix with an import whose answer was lost", () => {
 
     expect(content.downloads?.[0]?.reason).toBe(fixReasons.requestFailed);
     expect(claims.size).toBe(0);
+  });
+});
+
+describe("media_fix concludes nothing from a read cut short", () => {
+  /** Rows of other downloads of the same title, enough to fill the scan bound. */
+  function filler(): UpstreamRecord[] {
+    return Array.from({ length: defaultScanLimit }, (_, index) => ({
+      ...blocked,
+      id: 20_000 + index,
+      downloadId: `filler-${index}`,
+      status: "downloading",
+      trackedDownloadState: "downloading",
+      trackedDownloadStatus: "ok",
+    }));
+  }
+
+  function loseAcceptedImport(): void {
+    instances.intercept((request) => {
+      if (request.method === "POST" && request.route === "command") {
+        instances
+          .state("sonarr")
+          .commands.set(7999, { id: 7999, name: "ManualImport", status: "queued" });
+        throw new TypeError("fetch failed");
+      }
+      return undefined;
+    });
+  }
+
+  beforeEach(() => {
+    instances.state("sonarr").queue = [structuredClone(blocked)];
+    makeImportable();
+  });
+
+  it("keeps a lost import's claim when its download is missing only from a truncated queue read", async () => {
+    loseAcceptedImport();
+    await fix();
+    expect(claims.size).toBe(1);
+
+    // The download is still queued, past the bound of what one read covers.
+    instances.state("sonarr").queue = [...filler(), structuredClone(blocked)];
+    await status({ kind: "series", id: 100_002 });
+
+    expect(claims.size).toBe(1);
+  });
+
+  it("keeps a lost import's claim when the command list was too long to read in full", async () => {
+    loseAcceptedImport();
+    await fix();
+    const commands = instances.state("sonarr").commands;
+    const unfinished = commands.get(7999) ?? {};
+    commands.clear();
+    for (let index = 0; index < defaultScanLimit; index += 1) {
+      commands.set(10_000 + index, { id: 10_000 + index, name: "RssSync", status: "completed" });
+    }
+    // The unfinished import sits past the bound of what one read covers.
+    commands.set(7999, unfinished);
+
+    clock.advance(5 * 60 * 1000);
+    await status();
+
+    expect(claims.size).toBe(1);
+  });
+
+  it("does not call a download missing from a truncated re-read no longer stuck", async () => {
+    instances.state("sonarr").queue = [failedRow(502, "one")];
+    let reads = 0;
+    instances.intercept((request) => {
+      if (request.method === "GET" && request.route === "queue/details") {
+        reads += 1;
+        if (reads === 2) {
+          instances.state("sonarr").queue = [...filler(), failedRow(502, "one")];
+        }
+      }
+      return undefined;
+    });
+
+    const { content } = await fix();
+
+    expect(content.downloads?.[0]).toMatchObject({
+      action: "none",
+      reason: downloadReasons.queueIncomplete,
+    });
+    expect(instances.mutations()).toEqual([]);
+  });
+
+  it("refuses an import, in status and in fix alike, when the title's queue is truncated", async () => {
+    instances.state("sonarr").queue = [structuredClone(blocked), ...filler()];
+
+    const reported = (await status()).content;
+    const { content } = await fix();
+
+    expect(reported.downloads?.[0]).toMatchObject({
+      remedy: "none",
+      reason: downloadReasons.queueIncomplete,
+    });
+    expect(reported.warnings).toContain(
+      "this title has more queue entries than could be read, so its downloads may be incomplete",
+    );
+    expect(content.downloads?.[0]).toMatchObject({
+      action: "none",
+      reason: downloadReasons.queueIncomplete,
+    });
+    expect(content.warnings).toEqual([
+      "this title has more queue entries than could be read, so remaining counts only those read",
+    ]);
+    expect(instances.mutations()).toEqual([]);
   });
 });

@@ -41,6 +41,13 @@ export const fixReasons = {
     "Its import may have started but no answer came back, so it is not started again until that is known.",
 } as const;
 
+/**
+ * Warned when the title's queue was longer than one read covers: the stuck
+ * downloads beyond it are neither acted on nor counted in `remaining`.
+ */
+const truncatedQueueWarning =
+  "this title has more queue entries than could be read, so remaining counts only those read";
+
 export interface FixRequest {
   readonly kind: TitleKind;
   readonly id: number;
@@ -160,12 +167,15 @@ async function fixOne(scope: FixScope, download: Download): Promise<Outcome> {
     const current = downloads.find((candidate) => candidate.key === key);
     if (current === undefined) {
       claims.release(key);
-      return none(fixReasons.noLongerStuck);
+      // Gone from a read that stopped at its bound is not gone: the download
+      // may sit beyond it, so nothing is concluded about it.
+      return none(fresh.truncated ? downloadReasons.queueIncomplete : fixReasons.noLongerStuck);
     }
     // An import claims every movie or episode it is for, with the download's
     // own claim, before the library is asked whether they have a file.
     const judgement = await judgeDownload(adapter, kind, mediaId, current, false, {
       others: importingOthers(context, downloads, current),
+      complete: !fresh.truncated,
       reserve: (targets) => claims.tryClaimTargets(key, targets),
     });
     if (judgement.state !== "stuck") {
@@ -244,6 +254,7 @@ export async function fixTitle(context: MediaContext, request: FixRequest): Prom
   await refreshImports(context, adapter);
 
   let downloads: Download[];
+  let truncated = false;
   try {
     const rows = await readQueueForMedia(
       adapter.client,
@@ -252,13 +263,14 @@ export async function fixTitle(context: MediaContext, request: FixRequest): Prom
       "summary",
     );
     downloads = groupDownloads(rows.items);
+    truncated = rows.truncated;
   } catch (error) {
     return { ...named, warnings: [], errors: [mediaErrorFor(kind, error)] };
   }
   const stuck = downloads.filter((download) => classifyDownload(download, false).state === "stuck");
   const considered = stuck.slice(0, maxListedEntries);
 
-  const warnings: string[] = [];
+  const warnings: string[] = truncated ? [truncatedQueueWarning] : [];
   let numbers: EpisodeNumbers | undefined;
   if (kind === "series" && considered.length > 0) {
     try {
