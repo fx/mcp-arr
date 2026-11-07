@@ -1,5 +1,15 @@
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import type { Readable } from "node:stream";
+
+/**
+ * A child whose stdout and stderr are piped. Its stdin may be a pipe or
+ * absent: nothing here writes to it, and a child launched with stdin ignored
+ * is exactly how a container without an attached terminal starts one.
+ */
+export type ObservableChild = ChildProcess & {
+  readonly stdout: Readable;
+  readonly stderr: Readable;
+};
 
 export interface ProcessExit {
   code: number | null;
@@ -21,7 +31,7 @@ export interface ObservedChildProcess {
 export function consumeReadable(stream: Readable, onChunk: (chunk: Buffer) => void): Promise<void>;
 
 export function waitForChildCompletion(
-  child: ChildProcessWithoutNullStreams,
+  child: ObservableChild,
   stdoutConsumed: Promise<void>,
   stderrConsumed: Promise<void>,
 ): Promise<ProcessExit>;
@@ -33,6 +43,6 @@ export function waitForResponseOrExit<T>(
 ): Promise<T>;
 
 export function observeChildProcess(
-  child: ChildProcessWithoutNullStreams,
+  child: ObservableChild,
   options?: ObserveChildProcessOptions,
 ): ObservedChildProcess;

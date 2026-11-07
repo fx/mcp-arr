@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
-process.stdin.ref();
+import { refStdin, unrefStdin } from "./stdin.js";
+
+refStdin();
 
 void import("./process.js")
   .then(({ runProcess }) => runProcess())
@@ -8,5 +10,5 @@ void import("./process.js")
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`mcp-arr: startup failed: ${message}\n`);
     process.exitCode = 1;
-    process.stdin.unref();
+    unrefStdin();
   });

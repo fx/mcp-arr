@@ -1,4 +1,5 @@
 import { type EnvironmentConfiguration, loadEnvironment } from "./config/environment.js";
+import { unrefStdin } from "./stdin.js";
 import { createStdioRuntime, type StdioRuntime } from "./stdio.js";
 
 export type ShutdownSignal = "SIGINT" | "SIGTERM";
@@ -24,9 +25,7 @@ const defaultDependencies: ProcessDependencies = {
   setExitCode: (code) => {
     process.exitCode = code;
   },
-  unrefStdin: () => {
-    process.stdin.unref();
-  },
+  unrefStdin,
 };
 
 function errorMessage(error: unknown): string {

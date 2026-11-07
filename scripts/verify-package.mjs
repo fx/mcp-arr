@@ -76,6 +76,7 @@ const allowedFiles = [
   "dist/state/references.js",
   "dist/state/tokens.js",
   "dist/state/workflow.js",
+  "dist/stdin.js",
   "dist/stdio.js",
   "dist/tools/acquisition.js",
   "dist/tools/activity-change.js",

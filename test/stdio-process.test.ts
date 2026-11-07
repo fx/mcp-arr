@@ -1,8 +1,10 @@
+import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { deserializeMessage, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
 import { type JSONRPCMessage, LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it, vi } from "vitest";
+import { observeChildProcess } from "../scripts/child-process.mjs";
 import { isCleanTermination } from "../scripts/platform-command.mjs";
 import {
   configurationVariables,
@@ -45,6 +47,22 @@ function spawnNode(args: readonly string[], env: NodeJS.ProcessEnv = configuredE
     cwd: projectRoot,
     env,
   });
+}
+
+/**
+ * Launches the built server with stdin ignored, which hands it `/dev/null`:
+ * what a container started without an attached stdin sees. Node gives such a
+ * process a file stream for stdin rather than a socket, and a file stream has
+ * no `ref` or `unref`.
+ */
+function spawnWithoutStdin(env: NodeJS.ProcessEnv) {
+  return observeChildProcess(
+    spawn(process.execPath, ["dist/cli.js"], {
+      cwd: projectRoot,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    }),
+  );
 }
 
 describe("built stdio process", () => {
@@ -160,6 +178,31 @@ describe("built stdio process", () => {
     } finally {
       await child.forceCleanup().catch(() => undefined);
     }
+  });
+
+  it("starts and ends cleanly when stdin is a file rather than a pipe", async () => {
+    const child = spawnWithoutStdin(configuredEnvironment);
+
+    await expect(withDeadline(child.closed, "file stdin close")).resolves.toEqual({
+      code: 0,
+      signal: null,
+    });
+    expect(child.stdout).toBe("");
+    expect(child.stderr).toBe("");
+  });
+
+  it("reports a startup failure and nothing else when stdin is a file", async () => {
+    const child = spawnWithoutStdin(environmentWithout("SONARR_API_KEY"));
+
+    await expect(withDeadline(child.closed, "file stdin failure close")).resolves.toEqual({
+      code: 1,
+      signal: null,
+    });
+    expect(child.stdout).toBe("");
+    expect(child.stderr).toBe(
+      "mcp-arr: startup failed: invalid environment configuration: " +
+        "SONARR_API_KEY is required when SONARR_URL is set\n",
+    );
   });
 
   it("exits after a fatal startup failure while stdin remains open", async () => {
