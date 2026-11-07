@@ -38,7 +38,7 @@ Skipping or weakening any of these rules to land the PR MUST be treated as a bug
 
 Additionally:
 
-- A test MUST assert the [Minimal Footprint](../specs/media-toolset/#minimal-footprint) listing ceiling over stdio against a measured, recorded ceiling, in the way `test/tool-stdio.test.ts` records the `arr` listing's.
+- A test MUST assert the [Minimal Footprint](../specs/media-toolset/#minimal-footprint) listing over stdio against a measured, recorded ceiling, in the way `test/tool-stdio.test.ts` records the `arr` listing's. The ceiling's margin over the measurement MUST be smaller than the smallest single `media` tool's published definition, so a regression that republishes one tool cannot hide beneath it.
 - A test MUST scan every published `media` tool's name, title, description, and input and output schemas for the terms [Published Tools](../specs/media-toolset/#published-tools) forbids, case-insensitively. Its word list MUST be written out in the test rather than derived from code.
 - A test MUST prove `media_add` cannot create a duplicate. An add of a title already in the library MUST send no write request upstream.
 

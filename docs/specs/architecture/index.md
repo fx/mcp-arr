@@ -156,7 +156,8 @@ The feature contracts are split across:
 - Adapter behavior MUST be covered by sanitized, version-labelled upstream fixtures.
 - MCP tools MUST have protocol-level stdio integration tests for schemas, results, errors, and stdout cleanliness, for each toolset.
 - The HTTP transport MUST have protocol-level integration tests against a real listener for authentication, origin validation, statelessness, and the absence of every credential from responses and diagnostics.
-- Mutations MUST have tests for direct apply, planned apply, stale plans, retries, partial failure, and redaction.
+- `arr` toolset mutations MUST have tests for direct apply, planned apply, stale plans, retries, partial failure, and redaction.
+- `media` toolset mutations MUST have tests for repeated and concurrent calls, partial failure, and redaction.
 - The full build, type check, lint, and test suite MUST run in CI and failures MUST block merge.
 - Committed tests MUST NOT be focused, skipped, or dependent on live personal *arr instances.
 - A recorded upstream fixture MUST correspond to a response the application it names genuinely produces at the version and route it names, and MUST NOT be authored from documentation or inferred from another application's shape.

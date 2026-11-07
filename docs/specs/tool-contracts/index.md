@@ -8,7 +8,7 @@ This specification defines the stable MCP tool surface, how a deployment selects
 
 Mirroring upstream HTTP operations produces a large, brittle tool catalog. Conversely, one generic dispatcher hides the same catalog inside an untyped argument object. The desired surface uses a small set of explicitly typed domain tools.
 
-The server offers two such surfaces. The `arr` toolset exposes the applications' own model — fourteen tools with application selection, configuration references, and plan/apply — for operators who know Sonarr, Radarr, and Prowlarr. The `media` toolset, owned by [Media Toolset](../media-toolset/), talks about movies, series, and downloads and makes those choices itself. A process publishes one of them. Unless a requirement here names the `arr` toolset, it applies to every published tool in both.
+The server offers two such surfaces. The `arr` toolset exposes the applications' own model — fourteen tools with application selection, configuration references, and plan/apply — for operators who know Sonarr, Radarr, and Prowlarr. The `media` toolset, owned by [Media Toolset](../media-toolset/), talks about movies, series, and downloads and makes those choices itself. A process publishes one of them. Unless a requirement here names the `arr` toolset, it applies to every published tool in both. The domain specifications — Library Management, Activity Management, Acquisition and Import, and Configuration Reconciliation — govern the `arr` toolset only.
 
 Related behavior:
 
@@ -103,8 +103,8 @@ This parity is about the argument schema only. Cross-property correlations discl
 ### Bounded Structured Results
 
 - Every successful tool call MUST return schema-conforming structured content and a concise text summary.
-- Collection queries MUST support bounded page size and continuation metadata.
-- Default results MUST omit large nested payloads unless the caller requests a supported detail level.
+- Collection queries in the `arr` toolset MUST support bounded page size and continuation metadata.
+- `arr` toolset results MUST omit large nested payloads by default unless the caller requests a supported detail level. `media` results are bounded by the fixed limits [Media Toolset](../media-toolset/#minimal-footprint) sets instead.
 - Bulk and cross-application results MUST report per-item or per-application outcomes and MUST NOT conceal partial failure.
 - A collection query in the `arr` toolset MUST accept an optional caller-supplied projection naming which parts of a per-application payload to return, and a projected result MUST carry only the named parts and only values the same call would have returned unprojected.
 - A projection MUST NOT remove the result envelope, a per-application outcome's own fields, or the field that discriminates the payload, and a projection path matching nothing MUST produce a warning naming the paths that were available rather than failing the call.

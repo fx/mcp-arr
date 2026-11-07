@@ -52,3 +52,7 @@ Where a schema and an adapter must agree on such a rule, share one predicate rat
 ## Zod 4 Schema Conventions
 
 This repository pins zod 4 (see `zod` in `package.json`). In zod 4 the custom-message key for `.refine`, `.check`, and the schema factories is `error`; `message` is the legacy zod 3 alias. Both produce the custom message — verified against the pinned version — so `{ error: ... }` is correct and the message is not lost or ignored. Reporting `error` as a mistake, or asking for it to be changed to `message`, is a false positive.
+
+## Change Documents Restate the Standing Testing Rules
+
+Every change document in `docs/changes/` opens its `## Requirements` with a `### Testing Requirements` subsection that restates, in short bullets, the standing merge-blocking testing rules from [Architecture — Testing Contract](docs/specs/architecture/index.md#testing-contract), links that section, and then adds the change's own verification obligations. This is the project's change-document template, not duplication of a spec-owned contract: it puts the gates a PR must pass in front of the person implementing that PR. Reporting a change document's Testing Requirements bullets as a restatement of the Architecture spec that should be removed or replaced by a link is a false positive. A bullet that contradicts or narrows the Architecture rule it restates is a real finding.

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This specification defines safe observation of configuration stored in the upstream *arr applications, and retains the design for reconciling it. It does not introduce MCP-local configuration persistence; the MCP's own connection settings remain environment-only as defined by [Architecture](../architecture/).
+This specification defines safe observation of configuration stored in the upstream *arr applications, and retains the design for reconciling it. It does not introduce MCP-local configuration persistence; the MCP's own connection settings remain environment-only as defined by [Architecture](../architecture/). Its requirements govern the `arr` toolset. The `media` toolset acts on the same upstream records under [Media Toolset](../media-toolset/) alone, and none of the requirements here binds a `media` tool.
 
 The exposed surface is observation only. The write surface is withdrawn, and the requirements describing it are retained below as the design for any reinstatement rather than as a description of what the server does — see [Configuration Writes Are Not Exposed](#configuration-writes-are-not-exposed).
 
@@ -180,3 +180,4 @@ None.
 | 2026-08-25 | Initial desired-state specification created | [0008-configuration-reconciliation](../../changes/0008-configuration-reconciliation.md) |
 | 2026-08-28 | Provider template derivation made internal; observation payloads required to be bounded in every part | [0016-bounded-provider-schema-observation](../../changes/0016-bounded-provider-schema-observation.md) |
 | 2026-08-28 | Write surface withdrawn; reconciliation requirements retained as design rather than current behavior | [0020-withdraw-configuration-writes](../../changes/0020-withdraw-configuration-writes.md) |
+| 2026-11-07 | Requirements scoped to the `arr` toolset | [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) |

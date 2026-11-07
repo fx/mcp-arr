@@ -153,6 +153,7 @@ Setting any of these variables while the `arr` toolset is selected, or setting o
 - `media_status` MUST accept either nothing, for an overview, or a title's kind and id, for that title.
 - Every download it reports MUST carry its title, which for an episode includes its season and episode numbers, and exactly one state: `queued`, `downloading`, `waiting`, `importing`, or `stuck`.
 - A `downloading` download MUST also carry its progress as a whole percentage, and a `stuck` download MUST also carry a one-sentence reason and the remedy `media_fix` would apply to it if state did not change: `replace`, `import`, or `none`.
+- A download for which this process has started an import that has not yet finished MUST be reported `importing`.
 - The overview MUST carry the kinds this deployment serves, its downloads, the titles imported in the last 7 days with their dates, and the titles or episodes due in the next 14 days with their dates.
 - A title's status MUST carry `in_library`; for a title in the library it MUST also carry whether it is monitored, how many of its released movies or episodes the library has and lacks, its downloads, and its next due date when one is known.
 - Every list in a status result MUST hold at most 10 entries, and a list cut short MUST carry the total it was cut from.
@@ -174,12 +175,13 @@ Setting any of these variables while the `arr` toolset is selected, or setting o
 
 - `media_fix` MUST accept a title's kind and id and MUST act on every download of that title that is `stuck` when the call re-reads it.
 - A `stuck` download whose remedy is `replace` MUST be blocklisted, removed from the download client together with its downloaded data, and replaced by the application's own search for another release.
-- A `stuck` download whose remedy is `import` MUST be imported, and that remedy MUST apply only when every file the download holds is importable without any correction and none would replace a file already in the library.
+- A `stuck` download whose remedy is `import` MUST have its import started, and that remedy MUST apply only when every file the download holds is importable without any correction and the library's own records show no file for any movie or episode those files map to.
+- Where the library's records cannot establish that a mapped movie or episode has no file, the remedy MUST be `none`.
 - A `stuck` download whose remedy is `none` MUST be left untouched.
 - `media_fix` MUST NOT delete or replace any file already in the library, MUST NOT act on a download in any state other than `stuck`, and MUST NOT act on any other title's downloads.
 - `media_fix` MUST re-read each download immediately before acting on it, and MUST decide its remedy from that reading rather than from any earlier status result.
-- The result MUST carry, for each stuck download, its title and either the action taken, `replaced` or `imported`, or `none` with a one-sentence reason; a title with nothing stuck MUST produce an empty list.
-- Calling `media_fix` again after a successful fix MUST NOT repeat an action on a download it already replaced or imported.
+- The result MUST carry, for each stuck download, its title and either the action taken, `replaced` or `import_started`, or `none` with a one-sentence reason; a title with nothing stuck MUST produce an empty list.
+- Calling `media_fix` again, including concurrently, MUST NOT repeat an action on a download it already replaced or whose import it started and has not seen finish.
 
 #### Scenario: Replace a failed download
 
@@ -202,15 +204,22 @@ Setting any of these variables while the `arr` toolset is selected, or setting o
 ### Search Again
 
 - `media_search_again` MUST accept a title's kind and id and, for a series, an optional `season` and an optional `episode` within that season.
-- It MUST start the application's own search for the media the title lacks within the requested scope and MUST NOT choose or download a specific release itself.
+- It MUST start the application's own search for exactly the released movies or episodes within the requested scope that the library has no file for, and MUST NOT search for media the library already has or choose or download a specific release itself.
+- When nothing in scope is missing, it MUST start no search.
 - A title that is not in the library MUST fail with `conflict` and a remediation pointing to `media_add`.
-- The result MUST carry only the title and the scope searched; the search's outcome is observed through [Status](#status).
+- The result MUST carry only the title, the scope, and how many movies or episodes were searched for; the search's outcome is observed through [Status](#status).
 
 #### Scenario: Search one season again
 
 - **GIVEN** a series in the library is missing episodes in season 2
 - **WHEN** a caller searches season 2 again
-- **THEN** a search for that season starts and the result names the series and season 2, without downloading a specific release
+- **THEN** a search starts for season 2's missing episodes only, and the result names the series, season 2, and how many episodes were searched for
+
+#### Scenario: Nothing is missing
+
+- **GIVEN** a movie in the library that already has its file
+- **WHEN** a caller searches it again
+- **THEN** no search starts, and the result reports zero searched for
 
 ### Remove
 
@@ -255,6 +264,7 @@ The five states are this toolset's own vocabulary over the applications' queue e
 | Queued or paused in the client | `queued` |
 | Downloading with no warning or error | `downloading` |
 | Downloaded and importing, or pending import with no warning | `importing` |
+| An import this process started for it is still queued or running | `importing` |
 | Failed, failed pending, import blocked, client unavailable, or a client warning such as a stalled download | `stuck` |
 
 And the remedy for a `stuck` download:
@@ -262,21 +272,23 @@ And the remedy for a `stuck` download:
 | Stuck because | Remedy |
 |---|---|
 | The download failed, or the client reports it stalled | `replace` |
-| Import blocked, and a scan finds every file importable with no correction and no existing library file | `import` |
-| Import blocked for any other reason | `none`, with the rejection reasons |
+| Import blocked, a scan finds every file importable with no correction, and the library's records show no file for any movie or episode the files map to | `import` |
+| Import blocked for any other reason, including that the library already has a file for a mapped movie or episode or its records cannot say | `none`, with the reason |
 | The download client is unavailable | `none`, because no change can reach the client |
 
 ### Business Logic
 
 `media_add` reuses the `arr` toolset's lookup-by-id and duplicate detection, so an add can never create a second record for a title. Its idempotency comes from that state check rather than from an apply record: repeating an add finds the record the first call made.
 
-`media_fix` gets the same property from its re-read. A download it replaced has left the queue, and a download it imported is no longer stuck, so repeating the call finds nothing to act on.
+`media_fix` gets most of the same property from its re-read: a download it replaced has left the queue, so repeating the call finds nothing to act on. An import is different, because starting one only queues work upstream, and until it runs the download still looks stuck. So the process claims each download before starting its import, and treats that download as `importing` until the upstream work is seen to finish. A repeated or concurrent call therefore cannot start the same import twice within one process lifetime. After a restart that memory is gone. By then the first import has normally finished, and the library-file check refuses to import files into movies or episodes the library now holds; the residual case, a restart while an import is still queued upstream, is accepted.
+
+Whether a mapped movie or episode already has a file is read from the library's own movie and episode records, never from the import scan. The scan's own existing-file marker depends on fields the supported versions do not send; see [tasks](../../tasks.md).
 
 ### Safety Without Plan and Apply
 
 The `arr` toolset's plan and apply exist so a caller can inspect effects before committing to them. The `media` toolset trades that for a narrower set of effects, each of which is either additive or confined to a download that is already failing:
 
-- Nothing in the default toolset deletes a library file. `media_fix` removes only a stuck download and its incomplete data from the download client.
+- Nothing in the default toolset deletes or replaces a library file. `media_fix` removes only a stuck download and its incomplete data from the download client, and imports only into movies and episodes the library has no file for.
 - Removal from the library exists only when the operator enables it, and deletes files only when the call asks.
 - Every remedy is decided from a reading taken immediately before it is applied.
 

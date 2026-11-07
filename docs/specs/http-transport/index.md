@@ -72,6 +72,24 @@ A missing token, an unusable value, or any of these variables set while stdio is
 - **WHEN** it requests `/.well-known/oauth-protected-resource`
 - **THEN** the server answers `404`, and the client falls back to its configured bearer header
 
+### Refusal Order
+
+- A request that fails more than one check MUST be answered by the first check it fails, in this order: path and method, origin, failed-authentication throttle, credential, body size.
+- Each requirement in [Bearer Authentication](#bearer-authentication), [Failed-Authentication Throttling](#failed-authentication-throttling), [Origin Validation](#origin-validation), and the body bound in [MCP Endpoint](#mcp-endpoint) MUST be read as stating the answer for a request that passed every earlier check.
+- The origin, throttle, credential, and body checks MUST apply only to `POST /mcp`.
+
+#### Scenario: Wrong method and no token
+
+- **GIVEN** the server is running with a configured token
+- **WHEN** a client sends `GET /mcp` with no credential
+- **THEN** the server answers `405`, not `401`
+
+#### Scenario: Disallowed origin and wrong token
+
+- **GIVEN** no allowed origins are configured
+- **WHEN** a browser posts to `/mcp` with an `Origin` header and a wrong bearer token
+- **THEN** the server answers `403`, and the failure is not counted toward the throttle
+
 ### Bearer Authentication
 
 - Every request to the MCP endpoint MUST present the configured token as `Authorization: Bearer <token>` and MUST be refused before its body is read or any tool runs when it does not.
@@ -108,7 +126,7 @@ A missing token, an unusable value, or any of these variables set while stdio is
 
 ### Origin Validation
 
-- A request carrying an `Origin` header whose value is not exactly one of the configured allowed origins MUST be answered with `403 Forbidden` before authentication is evaluated.
+- A request carrying an `Origin` header whose value is not exactly one of the configured allowed origins MUST be answered with `403 Forbidden`.
 - A request without an `Origin` header MUST NOT be refused for its absence.
 
 #### Scenario: A web page tries to reach the server
@@ -170,16 +188,7 @@ Authentication, origin validation, throttling, and the body bound all run before
 
 ### Business Logic
 
-A request passes these checks in order, and the first that fails answers it:
-
-1. Path and method.
-2. `Origin` against the allowed origins.
-3. Throttle state for the peer address.
-4. `Authorization` header shape, then token equality.
-5. Body size.
-6. MCP handling.
-
-Origin is checked before the token so a page in a browser learns nothing about whether its guess was right. Throttling is checked before the token so a throttled address cannot keep testing guesses.
+The checks run in the order [Refusal Order](#refusal-order) fixes, and only a request that passes all of them reaches MCP handling. Origin is checked before the token so a page in a browser learns nothing about whether its guess was right. Throttling is checked before the token so a throttled address cannot keep testing guesses. The body is bounded last, so an unauthenticated client cannot make the server read a large body.
 
 ## Constraints
 
