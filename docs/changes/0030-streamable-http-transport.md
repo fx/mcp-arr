@@ -10,7 +10,7 @@ Let an operator run the server as a remote service over Streamable HTTP, protect
 
 ## Motivation
 
-Today every MCP host that wants this server launches it as a subprocess with all six instance variables in its environment, so every host holds every API key. That rules out:
+Before this change, every MCP host that wanted this server launched it as a subprocess with all six instance variables in its environment, so every host held every API key. That ruled out:
 
 - hosted MCP clients, which cannot launch a local subprocess;
 - clients on a machine other than the one next to the *arr applications;
@@ -18,7 +18,7 @@ Today every MCP host that wants this server launches it as a subprocess with all
 
 A remote deployment fixes all three by making the server the only place the keys live. What a client gets instead is a URL and a token that authorizes this server's published tools and nothing else.
 
-The architecture forbids this today: [Architecture](../specs/architecture/) required stdio exclusively and barred any network listener, and listed remote transport as out of scope. This change replaces that requirement with a startup transport selection; the spec edits are already made and marked unimplemented.
+The architecture forbade this: [Architecture](../specs/architecture/) required stdio exclusively and barred any network listener, and listed remote transport as out of scope. This change replaced that requirement with a startup transport selection. The spec edits were made before the implementation and marked unimplemented until it landed; the implementation removed those notes.
 
 ## Requirements
 
@@ -44,7 +44,7 @@ Additionally, because this change opens a network listener guarding credentials:
 
 The [HTTP Transport spec](../specs/http-transport/) owns the variables, defaults, endpoint behavior, refusal order, health path, and scenarios. [Architecture — Transports](../specs/architecture/#transports) and [Environment-Only Instance Configuration](../specs/architecture/#environment-only-instance-configuration) own the selection and the startup rejections. Those scenarios are this change's acceptance criteria and are not restated here. What implementing them requires of this change:
 
-- The stdio runtime's behavior MUST NOT change: a process with no transport selected starts exactly as it does today, and every existing stdio test passes unmodified except for the environment filters below.
+- The stdio runtime's behavior MUST NOT change: a process with no transport selected starts exactly as it did before this change, and every existing stdio test passes unmodified except for the environment filters below.
 - The HTTP runtime MUST build each request's server over the one adapter registry, operation inventory, and workflow state the process created at startup.
 - Every new environment variable MUST be added to the environment filters the spawned-server tests and the package verifier use, so a developer's own setting cannot change what those observe.
 - The package's description and keywords MUST stop describing it as stdio-only.
@@ -59,7 +59,7 @@ The [HTTP Transport spec](../specs/http-transport/) owns the variables, defaults
 - **Token comparison.** Hash the configured token and the presented one with SHA-256 and compare the digests with `crypto.timingSafeEqual`. Equal-length digests make the comparison constant-time whatever the presented length.
 - **Throttle.** Keep an in-memory map from peer address to `{ failures, windowStart }`. Prune entries whose window has ended. Cap the map size and evict the oldest entry, so a flood of distinct addresses cannot grow memory without bound.
 - **Body bound.** Refuse when `Content-Length` exceeds 1 MiB. Otherwise count bytes while reading, and abort at the bound when no length was declared.
-- **Lifecycle.** `start()` binds the listener and then writes the one startup diagnostic. It also unrefs stdin, so a closed or absent stdin in a container neither keeps the process alive nor ends it. `close()` stops accepting connections, closes idle ones, and waits for in-flight requests until the upstream timeout, then closes the rest.
+- **Lifecycle.** `start()` binds the listener and then writes the one startup diagnostic. It also unrefs stdin, so a closed or absent stdin in a container neither keeps the process alive nor ends it. `close()` stops accepting connections, closes idle ones, and waits for in-flight requests until the upstream timeout. It then abandons every upstream request still running, since each request a tool makes gets a fresh upstream deadline, and closes the remaining connections.
 
 ### Decisions
 
