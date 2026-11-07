@@ -299,7 +299,8 @@ export async function addTitle(context: MediaContext, request: AddRequest): Prom
   const payload = addMediaPayload(route.application, candidate, {
     rootFolderPath: chosen.value.rootFolderPath,
     qualityProfileId: chosen.value.profile.profile.id,
-    tagIds: [],
+    // No tags: the ones the lookup proposed are kept, like every other
+    // setting this toolset does not choose.
     monitor: kind === "series" ? (request.episodes ?? "all") : "all",
     searchOnAdd: true,
   });

@@ -641,3 +641,48 @@ describe("media_add title redaction", () => {
     expect("title" in content).toBe(false);
   });
 });
+
+describe("media_add new-record settings", () => {
+  it("keeps the tags the lookup proposed for either kind", async () => {
+    for (const [application, kind, id, defaults] of [
+      ["radarr", "movie", newMovie, movieDefaults],
+      ["sonarr", "series", newSeries, seriesDefaults],
+    ] as const) {
+      const unadded = instances.catalog(application).find((record) => record.id === 0);
+      if (unadded === undefined) {
+        throw new Error(`the recorded ${application} lookup holds a title not in the library`);
+      }
+      unadded.tags = [3, 7];
+
+      const { content } = await add({ kind, id }, defaults);
+
+      expect(content.outcome, kind).toBe("added");
+      const sent = creates().find((request) => request.application === application);
+      expect(sent?.body?.tags, kind).toEqual([3, 7]);
+    }
+  });
+
+  it("changes nothing the lookup proposed beyond folder, profile, monitoring, and search", async () => {
+    const unadded = instances.catalog("sonarr").find((record) => record.id === 0);
+    if (unadded === undefined) {
+      throw new Error("the recorded series lookup holds a title not in the library");
+    }
+    const proposal = { ...unadded, tags: [5] };
+    Object.assign(unadded, proposal);
+
+    await add({ kind: "series", id: newSeries }, seriesDefaults);
+
+    const sent = onlyCreate();
+    const overridden = new Set(["rootFolderPath", "qualityProfileId", "monitored", "addOptions"]);
+    for (const [field, value] of Object.entries(proposal)) {
+      if (!overridden.has(field)) {
+        expect(sent[field], field).toEqual(value);
+      }
+    }
+    expect(
+      Object.keys(sent)
+        .filter((field) => !(field in proposal))
+        .sort(),
+    ).toEqual(["addOptions", "qualityProfileId", "rootFolderPath"]);
+  });
+});

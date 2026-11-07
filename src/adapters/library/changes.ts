@@ -105,7 +105,11 @@ export interface LookupCandidate {
 export interface AddMediaRequest {
   readonly rootFolderPath: string;
   readonly qualityProfileId: number;
-  readonly tagIds: readonly number[];
+  /**
+   * The tags to write over the candidate's own, or `undefined` to keep the
+   * tags the lookup proposed. An explicit empty list clears them.
+   */
+  readonly tagIds?: readonly number[] | undefined;
   /** The normalized monitor selection, already checked against the application. */
   readonly monitor: string;
   readonly searchOnAdd: boolean;
@@ -379,8 +383,9 @@ export async function readLookupCandidate(
  *
  * The candidate resource the instance returned is the base, so an add sends
  * back the metadata the application itself produced; only the caller's explicit
- * choices are written over it. Search-on-add is passed through exactly as
- * supplied and is never defaulted to true here or anywhere below.
+ * choices are written over it — the tags among them only when the request
+ * names some. Search-on-add is passed through exactly as supplied and is never
+ * defaulted to true here or anywhere below.
  */
 export function addMediaPayload(
   application: MediaApplication,
@@ -394,7 +399,7 @@ export function addMediaPayload(
     rootFolderPath: request.rootFolderPath,
     qualityProfileId: request.qualityProfileId,
     monitored,
-    tags: [...request.tagIds],
+    ...(request.tagIds === undefined ? {} : { tags: [...request.tagIds] }),
   };
 
   return application === "sonarr"
