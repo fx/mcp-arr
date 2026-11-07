@@ -33,6 +33,7 @@ Additionally, because the image is a release artifact that only a Docker daemon 
 - The smoke test MUST NOT be a test in the suite: the suite runs anywhere without a Docker daemon, and a test that skipped itself without one would be the conditional test the contract forbids. It runs only in the Docker workflows.
 - The smoke test MUST hold the running container to the listener contract the package verifier already checks — an unauthenticated health check, a bearer challenge without the token, a stateless initialization with it reporting the package's own version, the tool listing — and additionally to its user, its health check, its refusal to start without a token, and a clean exit on `docker stop`.
 - The smoke test MUST pass every credential to the container through the Docker CLI's environment, never on a command line, and MUST assert that none appears in the container's output.
+- Every wait in the smoke test — each HTTP exchange, each Docker CLI call, the health wait, and the stop — MUST be bounded, and every container it started MUST be removed on every path, failures included, so a container that accepts and never answers fails the run rather than hanging it.
 
 ### Functional requirements
 
@@ -48,11 +49,11 @@ The [Architecture — Packaging and Release](../specs/architecture/#packaging-an
 
 ### Approach
 
-- **`Dockerfile`** — two stages on `node:22.23.4-bookworm-slim`. The build stage runs `npm ci`, `npm run build`, and `npm pack`, on the build host's platform because its output is platform-independent. The runtime stage installs `tini` from Debian, installs the packed tarball with `npm install --global --omit=dev` from a bind mount so the tarball never becomes a layer, sets `ARR_MCP_TRANSPORT=http`, `ARR_MCP_HTTP_HOST=0.0.0.0`, and `ARR_MCP_HTTP_PORT=9797`, runs as `1000:1000`, exposes `9797`, stops on `SIGTERM`, and declares a health check that fetches `/healthz` with `node -e`. OCI labels are the fallback for hand-built images; CI writes its own over them.
+- **`Dockerfile`** — two stages on `node:22.23.4-bookworm-slim`. The build stage runs `npm ci`, `npm run build`, and `npm pack`, on the build host's platform because its output is platform-independent. The runtime stage installs `tini` from Debian, installs the packed tarball with `npm install --global --omit=dev` from a bind mount so the tarball never becomes a layer, sets `ARR_MCP_TRANSPORT=http`, `ARR_MCP_HTTP_HOST=0.0.0.0`, and `ARR_MCP_HTTP_PORT=9797`, runs as `1000:1000`, exposes `9797`, stops on `SIGTERM`, and declares a health check that requests `/healthz` with `node:http` through `node -e`. OCI labels are the fallback for hand-built images; CI writes its own over them.
 - **`.dockerignore`** — `*`, then the files the build stage reads, then `**/.mcp.json` and `**/.env*` excluded again after the allowlist.
 - **`scripts/verify-image.mjs`** — the smoke test, given a local image tag. It inspects the image's configuration, lists its contents as root, starts it without a token, then starts it with a random 64-hex token and placeholder Sonarr settings on a free loopback port and runs the listener checks, the uid and PID 1 checks, the health wait, and `docker stop`. It removes every container it started. The assertion and HTTP helpers it shares with `scripts/verify-package.mjs` move to `scripts/verification.mjs`.
-- **`.github/workflows/docker.yml`** — on pull requests and pushes to `main`, except documentation-only changes and release pull requests: hadolint, build amd64 with `load: true` and the GitHub Actions cache, run the verifier, then on a push only, log in and publish amd64 and arm64 tagged `main` and `sha-<commit>`.
-- **`.github/workflows/release.yml`** — a `publish-image` job that needs both `release-please` and `publish`, checks out the released tag, builds and verifies the image the same way, and publishes `X.Y.Z`, `X.Y`, and `latest`. It alone holds `packages: write`; the existing jobs are unchanged.
+- **`.github/workflows/docker.yml`** — on pull requests and pushes to `main`, except documentation-only changes and release pull requests. A read-only `verify` job runs hadolint, builds amd64 with `load: true` and the GitHub Actions cache, and runs the verifier. A `publish` job that needs it, runs on a push only, and alone holds `packages: write` logs in and publishes amd64 and arm64 tagged `main` and `sha-<commit>` from that cache.
+- **`.github/workflows/release.yml`** — a read-only `verify-image` job that needs both `release-please` and `publish`, checks out the released tag, and builds and verifies the image the same way; then a `publish-image` job that needs it, alone holds `packages: write`, and publishes `X.Y.Z`, `X.Y`, and `latest`. The existing jobs are unchanged.
 
 ### Decisions
 
@@ -69,6 +70,9 @@ The [Architecture — Packaging and Release](../specs/architecture/#packaging-an
 - **Decision:** Verify one amd64 image loaded into the daemon, then publish amd64 and arm64 with a second `build-push-action` run from the same cache.
   - **Why:** `load` and a multi-platform push cannot be one step, and a runner can only run its own platform's image. The publishing run rebuilds amd64 entirely from the cache the verified build just wrote, so its layers are the verified ones; arm64 is built from the same Dockerfile and the same build-stage output, which runs once on the host platform.
   - **Alternatives considered:** Pushing the loaded image with `docker push`, as fx/ob does, rejected because it publishes amd64 only; verifying arm64 under emulation as well, rejected as a large CI cost for a stage whose only platform-specific input is the base image and Debian's `tini`.
+- **Decision:** Verification and publication are separate jobs, and only the publishing job can write to the registry.
+  - **Why:** A job's token scope is fixed for the whole job, and a step's condition does not narrow it. The verification job builds and runs code from a pull request, so it holds `contents: read` and nothing else on every event; the publishing job runs only on a push to `main`, or after a verified release, and holds `packages: write`. It reuses the verification job's build cache, and takes the commit and version from that job's outputs.
+  - **Alternatives considered:** One job with the publish steps conditioned on the event, rejected because every pull request run would then hold registry write access.
 - **Decision:** Release image tags `X.Y.Z`, `X.Y`, and `latest`, and no bare major tag.
   - **Why:** The package is 0.x, where every minor release may break, so a `0` tag would move across breaking changes. `X.Y` is the line an operator can follow without being surprised.
   - **Alternatives considered:** Adding `{{major}}` as fx/ob does, deferred until the package reaches 1.0.
@@ -79,8 +83,8 @@ The [Architecture — Packaging and Release](../specs/architecture/#packaging-an
   - **Why:** The image sets `ARR_MCP_HTTP_HOST` and `ARR_MCP_HTTP_PORT`, and the server rejects either under stdio by design, so the image cannot start over stdio without rewriting its environment. A stdio host already has `npx mcp-arr`, which needs no container.
   - **Alternatives considered:** Leaving the host and port unset, rejected because the default `127.0.0.1` listener is unreachable from outside a container; relaxing the server's rejection, rejected as a change to the server's behavior, which is out of scope.
 - **Decision:** The health check probes loopback when the listener binds every interface, and the configured address otherwise.
-  - **Why:** It reads the same variables the server does, so moving the port or binding one address does not turn a healthy container unhealthy. It uses the image's own Node.js, so no HTTP client is installed for it.
-  - **Alternatives considered:** `curl`, as fx/ob uses, rejected as a package installed for one command.
+  - **Why:** It reads the same variables the server does, so moving the port or binding one address does not turn a healthy container unhealthy. It uses the image's own Node.js, so no HTTP client is installed for it, and `node:http` with the address and port as separate options, so every value the server accepts is reachable. The request is destroyed after four seconds, inside the health check's own five-second timeout.
+  - **Alternatives considered:** `curl`, as fx/ob uses, rejected as a package installed for one command; `fetch`, rejected because it refuses the ports the Fetch standard blocks — a listener on 6000 would be reported unhealthy — and a URL cannot carry a scoped IPv6 address.
 - **Decision:** The README publishes the port on the host's loopback, `127.0.0.1:9797:9797`.
   - **Why:** The listener speaks plain HTTP and the token is its only defense, so the example an operator copies should not expose it to the network before the reverse proxy the README requires is in place.
   - **Alternatives considered:** `-p 9797:9797`, rejected as the unsafe default to copy.
@@ -100,8 +104,8 @@ The [Architecture — Packaging and Release](../specs/architecture/#packaging-an
   - [x] Add `.dockerignore` as an allowlist that re-excludes `.mcp.json` and environment files
   - [x] Add `scripts/verify-image.mjs`, sharing `scripts/verification.mjs` with `scripts/verify-package.mjs`
 - [x] Publish from CI
-  - [x] Add `.github/workflows/docker.yml`: hadolint, verified amd64 build, development images on `main` only
-  - [x] Add the `publish-image` job to `.github/workflows/release.yml` after the npm publish
+  - [x] Add `.github/workflows/docker.yml`: a read-only `verify` job (hadolint, amd64 build, verifier) and a `publish` job for development images on `main` only
+  - [x] Add the `verify-image` and `publish-image` jobs to `.github/workflows/release.yml` after the npm publish
 - [x] Document and specify
   - [x] Add "Run with Docker" to `README.md`
   - [x] Add the container image requirements and scenarios to [Architecture — Packaging and Release](../specs/architecture/#packaging-and-release), with a changelog row
