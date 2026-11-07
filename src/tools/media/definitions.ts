@@ -363,9 +363,8 @@ export const mediaToolDefinitions: readonly MediaToolDefinition[] = [
     name: "media_search_again",
     title: "Search again for missing media",
     description:
-      "Search again for the released movie, or released episodes, the library has no file " +
-      "for; for a series, season and then episode narrow it. Nothing the library has is " +
-      "searched for. Reports how many were.",
+      "Search again for the released movie or episodes in scope that the library has no " +
+      "file for, and nothing else. Reports how many.",
     inputSchema: searchAgainInputSchema,
     outputSchema: searchAgainOutputSchema,
     publishedOutputSchema: searchAgainPublishedOutputSchema,
@@ -381,16 +380,9 @@ export const mediaToolDefinitions: readonly MediaToolDefinition[] = [
       if (!parsed.success) {
         return bareFailure(invalidInput());
       }
-      const request = parsed.data;
-      // A movie has no seasons, and an episode is named within its season.
-      const scoped = request.season !== undefined || request.episode !== undefined;
-      if (
-        (request.kind === "movie" && scoped) ||
-        (request.episode !== undefined && request.season === undefined)
-      ) {
-        return bareFailure(invalidInput());
-      }
-      return searchAgain(context, request);
+      // The schema's forms already refuse a season for a movie and an
+      // episode without its season.
+      return searchAgain(context, parsed.data);
     },
     failure: bareFailure,
     summarize: summarizeSearchAgain,
