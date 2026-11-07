@@ -159,11 +159,24 @@ What implementing them requires of this change:
   - [x] Add the new variable to the environment filters and every new `dist/**` file to the packed-file inventory.
   - [x] Document the four tools and `ARR_MCP_MEDIA_ALLOW_REMOVE` in the README's "Media tools" section, and update the spec's status note.
 
+An import whose request was sent and whose answer was lost — no answer, or one that could not be read — keeps its download's claim with no command to follow. The download is reported `importing`, and no second import is started, until a later `media_status` or `media_fix` finds evidence. The claim is released when the download has left the queue, when the library has a file for everything the import was for, or when the instance lists no unfinished import at least two minutes after the attempt. It is released anyway thirty minutes after the attempt, so a lost answer cannot hold a place in the bounded claim map for the life of the process.
+
 Accepted while the captures wait: every `media` call that names a title reads the whole library list, the only title route a recorded fixture covers, to be revisited once C3 says whether the filtered route can replace it; and the overview reads at most five history pages of 100 records, so in a week with more history than that the imported list may be incomplete, which the result says in a warning.
 
 ## Open Questions
 
-None. The spec carries the two behavioral questions: upgrades, and the stalled-download threshold.
+The spec carries two behavioral questions: upgrades, and the stalled-download threshold. This change adds one more, for the user to decide.
+
+- **A file appearing between the last check and the import.** The `import` remedy imports only into movies and episodes the library's records show no file for. `media_fix` narrows the time in which that can stop being true:
+  - it claims every movie or episode an import is for, so two fixes never import into the same one at once;
+  - it refuses while another download for one of them is being imported;
+  - it reads the library's records once more after every file is recovered, immediately before the import is sent.
+
+  It cannot close the gap entirely. In the seconds between that final read and the instance running the import, a file can still appear for an approved movie or episode, from the instance's own automatic import of another download. The manual import the instance offers has no option that refuses to replace an existing file. The options are:
+  1. Keep the `import` remedy with this narrow residual, and amend the spec to accept it.
+  2. Withdraw the `import` remedy until the instance offers a no-replace guarantee. A blocked import would then get remedy `none`, with the reason "importing these files needs a person".
+
+  Default if no decision is made: option 2, the conservative one.
 
 ## References
 
