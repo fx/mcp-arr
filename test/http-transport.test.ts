@@ -5,7 +5,7 @@ import {
   type OutgoingHttpHeaders,
   type Server,
 } from "node:http";
-import { type AddressInfo, createServer as createNetServer } from "node:net";
+import { type AddressInfo, connect, createServer as createNetServer } from "node:net";
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { type EnvironmentRecord, parseEnvironment } from "../src/config/environment.js";
@@ -16,6 +16,7 @@ import {
   type HttpEnvironmentConfiguration,
   type HttpRuntime,
   type HttpRuntimeDependencies,
+  readPresentedCredential,
 } from "../src/http-transport.js";
 import { createManualClock, type ManualClock } from "../src/state/clock.js";
 import {
@@ -633,6 +634,61 @@ describe("HTTP transport bearer authentication", () => {
       // Each of these counts toward the throttle, so move past any window.
       harness.clock.advance(60_000);
     }
+    expect(sonarr.requests).toEqual([]);
+  });
+
+  it("reads a token only of ASCII b64token characters, whatever case-folds to one", () => {
+    // U+212A KELVIN SIGN and U+017F LATIN SMALL LETTER LONG S fold to `k` and
+    // `s` under Unicode case-insensitive matching, so a pattern that folds
+    // case over the token would take either for a token character.
+    for (const lookalike of ["\u212A", "\u017F"]) {
+      expect(readPresentedCredential([`Bearer ${lookalike}${"a".repeat(40)}`]), lookalike).toEqual({
+        kind: "malformed",
+      });
+      expect(readPresentedCredential([`Bearer${lookalike}${token}`])).toEqual({
+        kind: "malformed",
+      });
+    }
+    expect(readPresentedCredential([`bEaReR ${token}`])).toEqual({ kind: "bearer", token });
+    expect(readPresentedCredential(["Bearer AZaz09-._~+/=="])).toEqual({
+      kind: "bearer",
+      token: "AZaz09-._~+/==",
+    });
+    expect(readPresentedCredential(undefined)).toEqual({ kind: "absent" });
+    expect(readPresentedCredential([`Bearer ${token}`, `Bearer ${token}`])).toEqual({
+      kind: "malformed",
+    });
+  });
+
+  it("refuses a non-ASCII token as a bad request without comparing it", async () => {
+    const { harness, sonarr } = await sonarrHarness();
+    const body = initializeBody(1);
+
+    // Written as raw bytes: a client library refuses to send a header outside
+    // Latin-1, and the point is what the listener does when one arrives.
+    const answer = await new Promise<string>((resolve, reject) => {
+      const socket = connect(harness.port, "127.0.0.1");
+      const chunks: Buffer[] = [];
+      socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+      socket.once("error", reject);
+      socket.once("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+      socket.write(
+        Buffer.concat([
+          Buffer.from(
+            "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n" +
+              "Accept: application/json, text/event-stream\r\nAuthorization: Bearer ",
+          ),
+          Buffer.from(`\u212A${token.slice(1)}`, "utf8"),
+          Buffer.from(`\r\nContent-Length: ${String(Buffer.byteLength(body))}\r\n\r\n${body}`),
+        ]),
+      );
+    });
+
+    const [head = "", answered = ""] = answer.split("\r\n\r\n");
+    expect(head.split("\r\n")[0]).toBe("HTTP/1.1 400 Bad Request");
+    expect(head).toContain('WWW-Authenticate: Bearer realm="mcp-arr", error="invalid_request"');
+    expect(head).not.toContain("invalid_token");
+    expect(JSON.parse(answered)).toEqual(refusalBody("Bad Request"));
     expect(sonarr.requests).toEqual([]);
   });
 

@@ -371,6 +371,9 @@ describe("parseEnvironment transport selection", () => {
       `${"s".repeat(31)}"`,
       `${"s".repeat(31)},`,
       `${"s".repeat(31)}é`,
+      // Each folds to an ASCII letter under Unicode case-insensitive matching.
+      `${"s".repeat(31)}\u212A`,
+      `${"s".repeat(31)}\u017F`,
       `=${"s".repeat(31)}`,
       `${"s".repeat(16)}=${"s".repeat(16)}`,
     ];

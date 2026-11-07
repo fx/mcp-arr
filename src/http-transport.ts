@@ -44,8 +44,38 @@ const throttleWindowMs = 60_000;
 const maximumTrackedAddresses = 10_000;
 
 const realm = 'Bearer realm="mcp-arr"';
-/** RFC 6750 `credentials`: the scheme, one or more spaces, and a `b64token`. */
-const bearerCredential = /^Bearer +([A-Za-z0-9\-._~+/]+=*)$/iu;
+/**
+ * RFC 6750 `credentials` is the scheme, one or more spaces, and a `b64token`.
+ * Only the scheme is matched without regard to case. The token is held to
+ * its ASCII alphabet by a pattern that folds nothing: case-insensitive
+ * Unicode matching would take U+212A KELVIN SIGN for `k`, and pass a
+ * credential that is not one on to the comparison.
+ */
+const bearerScheme = /^Bearer +/i;
+const b64token = /^[A-Za-z0-9\-._~+/]+=*$/;
+
+/** What an `Authorization` header presented, before any comparison. */
+export type PresentedCredential =
+  | { readonly kind: "absent" }
+  | { readonly kind: "malformed" }
+  | { readonly kind: "bearer"; readonly token: string };
+
+/**
+ * Reads the request's `Authorization` header values — every one the request
+ * sent, so a repeated header is seen rather than collapsed — as one bearer
+ * credential or not.
+ */
+export function readPresentedCredential(
+  values: readonly string[] | undefined,
+): PresentedCredential {
+  if (values === undefined) {
+    return { kind: "absent" };
+  }
+  const value = values.length === 1 ? (values[0] ?? "") : "";
+  const scheme = bearerScheme.exec(value);
+  const token = scheme === null ? "" : value.slice(scheme[0].length);
+  return b64token.test(token) ? { kind: "bearer", token } : { kind: "malformed" };
+}
 
 /**
  * Reason phrases fixed here rather than taken from `node:http`, whose table
@@ -296,19 +326,18 @@ export function createHttpRuntime(
     response: ServerResponse,
     address: string,
   ): boolean => {
-    const values = request.headersDistinct.authorization;
-    if (values === undefined) {
+    const presented = readPresentedCredential(request.headersDistinct.authorization);
+    if (presented.kind === "absent") {
       // No credential is not an attempt at one, so it is not counted.
       refuse(response, 401, { "WWW-Authenticate": realm }, true);
       return false;
     }
-    const match = values.length === 1 ? bearerCredential.exec(values[0] ?? "") : null;
-    if (match === null) {
+    if (presented.kind === "malformed") {
       throttle.recordFailure(address);
       refuse(response, 400, { "WWW-Authenticate": `${realm}, error="invalid_request"` }, true);
       return false;
     }
-    if (!timingSafeEqual(sha256(match[1] ?? ""), tokenDigest)) {
+    if (!timingSafeEqual(sha256(presented.token), tokenDigest)) {
       throttle.recordFailure(address);
       refuse(response, 401, { "WWW-Authenticate": `${realm}, error="invalid_token"` }, true);
       return false;
