@@ -2,7 +2,7 @@
 
 ## Summary
 
-Ship a container image of the published package and publish it to the GitHub Container Registry from CI. The image is built by installing the same tarball `npm publish` uploads, runs the Streamable HTTP service from [0030](./0030-streamable-http-transport.md) as a non-root user under `tini`, and carries no credential. CI builds it once, smoke-tests that exact image, and only then publishes: development images from every push to `main`, release images only after a maintainer-merged release has been published to npm.
+Ship a container image of the published package and publish it to the GitHub Container Registry from CI. The image is built by installing the same tarball `npm publish` uploads, runs the Streamable HTTP service from [0030](./0030-streamable-http-transport.md) as a non-root user under `tini`, and carries no credential. CI builds it once, for both platforms, into one archive, smoke-tests each platform's image loaded from that archive, and only then copies that archive, unchanged, to the registry: development images from every push to `main`, release images only after a maintainer-merged release has been published to npm.
 
 **Spec:** [Architecture](../specs/architecture/#packaging-and-release)
 **Status:** in-progress
@@ -29,7 +29,8 @@ Skipping or weakening any of these rules to land the PR MUST be treated as a bug
 
 Additionally, because the image is a release artifact that only a Docker daemon can run:
 
-- The image MUST be smoke-tested by a script that runs against the image CI already built and loaded, never against a rebuild, and publication MUST depend on it passing.
+- The image MUST be smoke-tested by a script that runs against images loaded from the one archive CI built, for every published platform, never against a rebuild, and publication MUST depend on it passing.
+- Publication MUST copy that archive to the registry unchanged rather than build again, and MUST assert that every published tag resolves to the archive's index digest. A rebuild, even from a warm cache, can publish bytes that were never tested.
 - The smoke test MUST NOT be a test in the suite: the suite runs anywhere without a Docker daemon, and a test that skipped itself without one would be the conditional test the contract forbids. It runs only in the Docker workflows.
 - The smoke test MUST hold the running container to the listener contract the package verifier already checks — an unauthenticated health check, a bearer challenge without the token, a stateless initialization with it reporting the package's own version, the tool listing — and additionally to its user, its health check, its refusal to start without a token, and a clean exit on `docker stop`.
 - The smoke test MUST pass every credential to the container through the Docker CLI's environment, never on a command line, and MUST assert that none appears in the container's output.
@@ -51,9 +52,10 @@ The [Architecture — Packaging and Release](../specs/architecture/#packaging-an
 
 - **`Dockerfile`** — two stages on `node:22.23.4-bookworm-slim`. The build stage runs `npm ci`, `npm run build`, and `npm pack`, on the build host's platform because its output is platform-independent. The runtime stage installs `tini` from Debian, installs the packed tarball with `npm install --global --omit=dev` from a bind mount so the tarball never becomes a layer, sets `ARR_MCP_TRANSPORT=http`, `ARR_MCP_HTTP_HOST=0.0.0.0`, and `ARR_MCP_HTTP_PORT=9797`, runs as `1000:1000`, exposes `9797`, stops on `SIGTERM`, and declares a health check that requests `/healthz` with `node:http` through `node -e`. OCI labels are the fallback for hand-built images; CI writes its own over them.
 - **`.dockerignore`** — `*`, then the files the build stage reads, then `**/.mcp.json` and `**/.env*` excluded again after the allowlist.
-- **`scripts/verify-image.mjs`** — the smoke test, given a local image tag. It inspects the image's configuration, lists its contents as root, starts it without a token, then starts it with a random 64-hex token and placeholder Sonarr settings on a free loopback port and runs the listener checks, the uid and PID 1 checks, the health wait, and `docker stop`. It removes every container it started. The assertion and HTTP helpers it shares with `scripts/verify-package.mjs` move to `scripts/verification.mjs`.
-- **`.github/workflows/docker.yml`** — on pull requests and pushes to `main`, except documentation-only changes and release pull requests. A read-only `verify` job runs hadolint, builds amd64 with `load: true` and the GitHub Actions cache, and runs the verifier. A `publish` job that needs it, runs on a push only, and alone holds `packages: write` logs in and publishes amd64 and arm64 tagged `main` and `sha-<commit>` from that cache.
-- **`.github/workflows/release.yml`** — a read-only `verify-image` job that needs both `release-please` and `publish`, checks out the released tag, and builds and verifies the image the same way; then a `publish-image` job that needs it, alone holds `packages: write`, and publishes `X.Y.Z`, `X.Y`, and `latest`. The existing jobs are unchanged.
+- **`scripts/verify-image.mjs`** — the smoke test, given a local image tag and, for an image of another platform than the runner's, `--platform`, which runs it under emulation with every bound widened. It inspects the image's configuration, lists its contents as root, starts it without a token, then starts it with a random 64-hex token and placeholder Sonarr settings on a free loopback port and runs the listener checks, the uid and PID 1 checks, the health wait, and `docker stop`. It removes every container it started. The assertion and HTTP helpers it shares with `scripts/verify-package.mjs` move to `scripts/verification.mjs`.
+- **`scripts/image-archive.mjs`** — the archive's three operations. `check` asserts the archive holds one image index of exactly `linux/amd64` and `linux/arm64`, with every blob it reads matching its digest, and prints the index digest. `load` writes one platform's image from the archive as a Docker archive with `skopeo` and loads it, asserting the loaded image's ID is that platform's configuration or manifest digest. `publish` asserts the archive is still the verified digest, copies it with `skopeo copy --all --preserve-digests` to every tag, and reads each tag back to assert it resolves to that digest.
+- **`.github/workflows/docker.yml`** — on pull requests and pushes to `main`, except documentation-only changes and release pull requests. A read-only `verify` job runs hadolint, computes the tags and labels, builds both platforms once into an OCI archive with the GitHub Actions cache, checks it, loads and verifies the amd64 image and then the arm64 image under QEMU, and uploads the archive as a one-day workflow artifact. A `publish` job that needs it, runs on a push only, and alone holds `packages: write` downloads the archive, logs in, and publishes it tagged `main` and `sha-<commit>`. Nothing in it builds.
+- **`.github/workflows/release.yml`** — a read-only `verify-image` job that needs both `release-please` and `publish`, checks out the released tag, and builds, verifies, and uploads the archive the same way; then a `publish-image` job that needs it, alone holds `packages: write`, and copies that archive to `X.Y.Z`, `X.Y`, and `latest`. The existing jobs are unchanged.
 
 ### Decisions
 
@@ -67,11 +69,18 @@ The [Architecture — Packaging and Release](../specs/architecture/#packaging-an
 - **Decision:** The action majors current at the time: `docker/setup-buildx-action@v4`, `docker/login-action@v4`, `docker/metadata-action@v6`, `docker/build-push-action@v7`, `docker/setup-qemu-action@v4`, `actions/checkout@v7`, `actions/setup-node@v7`, and `hadolint/hadolint-action@v3.5.0`.
   - **Why:** The fx/ob workflow this is modelled on uses the previous Docker majors. The current ones break only by moving to the Node.js 24 action runtime and dropping options this workflow does not use, and the previous ones run on the Node.js 20 action runtime GitHub is retiring. `checkout` and `setup-node` match `release.yml`, the workflow this change also edits. hadolint is pinned to an exact release, which bundles hadolint 2.15.1.
   - **Alternatives considered:** The fx/ob majors, rejected for the runtime above; `@v4` checkout and setup-node to match `ci.yml`, rejected because the new jobs sit beside `release.yml`'s.
-- **Decision:** Verify one amd64 image loaded into the daemon, then publish amd64 and arm64 with a second `build-push-action` run from the same cache.
-  - **Why:** `load` and a multi-platform push cannot be one step, and a runner can only run its own platform's image. The publishing run rebuilds amd64 entirely from the cache the verified build just wrote, so its layers are the verified ones; arm64 is built from the same Dockerfile and the same build-stage output, which runs once on the host platform.
-  - **Alternatives considered:** Pushing the loaded image with `docker push`, as fx/ob does, rejected because it publishes amd64 only; verifying arm64 under emulation as well, rejected as a large CI cost for a stage whose only platform-specific input is the base image and Debian's `tini`.
+- **Decision:** Build once, for both platforms, into an OCI archive; smoke-test each platform's image loaded from that archive; publish by copying the archive, so the published index digest is the tested artifact's.
+  - **Why:** Publication has to ship the bytes that were tested. A second build for the push treats the cache as a guarantee when it is only an optimization: any cache miss — the unpinned `tini` layer after a Debian point release, an evicted cache entry — rebuilds a layer nobody tested, and pushes it. Copying the archive leaves nothing to rebuild, and reading every tag back proves the registry holds that index.
+  - **Alternatives considered:** Rebuilding for the push from the verified build's cache, which this change first did, rejected for the cache miss above; `docker push` of the loaded image, as fx/ob does, rejected because it publishes amd64 only and pushes what the daemon re-encoded rather than the build's own manifests; smoke-testing amd64 only, rejected because the arm64 bytes would then ship untested.
+  - **Accepted cost:** The arm64 smoke test runs under QEMU on every pull request and is several times slower than amd64, so its bounds are widened; the archive, both platforms' layers, is uploaded as an artifact on every run and kept for one day.
+- **Decision:** `skopeo`, as the runner provides it, to read the archive and to publish it.
+  - **Why:** The GitHub-hosted Ubuntu image ships it (1.13.3 at the time of writing), so nothing is downloaded at run time. It copies an OCI archive's whole index with `--all`, and `--preserve-digests` refuses any copy that would change a manifest, so the registry receives the archive byte for byte or the step fails. It reads the credentials `docker/login-action` writes, so the token never appears in an argument. The image is loaded through a Docker archive and `docker load`, which every daemon reads whichever image store it uses.
+  - **Alternatives considered:** `crane`, `oras`, or `regctl`, each rejected only because it would be one more pinned download; skopeo's `docker-daemon:` transport, rejected in favour of `docker load`, which needs nothing of the daemon's API but the load itself.
+- **Decision:** No provenance attestation in the index.
+  - **Why:** The index then holds exactly the two platform images, and `image-archive.mjs check` asserts that, so everything published is something the smoke tests ran. An attestation manifest would also be one more manifest kind for the copy to carry unchanged.
+  - **Alternatives considered:** Keeping `build-push-action`'s default provenance, deferred to a change that decides how attestations are verified and published.
 - **Decision:** Verification and publication are separate jobs, and only the publishing job can write to the registry.
-  - **Why:** A job's token scope is fixed for the whole job, and a step's condition does not narrow it. The verification job builds and runs code from a pull request, so it holds `contents: read` and nothing else on every event; the publishing job runs only on a push to `main`, or after a verified release, and holds `packages: write`. It reuses the verification job's build cache, and takes the commit and version from that job's outputs.
+  - **Why:** A job's token scope is fixed for the whole job, and a step's condition does not narrow it. The verification job builds and runs code from a pull request, so it holds `contents: read` and nothing else on every event; the publishing job runs only on a push to `main`, or after a verified release, and holds `packages: write`. It copies the verification job's archive, and takes the tags and the digest it must publish from that job's outputs.
   - **Alternatives considered:** One job with the publish steps conditioned on the event, rejected because every pull request run would then hold registry write access.
 - **Decision:** Release image tags `X.Y.Z`, `X.Y`, and `latest`, and no bare major tag.
   - **Why:** The package is 0.x, where every minor release may break, so a `0` tag would move across breaking changes. `X.Y` is the line an operator can follow without being surprised.
@@ -95,16 +104,17 @@ The [Architecture — Packaging and Release](../specs/architecture/#packaging-an
 - Kubernetes manifests, Helm charts, or Compose files beyond the README example.
 - TLS inside the container, or any change to the server's runtime behavior or defaults.
 - A stdio image.
-- Image signing or SBOM publication beyond what `build-push-action` attaches by default.
+- Image signing, SBOMs, or provenance attestations.
 
 ## Tasks
 
 - [x] Build the image
   - [x] Add `Dockerfile` with the two stages, `tini`, uid 1000, the HTTP defaults, `STOPSIGNAL SIGTERM`, the `/healthz` health check, and the OCI labels
   - [x] Add `.dockerignore` as an allowlist that re-excludes `.mcp.json` and environment files
-  - [x] Add `scripts/verify-image.mjs`, sharing `scripts/verification.mjs` with `scripts/verify-package.mjs`
+  - [x] Add `scripts/verify-image.mjs`, sharing `scripts/verification.mjs` with `scripts/verify-package.mjs`, with `--platform` for the emulated arm64 run
+  - [x] Add `scripts/image-archive.mjs` to check the archive, load each platform from it, and publish it unchanged
 - [x] Publish from CI
-  - [x] Add `.github/workflows/docker.yml`: a read-only `verify` job (hadolint, amd64 build, verifier) and a `publish` job for development images on `main` only
+  - [x] Add `.github/workflows/docker.yml`: a read-only `verify` job (hadolint, one two-platform archive build, both platforms verified, archive uploaded) and a `publish` job that copies that archive as the development image on `main` only
   - [x] Add the `verify-image` and `publish-image` jobs to `.github/workflows/release.yml` after the npm publish
 - [x] Document and specify
   - [x] Add "Run with Docker" to `README.md`
