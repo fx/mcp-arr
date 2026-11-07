@@ -1,8 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AdapterRegistry } from "../src/adapters/registry.js";
 import { type EnvironmentConfiguration, parseEnvironment } from "../src/config/environment.js";
-import { type ProcessDependencies, runProcess, type ShutdownSignal } from "../src/process.js";
-import type { StdioRuntime } from "../src/stdio.js";
+import type { HttpEnvironmentConfiguration } from "../src/http-transport.js";
+import {
+  type ProcessDependencies,
+  type Runtime,
+  runProcess,
+  type ShutdownSignal,
+  selectRuntime,
+} from "../src/process.js";
 
 const apiKey = "sonarr-secret-key";
 const configuration = parseEnvironment({
@@ -10,7 +16,7 @@ const configuration = parseEnvironment({
   SONARR_API_KEY: apiKey,
 });
 
-function createHarness(runtime: StdioRuntime): {
+function createHarness(runtime: Runtime): {
   dependencies: ProcessDependencies;
   listeners: Map<ShutdownSignal, () => void>;
   diagnostics: string[];
@@ -63,7 +69,7 @@ const inertRegistry: AdapterRegistry = {
   probe: async () => [],
 };
 
-function createRuntime(): StdioRuntime {
+function createRuntime(): Runtime {
   return {
     registry: inertRegistry,
     start: vi.fn(async () => undefined),
@@ -172,5 +178,58 @@ describe("runProcess", () => {
     expect(harness.exitCodes).toEqual([1]);
     expect(harness.stdinUnrefs).toEqual([]);
     expect(runtime.close).toHaveBeenCalledOnce();
+  });
+});
+
+describe("selectRuntime", () => {
+  function factories() {
+    const stdio = createRuntime();
+    const http = createRuntime();
+    const built: { stdio: EnvironmentConfiguration[]; http: HttpEnvironmentConfiguration[] } = {
+      stdio: [],
+      http: [],
+    };
+    return {
+      stdio,
+      http,
+      built,
+      factories: {
+        stdio: (received: EnvironmentConfiguration) => {
+          built.stdio.push(received);
+          return stdio;
+        },
+        http: (received: HttpEnvironmentConfiguration) => {
+          built.http.push(received);
+          return http;
+        },
+      },
+    };
+  }
+
+  it("builds the stdio runtime, and only it, when no transport is selected", () => {
+    const harness = factories();
+
+    expect(selectRuntime(configuration, harness.factories)).toBe(harness.stdio);
+    expect(harness.built).toEqual({ stdio: [configuration], http: [] });
+  });
+
+  it("builds the HTTP runtime, and only it, when HTTP is selected", () => {
+    const harness = factories();
+    const httpConfiguration = parseEnvironment({
+      SONARR_URL: "https://sonarr.example.invalid/sonarr",
+      SONARR_API_KEY: apiKey,
+      ARR_MCP_TRANSPORT: "http",
+      ARR_MCP_AUTH_TOKEN: "t".repeat(32),
+    });
+
+    expect(selectRuntime(httpConfiguration, harness.factories)).toBe(harness.http);
+    expect(harness.built.stdio).toEqual([]);
+    expect(harness.built.http).toEqual([httpConfiguration]);
+    expect(harness.built.http[0]?.transport).toEqual({
+      kind: "http",
+      host: "127.0.0.1",
+      port: 9797,
+      token: "t".repeat(32),
+    });
   });
 });

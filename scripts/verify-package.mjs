@@ -67,6 +67,7 @@ const allowedFiles = [
   "dist/config/environment.js",
   "dist/http/client.js",
   "dist/http/errors.js",
+  "dist/http-transport.js",
   "dist/process.js",
   "dist/server.js",
   "dist/state/apply-records.js",
@@ -129,13 +130,18 @@ const configurationVariables = [
   "PROWLARR_URL",
   "PROWLARR_API_KEY",
   "ARR_UPSTREAM_TIMEOUT_MS",
+  "ARR_MCP_TRANSPORT",
+  "ARR_MCP_HTTP_HOST",
+  "ARR_MCP_HTTP_PORT",
+  "ARR_MCP_AUTH_TOKEN",
 ];
 /**
  * The server rejects startup without a complete instance pair. Every inherited
- * variable the server reads is dropped — the instance pairs and the upstream
- * timeout alike — so a developer's own settings cannot change the verification,
- * and these placeholders point at the reserved `.invalid` domain, which is
- * never contacted because the verifier only initializes the MCP session.
+ * variable the server reads is dropped — the instance pairs, the upstream
+ * timeout, and the transport settings alike — so a developer's own settings
+ * cannot change the verification, and these placeholders point at the reserved
+ * `.invalid` domain, which is never contacted because the verifier only
+ * initializes the MCP session.
  */
 const instanceEnvironment = {
   ...Object.fromEntries(

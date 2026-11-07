@@ -82,6 +82,9 @@ export type TransportConfiguration =
       readonly token: string;
     };
 
+/** The HTTP member of {@link TransportConfiguration}. */
+export type HttpTransportConfiguration = Extract<TransportConfiguration, { readonly kind: "http" }>;
+
 export interface EnvironmentConfiguration {
   readonly instances: readonly InstanceConfiguration[];
   /**

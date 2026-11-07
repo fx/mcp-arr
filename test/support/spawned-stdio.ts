@@ -7,13 +7,19 @@ import {
 } from "@modelcontextprotocol/sdk/shared/stdio.js";
 import type { JSONRPCMessage, RequestId } from "@modelcontextprotocol/sdk/types.js";
 import { consumeReadable, waitForChildCompletion } from "../../scripts/child-process.mjs";
-import { upstreamTimeoutVariable } from "../../src/config/environment.js";
+import {
+  authTokenVariable,
+  httpHostVariable,
+  httpPortVariable,
+  transportVariable,
+  upstreamTimeoutVariable,
+} from "../../src/config/environment.js";
 
 const projectRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 /**
  * The configuration variables a spawned server must never inherit: the three
- * instance pairs and the upstream timeout.
+ * instance pairs, the upstream timeout, and the transport settings.
  *
  * A developer's own settings would otherwise decide what these tests observe,
  * and — worse — could point a test at a real instance.
@@ -26,6 +32,10 @@ export const configurationVariables: readonly string[] = [
   "PROWLARR_URL",
   "PROWLARR_API_KEY",
   upstreamTimeoutVariable,
+  transportVariable,
+  httpHostVariable,
+  httpPortVariable,
+  authTokenVariable,
 ];
 
 /** The process environment a host would launch the built server with. */
