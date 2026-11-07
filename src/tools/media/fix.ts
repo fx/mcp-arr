@@ -12,8 +12,9 @@ import {
   type EpisodeNumbers,
   episodeNumbersOf,
   groupDownloads,
-  importUnfinished,
+  importClaimed,
   judgeDownload,
+  refreshImports,
 } from "./downloads.js";
 import {
   distinctErrors,
@@ -71,7 +72,7 @@ async function fixOne(scope: FixScope, download: Download): Promise<Outcome> {
   const { context, adapter, kind, mediaId } = scope;
   const claims = context.claims;
   const key = download.key;
-  if (await importUnfinished(context, adapter, key)) {
+  if (importClaimed(context, key)) {
     return none(fixReasons.alreadyFixing);
   }
   const attempt = claims.tryClaim(key);
@@ -180,6 +181,7 @@ export async function fixTitle(context: MediaContext, request: FixRequest): Prom
   }
   const adapter = resolved.adapter;
   const application = kindRoutes[kind].application;
+  await refreshImports(context, adapter);
 
   let downloads: Download[];
   try {

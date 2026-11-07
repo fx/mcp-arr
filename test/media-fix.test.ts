@@ -604,6 +604,60 @@ describe("media_fix importing a download", () => {
     expect(claims.size).toBe(0);
   });
 
+  it("releases a finished import's claim once its download has left the queue", async () => {
+    await fix();
+    expect(claims.size).toBe(1);
+    // The import ran: the download left the queue and its command completed.
+    instances.state("sonarr").queue = [];
+    for (const [id, command] of instances.state("sonarr").commands) {
+      instances
+        .state("sonarr")
+        .commands.set(id, { ...command, status: "completed", result: "successful" });
+    }
+
+    // A status of any title of the kind, or the overview, reads it back.
+    await status({ kind: "series", id: 100_002 });
+    expect(claims.size).toBe(0);
+
+    expect(claims.imports()).toEqual([]);
+  });
+
+  it("frees room in a full claim map once finished imports are read back", async () => {
+    const small = createDownloadClaims(1);
+    await fix(undefined, small);
+    expect(small.size).toBe(1);
+
+    // The import finished and left the queue; another download is stuck.
+    instances.state("sonarr").queue = [failedRow(900, "another")];
+    for (const [id, command] of instances.state("sonarr").commands) {
+      instances
+        .state("sonarr")
+        .commands.set(id, { ...command, status: "completed", result: "successful" });
+    }
+
+    const { content } = await fix(undefined, small);
+
+    expect(content.downloads?.[0]?.action).toBe("replaced");
+    expect(small.size).toBe(0);
+  });
+
+  it("keeps a finished-looking claim whose command cannot be read, and refuses a new one while full", async () => {
+    const small = createDownloadClaims(1);
+    await fix(undefined, small);
+    instances.state("sonarr").queue = [failedRow(900, "another")];
+    instances.intercept((request) =>
+      request.route.startsWith("command/") ? new Response("{}", { status: 503 }) : undefined,
+    );
+
+    const { content } = await fix(undefined, small);
+
+    expect(content.downloads?.[0]).toMatchObject({
+      action: "none",
+      reason: fixReasons.tooManyFixes,
+    });
+    expect(small.size).toBe(1);
+  });
+
   it("keeps the claim while the import cannot be read back", async () => {
     await fix();
     instances.intercept((request) =>

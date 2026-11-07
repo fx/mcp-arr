@@ -32,6 +32,15 @@ describe("download claims", () => {
     expect(claims.tryClaim("key")).toBe("claimed");
   });
 
+  it("lists every claim waiting on an import, and no other", () => {
+    const claims = createDownloadClaims();
+    claims.tryClaim("acting");
+    claims.tryClaim("importing");
+    claims.markImporting("importing", { application: "radarr", commandId: "9" });
+
+    expect(claims.imports()).toEqual([["importing", { application: "radarr", commandId: "9" }]]);
+  });
+
   it("does not release a claim another call took after an import ended", () => {
     const claims = createDownloadClaims();
     claims.tryClaim("key");

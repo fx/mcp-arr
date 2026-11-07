@@ -29,9 +29,10 @@ import {
   episodeNumbersOf,
   episodesLabel,
   groupDownloads,
-  importUnfinished,
+  importClaimed,
   type Judgement,
   judgeDownload,
+  refreshImports,
   reportDownload,
 } from "./downloads.js";
 import {
@@ -166,7 +167,7 @@ async function judgeForStatus(
   download: Download,
   warnings: string[],
 ): Promise<Judgement> {
-  const claimed = await importUnfinished(context, adapter, download.key);
+  const claimed = importClaimed(context, download.key);
   try {
     return await judgeDownload(adapter, kind, mediaId, download, claimed);
   } catch {
@@ -216,6 +217,7 @@ async function overviewOfKind(
     return served;
   }
   const adapter = served.adapter;
+  await refreshImports(context, adapter);
   const application = kindRoutes[kind].application;
   const profile = profileFor(application);
   const now = context.clock.now();
@@ -270,7 +272,7 @@ async function overviewOfKind(
       if (record?.externalId === undefined) {
         continue;
       }
-      const claimed = await importUnfinished(context, adapter, download.key);
+      const claimed = importClaimed(context, download.key);
       candidates.push({
         kind,
         adapter,
@@ -544,6 +546,7 @@ async function titleStatus(
     return { kind, id, in_library: false, warnings: [], errors: [] };
   }
   const adapter = resolved.adapter;
+  await refreshImports(context, adapter);
   const application = kindRoutes[kind].application;
   const now = context.clock.now();
   const warnings: string[] = [];

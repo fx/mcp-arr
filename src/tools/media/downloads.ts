@@ -20,6 +20,7 @@ import {
   readLibraryTitleById,
 } from "../../adapters/library/titles.js";
 import type { ApplicationAdapter } from "../../adapters/registry.js";
+import type { ClaimedImport } from "../../state/download-claims.js";
 import type { UpstreamCommandObservation } from "../../state/jobs.js";
 import type { MediaContext } from "./context.js";
 import { kindRoutes, type TitleKind } from "./kinds.js";
@@ -494,36 +495,54 @@ function commandEnded(observation: UpstreamCommandObservation): boolean {
   return endedCommandStates.has(state);
 }
 
-/**
- * Whether the import this process started for a download is still unfinished.
- *
- * The command is read back; one that has ended, or that the instance no
- * longer holds, releases the claim, and anything else — still queued or
- * running, a state nobody recognizes, or a read that failed — keeps it. A
- * claim is kept on doubt because releasing one is what would let a second
- * import start.
- */
-export async function importUnfinished(
-  context: MediaContext,
-  adapter: ApplicationAdapter,
-  key: string,
-): Promise<boolean> {
-  const claimed = context.claims.importOf(key);
-  if (claimed === undefined) {
-    return false;
-  }
-  let ended = false;
+/** How many imports one refresh reads back at a time. */
+const refreshConcurrency = 4;
+
+/** Whether one claimed import's command has ended, or is gone; doubt keeps it. */
+async function importEnded(adapter: ApplicationAdapter, claimed: ClaimedImport): Promise<boolean> {
   try {
     const refresh = await readCommandRecord(adapter.client, claimed.application, claimed.commandId);
-    ended = refresh.status === "observed" && commandEnded(refresh.observation);
+    return refresh.status === "observed" && commandEnded(refresh.observation);
   } catch {
-    ended = false;
+    return false;
   }
-  if (!ended) {
-    return true;
+}
+
+/**
+ * Reads back every import this process started on one kind's instance, and
+ * releases each claim whose command has ended or that the instance no longer
+ * holds.
+ *
+ * It walks the claims themselves rather than the queue, because a finished
+ * import's download normally leaves the queue, and a claim found only through
+ * the queue would then never be released — the map would fill and refuse every
+ * fix. Anything else — still queued or running, a state nobody recognizes, or a
+ * read that failed — keeps its claim, because releasing one is what would let a
+ * second import start; the map's bound caps what doubt can hold. Both
+ * `media_status` and `media_fix` run it before they judge anything, so within
+ * a call whether a download is being imported is {@link importClaimed}.
+ */
+export async function refreshImports(
+  context: MediaContext,
+  adapter: ApplicationAdapter,
+): Promise<void> {
+  const pending = context.claims
+    .imports()
+    .filter(([, claimed]) => claimed.application === adapter.application);
+  for (let index = 0; index < pending.length; index += refreshConcurrency) {
+    await Promise.all(
+      pending.slice(index, index + refreshConcurrency).map(async ([key, claimed]) => {
+        if (await importEnded(adapter, claimed)) {
+          context.claims.releaseImport(key, claimed.commandId);
+        }
+      }),
+    );
   }
-  context.claims.releaseImport(key, claimed.commandId);
-  return false;
+}
+
+/** Whether this process has an unfinished import for a download, as last refreshed. */
+export function importClaimed(context: MediaContext, key: string): boolean {
+  return context.claims.importOf(key) !== undefined;
 }
 
 /** Season and episode numbers, by the episode's own identifier. */

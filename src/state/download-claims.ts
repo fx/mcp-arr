@@ -43,6 +43,12 @@ export interface DownloadClaims {
    * taken.
    */
   releaseImport(key: string, commandId: string): void;
+  /**
+   * Every claim waiting on an import, whatever its download now looks like —
+   * including one whose download has left the queue, which no read of the
+   * queue would ever name again.
+   */
+  imports(): readonly (readonly [key: string, claimed: ClaimedImport])[];
   /** How many downloads are claimed. */
   readonly size: number;
 }
@@ -79,6 +85,11 @@ export function createDownloadClaims(maxEntries = maxDownloadClaims): DownloadCl
       if (claim?.kind === "importing" && claim.import.commandId === commandId) {
         claims.delete(key);
       }
+    },
+    imports() {
+      return [...claims].flatMap(([key, claim]) =>
+        claim.kind === "importing" ? [[key, claim.import] as const] : [],
+      );
     },
     get size() {
       return claims.size;
