@@ -1,0 +1,19 @@
+# An allowlist: the build context is only what the build stage reads, so
+# nothing else — node_modules, dist, .git, tests and their fixtures, docs —
+# can reach the image, whatever is added to the repository later.
+*
+!package.json
+!package-lock.json
+!.npmrc
+!tsconfig.json
+!tsconfig.build.json
+!README.md
+!LICENSE
+!src
+
+# Re-excluded after the allowlist, because a later rule wins: a local MCP host
+# configuration holds real instance URLs and API keys, and an environment file
+# may hold anything. Neither may enter the context, wherever one is placed.
+**/.mcp.json
+**/.env
+**/.env.*

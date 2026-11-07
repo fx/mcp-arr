@@ -1,8 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { request as httpRequest } from "node:http";
-import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +13,7 @@ import {
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { observeChildProcess, waitForResponseOrExit } from "./child-process.mjs";
 import { createPlatformCommand, isCleanTermination } from "./platform-command.mjs";
+import { assert, exchange, freePort, withDeadline } from "./verification.mjs";
 
 const execFileAsync = promisify(execFile);
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -154,28 +153,6 @@ const instanceEnvironment = {
   SONARR_API_KEY: "package-verification-placeholder",
 };
 
-function assert(condition, message) {
-  if (!condition) {
-    throw new Error(message);
-  }
-}
-
-function withDeadline(promise, label, timeoutMs = 5_000) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), timeoutMs);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
-}
-
 async function run(command, args, options) {
   const invocation = createPlatformCommand(command, args);
   try {
@@ -307,41 +284,6 @@ async function verifyInstalledProcess(binPath, cwd, expectedVersion) {
     }
     await withDeadline(observed.closed, "installed package cleanup").catch(() => undefined);
   }
-}
-
-/** A loopback port that was free a moment ago: bound, read, and released. */
-async function freePort() {
-  const probe = createNetServer();
-  await new Promise((resolve, reject) => {
-    probe.once("error", reject);
-    probe.listen(0, "127.0.0.1", resolve);
-  });
-  const { port } = probe.address();
-  await new Promise((resolve) => probe.close(resolve));
-  return port;
-}
-
-/** One request on a connection of its own, read to the end. */
-function exchange(port, { method, path, headers = {}, body }) {
-  return new Promise((resolve, reject) => {
-    const request = httpRequest(
-      { host: "127.0.0.1", port, method, path, headers, agent: false },
-      (response) => {
-        const chunks = [];
-        response.on("data", (chunk) => chunks.push(chunk));
-        response.once("error", reject);
-        response.once("end", () =>
-          resolve({
-            status: response.statusCode,
-            headers: response.headers,
-            body: Buffer.concat(chunks).toString("utf8"),
-          }),
-        );
-      },
-    );
-    request.once("error", reject);
-    request.end(body);
-  });
 }
 
 /**

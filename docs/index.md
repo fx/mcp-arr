@@ -58,3 +58,4 @@ Changes 0030 through 0033 make the server deployable as a remote service and giv
 | 0031 | [Media Toolset — Selection, Find, and Add](changes/0031-media-toolset-library.md) | [Media Toolset](specs/media-toolset/) | draft | — |
 | 0032 | [Media Toolset — Status, Fix, Search Again, and Remove](changes/0032-media-toolset-activity.md) | [Media Toolset](specs/media-toolset/) | draft | 0031 |
 | 0033 | [Media as the Default Toolset](changes/0033-media-default-toolset.md) | [Tool Contracts](specs/tool-contracts/) | draft | 0031, 0032 |
+| 0034 | [Container Image](changes/0034-container-image.md) | [Architecture](specs/architecture/) | complete | 0030 |
