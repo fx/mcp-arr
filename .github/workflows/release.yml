@@ -106,15 +106,17 @@ jobs:
     needs: [release-please, publish]
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     # Read-only: this job builds and runs the released code, and needs no
     # registry access to do it.
     permissions:
       contents: read
     outputs:
-      sha: ${{ steps.build-info.outputs.sha }}
-      version: ${{ steps.build-info.outputs.version }}
+      digest: ${{ steps.archive.outputs.digest }}
+      tags: ${{ steps.meta.outputs.tags }}
     steps:
+      - name: Choose the archive path
+        run: echo "IMAGE_ARCHIVE=$RUNNER_TEMP/mcp-arr.oci.tar" >> "$GITHUB_ENV"
       - name: Check out the released tag
         uses: actions/checkout@v7
         with:
@@ -124,7 +126,7 @@ jobs:
         uses: hadolint/hadolint-action@v3.5.0
         with:
           dockerfile: Dockerfile
-      - name: Set up Node.js for the image verifier
+      - name: Set up Node.js for the image scripts
         uses: actions/setup-node@v7
         with:
           node-version: 20.x
@@ -136,46 +138,14 @@ jobs:
         run: |
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "version=$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-      - name: Build the image for verification
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          platforms: linux/amd64
-          load: true
-          push: false
-          tags: mcp-arr:verify
-          build-args: |
-            GIT_SHA=${{ steps.build-info.outputs.sha }}
-            VERSION=${{ steps.build-info.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Verify the image
-        run: node scripts/verify-image.mjs mcp-arr:verify
-
-  publish-image:
-    # Only once the released tag's image passed verification. This is the one
-    # job in the workflow that can write to the container registry.
-    needs: [release-please, verify-image]
-    if: needs.release-please.outputs.release_created == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Check out the released tag
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
-          persist-credentials: false
       # The release version, its minor line, and latest. No bare major tag
       # while the package is 0.x: under semantic versioning every 0.x minor
       # may break, so `0` would move across breaking releases.
       - name: Compute image metadata
         id: meta
         uses: docker/metadata-action@v6
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
         with:
           images: ghcr.io/${{ github.repository }}
           flavor: |
@@ -190,24 +160,78 @@ jobs:
           platforms: arm64
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+      # The only build, as in the Docker workflow: one OCI archive of both
+      # platforms, smoke-tested here and copied unchanged by publish-image.
+      - name: Build the image archive
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          outputs: type=oci,dest=${{ env.IMAGE_ARCHIVE }}
+          provenance: false
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          build-args: |
+            GIT_SHA=${{ steps.build-info.outputs.sha }}
+            VERSION=${{ steps.build-info.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Check the image archive
+        id: archive
+        run: node scripts/image-archive.mjs check "$IMAGE_ARCHIVE" >> "$GITHUB_OUTPUT"
+      - name: Load the amd64 image from the archive
+        run: node scripts/image-archive.mjs load "$IMAGE_ARCHIVE" linux/amd64 mcp-arr:verify-amd64
+      - name: Verify the amd64 image
+        run: node scripts/verify-image.mjs mcp-arr:verify-amd64
+      - name: Load the arm64 image from the archive
+        run: node scripts/image-archive.mjs load "$IMAGE_ARCHIVE" linux/arm64 mcp-arr:verify-arm64
+      - name: Verify the arm64 image under emulation
+        run: node scripts/verify-image.mjs mcp-arr:verify-arm64 --platform linux/arm64
+      - name: Keep the verified archive for publishing
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-image-archive
+          path: ${{ env.IMAGE_ARCHIVE }}
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+          compression-level: 0
+
+  publish-image:
+    # Only the archive verify-image built and smoke-tested, copied to the
+    # registry unchanged. This is the one job in the workflow that can write
+    # to the container registry.
+    needs: [release-please, verify-image]
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out the released tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          persist-credentials: false
+      - name: Set up Node.js for the image scripts
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20.x
+          package-manager-cache: false
+      - name: Download the verified archive
+        uses: actions/download-artifact@v8
+        with:
+          name: release-image-archive
+          path: ${{ runner.temp }}/image-archive
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # The amd64 image is rebuilt from the cache the verified build wrote,
-      # so its layers are the verified ones.
       - name: Publish the release image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            GIT_SHA=${{ needs.verify-image.outputs.sha }}
-            VERSION=${{ needs.verify-image.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+        env:
+          IMAGE_TAGS: ${{ needs.verify-image.outputs.tags }}
+          IMAGE_DIGEST: ${{ needs.verify-image.outputs.digest }}
+        run: node scripts/image-archive.mjs publish "$RUNNER_TEMP/image-archive/mcp-arr.oci.tar" "$IMAGE_DIGEST"
