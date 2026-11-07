@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { downloadIdentity } from "../src/adapters/activity/parse.js";
+import { defaultScanLimit } from "../src/adapters/library/paging.js";
 import { createManualClock, type ManualClock } from "../src/state/clock.js";
 import { createDownloadClaims, type DownloadClaims } from "../src/state/download-claims.js";
 import { downloadReasons } from "../src/tools/media/downloads.js";
@@ -344,10 +345,50 @@ describe("media_status overview", () => {
     expect(content.downloads_total).toBe(14);
   });
 
+  it("counts downloads, not rows, across every page of the queue", async () => {
+    // 99 downloads fill most of the first page; a three-row season pack
+    // straddles it and the second; 20 more downloads follow.
+    const pack = [1003, 1004, 1001].map((episodeId, index) => ({
+      ...failedRows(1)[0],
+      id: 5_000 + index,
+      episodeId,
+      downloadId: "season-pack",
+    }));
+    const singles = failedRows(119);
+    instances.state("sonarr").queue = [...singles.slice(0, 99), ...pack, ...singles.slice(99)];
+    instances.state("radarr").queue = [];
+
+    const { content } = await status({});
+
+    expect(content.downloads).toHaveLength(10);
+    expect(content.downloads_total).toBe(120);
+    expect(content.warnings).toEqual([]);
+    const pages = instances.requests.filter(
+      (request) => request.application === "sonarr" && request.route === "queue",
+    );
+    expect(pages.map((request) => request.query.page)).toEqual(["1", "2"]);
+  });
+
+  it("counts only the downloads it read when the queue is longer than the bound, and says so", async () => {
+    instances.state("sonarr").queue = failedRows(defaultScanLimit + 5);
+    instances.state("radarr").queue = [];
+
+    const { content } = await status({});
+
+    expect(content.downloads_total).toBe(defaultScanLimit);
+    expect(content.warnings).toContain(
+      `the queue holds more than ${defaultScanLimit} entries, so downloads_total counts only ` +
+        `the downloads among the first ${defaultScanLimit}; more may exist beyond them`,
+    );
+  });
+
   it("leaves out a download that belongs to no title, and says so", async () => {
-    instances
-      .state("sonarr")
-      .queue.push({ ...queueRow("sonarr", 502), id: 999, seriesId: 0, downloadId: "orphan" });
+    // Two rows of one unassociated download are one download.
+    for (const id of [998, 999]) {
+      instances
+        .state("sonarr")
+        .queue.push({ ...queueRow("sonarr", 502), id, seriesId: 0, downloadId: "orphan" });
+    }
 
     const { content } = await status({});
 

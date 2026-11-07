@@ -4,10 +4,10 @@ import {
   readMediaHistory,
   readQueue,
   readQueueForMedia,
-  readQueueStatus,
 } from "../../adapters/activity/media.js";
 import type { HistoryEventType, HistoryRecord, QueueItem } from "../../adapters/activity/model.js";
 import { readQualityProfiles } from "../../adapters/library/changes.js";
+import { defaultScanLimit } from "../../adapters/library/paging.js";
 import { runLibraryQuery } from "../../adapters/library/service.js";
 import {
   type EpisodeState,
@@ -73,8 +73,13 @@ const importEvents: ReadonlySet<HistoryEventType> = new Set([
 const unassociatedWarning = (count: number): string =>
   `${count} download(s) in the queue belong to no title in the library and are not listed`;
 
+/**
+ * Warned when the queue was longer than the overview reads: the total then
+ * counts exactly the downloads among the entries read.
+ */
 const partialQueueWarning =
-  "the queue holds more than one page, so downloads_total is at most the number shown";
+  `the queue holds more than ${defaultScanLimit} entries, so downloads_total counts only ` +
+  `the downloads among the first ${defaultScanLimit}; more may exist beyond them`;
 
 const partialHistoryWarning =
   "the history was longer than could be read, so the imported list may be incomplete";
@@ -238,10 +243,43 @@ function byReportingOrder(left: Candidate, right: Candidate): number {
   );
 }
 
+/**
+ * Every queue row of one kind, page by page, up to the scan bound the rest of
+ * the activity layer reads under, so the overview can count downloads rather
+ * than rows. `complete` says whether the read reached the
+ * queue's end; where the bound stopped it, rows beyond it were not read.
+ */
+async function readWholeQueue(
+  client: UpstreamClient,
+  profile: MediaProfile,
+): Promise<{ readonly items: readonly QueueItem[]; readonly complete: boolean }> {
+  const items: QueueItem[] = [];
+  const seen = new Set<number>();
+  for (let offset = 0; offset < defaultScanLimit; offset += maxPageSize) {
+    const page = await readQueue(
+      client,
+      { offset, pageSize: maxPageSize },
+      { view: "queue", detail: "summary", paging: { pageSize: maxPageSize } },
+      profile,
+    );
+    // A queue that moved between pages can list a row twice; it is one row.
+    for (const item of page.items) {
+      if (!seen.has(item.context.queueItemId)) {
+        seen.add(item.context.queueItemId);
+        items.push(item);
+      }
+    }
+    if (!page.hasMore) {
+      return { items, complete: true };
+    }
+  }
+  return { items, complete: false };
+}
+
 interface KindOverview {
   readonly candidates: readonly Candidate[];
-  /** Downloads beyond the page that was read, counted as one each: an upper bound. */
-  readonly unread: number;
+  /** Whether the queue was read to its end, so the candidates are every download in it. */
+  readonly complete: boolean;
   readonly imported: readonly DatedTitle[];
   readonly upcoming: readonly DatedTitle[];
   readonly warnings: readonly string[];
@@ -270,18 +308,11 @@ async function overviewOfKind(
   const application = kindRoutes[kind].application;
   const profile = profileFor(application);
   const now = context.clock.now();
-  const window = { offset: 0, pageSize: maxPageSize };
   const warnings: string[] = [];
 
   try {
-    const [page, summary, titles, history, calendar] = await Promise.all([
-      readQueue(
-        adapter.client,
-        window,
-        { view: "queue", detail: "summary", paging: { pageSize: maxPageSize } },
-        profile,
-      ),
-      readQueueStatus(adapter.client, profile),
+    const [queue, titles, history, calendar] = await Promise.all([
+      readWholeQueue(adapter.client, profile),
       readLibraryTitles(adapter.client, application),
       readRecentHistory(adapter.client, profile, now - importedWindowDays * day),
       runLibraryQuery(application, adapter.client, {
@@ -303,16 +334,16 @@ async function overviewOfKind(
       record.title === undefined ? undefined : publishedText(context, record.title);
 
     const associated: QueueItem[] = [];
-    let unassociated = 0;
-    for (const item of page.items) {
-      if (recordOf(item.context.mediaId)?.externalId === undefined) {
-        unassociated += 1;
-      } else {
-        associated.push(item);
-      }
+    const unassociated: QueueItem[] = [];
+    for (const item of queue.items) {
+      (recordOf(item.context.mediaId)?.externalId === undefined ? unassociated : associated).push(
+        item,
+      );
     }
-    if (unassociated > 0) {
-      warnings.push(unassociatedWarning(unassociated));
+    // Counted as downloads, like everything else the overview counts.
+    const strays = groupDownloads(unassociated).length;
+    if (strays > 0) {
+      warnings.push(unassociatedWarning(strays));
     }
 
     const candidates: Candidate[] = [];
@@ -334,8 +365,7 @@ async function overviewOfKind(
         position,
       });
     }
-    const unread = page.hasMore ? Math.max(0, summary.totalCount - page.items.length) : 0;
-    if (page.hasMore) {
+    if (!queue.complete) {
       warnings.push(partialQueueWarning);
     }
 
@@ -422,7 +452,10 @@ async function overviewOfKind(
         };
       });
 
-    return { ok: true, value: { candidates, unread, imported, upcoming, warnings } };
+    return {
+      ok: true,
+      value: { candidates, complete: queue.complete, imported, upcoming, warnings },
+    };
   } catch (error) {
     return { ok: false, error: mediaErrorFor(kind, error) };
   }
@@ -481,7 +514,6 @@ async function overview(context: MediaContext): Promise<StatusResult> {
   const candidates: Candidate[] = [];
   const imported: DatedTitle[] = [];
   const upcoming: DatedTitle[] = [];
-  let unread = 0;
   for (const outcome of overviews) {
     if (!outcome.ok) {
       errors.push(outcome.error);
@@ -490,7 +522,6 @@ async function overview(context: MediaContext): Promise<StatusResult> {
     candidates.push(...outcome.value.candidates);
     imported.push(...outcome.value.imported);
     upcoming.push(...outcome.value.upcoming);
-    unread += outcome.value.unread;
     warnings.push(...outcome.value.warnings);
   }
 
@@ -522,7 +553,8 @@ async function overview(context: MediaContext): Promise<StatusResult> {
     );
   }
 
-  const cutDownloads = bounded(downloads, ordered.length + unread);
+  // Downloads, never rows: a season pack listed once per episode counts once.
+  const cutDownloads = bounded(downloads, ordered.length);
   // Imports newest first and what is due soonest first, across both kinds.
   const cutImported = bounded(
     [...imported].sort((left, right) => Date.parse(right.date) - Date.parse(left.date)),
