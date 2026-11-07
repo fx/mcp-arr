@@ -1,5 +1,6 @@
 import { type ApplyRecordStore, createApplyRecordStore } from "./apply-records.js";
 import { type Clock, systemClock } from "./clock.js";
+import { createDownloadClaims, type DownloadClaims } from "./download-claims.js";
 import { createJobStore, type JobStore } from "./jobs.js";
 import { createPlanStore, type PlanStore } from "./plans.js";
 import { createReferenceStore, type ReferenceStore } from "./references.js";
@@ -15,6 +16,11 @@ import { createReferenceStore, type ReferenceStore } from "./references.js";
  * The four stores share one reference store so a plan, a receipt, and a job
  * reference expire, bind to an application, and reject a previous lifetime by
  * exactly the same code that governs a queue or release reference.
+ *
+ * The download claims are the `media` toolset's one piece of state, and they
+ * live here rather than with a `media` call because a call is short-lived: an
+ * HTTP request builds its server and its `media` context afresh, and only
+ * this state outlives it.
  */
 export interface WorkflowState {
   readonly clock: Clock;
@@ -22,6 +28,7 @@ export interface WorkflowState {
   readonly plans: PlanStore;
   readonly applies: ApplyRecordStore;
   readonly jobs: JobStore;
+  readonly downloadClaims: DownloadClaims;
 }
 
 export interface WorkflowStateOptions {
@@ -49,5 +56,6 @@ export function createWorkflowState(options: WorkflowStateOptions = {}): Workflo
     plans: createPlanStore(references, clock),
     applies: createApplyRecordStore(references, clock),
     jobs: createJobStore(references, clock),
+    downloadClaims: createDownloadClaims(),
   };
 }
