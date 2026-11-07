@@ -171,6 +171,12 @@ export interface QueueItem {
   readonly media?: MediaRef | undefined;
   readonly episode?: MediaRef | undefined;
   readonly quality?: string | undefined;
+  /**
+   * The vertical pixel count the release's quality names, where it names one.
+   * Only the `media` toolset reads it; the `arr` toolset publishes a queue row
+   * field by field and does not.
+   */
+  readonly resolution?: number | undefined;
   readonly evidence: QueueEvidence;
   readonly progress?: QueueProgress | undefined;
   readonly origin?: QueueOrigin | undefined;

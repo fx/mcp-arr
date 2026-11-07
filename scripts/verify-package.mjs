@@ -61,6 +61,7 @@ const allowedFiles = [
   "dist/adapters/library/requests.js",
   "dist/adapters/library/service.js",
   "dist/adapters/library/sonarr.js",
+  "dist/adapters/library/titles.js",
   "dist/adapters/registry.js",
   "dist/adapters/version.js",
   "dist/applications.js",

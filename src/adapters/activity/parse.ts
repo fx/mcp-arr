@@ -394,11 +394,28 @@ export function parseActivity<TSchema extends z.ZodType>(
   return parsed.data;
 }
 
-/** The upstream quality wrapper, reduced to the one name worth reporting. */
+/**
+ * The upstream quality wrapper, reduced to its name and the vertical
+ * resolution its definition states.
+ */
 export const qualitySchema = z
-  .object({ quality: z.object({ name: z.string().nullish() }).nullish() })
+  .object({
+    quality: z.object({ name: z.string().nullish(), resolution: z.number().nullish() }).nullish(),
+  })
   .nullish();
 
 export function qualityName(value: z.infer<typeof qualitySchema>): string | undefined {
   return safeLabel(value?.quality?.name);
+}
+
+/**
+ * The vertical pixel count a quality names, or `undefined` where it names
+ * none. Upstream reports zero for a quality with no known resolution — an
+ * unparsed file is `Unknown` at zero — and zero is not a resolution.
+ */
+export function qualityResolution(value: z.infer<typeof qualitySchema>): number | undefined {
+  const pixels = value?.quality?.resolution;
+  return typeof pixels === "number" && Number.isSafeInteger(pixels) && pixels > 0
+    ? pixels
+    : undefined;
 }
