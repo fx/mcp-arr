@@ -101,7 +101,18 @@ export type ImportSubmission =
    * Nothing is submitted, for the same reason a file that has gone stops the
    * whole submission.
    */
-  | { readonly status: "moved"; readonly identity: string; readonly error: ToolError };
+  | { readonly status: "moved"; readonly identity: string; readonly error: ToolError }
+  /** The caller's last check, run once every file was recovered, withheld the command. */
+  | { readonly status: "withheld"; readonly error: ToolError };
+
+export interface ImportSubmissionOptions {
+  /**
+   * Runs once every file has been recovered and held to its pinned target,
+   * immediately before the command is sent. Answering `false` withholds the
+   * command; once it answers `true`, the command is sent.
+   */
+  readonly confirm?: (() => Promise<boolean>) | undefined;
+}
 
 /**
  * Builds one file's entry, field by named field.
@@ -146,6 +157,7 @@ export async function submitManualImport(
   application: MediaApplication,
   files: readonly ImportFileRequest[],
   importMode: ImportMode,
+  options: ImportSubmissionOptions = {},
 ): Promise<ImportSubmission> {
   const prepared: PreparedFile[] = [];
   for (const file of files) {
@@ -167,6 +179,17 @@ export async function submitManualImport(
       };
     }
     prepared.push(entry);
+  }
+
+  if (options.confirm !== undefined && !(await options.confirm())) {
+    return {
+      status: "withheld",
+      error: createToolError({
+        code: "conflict",
+        message: `${application}: the import was withheld by its last check`,
+        application,
+      }),
+    };
   }
 
   const body: UpstreamBody = {

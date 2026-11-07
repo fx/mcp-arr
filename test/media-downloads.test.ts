@@ -9,7 +9,9 @@ import {
   downloadReasons,
   episodesLabel,
   groupDownloads,
+  type ImportGuard,
   judgeDownload,
+  targetKey,
 } from "../src/tools/media/downloads.js";
 import { activityFixture } from "./support/activity.js";
 import { jsonResponse, libraryHarness } from "./support/library.js";
@@ -325,9 +327,42 @@ describe("judgeDownload", () => {
     instances.state("sonarr").queue = [base(502)];
   });
 
-  async function judged() {
-    return judgeDownload(adapter, "series", 12, await download(base(502)), false);
+  const open: ImportGuard = { others: [], reserve: () => true };
+
+  async function judged(guard: ImportGuard = open) {
+    return judgeDownload(adapter, "series", 12, await download(base(502)), false, guard);
   }
+
+  it("refuses while another download being imported covers a mapped episode", async () => {
+    const importing = await download({
+      ...base(501),
+      id: 950,
+      episodeId: 1003,
+      status: "completed",
+      trackedDownloadState: "importing",
+      trackedDownloadStatus: "ok",
+    });
+
+    expect(await judged({ others: [importing], reserve: () => true })).toMatchObject({
+      remedy: "none",
+      reason: downloadReasons.targetImporting,
+    });
+  });
+
+  it("refuses while another fix holds a mapped episode, before asking the library", async () => {
+    const reserved: string[][] = [];
+    const judgement = await judged({
+      others: [],
+      reserve: (targets) => {
+        reserved.push([...targets]);
+        return false;
+      },
+    });
+
+    expect(judgement).toMatchObject({ remedy: "none", reason: downloadReasons.targetBeingFixed });
+    expect(reserved).toEqual([[targetKey("sonarr", 1003)]]);
+    expect(instances.requests.some((request) => request.route === "episode")).toBe(false);
+  });
 
   it("confirms an import whose files are importable and whose episodes have no file", async () => {
     const judgement = await judged();

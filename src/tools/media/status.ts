@@ -29,7 +29,9 @@ import {
   episodeNumbersOf,
   episodesLabel,
   groupDownloads,
+  type ImportGuard,
   importClaimed,
+  importingOthers,
   type Judgement,
   judgeDownload,
   refreshImports,
@@ -102,6 +104,8 @@ interface Candidate {
   readonly judgement: Judgement;
   /** The download's place in its own queue read. */
   readonly position: number;
+  /** Every download of the same kind the same read found, this one included. */
+  readonly siblings: readonly Download[];
 }
 
 /** The most history pages the overview reads looking for the week's imports. */
@@ -165,11 +169,19 @@ async function judgeForStatus(
   kind: TitleKind,
   mediaId: number,
   download: Download,
+  siblings: readonly Download[],
   warnings: string[],
 ): Promise<Judgement> {
   const claimed = importClaimed(context, download.key);
+  // Status acts on nothing, so it reserves nothing: it asks only whether a
+  // fix would find another download holding one of the import's targets.
+  const guard: ImportGuard = {
+    others: importingOthers(context, siblings, download),
+    reserve: (targets) =>
+      targets.every((target) => !context.claims.targetHeldByOther(download.key, target)),
+  };
   try {
-    return await judgeDownload(adapter, kind, mediaId, download, claimed);
+    return await judgeDownload(adapter, kind, mediaId, download, claimed, guard);
   } catch {
     if (!warnings.includes(uncheckedWarning)) {
       warnings.push(uncheckedWarning);
@@ -267,7 +279,8 @@ async function overviewOfKind(
     }
 
     const candidates: Candidate[] = [];
-    for (const [position, download] of groupDownloads(associated).entries()) {
+    const grouped = groupDownloads(associated);
+    for (const [position, download] of grouped.entries()) {
       const record = recordOf(download.rows[0]?.context.mediaId);
       if (record?.externalId === undefined) {
         continue;
@@ -283,6 +296,7 @@ async function overviewOfKind(
         // Provisional: an `import` is confirmed only for a listed download.
         judgement: provisionalJudgement(download, claimed),
         position,
+        siblings: grouped,
       });
     }
     const unread = page.hasMore ? Math.max(0, summary.totalCount - page.items.length) : 0;
@@ -463,6 +477,7 @@ async function overview(context: MediaContext): Promise<StatusResult> {
             candidate.kind,
             candidate.record.id,
             candidate.download,
+            candidate.siblings,
             warnings,
           )
         : candidate.judgement;
@@ -626,7 +641,15 @@ async function titleStatus(
   const downloads = groupDownloads(rows.items);
   const reported: ReportedDownload[] = [];
   for (const download of downloads.slice(0, maxListedEntries)) {
-    const judgement = await judgeForStatus(context, adapter, kind, record.id, download, warnings);
+    const judgement = await judgeForStatus(
+      context,
+      adapter,
+      kind,
+      record.id,
+      download,
+      downloads,
+      warnings,
+    );
     reported.push(
       reportDownload(
         namedTitle(kind, id, resolved.title),

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createManualClock, type ManualClock } from "../src/state/clock.js";
 import { createDownloadClaims, type DownloadClaims } from "../src/state/download-claims.js";
-import { downloadReasons } from "../src/tools/media/downloads.js";
+import { downloadReasons, targetKey, uncertainImportHoldMs } from "../src/tools/media/downloads.js";
 import { fixReasons } from "../src/tools/media/fix.js";
 import type { FixResult, StatusResult } from "../src/tools/media/schemas.js";
 import {
@@ -468,6 +468,24 @@ describe("media_fix replacing a download", () => {
     expect(retried.content.downloads?.[0]?.action).toBe("replaced");
   });
 
+  it("sends no second replacement after one whose answer was lost took effect", async () => {
+    instances.state("sonarr").queue = [failedRow(502, "one")];
+    instances.intercept((request) => {
+      if (request.method === "DELETE") {
+        instances.state("sonarr").queue = [];
+        throw new TypeError("fetch failed");
+      }
+      return undefined;
+    });
+
+    const lost = await fix();
+    const again = await fix();
+
+    expect(lost.content.downloads?.[0]?.reason).toBe(fixReasons.requestFailed);
+    expect(again.content.downloads).toEqual([]);
+    expect(instances.mutations().map(describeRequest)).toEqual(["DELETE queue/502"]);
+  });
+
   it("leaves a download alone when the downloader is unreachable", async () => {
     instances.state("sonarr").queue = [{ ...blocked, status: "downloadClientUnavailable" }];
 
@@ -766,5 +784,206 @@ describe("media_fix importing a download", () => {
     const { content, summary } = await fix();
 
     expect(forbiddenTermsIn(`${JSON.stringify(content)} ${summary}`)).toEqual([]);
+  });
+});
+
+describe("media_fix keeping two imports out of one episode", () => {
+  beforeEach(() => {
+    instances.state("sonarr").queue = [structuredClone(blocked)];
+    makeImportable();
+  });
+
+  function commandPosts(): number {
+    return instances.mutations().filter((request) => request.route === "command").length;
+  }
+
+  it("refuses while another fix holds the episode, and status says the same", async () => {
+    claims.tryClaim("another download");
+    claims.tryClaimTargets("another download", [targetKey("sonarr", 1003)]);
+
+    const reported = (await status()).content.downloads?.[0];
+    const { content } = await fix();
+
+    expect(reported).toMatchObject({ remedy: "none", reason: downloadReasons.targetBeingFixed });
+    expect(content.downloads?.[0]).toMatchObject({
+      action: "none",
+      reason: downloadReasons.targetBeingFixed,
+    });
+    expect(commandPosts()).toBe(0);
+  });
+
+  it("refuses while another download for the episode is being imported", async () => {
+    instances.state("sonarr").queue.push({
+      ...blocked,
+      id: 950,
+      downloadId: "another-release",
+      trackedDownloadState: "importing",
+      trackedDownloadStatus: "ok",
+    });
+
+    const reported = (await status()).content.downloads?.[0];
+    const { content } = await fix();
+
+    expect(reported).toMatchObject({ remedy: "none", reason: downloadReasons.targetImporting });
+    expect(content.downloads?.[0]).toMatchObject({
+      action: "none",
+      reason: downloadReasons.targetImporting,
+    });
+    expect(commandPosts()).toBe(0);
+  });
+
+  it("imports one of two downloads for the same episode, however the calls overlap", async () => {
+    instances.state("sonarr").queue.push({ ...blocked, id: 951, downloadId: "another-release" });
+
+    await Promise.all([fix(), fix()]);
+
+    expect(commandPosts()).toBe(1);
+  });
+
+  it("withholds the import when the library gains a file just before it is sent", async () => {
+    let scans = 0;
+    instances.intercept((request) => {
+      if (request.method === "GET" && request.route === "manualimport") {
+        scans += 1;
+        // The submission's own recovery: every check before it has passed.
+        if (scans === 3) {
+          setEpisodeFile(1003, true);
+        }
+      }
+      return undefined;
+    });
+
+    const { content } = await fix();
+
+    expect(content.downloads?.[0]).toMatchObject({
+      action: "none",
+      reason: downloadReasons.libraryHasFile,
+    });
+    expect(commandPosts()).toBe(0);
+    expect(claims.size).toBe(0);
+  });
+});
+
+describe("media_fix with an import whose answer was lost", () => {
+  beforeEach(() => {
+    instances.state("sonarr").queue = [structuredClone(blocked)];
+    makeImportable();
+  });
+
+  function commandPosts(): number {
+    return instances.mutations().filter((request) => request.route === "command").length;
+  }
+
+  /** Accepts the import upstream, or not, and then loses the answer. */
+  function loseImportAnswer(accept: boolean): void {
+    instances.intercept((request) => {
+      if (request.method === "POST" && request.route === "command") {
+        if (accept) {
+          instances.state("sonarr").commands.set(7999, {
+            id: 7999,
+            name: "ManualImport",
+            status: "queued",
+          });
+        }
+        throw new TypeError("fetch failed");
+      }
+      return undefined;
+    });
+  }
+
+  it("keeps the claim and reports the download importing, starting no second import", async () => {
+    loseImportAnswer(true);
+
+    const first = await fix();
+    expect(first.content.downloads?.[0]).toMatchObject({
+      action: "none",
+      reason: fixReasons.importUncertain,
+    });
+    expect(claims.imports().map(([, claimed]) => claimed.commandId)).toEqual([undefined]);
+    expect((await status()).content.downloads?.[0]).toMatchObject({ state: "importing" });
+
+    clock.advance(5 * 60 * 1000);
+    const again = await fix();
+    const [left, right] = await Promise.all([fix(), fix()]);
+    for (const call of [again, left, right]) {
+      expect(call.content.downloads?.[0]?.reason).toBe(fixReasons.alreadyFixing);
+    }
+    expect(commandPosts()).toBe(1);
+  });
+
+  it("treats an accepted answer it cannot read as a lost one", async () => {
+    instances.intercept((request) =>
+      request.method === "POST" && request.route === "command"
+        ? new Response(JSON.stringify({ accepted: true }), { status: 201 })
+        : undefined,
+    );
+
+    const first = await fix();
+
+    expect(first.content.downloads?.[0]?.reason).toBe(fixReasons.importUncertain);
+    expect(claims.size).toBe(1);
+    await fix();
+    expect(commandPosts()).toBe(1);
+  });
+
+  it("releases the claim once it is clear the import never arrived", async () => {
+    loseImportAnswer(false);
+    await fix();
+
+    // Too soon for an empty command list to mean anything.
+    clock.advance(60 * 1000);
+    await status();
+    expect(claims.size).toBe(1);
+
+    clock.advance(2 * 60 * 1000);
+    await status();
+    expect(claims.size).toBe(0);
+  });
+
+  it("releases the claim once the download has left the queue", async () => {
+    loseImportAnswer(true);
+    await fix();
+
+    instances.state("sonarr").queue = [];
+    await status({ kind: "series", id: 100_002 });
+
+    expect(claims.size).toBe(0);
+  });
+
+  it("releases the claim once the library has a file for everything it was for", async () => {
+    loseImportAnswer(true);
+    await fix();
+
+    setEpisodeFile(1003, true);
+    await status();
+
+    expect(claims.size).toBe(0);
+  });
+
+  it("releases the claim at the hold bound when nothing settles it", async () => {
+    loseImportAnswer(true);
+    await fix();
+
+    clock.advance(uncertainImportHoldMs - 1);
+    await status();
+    expect(claims.size).toBe(1);
+
+    clock.advance(1);
+    await status();
+    expect(claims.size).toBe(0);
+    expect(uncertainImportHoldMs).toBe(30 * 60 * 1000);
+  });
+
+  it("releases the claim when the instance refused the import outright", async () => {
+    instances.intercept((request) =>
+      request.method === "POST" && request.route === "command"
+        ? new Response(JSON.stringify([{ errorMessage: "refused" }]), { status: 400 })
+        : undefined,
+    );
+
+    const { content } = await fix();
+
+    expect(content.downloads?.[0]?.reason).toBe(fixReasons.requestFailed);
+    expect(claims.size).toBe(0);
   });
 });

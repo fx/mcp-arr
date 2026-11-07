@@ -171,7 +171,13 @@ describe("media_status for one title", () => {
   it("reports a download this process is importing as importing until the import ends", async () => {
     const key = `sonarr\u0000id:${downloadIdentity(String(queueRow("sonarr", 502).downloadId))}`;
     claims.tryClaim(key);
-    claims.markImporting(key, { application: "sonarr", commandId: "7001" });
+    claims.markImporting(key, {
+      application: "sonarr",
+      commandId: "7001",
+      attemptedAt: clock.now(),
+      mediaId: 12,
+      episodeIds: [1003],
+    });
     instances
       .state("sonarr")
       .commands.set(7001, { id: 7001, name: "ManualImport", status: "started" });

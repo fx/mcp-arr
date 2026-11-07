@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { createDownloadClaims, maxDownloadClaims } from "../src/state/download-claims.js";
+import {
+  type ClaimedImport,
+  createDownloadClaims,
+  maxDownloadClaims,
+} from "../src/state/download-claims.js";
 import { createWorkflowState } from "../src/state/workflow.js";
+
+function started(commandId: string | undefined): ClaimedImport {
+  return { application: "sonarr", commandId, attemptedAt: 0, mediaId: 12, episodeIds: [1003] };
+}
 
 describe("download claims", () => {
   it("lets one caller hold a download and tells the next that it is held", () => {
@@ -15,42 +23,84 @@ describe("download claims", () => {
     expect(claims.tryClaim("sonarr\u0000id:a")).toBe("claimed");
   });
 
-  it("keeps a claim for the import it started until that import is released", () => {
+  it("keeps a claim for the import it started until that very import is released", () => {
     const claims = createDownloadClaims();
+    const first = started("7001");
     claims.tryClaim("key");
-    claims.markImporting("key", { application: "sonarr", commandId: "7001" });
+    claims.markImporting("key", first);
 
-    expect(claims.importOf("key")).toEqual({ application: "sonarr", commandId: "7001" });
+    expect(claims.importOf("key")).toBe(first);
     expect(claims.tryClaim("key")).toBe("held");
 
-    // A refresh of a different command cannot release this one.
-    claims.releaseImport("key", "7002");
-    expect(claims.importOf("key")?.commandId).toBe("7001");
+    // A refresh of a different import cannot release this one.
+    claims.releaseImport("key", started("7001"));
+    expect(claims.importOf("key")).toBe(first);
 
-    claims.releaseImport("key", "7001");
+    claims.releaseImport("key", first);
     expect(claims.importOf("key")).toBeUndefined();
     expect(claims.tryClaim("key")).toBe("claimed");
+  });
+
+  it("holds an import whose answer was lost like any other", () => {
+    const claims = createDownloadClaims();
+    const uncertain = started(undefined);
+    claims.tryClaim("key");
+    claims.markImporting("key", uncertain);
+
+    expect(claims.importOf("key")?.commandId).toBeUndefined();
+    expect(claims.tryClaim("key")).toBe("held");
+    expect(claims.imports()).toEqual([["key", uncertain]]);
   });
 
   it("lists every claim waiting on an import, and no other", () => {
     const claims = createDownloadClaims();
     claims.tryClaim("acting");
     claims.tryClaim("importing");
-    claims.markImporting("importing", { application: "radarr", commandId: "9" });
+    claims.markImporting("importing", started("9"));
 
-    expect(claims.imports()).toEqual([["importing", { application: "radarr", commandId: "9" }]]);
+    expect(claims.imports()).toEqual([["importing", started("9")]]);
   });
 
   it("does not release a claim another call took after an import ended", () => {
     const claims = createDownloadClaims();
+    const ended = started("1");
     claims.tryClaim("key");
-    claims.markImporting("key", { application: "radarr", commandId: "1" });
-    claims.releaseImport("key", "1");
+    claims.markImporting("key", ended);
+    claims.releaseImport("key", ended);
     expect(claims.tryClaim("key")).toBe("claimed");
 
     // A second refresh of the ended import arrives late.
-    claims.releaseImport("key", "1");
+    claims.releaseImport("key", ended);
     expect(claims.tryClaim("key")).toBe("held");
+  });
+
+  it("claims an import's targets all or none, and releases them with the download", () => {
+    const claims = createDownloadClaims();
+    claims.tryClaim("one");
+    claims.tryClaim("two");
+
+    expect(claims.tryClaimTargets("one", ["episode:1", "episode:2"])).toBe(true);
+    // Asking again for the targets it already holds is no conflict.
+    expect(claims.tryClaimTargets("one", ["episode:2"])).toBe(true);
+    expect(claims.tryClaimTargets("two", ["episode:2", "episode:3"])).toBe(false);
+    expect(claims.targetHeldByOther("two", "episode:3")).toBe(false);
+    expect(claims.targetHeldByOther("two", "episode:1")).toBe(true);
+    expect(claims.targetHeldByOther("one", "episode:1")).toBe(false);
+
+    claims.release("one");
+    expect(claims.tryClaimTargets("two", ["episode:2", "episode:3"])).toBe(true);
+  });
+
+  it("keeps an importing download's targets until its import is released", () => {
+    const claims = createDownloadClaims();
+    const importing = started("5");
+    claims.tryClaim("one");
+    claims.tryClaimTargets("one", ["episode:1"]);
+    claims.markImporting("one", importing);
+
+    expect(claims.targetHeldByOther("two", "episode:1")).toBe(true);
+    claims.releaseImport("one", importing);
+    expect(claims.targetHeldByOther("two", "episode:1")).toBe(false);
   });
 
   it("refuses a new claim when full and never evicts one", () => {

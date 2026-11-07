@@ -234,6 +234,9 @@ export async function createActivityInstances(): Promise<ActivityInstances> {
       state.commands.set(id, accepted);
       return jsonResponse(accepted, 201);
     }
+    if (method === "GET" && route === "command") {
+      return jsonResponse([...state.commands.values()]);
+    }
     const command = /^command\/(\d+)$/u.exec(route);
     if (method === "GET" && command !== null) {
       const accepted = state.commands.get(Number(command[1]));

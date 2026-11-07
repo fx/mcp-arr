@@ -1237,7 +1237,13 @@ describe("HTTP transport toolset selection", () => {
     const blocked = rows.find((row) => row.id === 502);
     const key = `sonarr\u0000id:${downloadIdentity(String(blocked?.downloadId))}`;
     state.downloadClaims.tryClaim(key);
-    state.downloadClaims.markImporting(key, { application: "sonarr", commandId: "3001" });
+    state.downloadClaims.markImporting(key, {
+      application: "sonarr",
+      commandId: "3001",
+      attemptedAt: Date.now(),
+      mediaId: 12,
+      episodeIds: [1003],
+    });
 
     const status = await harness.call(1, "tools/call", {
       name: "media_status",

@@ -1,4 +1,6 @@
+import { profileFor, readQueueForMedia } from "../../adapters/activity/media.js";
 import type { QueueItem } from "../../adapters/activity/model.js";
+import { readCommands } from "../../adapters/activity/shared.js";
 import {
   type CandidateOrigin,
   readMediaFolder,
@@ -10,10 +12,11 @@ import {
   isImportable,
   validateForImport,
 } from "../../adapters/import/corrections.js";
-import type { ImportFileRequest } from "../../adapters/import/execute.js";
+import { type ImportFileRequest, manualImportCommandName } from "../../adapters/import/execute.js";
 import type { ImportCandidate } from "../../adapters/import/model.js";
 import { commandGoneWarning, readCommandRecord } from "../../adapters/jobs.js";
 import type { MediaApplication } from "../../adapters/library/model.js";
+import { defaultScanLimit } from "../../adapters/library/paging.js";
 import {
   type EpisodeState,
   readEpisodeStates,
@@ -117,6 +120,8 @@ export const downloadReasons = {
   unverifiedSpace: "Free space for its files could not be confirmed.",
   changed: "Its files changed while they were being checked.",
   checkFailed: "Its files could not be checked because a request failed.",
+  targetBeingFixed: "Another download for the same movie or episode is being fixed.",
+  targetImporting: "Another download for the same movie or episode is being imported.",
 } as const;
 
 const failedStates = new Set(["failed", "failed_pending"]);
@@ -289,7 +294,7 @@ function matchedTo(
  * version sends. Only a record that says `hasFile: false` counts; one that
  * says nothing is a record that cannot confirm it.
  */
-async function libraryLacksFiles(
+export async function libraryFileProblem(
   adapter: ApplicationAdapter,
   application: MediaApplication,
   mediaId: number,
@@ -343,13 +348,65 @@ function fileRequest(candidate: ImportCandidate, mediaId: number): ImportFileReq
 }
 
 /**
+ * What keeps two imports out of one movie or episode.
+ *
+ * `others` are the title's other downloads that are being imported, upstream
+ * or by this process. `reserve` claims the import's targets for this download:
+ * `media_fix` takes them, all or none, and `media_status`, which acts on
+ * nothing, only asks whether another download holds one.
+ */
+export interface ImportGuard {
+  readonly others: readonly Download[];
+  reserve(targets: readonly string[]): boolean;
+}
+
+/** The claim key of one movie or episode an import is for. */
+export function targetKey(application: MediaApplication, id: number): string {
+  return `${application}\u0000${application === "radarr" ? "movie" : "episode"}:${id}`;
+}
+
+/** Whether another download being imported covers any of these movies or episodes. */
+function coveredByOthers(
+  application: MediaApplication,
+  mediaId: number,
+  mapped: readonly number[],
+  others: readonly Download[],
+): boolean {
+  return others.some((other) =>
+    other.rows.some((row) =>
+      application === "radarr"
+        ? row.context.mediaId === mediaId
+        : row.episode !== undefined && mapped.includes(Number(row.episode.id)),
+    ),
+  );
+}
+
+/**
+ * The downloads among these that are being imported, other than this one.
+ * A download this process is importing counts whatever its rows say.
+ */
+export function importingOthers(
+  context: MediaContext,
+  downloads: readonly Download[],
+  download: Download,
+): Download[] {
+  return downloads.filter(
+    (other) =>
+      other.key !== download.key &&
+      classifyDownload(other, importClaimed(context, other.key)).state === "importing",
+  );
+}
+
+/**
  * Confirms that a blocked import can be finished with no correction, or says
  * why not.
  *
  * Every check refuses rather than guesses, and the first refusal ends it: the
  * download's files are scanned through its first row; every file must be
- * matched to this title and importable as matched; the library's records must
- * show no file for anything they map to; and each file is re-decided by the
+ * matched to this title and importable as matched; no other download being
+ * imported may cover what they map to, and no other fix may hold it; the
+ * library's records must show no file for anything they map to; and each file
+ * is re-decided by the
  * instance, which imports nothing, then checked for room together with the
  * others. Only then are the files an import would submit returned.
  */
@@ -358,6 +415,7 @@ async function confirmImport(
   kind: TitleKind,
   mediaId: number,
   download: Download,
+  guard: ImportGuard,
 ): Promise<Confirmation> {
   const application = kindRoutes[kind].application;
   const first = download.rows[0];
@@ -401,7 +459,14 @@ async function confirmImport(
     mapped.push(...targets);
   }
 
-  const held = await libraryLacksFiles(adapter, application, mediaId, mapped);
+  if (coveredByOthers(application, mediaId, mapped, guard.others)) {
+    return { ok: false, reason: downloadReasons.targetImporting };
+  }
+  if (!guard.reserve(mapped.map((id) => targetKey(application, id)))) {
+    return { ok: false, reason: downloadReasons.targetBeingFixed };
+  }
+
+  const held = await libraryFileProblem(adapter, application, mediaId, mapped);
   if (held !== undefined) {
     return { ok: false, reason: held };
   }
@@ -459,12 +524,13 @@ export async function judgeDownload(
   mediaId: number,
   download: Download,
   importClaimed: boolean,
+  guard: ImportGuard,
 ): Promise<Judgement> {
   const classified = classifyDownload(download, importClaimed);
   if (classified.state !== "stuck" || classified.remedy !== "import") {
     return classified;
   }
-  const confirmed = await confirmImport(adapter, kind, mediaId, download);
+  const confirmed = await confirmImport(adapter, kind, mediaId, download, guard);
   return confirmed.ok
     ? {
         state: "stuck",
@@ -498,8 +564,104 @@ function commandEnded(observation: UpstreamCommandObservation): boolean {
 /** How many imports one refresh reads back at a time. */
 const refreshConcurrency = 4;
 
-/** Whether one claimed import's command has ended, or is gone; doubt keeps it. */
-async function importEnded(adapter: ApplicationAdapter, claimed: ClaimedImport): Promise<boolean> {
+/**
+ * How long an import whose answer was lost is held with no evidence either
+ * way, from when it was sent. Long enough for a queued import to run on an
+ * instance working through its backlog; short enough that a lost answer
+ * cannot hold a download, and a place in the bounded map, for the life of
+ * the process.
+ */
+export const uncertainImportHoldMs = 30 * 60 * 1000;
+
+/**
+ * How long after an import whose answer was lost the instance's command list
+ * is taken as evidence. Before that, a list with no unfinished import could
+ * be one the request has not reached yet.
+ */
+export const uncertainCommandWindowMs = 2 * 60 * 1000;
+
+/** Whether the library's records show a file for every movie or episode an import is for. */
+async function everyTargetHasFile(
+  adapter: ApplicationAdapter,
+  claimed: ClaimedImport,
+): Promise<boolean> {
+  if (claimed.application === "radarr") {
+    const record = await readLibraryTitleById(adapter.client, "radarr", claimed.mediaId);
+    return record?.hasFile === true;
+  }
+  const episodes = new Map(
+    (await readEpisodeStates(adapter.client, claimed.mediaId)).map((episode) => [
+      episode.id,
+      episode,
+    ]),
+  );
+  return (
+    claimed.episodeIds.length > 0 &&
+    claimed.episodeIds.every((id) => episodes.get(id)?.hasFile === true)
+  );
+}
+
+/**
+ * Whether there is evidence that an import whose answer was lost is over, or
+ * never arrived: its download has left the queue, the library has a file for
+ * everything it was for, or — once the request has had time to arrive — the
+ * instance lists no unfinished import at all. Past the hold bound it is
+ * released for want of evidence. A read that fails is no evidence.
+ */
+async function uncertainImportSettled(
+  context: MediaContext,
+  adapter: ApplicationAdapter,
+  key: string,
+  claimed: ClaimedImport,
+): Promise<boolean> {
+  const age = context.clock.now() - claimed.attemptedAt;
+  if (age >= uncertainImportHoldMs) {
+    return true;
+  }
+  if (claimed.application !== "sonarr" && claimed.application !== "radarr") {
+    return false;
+  }
+  try {
+    const rows = await readQueueForMedia(
+      adapter.client,
+      claimed.mediaId,
+      profileFor(claimed.application),
+      "summary",
+    );
+    if (!groupDownloads(rows.items).some((download) => download.key === key)) {
+      return true;
+    }
+    if (await everyTargetHasFile(adapter, claimed)) {
+      return true;
+    }
+    if (age < uncertainCommandWindowMs) {
+      return false;
+    }
+    const commands = await readCommands(
+      adapter.client,
+      { offset: 0, pageSize: defaultScanLimit },
+      claimed.application,
+    );
+    return !commands.items.some(
+      (command) =>
+        command.name === manualImportCommandName &&
+        (command.status === "queued" || command.status === "started"),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Whether one claimed import has ended, or is gone; doubt keeps it. */
+async function importEnded(
+  context: MediaContext,
+  adapter: ApplicationAdapter,
+  key: string,
+  claimed: ClaimedImport,
+): Promise<boolean> {
+  if (claimed.commandId === undefined) {
+    return uncertainImportSettled(context, adapter, key, claimed);
+  }
   try {
     const refresh = await readCommandRecord(adapter.client, claimed.application, claimed.commandId);
     return refresh.status === "observed" && commandEnded(refresh.observation);
@@ -510,17 +672,18 @@ async function importEnded(adapter: ApplicationAdapter, claimed: ClaimedImport):
 
 /**
  * Reads back every import this process started on one kind's instance, and
- * releases each claim whose command has ended or that the instance no longer
- * holds.
+ * releases each claim whose import has ended, is gone, or — for one whose
+ * answer was lost — is shown to be over or never to have arrived.
  *
  * It walks the claims themselves rather than the queue, because a finished
  * import's download normally leaves the queue, and a claim found only through
  * the queue would then never be released — the map would fill and refuse every
  * fix. Anything else — still queued or running, a state nobody recognizes, or a
  * read that failed — keeps its claim, because releasing one is what would let a
- * second import start; the map's bound caps what doubt can hold. Both
- * `media_status` and `media_fix` run it before they judge anything, so within
- * a call whether a download is being imported is {@link importClaimed}.
+ * second import start; the map's bound, and the hold bound on an import whose
+ * answer was lost, cap what doubt can hold. Both `media_status` and
+ * `media_fix` run it before they judge anything, so within a call whether a
+ * download is being imported is {@link importClaimed}.
  */
 export async function refreshImports(
   context: MediaContext,
@@ -532,8 +695,8 @@ export async function refreshImports(
   for (let index = 0; index < pending.length; index += refreshConcurrency) {
     await Promise.all(
       pending.slice(index, index + refreshConcurrency).map(async ([key, claimed]) => {
-        if (await importEnded(adapter, claimed)) {
-          context.claims.releaseImport(key, claimed.commandId);
+        if (await importEnded(context, adapter, key, claimed)) {
+          context.claims.releaseImport(key, claimed);
         }
       }),
     );

@@ -1,8 +1,9 @@
 import { profileFor, readQueueForMedia } from "../../adapters/activity/media.js";
 import { compileQueueTransition } from "../../adapters/activity/transitions.js";
-import { submitManualImport } from "../../adapters/import/execute.js";
+import { type ImportFileRequest, submitManualImport } from "../../adapters/import/execute.js";
 import { readEpisodeStates } from "../../adapters/library/titles.js";
 import type { ApplicationAdapter } from "../../adapters/registry.js";
+import { toolErrorProvesNoEffect } from "../errors.js";
 import type { MediaContext } from "./context.js";
 import {
   classifyDownload,
@@ -13,7 +14,9 @@ import {
   episodeNumbersOf,
   groupDownloads,
   importClaimed,
+  importingOthers,
   judgeDownload,
+  libraryFileProblem,
   refreshImports,
 } from "./downloads.js";
 import {
@@ -34,6 +37,8 @@ export const fixReasons = {
   noLongerStuck: "It is no longer stuck.",
   notReplaceable: "It cannot be replaced by this server.",
   requestFailed: "The change could not be made because a request failed.",
+  importUncertain:
+    "Its import may have started but no answer came back, so it is not started again until that is known.",
 } as const;
 
 export interface FixRequest {
@@ -55,6 +60,66 @@ type Outcome = Pick<FixedDownload, "action" | "reason">;
 
 function none(reason: string): Outcome {
   return { action: "none", reason };
+}
+
+/**
+ * Submits an import this call has confirmed, keeping the download's claim for
+ * as long as the import may still be running.
+ *
+ * The library's records for every approved movie or episode are read once
+ * more after every file has been recovered, immediately before the command is
+ * sent, and a file found there withholds it. A failure before the command is
+ * sent proves nothing was started, and is thrown for {@link fixOne} to release.
+ * A failure after it may have reached the instance — no answer, or one that
+ * could not be read — leaves the outcome unknown, so the claim is kept with no
+ * command to follow and is reconciled by later calls; reporting the download
+ * as importing and refusing a second import until then is what keeps a lost
+ * answer from becoming two imports.
+ */
+async function startImport(
+  scope: FixScope,
+  key: string,
+  files: readonly ImportFileRequest[],
+): Promise<Outcome> {
+  const { context, adapter, kind, mediaId } = scope;
+  const claims = context.claims;
+  const application = kindRoutes[kind].application;
+  const episodeIds = [...new Set(files.flatMap((file) => file.approved?.episodeIds ?? []))];
+  const attemptedAt = context.clock.now();
+  let sent = false;
+  let gained: string | undefined;
+  let submission: Awaited<ReturnType<typeof submitManualImport>>;
+  try {
+    submission = await submitManualImport(adapter.client, application, files, "auto", {
+      confirm: async () => {
+        gained = await libraryFileProblem(adapter, application, mediaId, [
+          ...(application === "radarr" ? [mediaId] : episodeIds),
+        ]);
+        sent = gained === undefined;
+        return sent;
+      },
+    });
+  } catch (error) {
+    const failure = mediaErrorFor(kind, error);
+    if (!sent || toolErrorProvesNoEffect(failure.code)) {
+      throw error;
+    }
+    claims.markImporting(key, { application, attemptedAt, mediaId, episodeIds });
+    scope.errors.push(failure);
+    return none(fixReasons.importUncertain);
+  }
+  if (submission.status !== "ok") {
+    claims.release(key);
+    return none(gained ?? downloadReasons.changed);
+  }
+  claims.markImporting(key, {
+    application,
+    commandId: submission.command.upstreamId,
+    attemptedAt,
+    mediaId,
+    episodeIds,
+  });
+  return { action: "import_started" };
 }
 
 /**
@@ -91,12 +156,18 @@ async function fixOne(scope: FixScope, download: Download): Promise<Outcome> {
       profileFor(application),
       "summary",
     );
-    const current = groupDownloads(fresh.items).find((candidate) => candidate.key === key);
+    const downloads = groupDownloads(fresh.items);
+    const current = downloads.find((candidate) => candidate.key === key);
     if (current === undefined) {
       claims.release(key);
       return none(fixReasons.noLongerStuck);
     }
-    const judgement = await judgeDownload(adapter, kind, mediaId, current, false);
+    // An import claims every movie or episode it is for, with the download's
+    // own claim, before the library is asked whether they have a file.
+    const judgement = await judgeDownload(adapter, kind, mediaId, current, false, {
+      others: importingOthers(context, downloads, current),
+      reserve: (targets) => claims.tryClaimTargets(key, targets),
+    });
     if (judgement.state !== "stuck") {
       claims.release(key);
       return none(fixReasons.noLongerStuck);
@@ -135,18 +206,7 @@ async function fixOne(scope: FixScope, download: Download): Promise<Outcome> {
     }
 
     if (judgement.remedy === "import") {
-      const submission = await submitManualImport(
-        adapter.client,
-        application,
-        judgement.files,
-        "auto",
-      );
-      if (submission.status !== "ok") {
-        claims.release(key);
-        return none(downloadReasons.changed);
-      }
-      claims.markImporting(key, { application, commandId: submission.command.upstreamId });
-      return { action: "import_started" };
+      return await startImport(scope, key, judgement.files);
     }
 
     claims.release(key);
