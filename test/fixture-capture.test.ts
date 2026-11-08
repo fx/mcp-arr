@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -172,7 +172,7 @@ describe("fixture capture procedure", () => {
     expect(stderr).toContain("calls itself Radarr, not Sonarr");
   });
 
-  it("refuses an instance that is not the version the fixtures name", async () => {
+  it("refuses an instance at a version no fixture is recorded at", async () => {
     const url = await startStub({
       "/api/v3/system/status": { body: JSON.stringify({ appName: "Sonarr", version: "4.1.0.1" }) },
       "/api/v3/tag": { body: "[]" },
@@ -185,7 +185,50 @@ describe("fixture capture procedure", () => {
     );
 
     expect(stderr).toContain("reports 4.1.0.1");
-    expect(stderr).toContain("4.0.19.2979");
+    expect(stderr).toContain("recorded only at 4.0.19.2979, 4.0.20.3014");
+  });
+
+  it("refuses an instance that reports no version at all", async () => {
+    const url = await startStub({
+      "/api/v3/system/status": { body: JSON.stringify({ appName: "Sonarr" }) },
+      "/api/v3/tag": { body: "[]" },
+    });
+
+    const stderr = await expectRefusal(
+      url,
+      ["--application", "sonarr", "--route", "tag"],
+      "sonarr/v3/4.0.19.2979/tag.json",
+    );
+
+    expect(stderr).toContain("reports an unreported version");
+  });
+
+  it("refuses a newer recorded version for a route approved only at another", async () => {
+    // The instance is at a version fixtures may be recorded at, but this route
+    // is approved only at the minimum. Its body is evidence for the version it
+    // came from alone, so it is neither written there unapproved nor filed
+    // under the minimum's name.
+    const fixtureRoot = await temporaryFixtureRoot();
+    const url = await startStub({
+      "/api/v3/system/status": {
+        body: JSON.stringify({ appName: "Sonarr", version: "4.0.20.3014" }),
+      },
+      "/api/v3/tag": { body: "[]" },
+    });
+
+    const { code, stderr } = await runCapture(url, [
+      "--application",
+      "sonarr",
+      "--route",
+      "tag",
+      "--fixture-root",
+      fixtureRoot,
+    ]);
+
+    expect(code).toBe(1);
+    expect(stderr).toContain("reports 4.0.20.3014, a recorded version");
+    expect(stderr).toContain("tag is approved only at 4.0.19.2979");
+    await expect(readdir(fixtureRoot)).resolves.toEqual([]);
   });
 
   it("refuses a route the inventory does not approve, before reading anything", async () => {

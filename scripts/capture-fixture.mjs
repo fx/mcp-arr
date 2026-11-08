@@ -14,6 +14,13 @@
  * request no adapter sends, and a screen this side did not know about is
  * exactly how an unsanitized value reaches a committed file.
  *
+ * Which recorded version a fixture is written under is the version the instance
+ * reports, not a choice made here. An instance at an application's minimum
+ * supported version records the minimum's fixtures; an instance at a newer
+ * recorded version records only the routes approved at that version, under
+ * that version's directory, and leaves the minimum's fixtures as they are. An
+ * instance at any other version is refused.
+ *
  * Usage:
  *   npm run build
  *   node scripts/capture-fixture.mjs --application sonarr --route manualimport \
@@ -31,7 +38,12 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { approvedFixtures, validateFixture, validateSanitizedValue } from "./fixture-contract.mjs";
+import {
+  approvedFixtures,
+  captureTargetFor,
+  validateFixture,
+  validateSanitizedValue,
+} from "./fixture-contract.mjs";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const defaultFixtureRoot = path.join(projectRoot, "test", "fixtures");
@@ -323,17 +335,22 @@ async function main() {
     fail(`Unknown application: ${options.application}`);
   }
 
-  const approved = approvedFixtures.find(
+  // Refused before the instance is contacted when no recorded version approves
+  // the route at all; which version's fixture it becomes waits on the status.
+  const routeFixtures = approvedFixtures.filter(
     (candidate) =>
       candidate.application === options.application && candidate.route === options.route,
   );
-  if (approved === undefined) {
-    const routes = approvedFixtures
-      .filter((candidate) => candidate.application === options.application)
-      .map((candidate) => candidate.route);
+  const [routeFixture] = routeFixtures;
+  if (routeFixture === undefined) {
+    const routes = new Set(
+      approvedFixtures
+        .filter((candidate) => candidate.application === options.application)
+        .map((candidate) => candidate.route),
+    );
     fail(
       `${options.application} records no fixture for route ${options.route}.\n` +
-        `Approved routes: ${routes.join(", ")}`,
+        `Approved routes: ${[...routes].join(", ")}`,
     );
   }
 
@@ -353,11 +370,13 @@ async function main() {
   const client = http.createUpstreamClient({
     application: options.application,
     baseUrl: instance.baseUrl,
-    // The API base comes from the tuple the fixture will name, not from the
-    // application descriptor, so the request and the recorded metadata cannot
-    // disagree: were the two to drift, a body read from one API version could
-    // otherwise be committed as the answer of another.
-    apiBasePath: `/api/${approved.apiVersion}`,
+    // The API base comes from the recorded inventory the fixture will be named
+    // by, not from the application descriptor, so the request and the recorded
+    // metadata cannot disagree: were the two to drift, a body read from one API
+    // version could otherwise be committed as the answer of another. Every
+    // recorded version of one application shares its API version, so it is
+    // known before the status says which version this instance is.
+    apiBasePath: `/api/${routeFixture.apiVersion}`,
     apiKey: instance.apiKey,
     timeoutMs: requestTimeoutMs,
   });
@@ -370,7 +389,7 @@ async function main() {
   // route its application does not serve.
   const statusRoute = "system/status";
   const status = await readRoute(client, statusRoute);
-  const expectedAppName = `${approved.application[0].toUpperCase()}${approved.application.slice(1)}`;
+  const expectedAppName = `${options.application[0].toUpperCase()}${options.application.slice(1)}`;
   if (status?.appName !== expectedAppName) {
     fail(
       `The instance ${descriptor.urlVariable} names calls itself ` +
@@ -378,14 +397,27 @@ async function main() {
         `${expectedAppName}. Point that variable at a ${expectedAppName} instance.`,
     );
   }
-  const reported = typeof status?.version === "string" ? status.version : "an unreported version";
-  if (reported !== approved.version) {
+  const reportedVersion = typeof status?.version === "string" ? status.version : undefined;
+  const reported = reportedVersion ?? "an unreported version";
+  const target = captureTargetFor(options.application, options.route, reportedVersion);
+  if (target.kind === "unrecorded-version") {
     fail(
-      `The configured ${options.application} instance reports ${reported}, and the ` +
-        `recorded fixtures name ${approved.version}. Capture from an instance at ` +
-        "the recorded version, or raise the recorded version deliberately first.",
+      `The configured ${options.application} instance reports ${reported}, and ` +
+        `${options.application} fixtures are recorded only at ` +
+        `${target.recordedVersions.join(", ")}. Capture from an instance at a ` +
+        "recorded version, or record its version deliberately first.",
     );
   }
+  if (target.kind === "route-not-recorded-at-version") {
+    fail(
+      `The configured ${options.application} instance reports ${reported}, a recorded ` +
+        `version, but ${options.route} is approved only at ` +
+        `${target.routeVersions.join(", ")}. A body from this instance is evidence ` +
+        `for ${reported} alone; approve ${options.route} at ${reported} deliberately ` +
+        "first rather than writing it under another version.",
+    );
+  }
+  const approved = target.fixture;
 
   // The status route has already been read, and reading it twice would record
   // the second answer while having checked the first.
