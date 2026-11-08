@@ -97,6 +97,7 @@ What implementing them requires of this change:
 Choices the specs left open, made the safe way when this change was implemented:
 
 - A `media_find` call that could search no kind at all fails with each kind's error in `errors` rather than listing every kind as unavailable in a successful result.
+- A `media_find` text that is only whitespace names nothing to search for, so it is refused as `invalid_input` by a published pattern before any instance is asked, and surrounding whitespace is removed from the text that is searched for.
 - "Nearest" resolution is measured in steps of the five-step ladder, so 1080p is as near to 720p as to 2160p and the lower wins.
 - A create the instance did not confirm, or that failed in a way that does not prove nothing happened, is settled by re-reading the candidate: a title now in the library is reported `added`. A refusal that proves nothing happened and a title now in the library is `already_in_library`.
 - A configured root folder or quality profile is matched exactly as written, so a trailing separator or a different case is reported as `deployment_configuration` rather than guessed at.

@@ -93,7 +93,7 @@ function listing(toolset: string | undefined): Promise<PublishedListing> {
  * The most the `media` listing may cost on the wire, in bytes.
  *
  * A recorded measurement plus a margin, as the `arr` listing's ceiling is: it
- * was read off a spawned server at 4,643 bytes with `media_find` and
+ * was read off a spawned server at 4,659 bytes with `media_find` and
  * `media_add` published. The Media Toolset specification caps the complete
  * listing at 12,000 bytes once all six tools exist, and this ceiling sits far
  * below that so it guards what is published today rather than what may be.
@@ -159,6 +159,11 @@ describe("media toolset over stdio", () => {
     }
     // The bound left validation's published shape and is restated in prose.
     expect(tools[0]?.inputSchema?.description).toContain("text 200");
+    // Text that is only whitespace is refused by a published pattern, so a
+    // caller can see the rule a length alone would not state.
+    expect(
+      (tools[0]?.inputSchema?.properties as Record<string, Record<string, unknown>>)?.text?.pattern,
+    ).toBe("\\S");
 
     assertCleanProtocolStdout(stdout);
     expect(stderr).toBe("");

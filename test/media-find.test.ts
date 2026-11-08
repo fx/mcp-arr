@@ -265,6 +265,26 @@ describe("media_find", () => {
     expect(result.isError).toBe(false);
   });
 
+  it("refuses a search text that is only whitespace before asking any instance", async () => {
+    for (const text of [" ", "   ", "\t\n"]) {
+      const { result, content } = await find({ text });
+      expect(result.isError, JSON.stringify(text)).toBe(true);
+      expect(content.errors.map((error) => error.code)).toEqual(["invalid_input"]);
+    }
+    expect(instances.requests).toEqual([]);
+  });
+
+  it("searches for the text without its surrounding whitespace", async () => {
+    const { result } = await find({ text: " Dune \t", kind: "movie" });
+
+    expect(result.isError).toBe(false);
+    expect(
+      instances.requests
+        .filter((request) => request.route === "movie/lookup")
+        .map((request) => request.query.term),
+    ).toEqual(["Dune"]);
+  });
+
   it("returns no credential, address, route, or application name, whatever fails", async () => {
     const outcomes = [await find({ text: "Example" })];
     instances.failRoute("sonarr", "series/lookup", 401);

@@ -26,9 +26,21 @@ export const resolutionSchema = z.enum(resolutions);
 /** The longest search text `media_find` accepts, in characters. */
 export const maxFindTextLength = 200;
 
+/**
+ * A search text: at least one character that is not whitespace, published as a
+ * pattern so a caller sees the rule, and searched for with its surrounding
+ * whitespace removed. Text that is only whitespace names nothing to search for,
+ * and sending it upstream would turn a caller's mistake into a failure of the
+ * source.
+ */
 export const findInputSchema = objectInput(
   z.strictObject({
-    text: z.string().min(1).max(maxFindTextLength),
+    text: z
+      .string()
+      .min(1)
+      .max(maxFindTextLength)
+      .regex(/\S/u)
+      .transform((text) => text.trim()),
     kind: titleKindSchema.optional(),
   }),
 );
