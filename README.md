@@ -246,10 +246,12 @@ npx biome check --write test/fixtures
 
 The capture reads one route from the instance the usual environment variables name, sanitizes what it read, and writes the fixture the inventory approves for that route. Running the test suite never does any of this: the suite needs no instance, no network, and no credentials, and the capture is deliberately outside it.
 
+Fixtures may be recorded at more than one version of an application. Each application's minimum supported version keeps its full set, and those remain the evidence that the minimum works. A newer recorded version holds only the routes a change has approved there, for a body only a newer instance returns, and a fixture recorded there is evidence for that version alone. Which of them a capture writes is decided by the version the instance reports: it writes under that version's directory, and only a route approved at that version. A test reads the minimum's fixture unless it names the version it wants, as `fixturePathFor(application, route, { version })`.
+
 It refuses rather than writing whenever it cannot stand behind what it read:
 
 - the route is not one the inventory approves for that application;
-- the instance is not the version the recorded fixtures name;
+- the instance is not at a version fixtures are recorded at, or the route is not approved at the version it is at;
 - the application answers the route with `404`, or with its web interface instead of JSON — which is what an unrecognized API path is served, with a `200`;
 - the sanitized body still trips one of the fixture screens.
 

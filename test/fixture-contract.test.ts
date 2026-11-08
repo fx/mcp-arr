@@ -7,10 +7,14 @@ import {
   approvedFixtureInventory,
   approvedFixtures,
   approvedFixtureTuples,
+  captureTargetFor,
+  createFixtureInventory,
   type FixtureTuple,
   type FixtureVersion,
   fixturePathFor,
   loadFixture,
+  minimumFixtureTuples,
+  type RecordedApplication,
   validateFixture,
 } from "./support/fixtures.js";
 
@@ -166,11 +170,21 @@ describe("versioned fixture contract", () => {
     // list is what catches drift the other way.
     const declared: Record<FixtureVersion, FixtureTuple> = {
       "4.0.19.2979": { application: "sonarr", apiVersion: "v3", version: "4.0.19.2979" },
+      "4.0.20.3014": { application: "sonarr", apiVersion: "v3", version: "4.0.20.3014" },
       "6.3.0.10514": { application: "radarr", apiVersion: "v3", version: "6.3.0.10514" },
+      "6.4.4.10685": { application: "radarr", apiVersion: "v3", version: "6.4.4.10685" },
       "2.5.2.5491": { application: "prowlarr", apiVersion: "v1", version: "2.5.2.5491" },
+      "2.7.0.5723": { application: "prowlarr", apiVersion: "v1", version: "2.7.0.5723" },
     };
 
     expect(new Set(approvedFixtureTuples)).toEqual(new Set(Object.values(declared)));
+    // The minimum is what every test that names no version is evidence for,
+    // and it is the version the application descriptors record as supported.
+    expect(minimumFixtureTuples).toEqual([
+      declared["4.0.19.2979"],
+      declared["6.3.0.10514"],
+      declared["2.5.2.5491"],
+    ]);
   });
 
   it("rejects a fixture whose endpoint is not the one its file records", () => {
@@ -367,5 +381,175 @@ describe("versioned fixture contract", () => {
     ];
 
     expect(() => validate(fixture)).not.toThrow();
+  });
+});
+
+describe("fixtures recorded at more than one version", () => {
+  const minimumRoutes = ["system/status", "tag"];
+  const recorded: Record<string, RecordedApplication> = {
+    sonarr: {
+      apiVersion: "v3",
+      minimum: "4.0.19.2979",
+      routes: { "4.0.19.2979": minimumRoutes, "4.0.20.3014": ["tag", "series/lookup"] },
+    },
+    radarr: { apiVersion: "v3", minimum: "6.3.0.10514", routes: { "6.3.0.10514": ["tag"] } },
+  };
+
+  it("records a newer version's routes under that version, beside the minimum's", () => {
+    const inventory = createFixtureInventory(recorded);
+
+    expect(inventory.inventory).toEqual([
+      "sonarr/v3/4.0.19.2979/system-status.json",
+      "sonarr/v3/4.0.19.2979/tag.json",
+      "sonarr/v3/4.0.20.3014/tag.json",
+      "sonarr/v3/4.0.20.3014/series-lookup.json",
+      "radarr/v3/6.3.0.10514/tag.json",
+    ]);
+    expect(inventory.fixtures.find(({ version }) => version === "4.0.20.3014")).toMatchObject({
+      application: "sonarr",
+      apiVersion: "v3",
+      route: "tag",
+      endpoint: "/api/v3/tag",
+    });
+    expect(inventory.minimumTuples).toEqual([
+      { application: "sonarr", apiVersion: "v3", version: "4.0.19.2979" },
+      { application: "radarr", apiVersion: "v3", version: "6.3.0.10514" },
+    ]);
+    expect(inventory.tuples).toHaveLength(3);
+  });
+
+  it("resolves the minimum's fixture unless a test names another version", () => {
+    const inventory = createFixtureInventory(recorded);
+
+    // A route recorded at both versions still resolves to the minimum's by
+    // default, so recording a newer body never changes what an existing test
+    // reads.
+    expect(inventory.pathFor("sonarr", "tag")).toBe("sonarr/v3/4.0.19.2979/tag.json");
+    expect(inventory.pathFor("sonarr", "tag", { version: "4.0.19.2979" })).toBe(
+      "sonarr/v3/4.0.19.2979/tag.json",
+    );
+    expect(inventory.pathFor("sonarr", "tag", { version: "4.0.20.3014" })).toBe(
+      "sonarr/v3/4.0.20.3014/tag.json",
+    );
+    // A route recorded only at a newer version is never handed to a test that
+    // did not ask for that version: it is no evidence about the minimum.
+    expect(() => inventory.pathFor("sonarr", "series/lookup")).toThrow(
+      "No approved fixture for sonarr series/lookup",
+    );
+    expect(inventory.pathFor("sonarr", "series/lookup", { version: "4.0.20.3014" })).toBe(
+      "sonarr/v3/4.0.20.3014/series-lookup.json",
+    );
+    expect(() => inventory.pathFor("sonarr", "system/status", { version: "4.0.20.3014" })).toThrow(
+      "No approved fixture for sonarr system/status at 4.0.20.3014",
+    );
+    expect(() => inventory.pathFor("sonarr", "tag", { version: "4.0.21.1" })).toThrow(
+      "No approved fixture for sonarr tag at 4.0.21.1",
+    );
+  });
+
+  it("selects a capture's fixture from the version the instance reports", () => {
+    const inventory = createFixtureInventory(recorded);
+
+    expect(inventory.forReportedVersion("sonarr", "tag", "4.0.20.3014")).toEqual({
+      kind: "approved",
+      fixture: expect.objectContaining({ relativePath: "sonarr/v3/4.0.20.3014/tag.json" }),
+    });
+    expect(inventory.forReportedVersion("sonarr", "tag", "4.0.19.2979")).toEqual({
+      kind: "approved",
+      fixture: expect.objectContaining({ relativePath: "sonarr/v3/4.0.19.2979/tag.json" }),
+    });
+    expect(inventory.forReportedVersion("sonarr", "system/status", "4.0.20.3014")).toEqual({
+      kind: "route-not-recorded-at-version",
+      routeVersions: ["4.0.19.2979"],
+    });
+    for (const reported of ["4.0.21.1", undefined]) {
+      expect(inventory.forReportedVersion("sonarr", "tag", reported)).toEqual({
+        kind: "unrecorded-version",
+        recordedVersions: ["4.0.19.2979", "4.0.20.3014"],
+      });
+    }
+  });
+
+  it("refuses a record that breaks one fixture per application, version and route", () => {
+    expect(() =>
+      createFixtureInventory({
+        sonarr: {
+          apiVersion: "v3",
+          minimum: "4.0.19.2979",
+          routes: { "4.0.19.2979": ["tag", "tag"] },
+        },
+      }),
+    ).toThrow("Fixture is approved twice: sonarr/v3/4.0.19.2979/tag.json");
+    expect(() =>
+      createFixtureInventory({
+        sonarr: { apiVersion: "v3", minimum: "4.0.19.2979", routes: { "4.0.20.3014": ["tag"] } },
+      }),
+    ).toThrow("sonarr records no routes at its minimum version 4.0.19.2979");
+    expect(() =>
+      createFixtureInventory({
+        sonarr: { apiVersion: "v3", minimum: "4.0.19.2979", routes: { "4.0.19.2979": [] } },
+      }),
+    ).toThrow("sonarr records no routes at its minimum version 4.0.19.2979");
+    // A malformed label is refused even where there is no other version to
+    // order it against.
+    expect(() =>
+      createFixtureInventory({
+        sonarr: { apiVersion: "v3", minimum: "invalid", routes: { invalid: ["tag"] } },
+      }),
+    ).toThrow("Recorded fixture version is not a dotted numeric version: invalid");
+    // A version beside the minimum is a newer one by definition; an older one
+    // would be a minimum nobody lowered deliberately.
+    expect(() =>
+      createFixtureInventory({
+        sonarr: {
+          apiVersion: "v3",
+          minimum: "4.0.19.2979",
+          routes: { "4.0.19.2979": ["tag"], "4.0.9.2000": [] },
+        },
+      }),
+    ).toThrow("sonarr 4.0.9.2000 is recorded beside its minimum 4.0.19.2979 but is not newer");
+    expect(() =>
+      createFixtureInventory({
+        sonarr: {
+          apiVersion: "v3",
+          minimum: "4.0.19.2979",
+          routes: { "4.0.19.2979": ["tag"], "4.0.20-beta": [] },
+        },
+      }),
+    ).toThrow("Recorded fixture version is not a dotted numeric version: 4.0.20-beta");
+  });
+
+  it("holds the real record's newer versions to the routes approved there", () => {
+    expect(fixturePathFor("sonarr", "tag")).toBe(
+      fixturePathFor("sonarr", "tag", { version: "4.0.19.2979" }),
+    );
+    expect(() => fixturePathFor("sonarr", "tag", { version: "4.0.20.3014" })).toThrow(
+      "No approved fixture for sonarr tag at 4.0.20.3014",
+    );
+    // The version is typed by the application it is passed with, so a version
+    // another application records at does not compile, let alone resolve.
+    // @ts-expect-error 6.3.0.10514 is a Radarr version.
+    expect(() => fixturePathFor("sonarr", "tag", { version: "6.3.0.10514" })).toThrow();
+    expect(captureTargetFor("radarr", "tag", "6.4.4.10685")).toEqual({
+      kind: "route-not-recorded-at-version",
+      routeVersions: ["6.3.0.10514"],
+    });
+    expect(captureTargetFor("prowlarr", "tag", "2.6.0.1")).toEqual({
+      kind: "unrecorded-version",
+      recordedVersions: ["2.5.2.5491", "2.7.0.5723"],
+    });
+
+    // A newer version's tuple is approved, so a fixture labelled with it gets
+    // as far as the route check — and is refused there until its route is.
+    const newer = validFixture();
+    Object.assign(newer.metadata as Record<string, unknown>, { version: "4.0.20.3014" });
+    Object.assign(newer.body as Record<string, unknown>, { version: "4.0.20.3014" });
+    expect(() => validate(newer, "sonarr/v3/4.0.20.3014/system-status.json")).toThrow(
+      "Fixture is not in the approved inventory: sonarr/v3/4.0.20.3014/system-status.json",
+    );
+    // And a body recorded at the minimum cannot be filed under a newer version.
+    expect(() => validate(validFixture(), "sonarr/v3/4.0.20.3014/system-status.json")).toThrow(
+      "Fixture version label does not match metadata",
+    );
   });
 });

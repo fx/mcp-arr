@@ -15,97 +15,128 @@ import path from "node:path";
  * reaches a committed file.
  */
 
-export const approvedFixtureTuples = [
-  { application: "sonarr", apiVersion: "v3", version: "4.0.19.2979" },
-  { application: "radarr", apiVersion: "v3", version: "6.3.0.10514" },
-  { application: "prowlarr", apiVersion: "v1", version: "2.5.2.5491" },
-];
-
 /**
- * The upstream routes this project records a fixture for, per application.
+ * The versions this project records fixtures at, and the upstream routes it
+ * records at each, per application.
  *
- * Adding a route here is what authorizes a new fixture file: the file name, the
- * approved inventory, and the endpoint each fixture must declare are all
- * derived from this list, so a fixture cannot claim to be the response of one
- * route while living under the name of another.
+ * An application's `minimum` is the version the Architecture spec records as
+ * its minimum supported version, and the fixtures recorded there are the
+ * evidence for that minimum. Every other version listed is a newer one a
+ * fixture was captured from, and a fixture recorded there is evidence only for
+ * the version it names: it never stands in for the minimum, and it never
+ * replaces one recorded there. Recording at a newer version does not raise the
+ * minimum either; that is a decision about the implementation, not about which
+ * instance happened to answer.
+ *
+ * Adding a route under a version is what authorizes a new fixture file: the
+ * file name, the approved inventory, and the endpoint each fixture must declare
+ * are all derived from this record, so a fixture cannot claim to be the
+ * response of one route or one version while living under the name of another.
+ * A newer version starts with no routes, and each change that needs a body only
+ * a newer instance can give adds its route there.
+ *
+ * One API version per application, because the route list is stated against
+ * it: an instance that served the same routes under another API version would
+ * be a different contract, not a newer recording of this one.
  */
-const approvedRoutes = {
-  sonarr: [
-    "system/status",
-    "series",
-    "series/lookup",
-    "episode",
-    "episodefile",
-    "rename",
-    "wanted/missing",
-    "wanted/cutoff",
-    "calendar",
-    "release",
-    "queue/status",
-    "queue",
-    "queue/details",
-    "manualimport",
-    "history",
-    "history/series",
-    "blocklist",
-    "health",
-    "command",
-    "diskspace",
-    "rootfolder",
-    "qualityprofile",
-    "qualitydefinition",
-    "language",
-    "tag",
-    "indexer",
-    "importlist",
-    "config/downloadclient",
-    "importlistexclusion/paged",
-  ],
-  radarr: [
-    "system/status",
-    "movie",
-    "movie/lookup",
-    "collection",
-    "moviefile",
-    "rename",
-    "wanted/missing",
-    "wanted/cutoff",
-    "calendar",
-    "release",
-    "queue/status",
-    "queue",
-    "queue/details",
-    "manualimport",
-    "history",
-    "history/movie",
-    "blocklist",
-    "health",
-    "command",
-    "diskspace",
-    "rootfolder",
-    "qualityprofile",
-    "qualitydefinition",
-    "language",
-    "tag",
-    "downloadclient",
-    "config/downloadclient",
-    "customformat",
-    "exclusions/paged",
-  ],
-  prowlarr: [
-    "system/status",
-    "indexer",
-    "indexerstatus",
-    "search",
-    "history",
-    "health",
-    "command",
-    "indexerstats",
-    "applications",
-    "notification",
-    "appprofile",
-    "tag",
-  ],
+const recordedVersions = {
+  sonarr: {
+    apiVersion: "v3",
+    minimum: "4.0.19.2979",
+    routes: {
+      "4.0.19.2979": [
+        "system/status",
+        "series",
+        "series/lookup",
+        "episode",
+        "episodefile",
+        "rename",
+        "wanted/missing",
+        "wanted/cutoff",
+        "calendar",
+        "release",
+        "queue/status",
+        "queue",
+        "queue/details",
+        "manualimport",
+        "history",
+        "history/series",
+        "blocklist",
+        "health",
+        "command",
+        "diskspace",
+        "rootfolder",
+        "qualityprofile",
+        "qualitydefinition",
+        "language",
+        "tag",
+        "indexer",
+        "importlist",
+        "config/downloadclient",
+        "importlistexclusion/paged",
+      ],
+      "4.0.20.3014": [],
+    },
+  },
+  radarr: {
+    apiVersion: "v3",
+    minimum: "6.3.0.10514",
+    routes: {
+      "6.3.0.10514": [
+        "system/status",
+        "movie",
+        "movie/lookup",
+        "collection",
+        "moviefile",
+        "rename",
+        "wanted/missing",
+        "wanted/cutoff",
+        "calendar",
+        "release",
+        "queue/status",
+        "queue",
+        "queue/details",
+        "manualimport",
+        "history",
+        "history/movie",
+        "blocklist",
+        "health",
+        "command",
+        "diskspace",
+        "rootfolder",
+        "qualityprofile",
+        "qualitydefinition",
+        "language",
+        "tag",
+        "downloadclient",
+        "config/downloadclient",
+        "customformat",
+        "exclusions/paged",
+      ],
+      "6.4.4.10685": [],
+    },
+  },
+  prowlarr: {
+    apiVersion: "v1",
+    minimum: "2.5.2.5491",
+    routes: {
+      "2.5.2.5491": [
+        "system/status",
+        "indexer",
+        "indexerstatus",
+        "search",
+        "history",
+        "health",
+        "command",
+        "indexerstats",
+        "applications",
+        "notification",
+        "appprofile",
+        "tag",
+      ],
+      "2.7.0.5723": [],
+    },
+  },
 };
 
 /** The file that records one route's response. */
@@ -113,30 +144,173 @@ export function fixtureFileForRoute(route) {
   return `${route.replaceAll("/", "-")}.json`;
 }
 
-export const approvedFixtures = approvedFixtureTuples.flatMap(
-  ({ application, apiVersion, version }) =>
-    approvedRoutes[application].map((route) => ({
-      application,
-      apiVersion,
-      version,
-      route,
-      endpoint: `/api/${apiVersion}/${route}`,
-      relativePath: `${application}/${apiVersion}/${version}/${fixtureFileForRoute(route)}`,
-    })),
-);
-
-export const approvedFixtureInventory = approvedFixtures.map(({ relativePath }) => relativePath);
-
-/** The recorded fixture for one application's route, for a test to load. */
-export function fixturePathFor(application, route) {
-  const approved = approvedFixtures.find(
-    (candidate) => candidate.application === application && candidate.route === route,
-  );
-  if (approved === undefined) {
-    throw new Error(`No approved fixture for ${application} ${route}`);
+/**
+ * Orders two dotted numeric version labels, as these applications report them.
+ *
+ * A label that is not dotted digits is refused rather than ordered, since a
+ * recorded version is an exact build an instance reported and anything else is
+ * a typing error in the record above.
+ */
+function requireVersionLabel(label) {
+  if (!/^\d+(?:\.\d+)*$/u.test(label)) {
+    throw new Error(`Recorded fixture version is not a dotted numeric version: ${label}`);
   }
-  return approved.relativePath;
+  return label.split(".").map(Number);
 }
+
+function compareVersions(left, right) {
+  const [a, b] = [requireVersionLabel(left), requireVersionLabel(right)];
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const difference = (a[index] ?? 0) - (b[index] ?? 0);
+    if (difference !== 0) {
+      return Math.sign(difference);
+    }
+  }
+  return 0;
+}
+
+/**
+ * Derives the approved inventory, and the lookups over it, from a record shaped
+ * like {@link recordedVersions}.
+ *
+ * Exported so the derivation can be exercised against a record holding a newer
+ * version with routes in it before the real one does; the module's own exports
+ * are this function applied to the real record, so there is one derivation and
+ * not a second copy for tests.
+ */
+export function createFixtureInventory(recorded) {
+  const tuples = [];
+  const minimumTuples = [];
+  const fixtures = [];
+
+  for (const [application, { apiVersion, minimum, routes }] of Object.entries(recorded)) {
+    // The minimum is the evidence every test that names no version reads, so
+    // it has to hold fixtures; a newer version may start empty.
+    if (!Object.hasOwn(routes, minimum) || routes[minimum].length === 0) {
+      throw new Error(`${application} records no routes at its minimum version ${minimum}`);
+    }
+    for (const [version, versionRoutes] of Object.entries(routes)) {
+      // Every label is held to the format on its own, not only when there is
+      // a second version to order it against.
+      requireVersionLabel(version);
+      if (version !== minimum && compareVersions(version, minimum) <= 0) {
+        throw new Error(
+          `${application} ${version} is recorded beside its minimum ${minimum} but is not newer`,
+        );
+      }
+      const tuple = { application, apiVersion, version };
+      tuples.push(tuple);
+      if (version === minimum) {
+        minimumTuples.push(tuple);
+      }
+      for (const route of versionRoutes) {
+        const relativePath = `${application}/${apiVersion}/${version}/${fixtureFileForRoute(route)}`;
+        // One fixture per application, version and route: a second entry would
+        // name the same file, and only one body can live there.
+        if (fixtures.some((fixture) => fixture.relativePath === relativePath)) {
+          throw new Error(`Fixture is approved twice: ${relativePath}`);
+        }
+        fixtures.push({
+          application,
+          apiVersion,
+          version,
+          route,
+          endpoint: `/api/${apiVersion}/${route}`,
+          relativePath,
+        });
+      }
+    }
+  }
+
+  const find = (application, route, version) =>
+    fixtures.find(
+      (candidate) =>
+        candidate.application === application &&
+        candidate.route === route &&
+        candidate.version === version,
+    );
+
+  const recordedVersionsOf = (application) =>
+    tuples.filter((tuple) => tuple.application === application).map(({ version }) => version);
+
+  return {
+    tuples,
+    minimumTuples,
+    fixtures,
+    inventory: fixtures.map(({ relativePath }) => relativePath),
+
+    /**
+     * The recorded fixture for one application's route. Without a version it
+     * is the one recorded at the application's minimum, which is what every
+     * test that does not name a version is evidence about.
+     */
+    pathFor(application, route, options = {}) {
+      const version =
+        options.version ??
+        minimumTuples.find((tuple) => tuple.application === application)?.version;
+      const approved = find(application, route, version);
+      if (approved === undefined) {
+        throw new Error(
+          options.version === undefined
+            ? `No approved fixture for ${application} ${route}`
+            : `No approved fixture for ${application} ${route} at ${options.version}`,
+        );
+      }
+      return approved.relativePath;
+    },
+
+    /**
+     * Which fixture an instance reporting `reportedVersion` may be captured
+     * into for one route, or why none may.
+     *
+     * The reported version selects the fixture rather than being checked
+     * against one already chosen, so an instance at any recorded version can
+     * record the routes approved there and nothing else.
+     */
+    forReportedVersion(application, route, reportedVersion) {
+      const approved =
+        reportedVersion === undefined ? undefined : find(application, route, reportedVersion);
+      if (approved !== undefined) {
+        return { kind: "approved", fixture: approved };
+      }
+      const versions = recordedVersionsOf(application);
+      if (reportedVersion === undefined || !versions.includes(reportedVersion)) {
+        return { kind: "unrecorded-version", recordedVersions: versions };
+      }
+      return {
+        kind: "route-not-recorded-at-version",
+        routeVersions: fixtures
+          .filter((candidate) => candidate.application === application && candidate.route === route)
+          .map(({ version }) => version),
+      };
+    },
+  };
+}
+
+const fixtureInventory = createFixtureInventory(recordedVersions);
+
+/** Every version a fixture is recorded at, minimum and newer alike. */
+export const approvedFixtureTuples = fixtureInventory.tuples;
+
+/** Each application's minimum supported version, the one its fixtures are evidence for. */
+export const minimumFixtureTuples = fixtureInventory.minimumTuples;
+
+export const approvedFixtures = fixtureInventory.fixtures;
+
+export const approvedFixtureInventory = fixtureInventory.inventory;
+
+/**
+ * The recorded fixture for one application's route, for a test to load.
+ *
+ * Without `options.version` this is the fixture recorded at the application's
+ * minimum supported version. A test that reads a body only a newer instance
+ * returns names that version, so what it is evidence for is stated where it is
+ * asserted.
+ */
+export const fixturePathFor = fixtureInventory.pathFor;
+
+/** Which fixture a capture from an instance at `reportedVersion` may write, or why none. */
+export const captureTargetFor = fixtureInventory.forReportedVersion;
 
 const secretKeyParts = [
   "apikey",
