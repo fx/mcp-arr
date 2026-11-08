@@ -485,6 +485,18 @@ describe("fixtures recorded at more than one version", () => {
         sonarr: { apiVersion: "v3", minimum: "4.0.19.2979", routes: { "4.0.20.3014": ["tag"] } },
       }),
     ).toThrow("sonarr records no routes at its minimum version 4.0.19.2979");
+    expect(() =>
+      createFixtureInventory({
+        sonarr: { apiVersion: "v3", minimum: "4.0.19.2979", routes: { "4.0.19.2979": [] } },
+      }),
+    ).toThrow("sonarr records no routes at its minimum version 4.0.19.2979");
+    // A malformed label is refused even where there is no other version to
+    // order it against.
+    expect(() =>
+      createFixtureInventory({
+        sonarr: { apiVersion: "v3", minimum: "invalid", routes: { invalid: ["tag"] } },
+      }),
+    ).toThrow("Recorded fixture version is not a dotted numeric version: invalid");
     // A version beside the minimum is a newer one by definition; an older one
     // would be a minimum nobody lowered deliberately.
     expect(() =>

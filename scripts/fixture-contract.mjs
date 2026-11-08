@@ -151,14 +151,15 @@ export function fixtureFileForRoute(route) {
  * recorded version is an exact build an instance reported and anything else is
  * a typing error in the record above.
  */
+function requireVersionLabel(label) {
+  if (!/^\d+(?:\.\d+)*$/u.test(label)) {
+    throw new Error(`Recorded fixture version is not a dotted numeric version: ${label}`);
+  }
+  return label.split(".").map(Number);
+}
+
 function compareVersions(left, right) {
-  const parse = (label) => {
-    if (!/^\d+(?:\.\d+)*$/u.test(label)) {
-      throw new Error(`Recorded fixture version is not a dotted numeric version: ${label}`);
-    }
-    return label.split(".").map(Number);
-  };
-  const [a, b] = [parse(left), parse(right)];
+  const [a, b] = [requireVersionLabel(left), requireVersionLabel(right)];
   for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
     const difference = (a[index] ?? 0) - (b[index] ?? 0);
     if (difference !== 0) {
@@ -183,10 +184,15 @@ export function createFixtureInventory(recorded) {
   const fixtures = [];
 
   for (const [application, { apiVersion, minimum, routes }] of Object.entries(recorded)) {
-    if (!Object.hasOwn(routes, minimum)) {
+    // The minimum is the evidence every test that names no version reads, so
+    // it has to hold fixtures; a newer version may start empty.
+    if (!Object.hasOwn(routes, minimum) || routes[minimum].length === 0) {
       throw new Error(`${application} records no routes at its minimum version ${minimum}`);
     }
     for (const [version, versionRoutes] of Object.entries(routes)) {
+      // Every label is held to the format on its own, not only when there is
+      // a second version to order it against.
+      requireVersionLabel(version);
       if (version !== minimum && compareVersions(version, minimum) <= 0) {
         throw new Error(
           `${application} ${version} is recorded beside its minimum ${minimum} but is not newer`,
