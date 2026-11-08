@@ -4,7 +4,7 @@ import {
   applicationIds,
   describeApplication,
 } from "../src/applications.js";
-import { approvedFixtureTuples } from "./support/fixtures.js";
+import { minimumFixtureTuples } from "./support/fixtures.js";
 
 describe("applicationDescriptors", () => {
   it("records the researched API versions, minimums, and environment variables", () => {
@@ -37,14 +37,14 @@ describe("applicationDescriptors", () => {
     expect(applicationDescriptors.map((descriptor) => descriptor.id)).toEqual([...applicationIds]);
   });
 
-  it("agrees with the approved fixture tuples", () => {
+  it("records the minimum versions the fixtures are evidence for", () => {
     expect(
       applicationDescriptors.map(({ id, apiVersion, minimumVersion }) => ({
         application: id,
         apiVersion,
         version: minimumVersion,
       })),
-    ).toEqual([...approvedFixtureTuples]);
+    ).toEqual([...minimumFixtureTuples]);
   });
 });
 
