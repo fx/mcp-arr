@@ -379,7 +379,7 @@ describe("quality profiles as newer instances record them", () => {
   }
 
   it("derives every Sonarr profile's resolution from its cutoff quality", async () => {
-    // Each allowed group counts every quality it holds. "Max Ultra HD" allows
+    // Each allowed group counts every quality it holds. "Example Profile 1" allows
     // its WEB 1080p group while marking that group's members not allowed; the
     // applications decide by the group's own flag, and so does the count.
     expect(describeProfiles(await recordedProfiles("sonarr"))).toEqual([
@@ -389,7 +389,7 @@ describe("quality profiles as newer instances record them", () => {
       { id: 4, name: "HD-1080p", cutoff: 9, resolution: "1080p", allowed: 4 },
       { id: 5, name: "Ultra-HD", cutoff: 19, resolution: "2160p", allowed: 4 },
       { id: 6, name: "HD - 720p/1080p", cutoff: 7, resolution: "1080p", allowed: 8 },
-      { id: 8, name: "Max Ultra HD", cutoff: 21, resolution: "2160p", allowed: 10 },
+      { id: 8, name: "Example Profile 1", cutoff: 21, resolution: "2160p", allowed: 10 },
     ]);
   });
 
@@ -403,9 +403,9 @@ describe("quality profiles as newer instances record them", () => {
       { id: 4, name: "HD-1080p", cutoff: 7, resolution: "1080p", allowed: 4 },
       { id: 5, name: "Ultra-HD", cutoff: 19, resolution: "2160p", allowed: 4 },
       { id: 6, name: "HD - 720p/1080p", cutoff: 7, resolution: "1080p", allowed: 8 },
-      { id: 7, name: "Small 1080p", cutoff: 1002, resolution: "1080p", allowed: 3 },
-      { id: 8, name: "WEB/HDTV 4k", cutoff: 1003, resolution: "2160p", allowed: 6 },
-      { id: 9, name: "Max Ultra HD", cutoff: 31, resolution: "2160p", allowed: 10 },
+      { id: 7, name: "Example Profile 1", cutoff: 1002, resolution: "1080p", allowed: 3 },
+      { id: 8, name: "Example Profile 2", cutoff: 1003, resolution: "2160p", allowed: 6 },
+      { id: 9, name: "Example Profile 3", cutoff: 31, resolution: "2160p", allowed: 10 },
     ]);
     // The two cutoffs past 1000 name a group of the profile's own, which is
     // where their resolution came from.
@@ -433,9 +433,9 @@ describe("quality profiles as newer instances record them", () => {
       ["1080p", undefined, 4],
       ["1080p", "HD - 720p/1080p", 6],
       ["1080p", "Ultra-HD", 4],
-      // "Ultra-HD" allows fewer qualities than "Max Ultra HD".
+      // "Ultra-HD" allows fewer qualities than "Example Profile 1".
       ["2160p", undefined, 5],
-      ["2160p", "Max Ultra HD", 8],
+      ["2160p", "Example Profile 1", 8],
       ["2160p", "HD-1080p", 5],
     ];
 
@@ -454,16 +454,16 @@ describe("quality profiles as newer instances record them", () => {
       ["576p", undefined, 2],
       ["576p", "Any", 1],
       ["720p", undefined, 3],
-      ["720p", "Small 1080p", 3],
-      // "Small 1080p", cut off at its WEB 1080p group, allows the fewest.
+      ["720p", "Example Profile 1", 3],
+      // "Example Profile 1", cut off at its WEB 1080p group, allows the fewest.
       ["1080p", undefined, 7],
       ["1080p", "HD-1080p", 4],
       ["1080p", "HD - 720p/1080p", 6],
       ["1080p", "Ultra-HD", 7],
       ["2160p", undefined, 5],
-      ["2160p", "WEB/HDTV 4k", 8],
-      ["2160p", "Max Ultra HD", 9],
-      ["2160p", "Small 1080p", 5],
+      ["2160p", "Example Profile 2", 8],
+      ["2160p", "Example Profile 3", 9],
+      ["2160p", "Example Profile 1", 5],
     ];
 
     for (const [resolution, defaultName, expected] of cases) {

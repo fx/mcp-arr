@@ -376,12 +376,12 @@
       "formatItems": [
         {
           "format": 3,
-          "name": "Remux",
+          "name": "Example Format 1",
           "score": -10000
         },
         {
           "format": 2,
-          "name": "DV Boost",
+          "name": "Example Format 2",
           "score": -10000
         }
       ],
@@ -761,12 +761,12 @@
       "formatItems": [
         {
           "format": 3,
-          "name": "Remux",
+          "name": "Example Format 1",
           "score": -10000
         },
         {
           "format": 2,
-          "name": "DV Boost",
+          "name": "Example Format 2",
           "score": -10000
         }
       ],
@@ -1146,12 +1146,12 @@
       "formatItems": [
         {
           "format": 3,
-          "name": "Remux",
+          "name": "Example Format 1",
           "score": -10000
         },
         {
           "format": 2,
-          "name": "DV Boost",
+          "name": "Example Format 2",
           "score": -10000
         }
       ],
@@ -1531,12 +1531,12 @@
       "formatItems": [
         {
           "format": 3,
-          "name": "Remux",
+          "name": "Example Format 1",
           "score": -10000
         },
         {
           "format": 2,
-          "name": "DV Boost",
+          "name": "Example Format 2",
           "score": -10000
         }
       ],
@@ -1916,12 +1916,12 @@
       "formatItems": [
         {
           "format": 3,
-          "name": "Remux",
+          "name": "Example Format 1",
           "score": -10000
         },
         {
           "format": 2,
-          "name": "DV Boost",
+          "name": "Example Format 2",
           "score": -10000
         }
       ],
@@ -2301,12 +2301,12 @@
       "formatItems": [
         {
           "format": 3,
-          "name": "Remux",
+          "name": "Example Format 1",
           "score": -10000
         },
         {
           "format": 2,
-          "name": "DV Boost",
+          "name": "Example Format 2",
           "score": -10000
         }
       ],
@@ -2317,7 +2317,7 @@
       "id": 6
     },
     {
-      "name": "Small 1080p",
+      "name": "Example Profile 1",
       "upgradeAllowed": false,
       "cutoff": 1002,
       "items": [
@@ -2686,12 +2686,12 @@
       "formatItems": [
         {
           "format": 3,
-          "name": "Remux",
+          "name": "Example Format 1",
           "score": -10000
         },
         {
           "format": 2,
-          "name": "DV Boost",
+          "name": "Example Format 2",
           "score": -10000
         }
       ],
@@ -2702,7 +2702,7 @@
       "id": 7
     },
     {
-      "name": "WEB/HDTV 4k",
+      "name": "Example Profile 2",
       "upgradeAllowed": true,
       "cutoff": 1003,
       "items": [
@@ -3071,12 +3071,12 @@
       "formatItems": [
         {
           "format": 3,
-          "name": "Remux",
+          "name": "Example Format 1",
           "score": -10000
         },
         {
           "format": 2,
-          "name": "DV Boost",
+          "name": "Example Format 2",
           "score": -10000
         }
       ],
@@ -3087,7 +3087,7 @@
       "id": 8
     },
     {
-      "name": "Max Ultra HD",
+      "name": "Example Profile 3",
       "upgradeAllowed": true,
       "cutoff": 31,
       "items": [
@@ -3456,12 +3456,12 @@
       "formatItems": [
         {
           "format": 3,
-          "name": "Remux",
+          "name": "Example Format 1",
           "score": 0
         },
         {
           "format": 2,
-          "name": "DV Boost",
+          "name": "Example Format 2",
           "score": -10000
         }
       ],
