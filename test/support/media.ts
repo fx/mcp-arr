@@ -412,9 +412,10 @@ const qualityIds: Readonly<Record<number, number>> = { 480: 1, 576: 2, 720: 4, 1
 
 /**
  * A quality profile in the documented upstream shape, cut off at one
- * resolution and allowing the qualities named. The recorded fixtures carry
- * their profiles with emptied `items`, so a test that needs a profile to have a
- * resolution serves one of these instead.
+ * resolution and allowing the qualities named. The fixtures recorded at each
+ * application's minimum carry their profiles with emptied `items`, so a test
+ * that needs a profile to have a resolution, and a shape of its own choosing,
+ * serves one of these instead.
  */
 export function qualityProfileBody(
   id: number,

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { MediaDefaults } from "../src/config/environment.js";
 import type { AddResult, FindResult } from "../src/tools/media/schemas.js";
+import { fixtureBody } from "./support/library.js";
 import {
   callMediaTool,
   createMediaContext,
@@ -849,6 +850,69 @@ describe("media_add exact-key redaction", () => {
     expect("title" in content).toBe(false);
     expect(JSON.stringify(content)).not.toContain("key-123");
     expect(summary).not.toContain("key-123");
+  });
+});
+
+describe("media_add over the quality profiles newer instances record", () => {
+  // Captured with every profile's quality list populated, Radarr's with two
+  // profiles cut off at a group; see `test/media-resolution.test.ts` for what
+  // each profile resolves to.
+  const cases = [
+    {
+      application: "radarr",
+      version: "6.4.4.10685",
+      kind: "movie",
+      id: newMovie,
+      folder: {},
+      choices: [
+        ["1080p", undefined, 7],
+        ["1080p", "HD-1080p", 4],
+        ["2160p", undefined, 5],
+        ["2160p", "WEB/HDTV 4k", 8],
+        ["576p", undefined, 2],
+      ],
+    },
+    {
+      application: "sonarr",
+      version: "4.0.20.3014",
+      kind: "series",
+      id: newSeries,
+      folder: { rootFolder: "/media/example/series" },
+      choices: [
+        ["1080p", undefined, 4],
+        ["1080p", "HD - 720p/1080p", 6],
+        ["2160p", undefined, 5],
+        ["2160p", "Max Ultra HD", 8],
+        ["576p", undefined, 2],
+      ],
+    },
+  ] as const;
+
+  it("adds with the profile the resolution rule chooses among them", async () => {
+    for (const { application, version, kind, id, folder, choices } of cases) {
+      const body = await fixtureBody(application, "qualityprofile", { version });
+      for (const [resolution, qualityProfile, expected] of choices) {
+        const label = `${kind} ${resolution} ${String(qualityProfile)}`;
+        instances = await createMediaInstances();
+        instances.serve(application, "qualityprofile", body);
+        const kindDefaults = {
+          ...folder,
+          ...(qualityProfile === undefined ? {} : { qualityProfile }),
+        };
+        const defaults: MediaDefaults =
+          kind === "movie"
+            ? { movie: kindDefaults, series: {} }
+            : { movie: {}, series: kindDefaults };
+
+        const { content } = await add({ kind, id, resolution }, defaults);
+
+        expect(content, label).toMatchObject({
+          outcome: "added",
+          resolution: resolution === "576p" ? "480p" : resolution,
+        });
+        expect(onlyCreate(), label).toMatchObject({ qualityProfileId: expected });
+      }
+    }
   });
 });
 

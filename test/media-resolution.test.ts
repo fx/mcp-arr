@@ -14,12 +14,14 @@ import { readOnlyClient } from "./support/tool-context.js";
 /**
  * Choosing a quality profile by resolution.
  *
- * The recorded `qualityprofile` fixtures carry their profiles with emptied
- * `items`, so they prove the reader tolerates that shape and nothing about how a
- * cutoff resolves. The bodies below are written in the documented upstream
- * shape — a single quality is `{quality, items: [], allowed}`, a group is
- * `{id, name, items: [...qualities], allowed}`, and `cutoff` names one or the
- * other — and the selection rules are exercised over in-code profiles.
+ * The `qualityprofile` fixtures recorded at each application's minimum carry
+ * their profiles with emptied `items`, so they prove the reader tolerates that
+ * shape and nothing about how a cutoff resolves. The bodies below are written in
+ * the upstream shape — a single quality is `{quality, items: [], allowed}`, a
+ * group is `{id, name, items: [...qualities], allowed}`, and `cutoff` names one
+ * or the other — and the selection rules are exercised over in-code profiles.
+ * The last block holds the reader and the rules to the populated profiles newer
+ * instances genuinely report.
  */
 
 function quality(id: number, resolution: number, allowed = true): Record<string, unknown> {
@@ -330,5 +332,162 @@ describe("chooseProfile", () => {
 
     expect(choose(profiles, "2160p")).toBe(20);
     expect(choose(profiles, "1080p")).toBe(21);
+  });
+});
+
+/**
+ * The same rules over the profiles newer instances genuinely report.
+ *
+ * Unlike the minimum's recordings, the `qualityprofile` fixtures captured at
+ * Sonarr 4.0.20.3014 and Radarr 6.4.4.10685 carry every profile's populated
+ * quality list, groups and all, and Radarr's include two profiles cut off at a
+ * group. They are the evidence that the reader resolves the shape the
+ * applications send, not only the shape their documentation describes.
+ */
+describe("quality profiles as newer instances record them", () => {
+  const recorded = { sonarr: "4.0.20.3014", radarr: "6.4.4.10685" } as const;
+
+  async function recordedBody(
+    application: keyof typeof recorded,
+  ): Promise<readonly Record<string, unknown>[]> {
+    return fixtureBody<readonly Record<string, unknown>[], typeof application>(
+      application,
+      "qualityprofile",
+      { version: recorded[application] },
+    );
+  }
+
+  async function recordedProfiles(
+    application: keyof typeof recorded,
+    body?: readonly Record<string, unknown>[],
+  ): Promise<readonly QualityProfileRecord[]> {
+    const served = body ?? (await recordedBody(application));
+    return readQualityProfiles(
+      readOnlyClient(application, async () => served),
+      application,
+    );
+  }
+
+  function describeProfiles(profiles: readonly QualityProfileRecord[]) {
+    return profiles.map((profile) => ({
+      id: profile.id,
+      name: profile.name,
+      cutoff: profile.cutoff,
+      resolution: profileResolution(profile),
+      allowed: allowedQualityCount(profile),
+    }));
+  }
+
+  it("derives every Sonarr profile's resolution from its cutoff quality", async () => {
+    // Each allowed group counts every quality it holds. "Max Ultra HD" allows
+    // its WEB 1080p group while marking that group's members not allowed; the
+    // applications decide by the group's own flag, and so does the count.
+    expect(describeProfiles(await recordedProfiles("sonarr"))).toEqual([
+      { id: 1, name: "Any", cutoff: 1, resolution: "480p", allowed: 14 },
+      { id: 2, name: "SD", cutoff: 1, resolution: "480p", allowed: 6 },
+      { id: 3, name: "HD-720p", cutoff: 4, resolution: "720p", allowed: 4 },
+      { id: 4, name: "HD-1080p", cutoff: 9, resolution: "1080p", allowed: 4 },
+      { id: 5, name: "Ultra-HD", cutoff: 19, resolution: "2160p", allowed: 4 },
+      { id: 6, name: "HD - 720p/1080p", cutoff: 7, resolution: "1080p", allowed: 8 },
+      { id: 8, name: "Max Ultra HD", cutoff: 21, resolution: "2160p", allowed: 10 },
+    ]);
+  });
+
+  it("derives every Radarr profile's resolution, cutoff groups included", async () => {
+    const profiles = await recordedProfiles("radarr");
+
+    expect(describeProfiles(profiles)).toEqual([
+      { id: 1, name: "Any", cutoff: 20, resolution: "480p", allowed: 24 },
+      { id: 2, name: "SD", cutoff: 20, resolution: "480p", allowed: 12 },
+      { id: 3, name: "HD-720p", cutoff: 6, resolution: "720p", allowed: 4 },
+      { id: 4, name: "HD-1080p", cutoff: 7, resolution: "1080p", allowed: 4 },
+      { id: 5, name: "Ultra-HD", cutoff: 19, resolution: "2160p", allowed: 4 },
+      { id: 6, name: "HD - 720p/1080p", cutoff: 7, resolution: "1080p", allowed: 8 },
+      { id: 7, name: "Small 1080p", cutoff: 1002, resolution: "1080p", allowed: 3 },
+      { id: 8, name: "WEB/HDTV 4k", cutoff: 1003, resolution: "2160p", allowed: 6 },
+      { id: 9, name: "Max Ultra HD", cutoff: 31, resolution: "2160p", allowed: 10 },
+    ]);
+    // The two cutoffs past 1000 name a group of the profile's own, which is
+    // where their resolution came from.
+    for (const id of [7, 8]) {
+      const profile = profiles.find((candidate) => candidate.id === id);
+      const groups = profile?.items.filter((item) => item.groupId === profile.cutoff);
+      expect(groups, String(id)).toHaveLength(1);
+      expect(groups?.[0]?.qualities.length, String(id)).toBeGreaterThan(1);
+    }
+  });
+
+  it("chooses a Sonarr profile for every resolution, with and without a default", async () => {
+    const profiles = await recordedProfiles("sonarr");
+    const cases: readonly (readonly [Resolution, string | undefined, number])[] = [
+      // "SD" allows fewer qualities than "Any".
+      ["480p", undefined, 2],
+      ["480p", "Any", 1],
+      // No profile is cut off at 576p; 480p and 720p are equally near, and
+      // the lower wins.
+      ["576p", undefined, 2],
+      ["576p", "Any", 1],
+      ["720p", undefined, 3],
+      ["720p", "HD-1080p", 3],
+      // "HD-1080p" allows fewer qualities than "HD - 720p/1080p".
+      ["1080p", undefined, 4],
+      ["1080p", "HD - 720p/1080p", 6],
+      ["1080p", "Ultra-HD", 4],
+      // "Ultra-HD" allows fewer qualities than "Max Ultra HD".
+      ["2160p", undefined, 5],
+      ["2160p", "Max Ultra HD", 8],
+      ["2160p", "HD-1080p", 5],
+    ];
+
+    for (const [resolution, defaultName, expected] of cases) {
+      expect(choose(profiles, resolution, defaultName), `${resolution} ${defaultName}`).toBe(
+        expected,
+      );
+    }
+  });
+
+  it("chooses a Radarr profile for every resolution, with and without a default", async () => {
+    const profiles = await recordedProfiles("radarr");
+    const cases: readonly (readonly [Resolution, string | undefined, number])[] = [
+      ["480p", undefined, 2],
+      ["480p", "Any", 1],
+      ["576p", undefined, 2],
+      ["576p", "Any", 1],
+      ["720p", undefined, 3],
+      ["720p", "Small 1080p", 3],
+      // "Small 1080p", cut off at its WEB 1080p group, allows the fewest.
+      ["1080p", undefined, 7],
+      ["1080p", "HD-1080p", 4],
+      ["1080p", "HD - 720p/1080p", 6],
+      ["1080p", "Ultra-HD", 7],
+      ["2160p", undefined, 5],
+      ["2160p", "WEB/HDTV 4k", 8],
+      ["2160p", "Max Ultra HD", 9],
+      ["2160p", "Small 1080p", 5],
+    ];
+
+    for (const [resolution, defaultName, expected] of cases) {
+      expect(choose(profiles, resolution, defaultName), `${resolution} ${defaultName}`).toBe(
+        expected,
+      );
+    }
+  });
+
+  it("never chooses a recorded profile cut off at a quality with no known resolution", async () => {
+    // Radarr records its pre-release qualities, CAM among them, with a
+    // resolution of 0. Cutting both 480p profiles off there leaves them with
+    // no resolution, so a request for 480p reaches the nearest that has one,
+    // even past a configured default.
+    const body = await recordedBody("radarr");
+    const cam = 25;
+    const edited = body.map((profile) =>
+      profile.id === 1 || profile.id === 2 ? { ...profile, cutoff: cam } : profile,
+    );
+    const profiles = await recordedProfiles("radarr", edited);
+
+    expect(profiles.filter((profile) => profileResolution(profile) === undefined)).toHaveLength(2);
+    expect(choose(profiles, "480p")).toBe(3);
+    expect(choose(profiles, "480p", "Any")).toBe(3);
+    expect(choose(profiles, "576p", "SD")).toBe(3);
   });
 });
