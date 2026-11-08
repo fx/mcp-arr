@@ -160,12 +160,21 @@ The feature contracts are split across:
 - Committed tests MUST NOT be focused, skipped, or dependent on live personal *arr instances.
 - A recorded upstream fixture MUST correspond to a response the application it names genuinely produces at the version and route it names, and MUST NOT be authored from documentation or inferred from another application's shape.
 - Refreshing the recorded fixtures against a live instance MUST be a repeatable procedure that sanitizes what it captures, and MUST remain outside the test suite so that running the tests never requires an instance.
+- Fixtures MAY be recorded at more than one version of an application. Each fixture MUST be labelled with the exact version it was captured from, and one fixture MUST exist for at most one combination of application, version, and route.
+- The fixtures recorded at an application's minimum supported version MUST remain the evidence for that minimum. Recording a fixture at a newer version MUST NOT replace or remove a minimum-version fixture, and MUST NOT by itself raise the minimum supported version.
+- A fixture recorded at a newer version MUST be treated as evidence only for the version it names; a test that relies on it MUST name that version rather than reading it as the application's recorded contract.
 
 #### Scenario: A recorded fixture contradicts the instance it names
 
 - **GIVEN** a recorded fixture declares an application, a version, and a route
 - **WHEN** that route is read from a real instance of that application at that version
 - **THEN** the recorded body carries the same field shapes the instance returns, so a shape the instance never sends cannot stand as the recorded contract
+
+#### Scenario: Record a route at a newer version
+
+- **GIVEN** an application's fixtures are recorded at its minimum supported version, and a route is approved at a newer version
+- **WHEN** that route is captured from an instance reporting the newer version
+- **THEN** the fixture is written under and labelled with the newer version, every minimum-version fixture is left unchanged, and the minimum supported version is unchanged
 
 #### Scenario: Protocol output remains clean
 
@@ -286,3 +295,4 @@ None.
 | 2026-11-07 | Stdio-only transport replaced by a startup transport selection with Streamable HTTP; state shared across a process's clients; single-operator and single-process constraints stated | [0030-streamable-http-transport](../../changes/0030-streamable-http-transport.md) |
 | 2026-11-07 | Non-instance settings, including the toolset and its defaults, required to come from the environment | [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) |
 | 2026-11-07 | Container image distribution added: built from the packed package, published only as the exact bytes that were smoke-tested, release images only from a merged release, development images never tagged as a release, non-root, and no credentials baked in | [0034-container-image](../../changes/0034-container-image.md) |
+| 2026-11-08 | Fixtures allowed at more than one version per application, each labelled with the version it was captured from; minimum-version fixtures kept as the evidence for the minimum, and a newer-version fixture made evidence only for the version it names | [0035-fixtures-at-newer-versions](../../changes/0035-fixtures-at-newer-versions.md) |
