@@ -91,6 +91,20 @@ describe("readQueueForMedia", () => {
     expect(read.items[0]?.origin?.downloadIdentity).toBeUndefined();
   });
 
+  it("reports the read incomplete when a row names no title, rather than dropping it", async () => {
+    // A row that does not say whose it is may be one of this title's, a
+    // season pack's sibling say; leaving it out silently would make a
+    // download look smaller than it is.
+    const rows = await recorded("sonarr");
+    const { seriesId: _dropped, ...parentless } = rows[0] as QueueRow;
+    const { client } = libraryHarness("sonarr", () => jsonResponse([...rows, parentless]));
+
+    const read = await readQueueForMedia(client, 12, sonarrProfile, "summary");
+
+    expect(read.items.map((item) => item.context.queueItemId)).toEqual([502, 501]);
+    expect(read.truncated).toBe(true);
+  });
+
   it("matches rows to the title locally when the scope is not honoured", async () => {
     const rows = await recorded("sonarr");
     const { client } = libraryHarness("sonarr", () => jsonResponse(rows));

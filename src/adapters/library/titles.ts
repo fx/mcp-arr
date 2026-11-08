@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { UpstreamClient } from "../../http/client.js";
+import { UpstreamError } from "../../http/errors.js";
 import { qualityResolution, qualitySchema } from "../activity/parse.js";
 import type { MediaApplication } from "./model.js";
 import {
@@ -180,8 +181,8 @@ function ordinal(value: number | null | undefined): number | undefined {
 /**
  * Every episode of one series, or of one season of it.
  *
- * Asked of the instance by series, and matched to that series here as well,
- * for the same reason the title read matches its identifier. A season is
+ * Asked of the instance by series, and matched to that series here as well;
+ * see {@link ownRecords}. A season is
  * selected here rather than upstream, so both scopes are answered by the one
  * request a recorded fixture covers.
  */
@@ -197,11 +198,7 @@ export async function readEpisodeStates(
     "sonarr",
     route,
   );
-  return records
-    .filter(
-      (record) =>
-        record.seriesId === undefined || record.seriesId === null || record.seriesId === seriesId,
-    )
+  return ownRecords(records, seriesId, route)
     .map(
       (record): EpisodeState => ({
         id: record.id,
@@ -213,6 +210,25 @@ export async function readEpisodeStates(
       }),
     )
     .filter((episode) => seasonNumber === undefined || episode.seasonNumber === seasonNumber);
+}
+
+/**
+ * One series' records out of an answer to a series-scoped read.
+ *
+ * The scope is matched here as well as asked for, because an instance that
+ * ignored it answers with every series' records. A record that names another
+ * series is left out; one that names none fails the read, since it could be
+ * any series' and counting it in or leaving it out would both be a guess.
+ */
+function ownRecords<TRecord extends { readonly seriesId?: number | null | undefined }>(
+  records: readonly TRecord[],
+  seriesId: number,
+  route: string,
+): TRecord[] {
+  if (records.some((record) => record.seriesId === undefined || record.seriesId === null)) {
+    throw new UpstreamError("unexpected-response", { application: "sonarr", operation: route });
+  }
+  return records.filter((record) => record.seriesId === seriesId);
 }
 
 const fileQualitySchema = z.object({
@@ -236,11 +252,7 @@ export async function readEpisodeFileResolutions(
     "sonarr",
     route,
   );
-  return records
-    .filter(
-      (record) =>
-        record.seriesId === undefined || record.seriesId === null || record.seriesId === seriesId,
-    )
+  return ownRecords(records, seriesId, route)
     .map((record) => qualityResolution(record.quality))
     .filter((pixels): pixels is number => pixels !== undefined);
 }

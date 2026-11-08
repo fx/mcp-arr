@@ -423,7 +423,10 @@ export async function readQueueDetails(
 /** Every queue row filed under one series or movie, in the order upstream listed them. */
 export interface MediaQueueRows {
   readonly items: readonly QueueItem[];
-  /** Set when the scan bound stopped the read before the instance's answer ended. */
+  /**
+   * Set when the scan bound stopped the read before the instance's answer
+   * ended, or when the answer held a row that names no title.
+   */
   readonly truncated: boolean;
 }
 
@@ -461,7 +464,13 @@ export async function readQueueForMedia(
     include: (record) => mediaIdOf(profile, record) === mediaId,
     map: (record) => mapQueueItem(profile, record, detail),
   });
-  return { items: page.items, truncated: page.hasMore || (page.warnings?.length ?? 0) > 0 };
+  // A row that names no title may be one of this title's — a season pack's
+  // sibling, say — so the read is incomplete rather than merely smaller.
+  const unowned = records.some((record) => mediaIdOf(profile, record) === undefined);
+  return {
+    items: page.items,
+    truncated: unowned || page.hasMore || (page.warnings?.length ?? 0) > 0,
+  };
 }
 
 export type BlocklistUpstream = z.infer<typeof blocklistRecordSchema>;

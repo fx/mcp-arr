@@ -165,6 +165,22 @@ describe("readEpisodeStates", () => {
 
     expect(states.map((state) => state.id)).toEqual([1003, 1004]);
   });
+
+  it("fails the read on an episode that names no series, rather than counting it in", async () => {
+    // An instance that ignored the scope answers with every series' episodes;
+    // one that does not say whose it is could be any of them.
+    const episodes = await fixtureBody<UpstreamRecord[]>("sonarr", "episode");
+    for (const parentless of [
+      without(episodes[0] as UpstreamRecord, "seriesId"),
+      { ...episodes[0], seriesId: null },
+    ]) {
+      const { client } = libraryHarness("sonarr", () => jsonResponse([...episodes, parentless]));
+
+      await expect(readEpisodeStates(client, 12)).rejects.toMatchObject({
+        kind: "unexpected-response",
+      });
+    }
+  });
 });
 
 describe("readEpisodeFileResolutions", () => {
@@ -186,5 +202,18 @@ describe("readEpisodeFileResolutions", () => {
     const { client } = libraryHarness("sonarr", () => jsonResponse(unknown));
 
     expect(await readEpisodeFileResolutions(client, 12)).toEqual([]);
+  });
+
+  it("leaves out another series' file and fails the read on one that names none", async () => {
+    const files = await fixtureBody<UpstreamRecord[]>("sonarr", "episodefile");
+    const other = { ...files[0], seriesId: 13 };
+    const { client } = libraryHarness("sonarr", () => jsonResponse([...files, other]));
+    expect(await readEpisodeFileResolutions(client, 12)).toEqual([1080, 720]);
+
+    const parentless = without(files[0] as UpstreamRecord, "seriesId");
+    const failing = libraryHarness("sonarr", () => jsonResponse([...files, parentless]));
+    await expect(readEpisodeFileResolutions(failing.client, 12)).rejects.toMatchObject({
+      kind: "unexpected-response",
+    });
   });
 });
