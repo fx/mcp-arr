@@ -332,6 +332,41 @@ describe("media_status overview", () => {
     ]);
   });
 
+  it("reports a movie due on a later release date once its cinema date has passed", async () => {
+    // Recorded, movie 200001 opened in cinemas on 2021-06-01 and is released
+    // digitally on 2021-08-01 and physically on 2021-09-01.
+    clock.set(Date.parse("2021-07-25T06:00:00Z"));
+
+    const { content } = await status({});
+
+    expect(content.upcoming).toEqual([
+      { kind: "movie", id: 200_001, title: "Example Movie", date: "2021-08-01T00:00:00.000Z" },
+    ]);
+    // The calendar view is asked for dates, as its contract states, not instants.
+    const calendars = instances.requests.filter((request) => request.route === "calendar");
+    expect(calendars.map((request) => [request.application, request.query])).toEqual([
+      ["radarr", expect.objectContaining({ start: "2021-07-25", end: "2021-08-08" })],
+      ["sonarr", expect.objectContaining({ start: "2021-07-25", end: "2021-08-08" })],
+    ]);
+  });
+
+  it("reports a movie on its later release when an earlier one fell earlier the same day", async () => {
+    // The cinema date is inside the window the calendar is asked for, which
+    // starts at midnight, but it has already passed: the digital release is due.
+    const movie = instances.state("radarr").calendar.find((record) => record.id === 8);
+    if (movie === undefined) {
+      throw new Error("No calendar movie 8");
+    }
+    movie.inCinemas = "2021-07-25T00:00:00Z";
+    clock.set(Date.parse("2021-07-25T06:00:00Z"));
+
+    const { content } = await status({});
+
+    expect(content.upcoming).toEqual([
+      { kind: "movie", id: 200_001, title: "Example Movie", date: "2021-08-01T00:00:00.000Z" },
+    ]);
+  });
+
   it("cuts the downloads to ten and reports the total", async () => {
     instances.state("sonarr").queue = failedRows(12);
 

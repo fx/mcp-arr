@@ -6,8 +6,11 @@ import { reportCapabilities } from "../src/tools/capabilities.js";
 import { findToolDefinition, type ToolDefinition } from "../src/tools/definitions.js";
 import type { ToolContext } from "../src/tools/dispatch.js";
 import { applicationOutcome, buildToolResult, type ToolResult } from "../src/tools/results.js";
-import { defaultPageSize, maxPageSize } from "../src/tools/schemas/common.js";
-import { maxCalendarWindowDays } from "../src/tools/schemas/library.js";
+import {
+  defaultPageSize,
+  maxCalendarWindowDays,
+  maxPageSize,
+} from "../src/tools/schemas/common.js";
 import type { LibraryViewResult } from "../src/tools/schemas/library-results.js";
 import {
   type FixtureInstance,

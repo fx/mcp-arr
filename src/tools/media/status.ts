@@ -7,6 +7,7 @@ import {
 } from "../../adapters/activity/media.js";
 import type { HistoryEventType, HistoryRecord, QueueItem } from "../../adapters/activity/model.js";
 import { readQualityProfiles } from "../../adapters/library/changes.js";
+import type { CalendarEvent } from "../../adapters/library/model.js";
 import { defaultScanLimit } from "../../adapters/library/paging.js";
 import { runLibraryQuery } from "../../adapters/library/service.js";
 import {
@@ -159,6 +160,41 @@ function bounded<TItem>(
 
 function iso(milliseconds: number): string {
   return new Date(milliseconds).toISOString();
+}
+
+/** The UTC date of an instant, which is what the calendar view is asked for. */
+function isoDate(milliseconds: number): string {
+  return iso(milliseconds).slice(0, 10);
+}
+
+/**
+ * The earliest instant one calendar entry is due inside `[from, to]`, if any.
+ *
+ * Radarr returns a movie when any of its release dates falls on the days it was
+ * asked for, and anchors the entry to the earliest of those. The overview's
+ * window starts now rather than at midnight, so an anchor earlier the same day
+ * has passed while a later release is still to come: every release date the
+ * movie carries is a candidate, not only the anchor. An episode has one date.
+ */
+function dueWithin(event: CalendarEvent, from: number, to: number): number | undefined {
+  const media = event.media;
+  const dates =
+    media.application === "radarr" && media.radarr.kind === "movie"
+      ? [
+          event.start,
+          media.radarr.releaseDates?.inCinemas,
+          media.radarr.releaseDates?.physicalRelease,
+          media.radarr.releaseDates?.digitalRelease,
+        ]
+      : [event.start];
+  let best: number | undefined;
+  for (const value of dates) {
+    const at = value === undefined ? Number.NaN : Date.parse(value);
+    if (!Number.isNaN(at) && at >= from && at <= to && (best === undefined || at < best)) {
+      best = at;
+    }
+  }
+  return best;
 }
 
 /**
@@ -320,8 +356,9 @@ async function overviewOfKind(
         view: "calendar",
         detail: "summary",
         paging: { pageSize: maxPageSize },
-        start: iso(now),
-        end: iso(now + upcomingWindowDays * day),
+        // The view takes inclusive dates; the instants are cut to the window below.
+        start: isoDate(now),
+        end: isoDate(now + upcomingWindowDays * day),
       }),
     ]);
     if (calendar.status === "error") {
@@ -418,17 +455,11 @@ async function overviewOfKind(
             ? Number(media.ref.id)
             : undefined;
       const record = recordOf(mediaId);
-      const at = event.start === undefined ? Number.NaN : Date.parse(event.start);
-      if (
-        record?.externalId === undefined ||
-        event.start === undefined ||
-        Number.isNaN(at) ||
-        at < now ||
-        at > now + upcomingWindowDays * day
-      ) {
+      const at = dueWithin(event, now, now + upcomingWindowDays * day);
+      if (record?.externalId === undefined || at === undefined) {
         continue;
       }
-      const key = `${record.id}\u0000${iso(at).slice(0, 10)}`;
+      const key = `${record.id}\u0000${isoDate(at)}`;
       const entry = due.get(key) ?? { record, at, episodes: [] };
       entry.at = Math.min(entry.at, at);
       if (media.application === "sonarr" && media.sonarr.kind === "episode") {

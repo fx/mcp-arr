@@ -128,6 +128,34 @@ describe("library query bounds", () => {
     }
   });
 
+  it("rejects a calendar window that is not two real dates in order before any request", async () => {
+    const windows = [
+      // Instants rather than dates: an adapter reading them as dates gets no window.
+      { start: "2026-01-01T00:00:00.000Z", end: "2026-01-15T00:00:00.000Z" },
+      { start: "2026-02-30", end: "2026-03-05" },
+      { start: "2026-01-31", end: "2026-01-01" },
+    ];
+    for (const application of ["sonarr", "radarr"] as const) {
+      for (const window of windows) {
+        const harness = libraryHarness(application, () => {
+          throw new Error("no upstream request may be sent for an unusable calendar window");
+        });
+
+        const error = expectError(
+          await runLibraryQuery(application, harness.client, {
+            view: "calendar",
+            detail: "summary",
+            ...window,
+            paging: paging(25),
+          }),
+        );
+        expect(error.code, JSON.stringify(window)).toBe("invalid_input");
+        expect(error.message).toContain("start and end must be real dates, in order");
+        expect(harness.calls).toEqual([]);
+      }
+    }
+  });
+
   it("rejects a continuation that belongs to a different query", async () => {
     const series = await fixtureBody("sonarr", "series");
     const first = expectOk(

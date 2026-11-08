@@ -196,6 +196,60 @@ export function isReferenceProperty(name: string): boolean {
 /** An ISO-8601 calendar date, used for bounded date-window queries. */
 export const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/u, "must be an ISO-8601 date");
 
+/**
+ * The widest calendar window one call may ask for.
+ *
+ * Neither application pages its calendar endpoint, so the width of the window
+ * decides how much an instance is asked to assemble and send. A year covers
+ * every scheduling question this view exists to answer, and reaching further is
+ * a different query rather than a wider one.
+ */
+export const maxCalendarWindowDays = 366;
+
+const dayMs = 86_400_000;
+
+/**
+ * Reads one calendar bound, refusing a date that does not exist.
+ *
+ * The date schema fixes only the shape, and `Date.parse` answers a day that is
+ * shaped correctly but absent from its month by rolling it forward:
+ * `2026-02-30` becomes `2026-03-02`, and `2027-02-29` becomes `2027-03-01`.
+ * Accepting that would send the instance a different window than the caller
+ * asked for and report nothing, which is worse than refusing the input — so the
+ * parsed instant is formatted back and kept only when it is byte-identical to
+ * what arrived. Every real date round-trips unchanged.
+ */
+function readCalendarBound(value: string): number | undefined {
+  const parsed = Date.parse(`${value}T00:00:00Z`);
+  if (Number.isNaN(parsed)) {
+    return undefined;
+  }
+  return new Date(parsed).toISOString().slice(0, 10) === value ? parsed : undefined;
+}
+
+/**
+ * Whether a calendar window names two real dates, in order — what every reader
+ * of the calendar view needs, whatever bound a tool puts on its width.
+ */
+export function isCalendarWindow(start: string, end: string): boolean {
+  const from = readCalendarBound(start);
+  const to = readCalendarBound(end);
+  return from !== undefined && to !== undefined && from <= to;
+}
+
+/** Whether a calendar window names two real dates, in order, and is bounded. */
+export function isUsableCalendarWindow(start: string, end: string): boolean {
+  if (!isCalendarWindow(start, end)) {
+    return false;
+  }
+  const from = Date.parse(`${start}T00:00:00Z`);
+  const to = Date.parse(`${end}T00:00:00Z`);
+  return to - from <= (maxCalendarWindowDays - 1) * dayMs;
+}
+
+/** What a caller is told when {@link isUsableCalendarWindow} refuses a window. */
+export const calendarWindowMessage = `start and end must be real dates, in order, and cover at most ${maxCalendarWindowDays} days including both bounds`;
+
 export const isoDateTimeSchema = z.iso.datetime();
 
 /** A bounded free-text search term. Never a path, URL, or upstream route. */
