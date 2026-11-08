@@ -199,10 +199,10 @@ describe("versioned fixture contract", () => {
   it("accepts object or array response bodies and keeps status checks object-specific", () => {
     const collectionFixture = validFixture();
     (collectionFixture.metadata as Record<string, unknown>).endpoint = "/api/v3/series";
-    collectionFixture.body = [{ title: "Sanitized fixture" }];
+    collectionFixture.body = [{ title: "Example Series" }];
 
     expect(validate(collectionFixture, "sonarr/v3/4.0.19.2979/series.json").body).toEqual([
-      { title: "Sanitized fixture" },
+      { title: "Example Series" },
     ]);
 
     const statusFixture = validFixture();
@@ -370,6 +370,131 @@ describe("versioned fixture contract", () => {
       const keyed = validFixture();
       (keyed.body as Record<string, unknown>).nested = [{ [unsafeValue]: 1 }];
       expect(() => validate(keyed)).toThrow("is not allowed");
+    }
+  });
+
+  it("refuses what identifies a library or its services, and accepts the stand-ins", () => {
+    // Real-looking values a capture must never write: a library's titles and
+    // text, metadata ids outside the reserved blocks, an operator's names.
+    const identifying: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+      ["title", { title: "Love Begins in Another World" }],
+      ["title", { originalTitle: "Another World" }],
+      ["title", { seriesTitle: "Another World" }],
+      ["sortTitle", { sortTitle: "love begins in another world" }],
+      ["cleanTitle", { cleanTitle: "lovebeginsinanotherworld" }],
+      ["titleSlug", { titleSlug: "love-begins-in-another-world" }],
+      ["overview", { overview: "Two strangers meet in a world that is not theirs." }],
+      ["network", { network: "A Real Broadcaster" }],
+      ["studio", { studio: "A Real Studio" }],
+      ["indexer", { indexer: "Treasure Maps (Prowlarr)" }],
+      ["indexer", { indexerName: "Treasure Maps" }],
+      ["downloadClient", { downloadClient: "SABnzbd" }],
+      ["downloadId", { downloadId: "SABnzbd_nzo_8f2k1q" }],
+      ["downloadId", { downloadId: "0123456789abcdef0123456789abcdef01234567" }],
+      ["externalId:tvdbId", { tvdbId: 469_794 }],
+      ["externalId:tmdbId", { tmdbId: 11 }],
+      ["externalId:tvMazeId", { tvMazeId: 65_001 }],
+      ["externalId:tvRageId", { tvRageId: "12345" }],
+      ["imdbId", { imdbId: "tt1234567" }],
+      ["genres", { genres: ["Drama", "Isekai Romance"] }],
+      ["certification", { certification: "Kids 7+" }],
+      ["tagLabel", { label: "private-tracker" }],
+      ["artwork", { coverType: "poster", url: "poster.jpg" }],
+    ];
+    for (const [field, nested] of identifying) {
+      const fixture = validFixture();
+      (fixture.body as Record<string, unknown>).nested = [{ inner: nested }];
+      expect(() => validate(fixture), JSON.stringify(nested)).toThrow(
+        `Identifying ${field} is not neutralized at fixture.body.nested[0].inner.`,
+      );
+    }
+
+    // The stand-ins a capture writes, the forms the minimum's fixtures were
+    // recorded with, and the values that say a field is unset all pass.
+    const fixture = validFixture();
+    (fixture.body as Record<string, unknown>).nested = [
+      {
+        title: "Example Title 1",
+        sortTitle: "example title 1",
+        cleanTitle: "exampletitle1",
+        titleSlug: "example-title-1",
+        overview: "A sanitized overview recorded only to fix the payload shape",
+        network: "Example Network 1",
+        studio: "Example Studio",
+        indexer: "Example Indexer 1",
+        downloadClient: "Example Download Client 1",
+        downloadId: "example-download-1",
+        tvdbId: 100_001,
+        tmdbId: 200_001,
+        tvMazeId: 0,
+        tvRageId: null,
+        imdbId: "tt0000001",
+        genres: ["Example Genre 1", "Drama", "Science Fiction"],
+        certification: "PG-13",
+        ratings: { votes: 300, value: 7.5 },
+        images: [{ coverType: "poster", url: "/media/example/artwork-1", remoteUrl: "" }],
+      },
+      { id: 7, label: "example-tag-1" },
+      { downloadId: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0", imdbId: "" },
+      // A quality definition is titled by its quality until an operator renames it.
+      { quality: { id: 7, name: "Bluray-1080p" }, title: "Bluray-1080p" },
+      // A provider field's label is the application's text, not a tag's.
+      { name: "apiPath", label: "API Path", value: "" },
+    ];
+    expect(() => validate(fixture)).not.toThrow();
+
+    // A renamed quality definition is the operator's text, and is held to a stand-in.
+    const renamed = validFixture();
+    (renamed.body as Record<string, unknown>).nested = [
+      { quality: { id: 7, name: "Bluray-1080p" }, title: "My Favourite Quality" },
+    ];
+    expect(() => validate(renamed)).toThrow("Identifying title is not neutralized");
+  });
+
+  it("holds a newer version's fixture to shifted dates, years, and example languages", () => {
+    // Any route approved at the newer version will do; the screen reads the body.
+    const fixtureAt = (version: string, row: Record<string, unknown>) => ({
+      metadata: {
+        application: "sonarr",
+        apiVersion: "v3",
+        version,
+        endpoint: "/api/v3/qualityprofile",
+      },
+      body: [row],
+    });
+    const shifted = {
+      added: "2251-06-09T06:47:10Z",
+      episode: { airDate: "2251-06-10" },
+      series: { year: 2251, originalLanguage: { id: 1, name: "Example Language 1" } },
+      languages: [{ id: 1, name: "Example Language 1" }],
+    };
+    expect(() =>
+      validate(fixtureAt("4.0.20.3014", shifted), "sonarr/v3/4.0.20.3014/qualityprofile.json"),
+    ).not.toThrow();
+
+    const unshifted: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+      ["Date is not shifted", { ...shifted, added: "2026-11-06T06:47:10Z" }],
+      ["Date is not shifted", { ...shifted, episode: { airDate: "2025-11-21" } }],
+      ["Identifying year is not shifted", { ...shifted, series: { year: 2025 } }],
+      [
+        "Identifying language is not neutralized",
+        { ...shifted, languages: [{ id: 8, name: "Japanese" }] },
+      ],
+      [
+        "Identifying language is not neutralized",
+        { ...shifted, series: { originalLanguage: { id: 8, name: "Japanese" } } },
+      ],
+    ];
+    for (const [refusal, row] of unshifted) {
+      expect(
+        () => validate(fixtureAt("4.0.20.3014", row), "sonarr/v3/4.0.20.3014/qualityprofile.json"),
+        JSON.stringify(row),
+      ).toThrow(refusal);
+      // The minimum's fixtures were recorded before dates were shifted, and
+      // their tests are written against the dates they hold.
+      expect(() =>
+        validate(fixtureAt("4.0.19.2979", row), "sonarr/v3/4.0.19.2979/qualityprofile.json"),
+      ).not.toThrow();
     }
   });
 

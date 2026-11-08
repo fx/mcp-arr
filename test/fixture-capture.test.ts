@@ -291,6 +291,168 @@ describe("fixture capture procedure", () => {
     expect(Object.values(record)).toContainEqual({ retained: true });
   });
 
+  it("replaces what identifies a library with stand-ins that still agree with each other", async () => {
+    const fixtureRoot = await temporaryFixtureRoot();
+    const series = {
+      id: 113,
+      title: "Love Begins in Another World",
+      sortTitle: "love begins in another world",
+      cleanTitle: "lovebeginsinanotherworld",
+      titleSlug: "love-begins-in-another-world",
+      overview: "Two strangers meet in a world that is not theirs.",
+      network: "A Real Broadcaster",
+      genres: ["Animation", "Isekai Romance"],
+      certification: "TV-14",
+      ratings: { votes: 41, value: 8.2 },
+      images: [{ coverType: "poster", url: "poster.jpg", remoteUrl: "" }],
+      tvdbId: 469_794,
+      tvMazeId: 65_001,
+      tvRageId: 0,
+      imdbId: "tt1234567",
+      tags: [3],
+      year: 2025,
+      firstAired: "2025-11-21T00:00:00Z",
+      airTime: "01:30",
+      runtime: 24,
+      originalLanguage: { id: 8, name: "Japanese" },
+    };
+    const row = (id: number, episodeId: number, episodeTitle: string, airDay: number) => ({
+      id,
+      seriesId: 113,
+      episodeId,
+      series,
+      episode: {
+        id: episodeId,
+        title: episodeTitle,
+        tvdbId: 9_000_000 + episodeId,
+        airDate: `2025-11-${airDay}`,
+        airDateUtc: `2025-11-${airDay - 1}T16:30:00Z`,
+        runtime: 24,
+      },
+      languages: [{ id: 8, name: "Japanese" }],
+      size: 4_000_000_000,
+      sizeleft: 1_000_000_000,
+      added: "2026-11-06T06:47:10.123Z",
+      title: "Love Begins S01 1080p",
+      downloadId: "SABnzbd_nzo_8f2k1q",
+      downloadClient: "My Downloader",
+      indexer: "Treasure Maps (Prowlarr)",
+      status: "completed",
+    });
+    const url = await startStub({
+      "/api/v3/system/status": sonarrStatus,
+      "/api/v3/queue/details": {
+        body: JSON.stringify([
+          row(1, 11_807, "A First Meeting", 21),
+          row(2, 11_808, "A Second Look", 28),
+        ]),
+      },
+    });
+
+    const { code } = await runCapture(url, [
+      "--application",
+      "sonarr",
+      "--route",
+      "queue/details",
+      "--query",
+      "seriesId=113",
+      "--fixture-root",
+      fixtureRoot,
+    ]);
+
+    expect(code).toBe(0);
+    const written = await readFile(
+      path.join(fixtureRoot, "sonarr/v3/4.0.19.2979/queue-details.json"),
+      "utf8",
+    );
+    for (const original of [
+      "Love Begins",
+      "love",
+      "Two strangers",
+      "Real Broadcaster",
+      "Isekai",
+      "469794",
+      "65001",
+      "tt1234567",
+      "9011807",
+      "A First Meeting",
+      "SABnzbd",
+      "My Downloader",
+      "Treasure Maps",
+      "Japanese",
+      "01:30",
+    ]) {
+      expect(written, original).not.toContain(original);
+    }
+    type Row = Record<string, unknown> & {
+      series: Record<string, unknown>;
+      episode: Record<string, string>;
+      size: number;
+      sizeleft: number;
+    };
+    const [first, second] = (JSON.parse(written) as { body: Row[] }).body;
+    const { year, firstAired, airTime, runtime, originalLanguage, ...text } = first?.series ?? {};
+    // The facts that place a title: one offset for every date, a year moved
+    // with them, a runtime and an air time anyone could have, an example language.
+    const shiftedDays =
+      (Date.parse(firstAired as string) - Date.parse("2025-11-21T00:00:00Z")) / 86_400_000;
+    expect(Number.isInteger(shiftedDays)).toBe(true);
+    expect(new Date(firstAired as string).getUTCFullYear()).toBeGreaterThanOrEqual(2100);
+    expect(
+      Math.abs((year as number) - new Date(firstAired as string).getUTCFullYear()),
+    ).toBeLessThanOrEqual(1);
+    expect([airTime, runtime, first?.episode.runtime]).toEqual(["20:00", 30, 30]);
+    expect(originalLanguage).toEqual({ id: 1, name: "Example Language 1" });
+    expect(first?.languages).toEqual([{ id: 1, name: "Example Language 1" }]);
+    const shifted = (instant: string, original: string) =>
+      (Date.parse(instant) - Date.parse(original)) / 86_400_000;
+    expect(shifted(first?.episode.airDateUtc ?? "", "2025-11-20T16:30:00Z")).toBe(shiftedDays);
+    expect(shifted(first?.episode.airDate ?? "", "2025-11-21")).toBe(shiftedDays);
+    expect(shifted(second?.episode.airDateUtc ?? "", "2025-11-27T16:30:00Z")).toBe(shiftedDays);
+    // The time and the zone are kept as written.
+    expect(first?.added).toMatch(/^\d{4}-\d{2}-\d{2}T06:47:10\.123Z$/u);
+    expect(shifted(first?.added as string, "2026-11-06T06:47:10.123Z")).toBe(shiftedDays);
+    // Every byte count is scaled by one factor, so progress reads the same.
+    expect(first?.size).not.toBe(4_000_000_000);
+    expect(first?.sizeleft ?? 0).toBeGreaterThan(0);
+    expect((first?.sizeleft ?? 0) / (first?.size ?? 1)).toBeCloseTo(0.25, 6);
+    expect(text).toEqual({
+      id: 113,
+      title: "Example Title 1",
+      sortTitle: "example title 1",
+      cleanTitle: "exampletitle1",
+      titleSlug: "example-title-1",
+      overview: "A sanitized overview recorded only to fix the payload shape",
+      network: "Example Network 1",
+      genres: ["Example Genre 1", "Example Genre 2"],
+      certification: "Example Certification 1",
+      ratings: { votes: 0, value: 0 },
+      images: [{ coverType: "poster", url: "/media/example/artwork-1", remoteUrl: "" }],
+      tvdbId: 100_001,
+      tvMazeId: 400_001,
+      tvRageId: 0,
+      imdbId: "tt0000001",
+      tags: [3],
+    });
+    // Each distinct value has its own stand-in, the same wherever it recurs,
+    // so the two rows of one download, and of one series, still agree.
+    expect(second?.series).toEqual(first?.series);
+    expect(first).toMatchObject({
+      id: 1,
+      seriesId: 113,
+      title: "Example Title 3",
+      downloadId: "example-download-1",
+      downloadClient: "Example Download Client 1",
+      indexer: "Example Indexer 1",
+      episode: { id: 11_807, title: "Example Title 2", tvdbId: 100_002 },
+    });
+    expect(second).toMatchObject({
+      title: "Example Title 3",
+      downloadId: "example-download-1",
+      episode: { title: "Example Title 4", tvdbId: 100_003 },
+    });
+  });
+
   it("reports what a dry run would write without writing it", async () => {
     const fixtureRoot = await temporaryFixtureRoot();
     const url = await startStub({

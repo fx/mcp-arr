@@ -41,6 +41,8 @@ import { fileURLToPath } from "node:url";
 import {
   approvedFixtures,
   captureTargetFor,
+  createIdentifyingNeutralizer,
+  identifyingFieldOf,
   validateFixture,
   validateSanitizedValue,
 } from "./fixture-contract.mjs";
@@ -191,14 +193,25 @@ async function readRoute(client, route, query = {}) {
  * or a URL — becomes a neutral stand-in, distinct per original text so that two
  * fields which carried the same text still carry the same text afterwards. What
  * a fixture owes is its field shapes, not its text.
+ *
+ * A field that identifies the library or the services behind it — a title, an
+ * overview, artwork, a metadata id, an indexer's or a client's name, a
+ * download's id — is replaced by the stand-in the fixture contract defines
+ * for it, whatever it holds, rather than only when a screen refuses its text:
+ * the contract refuses any other value there, and it is the one definition of
+ * which fields those are. Every date the body holds is moved by the one
+ * offset that capture chose, whatever field it is in.
  */
 function createSanitizer(screen) {
   const replacements = new Map();
+  const identifying = createIdentifyingNeutralizer();
 
   /** `keep`, `drop` — the name itself is the disclosure — or `rename`. */
   const keyDisposition = (key) => {
     try {
-      screen({ [key]: 1 }, "value");
+      // Probed with no value, so only the name is judged: an identifying
+      // field holding nothing is neutral, and its name is not a disclosure.
+      screen({ [key]: null }, "value");
       return "keep";
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
@@ -298,9 +311,16 @@ function createSanitizer(screen) {
         // value is rather than dropped, which would take its value with it and
         // lose a field the shape has.
         const sanitizedKey = disposition === "rename" ? replace(key) : key;
+        const field = disposition === "keep" ? identifyingFieldOf(key, value) : undefined;
         entries.push([
           sanitizedKey,
-          redactSiblingValue && key === "value" ? redact(child) : sanitize(child),
+          field !== undefined
+            ? // Screened as well, for what a stand-in leaves in place, such as
+              // the text beside a rating's numbers.
+              sanitize(identifying.neutralize(field, child))
+            : redactSiblingValue && key === "value"
+              ? redact(child)
+              : sanitize(child),
         ]);
       }
       // A replaced key could land on one the object already has, and building
@@ -314,6 +334,10 @@ function createSanitizer(screen) {
       // the prototype setter, so an upstream key of that name would silently
       // take its whole subtree out of the fixture.
       return Object.fromEntries(entries);
+    }
+    const shifted = identifying.shiftDate(value);
+    if (shifted !== undefined) {
+      return shifted;
     }
     if (typeof value === "string" && refusesValue(value)) {
       return replace(value);
