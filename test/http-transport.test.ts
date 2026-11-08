@@ -183,6 +183,10 @@ async function fixture(
 /**
  * The configuration the environment would produce for these instances, with
  * the listener moved to an ephemeral port no environment value could name.
+ *
+ * The `arr` toolset is selected unless the instances name a selection, so no
+ * test here depends on what an absent selection publishes; naming it as
+ * `undefined` leaves it absent.
  */
 function configurationFor(
   instances: EnvironmentRecord,
@@ -190,6 +194,7 @@ function configurationFor(
   listener: { host?: string; port?: number } = {},
 ): HttpEnvironmentConfiguration {
   const parsed = parseEnvironment({
+    ARR_MCP_TOOLSET: "arr",
     ...instances,
     ARR_MCP_TRANSPORT: "http",
     ARR_MCP_AUTH_TOKEN: token,
@@ -1148,11 +1153,20 @@ describe("HTTP transport toolset selection", () => {
 
   /** The tools the built stdio server publishes for the same selection. */
   async function stdioTools(selection: EnvironmentRecord): Promise<unknown[]> {
-    const child = spawnBuiltServer({
-      SONARR_URL: "https://sonarr.example.invalid/sonarr",
-      SONARR_API_KEY: "sonarr-secret-key",
-      ...selection,
-    });
+    const named = Object.fromEntries(
+      Object.entries(selection).filter(
+        (entry): entry is [string, string] => entry[1] !== undefined,
+      ),
+    );
+    const child = spawnBuiltServer(
+      {
+        SONARR_URL: "https://sonarr.example.invalid/sonarr",
+        SONARR_API_KEY: "sonarr-secret-key",
+        ...named,
+      },
+      undefined,
+      named.ARR_MCP_TOOLSET === undefined ? "absent" : "arr",
+    );
     try {
       await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
       const listed = (await child.request(2, "tools/list")) as { result?: { tools?: unknown[] } };
@@ -1164,6 +1178,13 @@ describe("HTTP transport toolset selection", () => {
   }
 
   for (const [label, selection, names, words] of [
+    [
+      "absent",
+      { ARR_MCP_TOOLSET: undefined },
+      [...publishedMediaToolNames(false)],
+      "the media toolset",
+    ],
+    ["arr", { ARR_MCP_TOOLSET: "arr" }, [...toolNames], "the arr toolset"],
     [
       "media",
       { ARR_MCP_TOOLSET: "media" },

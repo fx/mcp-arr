@@ -221,20 +221,53 @@ function assertManifest(manifest) {
   );
 }
 
-async function verifyInstalledProcess(binPath, cwd, expectedVersion) {
+/**
+ * What the installed executable publishes with no toolset selection: the
+ * `media` tools, `media_remove` excepted because removal is not enabled.
+ * Written out here rather than read from the package, so a changed default is
+ * caught rather than followed.
+ */
+const defaultToolNames = [
+  "media_find",
+  "media_add",
+  "media_status",
+  "media_fix",
+  "media_search_again",
+];
+
+/** The selections the installed stdio executable is started under, and what each must list. */
+const stdioSelections = [
+  {
+    label: "the default selection",
+    env: instanceEnvironment,
+    assertTools: (names) =>
+      assert(
+        JSON.stringify(names) === JSON.stringify(defaultToolNames),
+        `Installed bin did not list the media toolset by default: ${names.join(", ")}`,
+      ),
+  },
+  {
+    label: "ARR_MCP_TOOLSET=arr",
+    env: { ...instanceEnvironment, ARR_MCP_TOOLSET: "arr" },
+    assertTools: (names) =>
+      assert(
+        names.length === 14 &&
+          names.includes("arr_capabilities") &&
+          names.every((name) => name.startsWith("arr_")),
+        `Installed bin did not list the fourteen arr tools when arr was selected: ${names.join(", ")}`,
+      ),
+  },
+];
+
+async function verifyInstalledProcess(binPath, cwd, expectedVersion, selection) {
   const invocation = createPlatformCommand(binPath, []);
   const child = spawn(invocation.executable, invocation.args, {
     cwd,
-    env: instanceEnvironment,
+    env: selection.env,
     stdio: ["pipe", "pipe", "pipe"],
   });
   const readBuffer = new ReadBuffer();
-  let resolveResponse;
-  let rejectResponse;
-  const responsePromise = new Promise((resolve, reject) => {
-    resolveResponse = resolve;
-    rejectResponse = reject;
-  });
+  const responses = new Map();
   const observed = observeChildProcess(child, {
     onStdoutChunk: (chunk) => {
       try {
@@ -244,17 +277,24 @@ async function verifyInstalledProcess(binPath, cwd, expectedVersion) {
           message !== null;
           message = readBuffer.readMessage()
         ) {
-          if ("id" in message && message.id === 1) {
-            resolveResponse(message);
+          if ("id" in message) {
+            responses.get(message.id)?.resolve(message);
           }
         }
       } catch (error) {
-        rejectResponse(error);
+        for (const response of responses.values()) {
+          response.reject(error);
+        }
       }
     },
   });
+  const expectResponse = (id) =>
+    new Promise((resolve, reject) => {
+      responses.set(id, { resolve, reject });
+    });
 
   try {
+    const responsePromise = expectResponse(1);
     child.stdin.write(
       serializeMessage({
         jsonrpc: "2.0",
@@ -288,7 +328,16 @@ async function verifyInstalledProcess(binPath, cwd, expectedVersion) {
     );
 
     child.stdin.write(serializeMessage({ jsonrpc: "2.0", method: "notifications/initialized" }));
-    assert(child.kill("SIGTERM"), "Installed bin did not accept SIGTERM");
+    const listedPromise = expectResponse(2);
+    child.stdin.write(serializeMessage({ jsonrpc: "2.0", id: 2, method: "tools/list" }));
+    const listed = await withDeadline(
+      waitForResponseOrExit(listedPromise, observed.exit, "installed package tool listing"),
+      "installed package tool listing",
+    );
+    assert(listed.jsonrpc === "2.0" && listed.id === 2, "Installed bin returned the wrong ID");
+    selection.assertTools((listed.result?.tools ?? []).map((tool) => tool.name));
+
+    assert(child.kill("SIGTERM"), `Installed bin did not accept SIGTERM under ${selection.label}`);
     const exit = await withDeadline(observed.exit, "installed package shutdown");
     assert(isCleanTermination(exit), "Installed bin did not terminate cleanly");
     const closed = await withDeadline(observed.closed, "installed package stream close");
@@ -298,9 +347,10 @@ async function verifyInstalledProcess(binPath, cwd, expectedVersion) {
     );
 
     const stdoutLines = observed.stdout.split("\n");
-    assert(stdoutLines.length === 2 && stdoutLines[1] === "", "Installed bin polluted stdout");
+    assert(stdoutLines.length === 3 && stdoutLines[2] === "", "Installed bin polluted stdout");
     assert(
-      JSON.stringify(deserializeMessage(stdoutLines[0] ?? "")) === JSON.stringify(response),
+      JSON.stringify(deserializeMessage(stdoutLines[0] ?? "")) === JSON.stringify(response) &&
+        JSON.stringify(deserializeMessage(stdoutLines[1] ?? "")) === JSON.stringify(listed),
       "Installed bin emitted invalid MCP framing",
     );
     assert(observed.stderr === "", "Installed bin wrote to stderr");
@@ -327,6 +377,7 @@ async function verifyInstalledHttpProcess(binPath, cwd, expectedVersion) {
     cwd,
     env: {
       ...instanceEnvironment,
+      ARR_MCP_TOOLSET: "arr",
       ARR_MCP_TRANSPORT: "http",
       ARR_MCP_HTTP_PORT: String(port),
       ARR_MCP_AUTH_TOKEN: token,
@@ -496,7 +547,9 @@ try {
     ".bin",
     process.platform === "win32" ? "mcp-arr.cmd" : "mcp-arr",
   );
-  await verifyInstalledProcess(binPath, consumerDirectory, installedManifest.version);
+  for (const selection of stdioSelections) {
+    await verifyInstalledProcess(binPath, consumerDirectory, installedManifest.version, selection);
+  }
   await verifyInstalledHttpProcess(binPath, consumerDirectory, installedManifest.version);
   process.stdout.write("Package verification passed\n");
 } finally {

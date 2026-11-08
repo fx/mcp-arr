@@ -53,7 +53,21 @@ const installedPackage = "/usr/local/lib/node_modules/mcp-arr";
  * this long before it kills, so a container that needed the kill fails here.
  */
 const upstreamTimeoutMs = 30_000;
-const startupLine = `mcp-arr: listening on http://0.0.0.0:${containerPort}/mcp with the arr toolset\n`;
+const startupLine = `mcp-arr: listening on http://0.0.0.0:${containerPort}/mcp with the media toolset\n`;
+
+/**
+ * What the image publishes when it is run with no toolset selection, as the
+ * package does: the `media` tools, `media_remove` excepted because removal is
+ * not enabled. Written out here rather than read from the build, so a changed
+ * default is caught rather than followed.
+ */
+const defaultToolNames = [
+  "media_find",
+  "media_add",
+  "media_status",
+  "media_fix",
+  "media_search_again",
+];
 
 /**
  * Placeholder instance settings on the reserved `.invalid` domain. Nothing
@@ -156,6 +170,10 @@ async function verifyImageConfiguration() {
     (name) => name === "ARR_MCP_AUTH_TOKEN" || /_(?:URL|API_KEY)$/u.test(name),
   );
   assert(baked.length === 0, `Image bakes in credentials or instances: ${baked.join(", ")}`);
+  assert(
+    environment.ARR_MCP_TOOLSET === undefined,
+    "Image selects a toolset instead of publishing the package default",
+  );
   assert(
     config.Labels?.["org.opencontainers.image.source"] === canonicalRepository,
     `Image source label is not ${canonicalRepository}`,
@@ -413,8 +431,8 @@ async function verifyService(expectedVersion) {
     const tools = JSON.parse(listed.body).result?.tools ?? [];
     const names = tools.map((tool) => tool.name);
     assert(
-      names.includes("arr_capabilities") && names.every((toolName) => toolName.startsWith("arr_")),
-      `tools/list did not list the arr toolset: ${names.join(", ")}`,
+      JSON.stringify(names) === JSON.stringify(defaultToolNames),
+      `tools/list did not list the default media toolset: ${names.join(", ")}`,
     );
 
     await waitForHealthy(name);

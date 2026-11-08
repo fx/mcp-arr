@@ -518,8 +518,22 @@ describe("toolset selection", () => {
     }).toolsets;
   }
 
-  it("publishes only the arr toolset when no selection is made, until the default changes", () => {
-    expect(selected(undefined)).toEqual({ names: ["arr"] });
+  it("publishes only the media toolset when no selection is made", () => {
+    expect(selected(undefined)).toEqual({ names: ["media"], media: noDefaults });
+    expect(selected(undefined)).toEqual(selected("media"));
+  });
+
+  it("reads the media defaults under the default selection", () => {
+    expect(
+      selected(undefined, {
+        ARR_MCP_MEDIA_MOVIE_QUALITY_PROFILE: "Example HD",
+        ARR_MCP_MEDIA_ALLOW_REMOVE: "true",
+      }),
+    ).toEqual({
+      names: ["media"],
+      media: { movie: { qualityProfile: "Example HD" }, series: {} },
+      mediaAllowRemove: true,
+    });
   });
 
   it("accepts each toolset alone", () => {
@@ -626,18 +640,12 @@ describe("toolset selection", () => {
   });
 
   it("rejects a media default when media is not selected, even an empty one", () => {
-    for (const toolset of [undefined, "arr"]) {
-      for (const variable of mediaVariables) {
-        for (const value of ["Example HD", ""]) {
-          expect(
-            expectProblems({
-              ...sonarrEnvironment,
-              ...(toolset === undefined ? {} : { ARR_MCP_TOOLSET: toolset }),
-              [variable]: value,
-            }),
-            `${String(toolset)} ${variable}`,
-          ).toEqual([`${variable} requires ARR_MCP_TOOLSET to select media`]);
-        }
+    for (const variable of mediaVariables) {
+      for (const value of ["Example HD", ""]) {
+        expect(
+          expectProblems({ ...sonarrEnvironment, ARR_MCP_TOOLSET: "arr", [variable]: value }),
+          variable,
+        ).toEqual([`${variable} requires ARR_MCP_TOOLSET to select media`]);
       }
     }
   });
@@ -645,6 +653,7 @@ describe("toolset selection", () => {
   it("names every misplaced media default at once without echoing a value", () => {
     const problems = expectProblems({
       ...sonarrEnvironment,
+      ARR_MCP_TOOLSET: "arr",
       ARR_MCP_MEDIA_MOVIE_QUALITY_PROFILE: "Secret Movie Profile",
       ARR_MCP_MEDIA_SERIES_ROOT_FOLDER: "/secret/series",
     });
@@ -685,6 +694,7 @@ describe("toolset selection", () => {
     const problems = expectProblems({
       ...sonarrEnvironment,
       ARR_MCP_AUTH_TOKEN: listenerToken,
+      ARR_MCP_TOOLSET: "arr",
       ARR_MCP_MEDIA_SERIES_ROOT_FOLDER: "/secret/series",
     });
 
@@ -767,18 +777,22 @@ describe("media removal setting", () => {
   });
 
   it("rejects the setting when media is not selected, even an empty one", () => {
-    for (const toolset of [undefined, "arr"]) {
-      for (const value of ["true", "false", ""]) {
-        expect(
-          expectProblems({
-            ...sonarrEnvironment,
-            ...(toolset === undefined ? {} : { ARR_MCP_TOOLSET: toolset }),
-            ARR_MCP_MEDIA_ALLOW_REMOVE: value,
-          }),
-          `${String(toolset)} ${value}`,
-        ).toEqual(["ARR_MCP_MEDIA_ALLOW_REMOVE requires ARR_MCP_TOOLSET to select media"]);
-      }
+    for (const value of ["true", "false", ""]) {
+      expect(
+        expectProblems({
+          ...sonarrEnvironment,
+          ARR_MCP_TOOLSET: "arr",
+          ARR_MCP_MEDIA_ALLOW_REMOVE: value,
+        }),
+        value,
+      ).toEqual(["ARR_MCP_MEDIA_ALLOW_REMOVE requires ARR_MCP_TOOLSET to select media"]);
     }
+  });
+
+  it("accepts the setting under the default selection", () => {
+    expect(
+      parseEnvironment({ ...sonarrEnvironment, ARR_MCP_MEDIA_ALLOW_REMOVE: "false" }).toolsets,
+    ).toEqual({ names: ["media"], media: { movie: {}, series: {} }, mediaAllowRemove: false });
   });
 });
 

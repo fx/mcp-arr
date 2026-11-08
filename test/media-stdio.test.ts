@@ -58,11 +58,15 @@ async function readListing(
   toolset: string | undefined,
   extra: Readonly<Record<string, string>>,
 ): Promise<PublishedListing> {
-  const child = spawnBuiltServer({
-    ...placeholderInstances,
-    ...(toolset === undefined ? {} : { ARR_MCP_TOOLSET: toolset }),
-    ...extra,
-  });
+  const child = spawnBuiltServer(
+    {
+      ...placeholderInstances,
+      ...(toolset === undefined ? {} : { ARR_MCP_TOOLSET: toolset }),
+      ...extra,
+    },
+    undefined,
+    "absent",
+  );
   try {
     await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
     const listed = (await child.request(2, "tools/list")) as {
@@ -290,13 +294,34 @@ describe("media toolset over stdio", () => {
     }
   });
 
-  it("publishes exactly the arr toolset when no selection is made", async () => {
+  it("publishes exactly the media toolset when no selection is made", async () => {
     const absent = await listing(undefined);
-    const arr = await listing("arr");
+    const media = await listing("media");
 
-    expect(absent.tools.map((tool) => tool.name)).toEqual([...toolNames]);
-    expect(absent.tools).toEqual(arr.tools);
-    expect(absent.bytes).toBe(arr.bytes);
+    expect(absent.tools.map((tool) => tool.name)).toEqual(publishedMediaToolNames(false));
+    expect(absent.tools.some((tool) => tool.name.startsWith("arr_"))).toBe(false);
+    expect(absent.tools).toEqual(media.tools);
+    expect(absent.bytes).toBe(media.bytes);
+    assertCleanProtocolStdout(absent.stdout);
+    expect(absent.stderr).toBe("");
+  });
+
+  it("publishes exactly the fourteen arr tools when arr is selected", async () => {
+    const { tools, stdout, stderr } = await listing("arr");
+
+    expect(tools.map((tool) => tool.name)).toEqual([...toolNames]);
+    expect(toolNames).toHaveLength(14);
+    expect(tools.some((tool) => tool.name.startsWith("media_"))).toBe(false);
+    assertCleanProtocolStdout(stdout);
+    expect(stderr).toBe("");
+  });
+
+  it("publishes media_remove under the default selection where removal is enabled", async () => {
+    const absent = await listing(undefined, removalEnabled);
+    const media = await listing("media", removalEnabled);
+
+    expect(absent.tools.map((tool) => tool.name)).toEqual(publishedMediaToolNames(true));
+    expect(absent.tools).toEqual(media.tools);
   });
 
   it("refuses an unknown selection at startup without echoing it", async () => {

@@ -45,12 +45,25 @@ export const configurationVariables: readonly string[] = [
   mediaAllowRemoveVariable,
 ];
 
+/**
+ * How a spawned server's toolset selection is set when the caller names none.
+ *
+ * `arr` is the default for these helpers, so a test that exercises an `arr`
+ * tool never depends on what an absent selection publishes; `absent` leaves
+ * the variable unset, for the tests that pin that default.
+ */
+export type ToolsetSelectionMode = "arr" | "absent";
+
 /** The process environment a host would launch the built server with. */
-export function serverEnvironment(instances: Readonly<Record<string, string>>): NodeJS.ProcessEnv {
+export function serverEnvironment(
+  instances: Readonly<Record<string, string>>,
+  selection: ToolsetSelectionMode = "arr",
+): NodeJS.ProcessEnv {
   return {
     ...Object.fromEntries(
       Object.entries(process.env).filter(([name]) => !configurationVariables.includes(name)),
     ),
+    ...(selection === "arr" ? { [toolsetVariable]: "arr" } : {}),
     ...instances,
   };
 }
@@ -62,12 +75,13 @@ export function serverEnvironment(instances: Readonly<Record<string, string>>): 
 export function spawnBuiltServer(
   instances: Readonly<Record<string, string>>,
   deadlineMs = 5_000,
+  selection: ToolsetSelectionMode = "arr",
 ): SpawnedStdioProcess {
   return spawnStdioProcess({
     executable: process.execPath,
     args: ["dist/cli.js"],
     cwd: projectRoot,
-    env: serverEnvironment(instances),
+    env: serverEnvironment(instances, selection),
     deadlineMs,
   });
 }
