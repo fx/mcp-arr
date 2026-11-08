@@ -279,3 +279,10 @@ changes:
     spec: architecture
     status: complete
     depends_on: ["0030"]
+  - id: "0035"
+    name: fixtures-at-newer-versions
+    path: changes/0035-fixtures-at-newer-versions.md
+    description: Record fixtures at a newer version per application beside the minimum, and capture under the version the instance reports
+    spec: architecture
+    status: complete
+    depends_on: []
