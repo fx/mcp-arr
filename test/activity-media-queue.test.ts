@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { radarrProfile, readQueueForMedia, sonarrProfile } from "../src/adapters/activity/media.js";
+import {
+  radarrProfile,
+  readQueue,
+  readQueueForMedia,
+  sonarrProfile,
+} from "../src/adapters/activity/media.js";
 import { defaultScanLimit } from "../src/adapters/library/paging.js";
+import { classifyDownload, type Download, groupDownloads } from "../src/tools/media/downloads.js";
 import { activityFixture } from "./support/activity.js";
+import { fixturePathFor, loadFixture } from "./support/fixtures.js";
 import { jsonResponse, libraryHarness } from "./support/library.js";
+import { fixtureRoot } from "./support/tool-context.js";
 
 /**
  * Every queue row of one series or movie, read through the scoped
@@ -112,5 +120,70 @@ describe("readQueueForMedia", () => {
     await expect(readQueueForMedia(client, 12, sonarrProfile, "summary")).rejects.toMatchObject({
       kind: "unexpected-response",
     });
+  });
+});
+
+/**
+ * The queue as the newer recorded versions answer it. Recorded at Sonarr
+ * 4.0.20.3014, one series has a season pack in the queue: six episode rows of
+ * one download, finished, whose import is blocked. Recorded at Radarr
+ * 6.4.4.10685, the queue is empty.
+ */
+describe("the queue at the newer recorded versions", () => {
+  async function newer<TBody>(relativePath: string): Promise<TBody> {
+    return (await loadFixture<TBody>(fixtureRoot, relativePath)).body;
+  }
+
+  it("reads a season pack's rows as one download, stuck on a blocked import", async () => {
+    const rows = await newer<QueueRow[]>(
+      fixturePathFor("sonarr", "queue/details", { version: "4.0.20.3014" }),
+    );
+    const seriesId = rows[0]?.seriesId as number;
+    const { client } = libraryHarness("sonarr", () => jsonResponse(rows));
+
+    const read = await readQueueForMedia(client, seriesId, sonarrProfile, "summary");
+    const downloads = groupDownloads(read.items);
+
+    expect(read.items).toHaveLength(6);
+    expect(read.truncated).toBe(false);
+    expect(new Set(read.items.map((item) => item.episode?.id)).size).toBe(6);
+    expect(downloads).toHaveLength(1);
+    expect(downloads[0]?.rows).toHaveLength(6);
+    expect(read.items.every((item) => item.evidence.trackedState === "import_blocked")).toBe(true);
+    // Provisional: an import is confirmed only by the scan and the library.
+    expect(classifyDownload(downloads[0] as Download, undefined)).toEqual({
+      state: "stuck",
+      remedy: "import",
+      provisional: true,
+    });
+  });
+
+  it("pages the same rows out of the whole queue, and an empty queue as empty", async () => {
+    const page = await newer<{ records: QueueRow[] }>(
+      fixturePathFor("sonarr", "queue", { version: "4.0.20.3014" }),
+    );
+    const sonarr = libraryHarness("sonarr", () => jsonResponse(page));
+    const read = await readQueue(
+      sonarr.client,
+      { offset: 0, pageSize: 100 },
+      { view: "queue", detail: "summary", paging: { pageSize: 100 } },
+      sonarrProfile,
+    );
+    expect(read.items).toHaveLength(6);
+    expect(read.hasMore).toBe(false);
+    expect(groupDownloads(read.items)).toHaveLength(1);
+
+    const empty = await newer<unknown>(
+      fixturePathFor("radarr", "queue", { version: "6.4.4.10685" }),
+    );
+    const radarr = libraryHarness("radarr", () => jsonResponse(empty));
+    const none = await readQueue(
+      radarr.client,
+      { offset: 0, pageSize: 100 },
+      { view: "queue", detail: "summary", paging: { pageSize: 100 } },
+      radarrProfile,
+    );
+    expect(none.items).toEqual([]);
+    expect(none.hasMore).toBe(false);
   });
 });
