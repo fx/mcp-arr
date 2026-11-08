@@ -455,7 +455,7 @@ describe("versioned fixture contract", () => {
       // a profile's language, a field nobody has classified, and free text
       // under a key whose rule accepts only an enumeration word.
       ["text", { data: { reason: "The download of Another World failed" } }],
-      ["text", { language: { id: 1, name: "English" } }],
+      ["language", { language: { id: 1, name: "English" } }],
       ["text", { someFieldNoOneHasSeen: "Another World" }],
       ["text", { status: "Another World is downloading" }],
       ["text", { indexerFlags: ["freeleech", "Another World only"] }],
@@ -543,9 +543,9 @@ describe("versioned fixture contract", () => {
     const legacy = validFixture();
     (legacy.metadata as Record<string, unknown>).endpoint = "/api/v3/indexer";
     legacy.body = [{ implementation: "Newznab", name: "Example Usenet Indexer" }];
-    expect(() => validate(legacy, "sonarr/v3/4.0.19.2979/indexer.json")).not.toThrow();
+    expect(() => validate(legacy, fixturePathFor("sonarr", "indexer"))).not.toThrow();
     (legacy.metadata as Record<string, unknown>).endpoint = "/api/v3/tag";
-    expect(() => validate(legacy, "sonarr/v3/4.0.19.2979/tag.json")).toThrow(
+    expect(() => validate(legacy, fixturePathFor("sonarr", "tag"))).toThrow(
       "Identifying service is not neutralized",
     );
   });
@@ -554,11 +554,11 @@ describe("versioned fixture contract", () => {
     const fixture = validFixture();
     (fixture.metadata as Record<string, unknown>).endpoint = "/api/v3/tag";
     fixture.body = ["My Private Movie"];
-    expect(() => validate(fixture, "sonarr/v3/4.0.19.2979/tag.json")).toThrow(
+    expect(() => validate(fixture, fixturePathFor("sonarr", "tag"))).toThrow(
       "Identifying text is not neutralized at fixture.body[0]",
     );
     fixture.body = [["My Private Movie"]];
-    expect(() => validate(fixture, "sonarr/v3/4.0.19.2979/tag.json")).toThrow(
+    expect(() => validate(fixture, fixturePathFor("sonarr", "tag"))).toThrow(
       "Identifying text is not neutralized at fixture.body[0][0]",
     );
   });
@@ -597,12 +597,15 @@ describe("versioned fixture contract", () => {
     // A newer fixture says a capture wrote it; a minimum's predates the mark.
     const { capturedBy: _mark, ...unmarked } = fixtureAt("4.0.20.3014", {}).metadata;
     expect(() =>
-      validate({ metadata: unmarked, body: [] }, "sonarr/v3/4.0.20.3014/qualityprofile.json"),
+      validate(
+        { metadata: unmarked, body: [] },
+        fixturePathFor("sonarr", "qualityprofile", { version: "4.0.20.3014" }),
+      ),
     ).toThrow("carries no capture provenance");
     expect(() =>
       validate(
         { metadata: { ...unmarked, version: "4.0.19.2979" }, body: [] },
-        "sonarr/v3/4.0.19.2979/qualityprofile.json",
+        fixturePathFor("sonarr", "qualityprofile"),
       ),
     ).not.toThrow();
     const shifted = {
@@ -610,11 +613,14 @@ describe("versioned fixture contract", () => {
       popularity: 0,
       added: "2251-06-09T06:47:10Z",
       episode: { airDate: "2251-06-10" },
-      series: { year: 2251, originalLanguage: { id: 1, name: "Example Language 1" } },
-      languages: [{ id: 1, name: "Example Language 1" }],
+      series: { year: 2251, originalLanguage: { id: 0, name: "Example Language 1" } },
+      languages: [{ id: 0, name: "Example Language 1" }],
     };
     expect(() =>
-      validate(fixtureAt("4.0.20.3014", shifted), "sonarr/v3/4.0.20.3014/qualityprofile.json"),
+      validate(
+        fixtureAt("4.0.20.3014", shifted),
+        fixturePathFor("sonarr", "qualityprofile", { version: "4.0.20.3014" }),
+      ),
     ).not.toThrow();
 
     const unshifted: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
@@ -634,28 +640,33 @@ describe("versioned fixture contract", () => {
     ];
     for (const [refusal, row] of unshifted) {
       expect(
-        () => validate(fixtureAt("4.0.20.3014", row), "sonarr/v3/4.0.20.3014/qualityprofile.json"),
+        () =>
+          validate(
+            fixtureAt("4.0.20.3014", row),
+            fixturePathFor("sonarr", "qualityprofile", { version: "4.0.20.3014" }),
+          ),
         JSON.stringify(row),
       ).toThrow(refusal);
       // The minimum's fixtures were recorded before dates were shifted, and
       // their tests are written against the dates they hold.
       expect(() =>
-        validate(fixtureAt("4.0.19.2979", row), "sonarr/v3/4.0.19.2979/qualityprofile.json"),
+        validate(fixtureAt("4.0.19.2979", row), fixturePathFor("sonarr", "qualityprofile")),
       ).not.toThrow();
     }
 
-    // A language's name is text no rule recognizes, so it is refused at every
-    // version unless the one fixture it was recorded in lists it.
+    // Every leaf under a language is the language, and a language that is not
+    // an example is refused at every version unless the one fixture it was
+    // recorded in lists it.
     for (const row of [
       { ...shifted, languages: [{ id: 8, name: "Japanese" }] },
       { ...shifted, series: { originalLanguage: { id: 8, name: "Japanese" } } },
     ]) {
       for (const [version, file] of [
-        ["4.0.20.3014", "sonarr/v3/4.0.20.3014/qualityprofile.json"],
-        ["4.0.19.2979", "sonarr/v3/4.0.19.2979/qualityprofile.json"],
+        ["4.0.20.3014", fixturePathFor("sonarr", "qualityprofile", { version: "4.0.20.3014" })],
+        ["4.0.19.2979", fixturePathFor("sonarr", "qualityprofile")],
       ] as const) {
         expect(() => validate(fixtureAt(version, row), file), version).toThrow(
-          "Identifying text is not neutralized",
+          /Identifying languages? is not neutralized/u,
         );
       }
     }
@@ -689,7 +700,7 @@ describe("fixtures recorded at more than one version", () => {
 
     expect(inventory.inventory).toEqual([
       "sonarr/v3/4.0.19.2979/system-status.json",
-      "sonarr/v3/4.0.19.2979/tag.json",
+      fixturePathFor("sonarr", "tag"),
       "sonarr/v3/4.0.20.3014/tag.json",
       "sonarr/v3/4.0.20.3014/series-lookup.json",
       "radarr/v3/6.3.0.10514/tag.json",
@@ -713,9 +724,9 @@ describe("fixtures recorded at more than one version", () => {
     // A route recorded at both versions still resolves to the minimum's by
     // default, so recording a newer body never changes what an existing test
     // reads.
-    expect(inventory.pathFor("sonarr", "tag")).toBe("sonarr/v3/4.0.19.2979/tag.json");
+    expect(inventory.pathFor("sonarr", "tag")).toBe(fixturePathFor("sonarr", "tag"));
     expect(inventory.pathFor("sonarr", "tag", { version: "4.0.19.2979" })).toBe(
-      "sonarr/v3/4.0.19.2979/tag.json",
+      fixturePathFor("sonarr", "tag"),
     );
     expect(inventory.pathFor("sonarr", "tag", { version: "4.0.20.3014" })).toBe(
       "sonarr/v3/4.0.20.3014/tag.json",
@@ -745,7 +756,7 @@ describe("fixtures recorded at more than one version", () => {
     });
     expect(inventory.forReportedVersion("sonarr", "tag", "4.0.19.2979")).toEqual({
       kind: "approved",
-      fixture: expect.objectContaining({ relativePath: "sonarr/v3/4.0.19.2979/tag.json" }),
+      fixture: expect.objectContaining({ relativePath: fixturePathFor("sonarr", "tag") }),
     });
     expect(inventory.forReportedVersion("sonarr", "system/status", "4.0.20.3014")).toEqual({
       kind: "route-not-recorded-at-version",

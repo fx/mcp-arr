@@ -1,3 +1,4 @@
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { createSanitizer } from "../scripts/capture-sanitizer.mjs";
@@ -5,6 +6,7 @@ import {
   capturedBy,
   contextualFieldProbes,
   factFieldKeys,
+  fixturePathFor,
   identifyingFieldKeys,
   structuralRules,
   validateFixture,
@@ -127,6 +129,15 @@ describe("every structural rule and identifying field", () => {
  * be scaled, must be refused without that provenance instead. The capture
  * must then write each probe in a form the same fixture accepts.
  */
+const factRecordProbes: readonly unknown[] = [
+  { x: { value: 123 } },
+  { x: { value: "123" } },
+  { x: { a: { votes: "8123", value: "8.9" } } },
+  { id: 7 },
+  [{ id: 7 }],
+  { x: [{ id: 7, name: "English" }] },
+];
+
 const factProbes: readonly unknown[] = [
   123,
   "123",
@@ -134,10 +145,27 @@ const factProbes: readonly unknown[] = [
   "English",
   { name: "English" },
   ["English"],
+  ...factRecordProbes,
+  // And each of those again, inside lists of lists.
+  ...factRecordProbes.map((probe) => [[probe]]),
 ];
 
+/** Every leaf a probe holds. */
+function leavesOf(value: unknown): unknown[] {
+  if (Array.isArray(value)) {
+    return value.flatMap(leavesOf);
+  }
+  if (typeof value === "object" && value !== null) {
+    return Object.values(value).flatMap(leavesOf);
+  }
+  return [value];
+}
+
 const fixtureRoot = fileURLToPath(new URL("./fixtures", import.meta.url));
-const newerFile = `${fixtureRoot}/sonarr/v3/4.0.20.3014/qualityprofile.json`;
+const newerFile = path.join(
+  fixtureRoot,
+  fixturePathFor("sonarr", "qualityprofile", { version: "4.0.20.3014" }),
+);
 
 function newerFixture(body: unknown, marked = true) {
   return {
@@ -181,7 +209,10 @@ describe("every fact a newer fixture holds", () => {
       for (const probe of factProbes) {
         const body = [{ [key]: probe }];
         const label = `${key}: ${JSON.stringify(probe)}`;
-        const numeric = typeof probe === "number" || /^\d+$/u.test(String(probe));
+        // A probe whose every leaf is a number, as a number or as text.
+        const numeric = leavesOf(probe).every(
+          (leaf) => typeof leaf === "number" || /^\d+(?:\.\d+)?$/u.test(String(leaf)),
+        );
         if (verified === "provenance" && numeric) {
           // No value shows a byte count was scaled; only the provenance can.
           expect(() => validateNewer(body, false), label).toThrow("carries no capture provenance");
@@ -191,7 +222,9 @@ describe("every fact a newer fixture holds", () => {
 
         const written = capture(body);
         expect(JSON.stringify(written), label).not.toContain("English");
-        expect(JSON.stringify(written), label).not.toMatch(/"(?:123|1984)"|:(?:123|1984)\b/u);
+        expect(JSON.stringify(written), label).not.toMatch(
+          /"(?:7|123|1984|8123|8\.9)"|:(?:7|123|1984|8123|8\.9)\b/u,
+        );
         expect(
           () => validateNewer(written),
           `${label} -> ${JSON.stringify(written)}`,

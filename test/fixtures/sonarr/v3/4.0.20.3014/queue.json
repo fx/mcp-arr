@@ -40,7 +40,7 @@
             }
           ],
           "originalLanguage": {
-            "id": 1,
+            "id": 0,
             "name": "Example Language 1"
           },
           "seasons": [
@@ -61,14 +61,14 @@
           "tvRageId": 0,
           "tvMazeId": 400001,
           "tmdbId": 200001,
-          "firstAired": "2248-02-12T00:00:00Z",
-          "lastAired": "2248-03-18T00:00:00Z",
+          "firstAired": "2248-03-09T00:00:00Z",
+          "lastAired": "2248-04-13T00:00:00Z",
           "seriesType": "standard",
           "cleanTitle": "exampletitle1",
           "titleSlug": "example-title-1",
           "genres": ["Example Genre 1", "Example Genre 2", "Example Genre 3"],
           "tags": [],
-          "added": "2249-01-27T06:47:05Z",
+          "added": "2249-02-22T06:47:05Z",
           "ratings": {
             "votes": 0,
             "value": 0
@@ -83,9 +83,9 @@
           "seasonNumber": 1,
           "episodeNumber": 1,
           "title": "Example Title 2",
-          "airDate": "2248-02-12",
-          "airDateUtc": "2248-02-11T16:30:00Z",
-          "lastSearchTime": "2249-01-27T06:47:08Z",
+          "airDate": "2248-03-09",
+          "airDateUtc": "2248-03-08T16:30:00Z",
+          "lastSearchTime": "2249-02-22T06:47:08Z",
           "runtime": 30,
           "overview": "A sanitized overview recorded only to fix the payload shape",
           "hasFile": false,
@@ -95,7 +95,7 @@
         },
         "languages": [
           {
-            "id": 1,
+            "id": 0,
             "name": "Example Language 1"
           }
         ],
@@ -114,10 +114,10 @@
         },
         "customFormats": [],
         "customFormatScore": 0,
-        "size": 6869152556,
+        "size": 9759613165,
         "title": "Example Title 3",
-        "estimatedCompletionTime": "2249-01-29T02:43:00Z",
-        "added": "2249-01-27T06:47:10Z",
+        "estimatedCompletionTime": "2249-02-24T02:47:30Z",
+        "added": "2249-02-22T06:47:10Z",
         "status": "completed",
         "trackedDownloadStatus": "warning",
         "trackedDownloadState": "importBlocked",
@@ -166,7 +166,7 @@
             }
           ],
           "originalLanguage": {
-            "id": 1,
+            "id": 0,
             "name": "Example Language 1"
           },
           "seasons": [
@@ -187,14 +187,14 @@
           "tvRageId": 0,
           "tvMazeId": 400001,
           "tmdbId": 200001,
-          "firstAired": "2248-02-12T00:00:00Z",
-          "lastAired": "2248-03-18T00:00:00Z",
+          "firstAired": "2248-03-09T00:00:00Z",
+          "lastAired": "2248-04-13T00:00:00Z",
           "seriesType": "standard",
           "cleanTitle": "exampletitle1",
           "titleSlug": "example-title-1",
           "genres": ["Example Genre 1", "Example Genre 2", "Example Genre 3"],
           "tags": [],
-          "added": "2249-01-27T06:47:05Z",
+          "added": "2249-02-22T06:47:05Z",
           "ratings": {
             "votes": 0,
             "value": 0
@@ -209,9 +209,9 @@
           "seasonNumber": 1,
           "episodeNumber": 2,
           "title": "Example Title 4",
-          "airDate": "2248-02-19",
-          "airDateUtc": "2248-02-18T16:30:00Z",
-          "lastSearchTime": "2249-01-27T06:47:08Z",
+          "airDate": "2248-03-16",
+          "airDateUtc": "2248-03-15T16:30:00Z",
+          "lastSearchTime": "2249-02-22T06:47:08Z",
           "runtime": 30,
           "overview": "A sanitized overview recorded only to fix the payload shape",
           "hasFile": false,
@@ -221,7 +221,7 @@
         },
         "languages": [
           {
-            "id": 1,
+            "id": 0,
             "name": "Example Language 1"
           }
         ],
@@ -240,10 +240,10 @@
         },
         "customFormats": [],
         "customFormatScore": 0,
-        "size": 6869152556,
+        "size": 9759613165,
         "title": "Example Title 3",
-        "estimatedCompletionTime": "2249-01-29T02:43:00Z",
-        "added": "2249-01-27T06:47:10Z",
+        "estimatedCompletionTime": "2249-02-24T02:47:30Z",
+        "added": "2249-02-22T06:47:10Z",
         "status": "completed",
         "trackedDownloadStatus": "warning",
         "trackedDownloadState": "importBlocked",
@@ -292,7 +292,7 @@
             }
           ],
           "originalLanguage": {
-            "id": 1,
+            "id": 0,
             "name": "Example Language 1"
           },
           "seasons": [
@@ -313,14 +313,14 @@
           "tvRageId": 0,
           "tvMazeId": 400001,
           "tmdbId": 200001,
-          "firstAired": "2248-02-12T00:00:00Z",
-          "lastAired": "2248-03-18T00:00:00Z",
+          "firstAired": "2248-03-09T00:00:00Z",
+          "lastAired": "2248-04-13T00:00:00Z",
           "seriesType": "standard",
           "cleanTitle": "exampletitle1",
           "titleSlug": "example-title-1",
           "genres": ["Example Genre 1", "Example Genre 2", "Example Genre 3"],
           "tags": [],
-          "added": "2249-01-27T06:47:05Z",
+          "added": "2249-02-22T06:47:05Z",
           "ratings": {
             "votes": 0,
             "value": 0
@@ -335,9 +335,9 @@
           "seasonNumber": 1,
           "episodeNumber": 3,
           "title": "Example Title 5",
-          "airDate": "2248-02-26",
-          "airDateUtc": "2248-02-25T16:30:00Z",
-          "lastSearchTime": "2249-01-27T06:47:08Z",
+          "airDate": "2248-03-23",
+          "airDateUtc": "2248-03-22T16:30:00Z",
+          "lastSearchTime": "2249-02-22T06:47:08Z",
           "runtime": 30,
           "overview": "A sanitized overview recorded only to fix the payload shape",
           "hasFile": false,
@@ -347,7 +347,7 @@
         },
         "languages": [
           {
-            "id": 1,
+            "id": 0,
             "name": "Example Language 1"
           }
         ],
@@ -366,10 +366,10 @@
         },
         "customFormats": [],
         "customFormatScore": 0,
-        "size": 6869152556,
+        "size": 9759613165,
         "title": "Example Title 3",
-        "estimatedCompletionTime": "2249-01-29T02:43:00Z",
-        "added": "2249-01-27T06:47:10Z",
+        "estimatedCompletionTime": "2249-02-24T02:47:30Z",
+        "added": "2249-02-22T06:47:10Z",
         "status": "completed",
         "trackedDownloadStatus": "warning",
         "trackedDownloadState": "importBlocked",
@@ -418,7 +418,7 @@
             }
           ],
           "originalLanguage": {
-            "id": 1,
+            "id": 0,
             "name": "Example Language 1"
           },
           "seasons": [
@@ -439,14 +439,14 @@
           "tvRageId": 0,
           "tvMazeId": 400001,
           "tmdbId": 200001,
-          "firstAired": "2248-02-12T00:00:00Z",
-          "lastAired": "2248-03-18T00:00:00Z",
+          "firstAired": "2248-03-09T00:00:00Z",
+          "lastAired": "2248-04-13T00:00:00Z",
           "seriesType": "standard",
           "cleanTitle": "exampletitle1",
           "titleSlug": "example-title-1",
           "genres": ["Example Genre 1", "Example Genre 2", "Example Genre 3"],
           "tags": [],
-          "added": "2249-01-27T06:47:05Z",
+          "added": "2249-02-22T06:47:05Z",
           "ratings": {
             "votes": 0,
             "value": 0
@@ -461,9 +461,9 @@
           "seasonNumber": 1,
           "episodeNumber": 4,
           "title": "Example Title 6",
-          "airDate": "2248-03-04",
-          "airDateUtc": "2248-03-03T16:30:00Z",
-          "lastSearchTime": "2249-01-27T06:47:08Z",
+          "airDate": "2248-03-30",
+          "airDateUtc": "2248-03-29T16:30:00Z",
+          "lastSearchTime": "2249-02-22T06:47:08Z",
           "runtime": 30,
           "overview": "A sanitized overview recorded only to fix the payload shape",
           "hasFile": false,
@@ -473,7 +473,7 @@
         },
         "languages": [
           {
-            "id": 1,
+            "id": 0,
             "name": "Example Language 1"
           }
         ],
@@ -492,10 +492,10 @@
         },
         "customFormats": [],
         "customFormatScore": 0,
-        "size": 6869152556,
+        "size": 9759613165,
         "title": "Example Title 3",
-        "estimatedCompletionTime": "2249-01-29T02:43:00Z",
-        "added": "2249-01-27T06:47:10Z",
+        "estimatedCompletionTime": "2249-02-24T02:47:30Z",
+        "added": "2249-02-22T06:47:10Z",
         "status": "completed",
         "trackedDownloadStatus": "warning",
         "trackedDownloadState": "importBlocked",
@@ -544,7 +544,7 @@
             }
           ],
           "originalLanguage": {
-            "id": 1,
+            "id": 0,
             "name": "Example Language 1"
           },
           "seasons": [
@@ -565,14 +565,14 @@
           "tvRageId": 0,
           "tvMazeId": 400001,
           "tmdbId": 200001,
-          "firstAired": "2248-02-12T00:00:00Z",
-          "lastAired": "2248-03-18T00:00:00Z",
+          "firstAired": "2248-03-09T00:00:00Z",
+          "lastAired": "2248-04-13T00:00:00Z",
           "seriesType": "standard",
           "cleanTitle": "exampletitle1",
           "titleSlug": "example-title-1",
           "genres": ["Example Genre 1", "Example Genre 2", "Example Genre 3"],
           "tags": [],
-          "added": "2249-01-27T06:47:05Z",
+          "added": "2249-02-22T06:47:05Z",
           "ratings": {
             "votes": 0,
             "value": 0
@@ -587,9 +587,9 @@
           "seasonNumber": 1,
           "episodeNumber": 5,
           "title": "Example Title 7",
-          "airDate": "2248-03-11",
-          "airDateUtc": "2248-03-10T16:30:00Z",
-          "lastSearchTime": "2249-01-27T06:47:08Z",
+          "airDate": "2248-04-06",
+          "airDateUtc": "2248-04-05T16:30:00Z",
+          "lastSearchTime": "2249-02-22T06:47:08Z",
           "runtime": 30,
           "overview": "A sanitized overview recorded only to fix the payload shape",
           "hasFile": false,
@@ -599,7 +599,7 @@
         },
         "languages": [
           {
-            "id": 1,
+            "id": 0,
             "name": "Example Language 1"
           }
         ],
@@ -618,10 +618,10 @@
         },
         "customFormats": [],
         "customFormatScore": 0,
-        "size": 6869152556,
+        "size": 9759613165,
         "title": "Example Title 3",
-        "estimatedCompletionTime": "2249-01-29T02:43:00Z",
-        "added": "2249-01-27T06:47:10Z",
+        "estimatedCompletionTime": "2249-02-24T02:47:30Z",
+        "added": "2249-02-22T06:47:10Z",
         "status": "completed",
         "trackedDownloadStatus": "warning",
         "trackedDownloadState": "importBlocked",
@@ -670,7 +670,7 @@
             }
           ],
           "originalLanguage": {
-            "id": 1,
+            "id": 0,
             "name": "Example Language 1"
           },
           "seasons": [
@@ -691,14 +691,14 @@
           "tvRageId": 0,
           "tvMazeId": 400001,
           "tmdbId": 200001,
-          "firstAired": "2248-02-12T00:00:00Z",
-          "lastAired": "2248-03-18T00:00:00Z",
+          "firstAired": "2248-03-09T00:00:00Z",
+          "lastAired": "2248-04-13T00:00:00Z",
           "seriesType": "standard",
           "cleanTitle": "exampletitle1",
           "titleSlug": "example-title-1",
           "genres": ["Example Genre 1", "Example Genre 2", "Example Genre 3"],
           "tags": [],
-          "added": "2249-01-27T06:47:05Z",
+          "added": "2249-02-22T06:47:05Z",
           "ratings": {
             "votes": 0,
             "value": 0
@@ -713,9 +713,9 @@
           "seasonNumber": 1,
           "episodeNumber": 6,
           "title": "Example Title 8",
-          "airDate": "2248-03-18",
-          "airDateUtc": "2248-03-17T16:30:00Z",
-          "lastSearchTime": "2249-01-27T06:47:08Z",
+          "airDate": "2248-04-13",
+          "airDateUtc": "2248-04-12T16:30:00Z",
+          "lastSearchTime": "2249-02-22T06:47:08Z",
           "runtime": 30,
           "finaleType": "series",
           "overview": "A sanitized overview recorded only to fix the payload shape",
@@ -726,7 +726,7 @@
         },
         "languages": [
           {
-            "id": 1,
+            "id": 0,
             "name": "Example Language 1"
           }
         ],
@@ -745,10 +745,10 @@
         },
         "customFormats": [],
         "customFormatScore": 0,
-        "size": 6869152556,
+        "size": 9759613165,
         "title": "Example Title 3",
-        "estimatedCompletionTime": "2249-01-29T02:43:00Z",
-        "added": "2249-01-27T06:47:10Z",
+        "estimatedCompletionTime": "2249-02-24T02:47:30Z",
+        "added": "2249-02-22T06:47:10Z",
         "status": "completed",
         "trackedDownloadStatus": "warning",
         "trackedDownloadState": "importBlocked",

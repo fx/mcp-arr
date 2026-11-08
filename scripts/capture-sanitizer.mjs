@@ -2,6 +2,7 @@ import {
   classifyValue,
   coversValue,
   createIdentifyingNeutralizer,
+  factOf,
   identifyingFieldOf,
 } from "./fixture-contract.mjs";
 
@@ -149,21 +150,27 @@ export function createSanitizer(screen, fail) {
         // lose a field the shape has.
         const sanitizedKey = disposition === "rename" ? replace(key) : key;
         const field =
-          disposition === "keep" ? identifyingFieldOf(key, value, context.key) : undefined;
+          disposition === "keep" && context.fact === undefined
+            ? identifyingFieldOf(key, value, context.key)
+            : undefined;
+        // A fact's context passes to every descendant, whatever its key.
+        const fact = context.fact ?? factOf(field);
         const at = { key, parent: value, container: context.key };
         entries.push([
           sanitizedKey,
-          field !== undefined
-            ? // Screened as well, for what a stand-in leaves in place, such as
-              // the text beside a rating's numbers or a rejection's own fields;
-              // a value the field does not cover as it is is judged leaf by leaf.
-              sanitize(identifying.neutralize(field, child), {
-                ...at,
-                classified: coversValue(field, child),
-              })
-            : redactSiblingValue && key === "value"
-              ? redact(child)
-              : sanitize(child, at),
+          fact !== undefined
+            ? sanitize(child, { ...at, fact })
+            : field !== undefined
+              ? // Screened as well, for what a stand-in leaves in place, such as
+                // the text beside a rating's numbers or a rejection's own fields;
+                // a value the field does not cover as it is is judged leaf by leaf.
+                sanitize(identifying.neutralize(field, child), {
+                  ...at,
+                  classified: coversValue(field, child),
+                })
+              : redactSiblingValue && key === "value"
+                ? redact(child)
+                : sanitize(child, at),
         ]);
       }
       // A replaced key could land on one the object already has, and building
@@ -177,6 +184,9 @@ export function createSanitizer(screen, fail) {
       // the prototype setter, so an upstream key of that name would silently
       // take its whole subtree out of the fixture.
       return Object.fromEntries(entries);
+    }
+    if (context.fact !== undefined && typeof value !== "object") {
+      return identifying.neutralizeFactLeaf(context.fact, context.key, value);
     }
     if (typeof value === "number" && context.classified !== true) {
       // A number is structural unless a named field holds it, however deeply.

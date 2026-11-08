@@ -285,12 +285,7 @@ const factFields = new Set([
   "languages",
 ]);
 
-/** The facts that are numbers, which a history event's data writes as text. */
-const numericFactFields = new Set(["popularity", "year", "runtime", "byteCount"]);
-
-/** The facts a capture writes as a number whatever type they arrive in, a rating's included. */
-const numericFacts = new Set([...numericFactFields, "ratings"]);
-
+/** A number written as text, as a history event's data writes one. */
 const isNumericText = (value) => /^-?\d+(?:\.\d+)?$/u.test(value);
 
 const isUnset = (value) => value === null || value === undefined || value === "" || value === 0;
@@ -303,10 +298,6 @@ const isUnset = (value) => value === null || value === undefined || value === ""
 export function isNeutralIdentifyingValue(field, value, legacy = undefined) {
   if (isUnset(value)) {
     return true;
-  }
-  // A language written as its name alone is checkable at every version.
-  if ((field === "language" || field === "languages") && typeof value === "string") {
-    return standInForms.languageName.test(value) || legacy?.text?.includes(value) === true;
   }
   if (factFields.has(field)) {
     return true;
@@ -992,28 +983,10 @@ function isStructuralShape(value) {
 export function classifyValue(key, parent, container, value) {
   const field = identifyingFieldOf(key, parent, container);
   if (field !== undefined) {
-    // A string is judged as what it is, not as what its field expects: one
-    // item of a list field is that list's element, and a string where a
-    // number, a record, or a time belongs is text.
-    if (typeof value === "string") {
-      if (Object.hasOwn(elementFields, field)) {
-        return elementFields[field];
-      }
-      if (field === "airTime") {
-        return /^\d{1,2}:\d{2}$/u.test(value) ? field : "text";
-      }
-      // A language may be written as its name alone.
-      if (field === "language" || field === "languages") {
-        return "language";
-      }
-      // A number written as text, as a history event's data holds it, is
-      // still the number its field expects.
-      if (numericFacts.has(field) && isNumericText(value)) {
-        return field;
-      }
-      if (factFields.has(field)) {
-        return "text";
-      }
+    // One item of a list field is that list's element. A fact never reaches
+    // here: its context is carried to every descendant instead.
+    if (typeof value === "string" && Object.hasOwn(elementFields, field)) {
+      return elementFields[field];
     }
     return field;
   }
@@ -1044,17 +1017,8 @@ export function coversValue(field, value) {
   if (Object.hasOwn(elementFields, field)) {
     return Array.isArray(value) && value.every((item) => !Array.isArray(item));
   }
-  if (field === "airTime") {
-    return typeof value === "string" && /^\d{1,2}:\d{2}$/u.test(value);
-  }
-  if (field === "language" || field === "languages") {
-    return typeof value === "string";
-  }
   if (factFields.has(field)) {
-    return (
-      typeof value === "number" ||
-      (numericFacts.has(field) && typeof value === "string" && isNumericText(value))
-    );
+    return false;
   }
   return typeof value === "string" || typeof value === "number";
 }
@@ -1129,19 +1093,6 @@ export const datePrefixPattern =
 const standInRuntimeMinutes = 30;
 const standInAirTime = "20:00";
 
-/** Replaces every number in a value with zero, keeping its shape. */
-function zeroNumbers(value) {
-  if (Array.isArray(value)) {
-    return value.map(zeroNumbers);
-  }
-  if (isRecord(value)) {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, child]) => [key, zeroNumbers(child)]),
-    );
-  }
-  return typeof value === "number" ? 0 : value;
-}
-
 /**
  * The stand-ins one capture writes.
  *
@@ -1206,23 +1157,6 @@ export function createIdentifyingNeutralizer(options = {}) {
       return `example-${ordinalFor("pathSegment", stem)}${extension.toLowerCase()}`;
     });
     return absolute ? ["/media/example", ...mapped].join("/") : mapped.join("/");
-  };
-
-  /** A language as a record, by its name alone, or by an id, each kept in its own type. */
-  const language = (entry) => {
-    if (typeof entry === "string") {
-      return entry === "" || standInForms.languageName.test(entry)
-        ? entry
-        : `Example Language ${ordinalFor("language", entry)}`;
-    }
-    if (typeof entry === "number") {
-      return 0;
-    }
-    if (!isRecord(entry) || typeof entry.name !== "string") {
-      return entry;
-    }
-    const n = ordinalFor("language", entry.name);
-    return { ...entry, id: n, name: `Example Language ${n}` };
   };
 
   const text = (field, value) => {
@@ -1293,12 +1227,6 @@ export function createIdentifyingNeutralizer(options = {}) {
     if (isUnset(value)) {
       return value;
     }
-    // A fact keeps the type it arrived in: a number written as text is
-    // neutralized as the number and written back as text, and other text
-    // where a number belongs is left unset rather than carried.
-    if (numericFacts.has(field) && typeof value === "string") {
-      return isNumericText(value) ? String(neutralize(field, Number(value))) : "";
-    }
     const element = elementFields[field];
     if (element !== undefined) {
       // A rejection may be an object; the caller screens its reason as a field.
@@ -1325,30 +1253,6 @@ export function createIdentifyingNeutralizer(options = {}) {
         return typeof value === "string" && /^(?:[\\/]|[a-z]:[\\/])/iu.test(value)
           ? path(value)
           : text(field, value);
-      case "ratings":
-        return zeroNumbers(value);
-      case "popularity":
-        return typeof value === "number" ? 0 : value;
-      case "year": {
-        if (typeof value !== "number") {
-          return value;
-        }
-        // The year its middle moves to, so a year and the dates it holds
-        // agree, and never one before the shifted calendar starts.
-        const middle = `${String(Math.max(1, Math.trunc(value))).padStart(4, "0")}-07-01`;
-        return Math.max(Number(shiftDate(middle)?.slice(0, 4)), earliestShiftedYear);
-      }
-      case "runtime":
-        return typeof value === "number" ? standInRuntimeMinutes : value;
-      case "airTime":
-        // An air time written any other way than as text is left unset.
-        return typeof value === "string" ? standInAirTime : 0;
-      case "byteCount":
-        return typeof value === "number" ? Math.round(value * sizeFactor) : value;
-      case "language":
-        return language(value);
-      case "languages":
-        return Array.isArray(value) ? value.map(language) : language(value);
       case "mediaRunTime":
         return typeof value === "string" ? "30:00" : value;
       case "mediaLanguages":
@@ -1361,12 +1265,64 @@ export function createIdentifyingNeutralizer(options = {}) {
     }
   };
 
+  /**
+   * One leaf under a fact, at any depth and under any key, in the fact's
+   * neutral form and in its own type: a number or a number written as text
+   * becomes the fact's neutral number — a year shifted, a runtime the stand-in,
+   * a byte count scaled, anything else zero — any text under a language becomes
+   * an example language, an air time the stand-in, a value the fact allows
+   * stays, and any other text is left empty. A flag or a null is kept.
+   */
+  const neutralizeFactLeaf = (fact, key, leaf) => {
+    if (leaf === null || leaf === undefined || typeof leaf === "boolean" || leaf === "") {
+      return leaf;
+    }
+    const factNumber = (number) => {
+      if (number === 0) {
+        return 0;
+      }
+      switch (fact) {
+        case "year": {
+          // The year its middle moves to, so a year and the dates it holds
+          // agree, and never one before the shifted calendar starts.
+          const middle = `${String(Math.max(1, Math.trunc(number))).padStart(4, "0")}-07-01`;
+          return Math.max(Number(shiftDate(middle)?.slice(0, 4)), earliestShiftedYear);
+        }
+        case "runtime":
+          return standInRuntimeMinutes;
+        case "byteCount":
+          return Math.round(number * sizeFactor);
+        default:
+          return 0;
+      }
+    };
+    if (typeof leaf === "number") {
+      return factNumber(leaf);
+    }
+    if (typeof leaf !== "string") {
+      return leaf;
+    }
+    if (isNumericText(leaf)) {
+      return String(factNumber(Number(leaf)));
+    }
+    if (isLanguageFact(fact)) {
+      return standInForms.languageName.test(leaf)
+        ? leaf
+        : `Example Language ${ordinalFor("language", leaf)}`;
+    }
+    if (fact === "airTime") {
+      return standInAirTime;
+    }
+    return factTextAllowed[fact]?.[key]?.includes(leaf) === true ? leaf : "";
+  };
+
   return {
     /**
      * A date, or a date and time, moved by this capture's offset with its
      * time and zone as written; anything else is not a date and is left alone.
      */
     shiftDate,
+    neutralizeFactLeaf,
     /** The stand-in for what one identifying field held, of the same type. */
     neutralize,
   };
@@ -1381,38 +1337,22 @@ export function createIdentifyingNeutralizer(options = {}) {
  * dates, and its tests are written against the dates it holds, so it is not
  * held to this.
  */
-export function validateShiftedFacts(value, location, container = undefined) {
+export function validateShiftedFacts(value, location, context = {}) {
   if (Array.isArray(value)) {
     value.forEach((item, index) => {
-      validateShiftedFacts(item, `${location}[${index}]`, container);
+      validateShiftedFacts(item, `${location}[${index}]`, context);
     });
     return;
   }
   if (isRecord(value)) {
     for (const [key, child] of Object.entries(value)) {
-      const field = identifyingFieldOf(key, value, container);
-      const at = `${location}.${key}`;
-      if (field !== undefined && factFields.has(field) && !isNeutralFact(field, child)) {
-        throw new Error(`Identifying ${field} is not neutralized at ${at}`);
-      }
-      validateShiftedFacts(child, at, key);
+      const field = context.fact ?? factOf(identifyingFieldOf(key, value, context.key));
+      validateShiftedFacts(child, `${location}.${key}`, { key, fact: field });
     }
     return;
   }
-  // A fact nested in a list is held to the same form as one that is not.
-  const field = container === undefined ? undefined : fieldsByKey[container];
-  // Text that is neither a number nor an air time is judged as text by the
-  // screens every fixture is held to.
-  const judgedAsFact =
-    typeof value === "number" ||
-    (typeof value === "string" && (isNumericText(value) || field === "airTime"));
-  if (
-    field !== undefined &&
-    factFields.has(field) &&
-    judgedAsFact &&
-    !isNeutralFact(field, value)
-  ) {
-    throw new Error(`Identifying ${field} is not neutralized at ${location}`);
+  if (context.fact !== undefined && !isNeutralFactLeaf(context.fact, context.key, value, true)) {
+    throw new Error(`Identifying ${context.fact} is not neutralized at ${location}`);
   }
   const match = typeof value === "string" ? datePrefixPattern.exec(value) : null;
   if (match !== null && match[1] !== "0001" && Number(match[1]) < earliestShiftedYear) {
@@ -1420,56 +1360,67 @@ export function validateShiftedFacts(value, location, container = undefined) {
   }
 }
 
+/** The fact a named field is, or `undefined` for any other field. */
+export function factOf(field) {
+  return field !== undefined && factFields.has(field) ? field : undefined;
+}
+
+/** The text a fact allows among its descendants, by key: a rating's kind. */
+const factTextAllowed = { ratings: { type: ["user", "critic"] } };
+
+const isLanguageFact = (fact) => fact === "language" || fact === "languages";
+
 /**
- * Whether one fact a newer fixture holds is in the form the capture writes,
- * in any representation the capture accepts: a number or a number written as
- * text, a language by name, by record, or by id, or a list of them. A byte
- * count cannot be told from a scaled one, which is why a newer fixture must
- * carry the capture's provenance as well; see {@link capturedBy}.
+ * Whether one leaf under a fact — at any depth, under any key — is that fact
+ * in a form the fixture contract accepts.
+ *
+ * A fact's context passes to every descendant, so a rating's numbers inside
+ * nested records, a language's id inside its record, and a runtime written as
+ * a record are all the fact. `strict` holds a fixture recorded at a newer
+ * version, which a capture wrote, to the fact's neutral form; otherwise — a
+ * minimum's fixture, recorded before facts were neutralized — a number is any
+ * number, and text must still be a number, an empty string, an example
+ * language, an air time, a value the fact allows, or a listed legacy value.
  */
-function isNeutralFact(field, value) {
-  if (isUnset(value)) {
-    return true;
-  }
-  if (field === "language" || field === "languages") {
-    const entries = Array.isArray(value) ? value : [value];
-    return entries.every(
-      (entry) =>
-        isUnset(entry) ||
-        Array.isArray(entry) ||
-        (typeof entry === "string" && standInForms.languageName.test(entry)) ||
-        (isRecord(entry) &&
-          (typeof entry.name !== "string" || standInForms.languageName.test(entry.name))),
-    );
-  }
-  if (field === "ratings" && isRecord(value)) {
-    return JSON.stringify(zeroNumbers(value)) === JSON.stringify(value);
-  }
-  // A list or a record of anything else is judged by its leaves.
-  if (Array.isArray(value) || isRecord(value)) {
+export function isNeutralFactLeaf(fact, key, leaf, strict, legacy = undefined) {
+  if (leaf === null || leaf === undefined || typeof leaf === "boolean" || leaf === "") {
     return true;
   }
   const number =
-    typeof value === "number"
-      ? value
-      : typeof value === "string" && isNumericText(value)
-        ? Number(value)
+    typeof leaf === "number"
+      ? leaf
+      : typeof leaf === "string" && isNumericText(leaf)
+        ? Number(leaf)
         : undefined;
-  switch (field) {
-    case "year":
-      return number !== undefined && number >= earliestShiftedYear;
-    case "runtime":
-      return number === standInRuntimeMinutes;
-    case "popularity":
-    case "ratings":
-      return number === 0;
-    case "airTime":
-      return value === standInAirTime;
-    case "byteCount":
-      return number !== undefined;
-    default:
-      return false;
+  if (number !== undefined) {
+    if (!strict || number === 0) {
+      return true;
+    }
+    switch (fact) {
+      case "year":
+        return number >= earliestShiftedYear;
+      case "runtime":
+        return number === standInRuntimeMinutes;
+      case "byteCount":
+        return true;
+      default:
+        // A rating, a popularity, an air time, and a language's id are zero.
+        return false;
+    }
   }
+  if (typeof leaf !== "string") {
+    return false;
+  }
+  if (isLanguageFact(fact) && standInForms.languageName.test(leaf)) {
+    return true;
+  }
+  if (fact === "airTime") {
+    return strict ? leaf === standInAirTime : /^\d{1,2}:\d{2}$/u.test(leaf);
+  }
+  if (factTextAllowed[fact]?.[key]?.includes(leaf) === true) {
+    return true;
+  }
+  return !strict && legacy?.text?.includes(leaf) === true;
 }
 
 /**

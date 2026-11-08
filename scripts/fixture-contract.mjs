@@ -5,7 +5,9 @@ import {
   capturedBy,
   classifyValue,
   coversValue,
+  factOf,
   identifyingFieldOf,
+  isNeutralFactLeaf,
   isNeutralIdentifyingValue,
   legacyStandInsFor,
   validateShiftedFacts,
@@ -18,6 +20,7 @@ export {
   coversValue,
   createIdentifyingNeutralizer,
   factFieldKeys,
+  factOf,
   identifyingFieldKeys,
   identifyingFieldOf,
   isNeutralIdentifyingValue,
@@ -581,18 +584,31 @@ export function validateSanitizedValue(value, location, legacy = undefined, cont
       // keys a path or a URL where a payload is a dictionary of them, and a key
       // held only to the name lists above would carry one through untouched.
       screenText(key, `${location}.${key}`);
-      const field = identifyingFieldOf(key, value, context.key);
-      const covered = coversValue(field, child);
+      // A fact's context passes to every descendant, whatever its key.
+      const field =
+        context.fact === undefined ? identifyingFieldOf(key, value, context.key) : undefined;
+      const fact = context.fact ?? factOf(field);
+      const covered = fact === undefined && coversValue(field, child);
       const at = `${location}.${key}`;
       validateSanitizedValue(child, at, legacy, {
         key,
         parent: value,
         container: context.key,
         classified: covered,
+        fact,
       });
       if (covered && !isNeutralIdentifyingValue(field, child, legacy)) {
         throw new Error(`Identifying ${field} is not neutralized at ${at}`);
       }
+    }
+    return;
+  }
+  if (context.fact !== undefined && typeof value !== "object") {
+    if (typeof value === "string") {
+      screenText(value, location);
+    }
+    if (!isNeutralFactLeaf(context.fact, context.key, value, false, legacy)) {
+      throw new Error(`Identifying ${context.fact} is not neutralized at ${location}`);
     }
     return;
   }

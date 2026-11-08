@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { observeChildProcess } from "../scripts/child-process.mjs";
+import { fixturePathFor } from "./support/fixtures.js";
 
 /**
  * The capture procedure's refusals.
@@ -364,7 +365,8 @@ describe("fixture capture procedure", () => {
 
     expect(code).toBe(0);
     const written = await readFile(
-      path.join(fixtureRoot, "sonarr/v3/4.0.19.2979/queue-details.json"),
+      // A capture from an instance at the minimum writes the minimum's file.
+      path.join(fixtureRoot, fixturePathFor("sonarr", "queue/details")),
       "utf8",
     );
     for (const original of [
@@ -404,8 +406,8 @@ describe("fixture capture procedure", () => {
       Math.abs((year as number) - new Date(firstAired as string).getUTCFullYear()),
     ).toBeLessThanOrEqual(1);
     expect([airTime, runtime, first?.episode.runtime]).toEqual(["20:00", 30, 30]);
-    expect(originalLanguage).toEqual({ id: 1, name: "Example Language 1" });
-    expect(first?.languages).toEqual([{ id: 1, name: "Example Language 1" }]);
+    expect(originalLanguage).toEqual({ id: 0, name: "Example Language 1" });
+    expect(first?.languages).toEqual([{ id: 0, name: "Example Language 1" }]);
     const shifted = (instant: string, original: string) =>
       (Date.parse(instant) - Date.parse(original)) / 86_400_000;
     expect(shifted(first?.episode.airDateUtc ?? "", "2025-11-20T16:30:00Z")).toBe(shiftedDays);
@@ -563,7 +565,7 @@ describe("fixture capture procedure", () => {
             { id: 1002, name: "WEB 1080p", allowed: true, items: [] },
           ],
           formatItems: [{ format: 3, name: "Example Format 1", score: 100 }],
-          language: { id: 1, name: "Example Language 1" },
+          language: { id: 0, name: "Example Language 1" },
         },
       ],
     },
@@ -772,9 +774,10 @@ describe("fixture capture procedure", () => {
           added: "Example text 3",
           airDateUtc: expect.stringMatching(/^2\d{3}-\d{2}-\d{2}T16:30:00Z$/u),
           status: "Example text 4",
-          languages: [{ id: 1, name: "Example Language 1" }],
-          language: { id: 2, name: "Example Language 2", nameLower: "Example text 5" },
-          mediaInfo: { videoCodec: "Example text 6", audioCodec: "EAC3 Atmos" },
+          languages: [{ id: 0, name: "Example Language 1" }],
+          // Every leaf under a language is the language: its id zero, its text an example.
+          language: { id: 0, name: "Example Language 2", nameLower: "Example Language 3" },
+          mediaInfo: { videoCodec: "Example text 5", audioCodec: "EAC3 Atmos" },
         },
       ],
     },
@@ -809,10 +812,8 @@ describe("fixture capture procedure", () => {
       );
 
       expect(code, stderr).toBe(0);
-      const file = path.join(
-        fixtureRoot,
-        `${application}/${api.slice(5)}/${status.version}/${route.replaceAll("/", "-")}.json`,
-      );
+      // Each stub reports its application's minimum, whose file is written.
+      const file = path.join(fixtureRoot, fixturePathFor(application, route));
       const written = await readFile(file, "utf8");
       for (const original of originals) {
         expect(written, original).not.toContain(original);
