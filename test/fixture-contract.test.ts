@@ -7,6 +7,7 @@ import {
   approvedFixtureInventory,
   approvedFixtures,
   approvedFixtureTuples,
+  capturedBy,
   captureTargetFor,
   createFixtureInventory,
   type FixtureTuple,
@@ -589,9 +590,21 @@ describe("versioned fixture contract", () => {
         apiVersion: "v3",
         version,
         endpoint: "/api/v3/qualityprofile",
+        capturedBy,
       },
       body: [row],
     });
+    // A newer fixture says a capture wrote it; a minimum's predates the mark.
+    const { capturedBy: _mark, ...unmarked } = fixtureAt("4.0.20.3014", {}).metadata;
+    expect(() =>
+      validate({ metadata: unmarked, body: [] }, "sonarr/v3/4.0.20.3014/qualityprofile.json"),
+    ).toThrow("carries no capture provenance");
+    expect(() =>
+      validate(
+        { metadata: { ...unmarked, version: "4.0.19.2979" }, body: [] },
+        "sonarr/v3/4.0.19.2979/qualityprofile.json",
+      ),
+    ).not.toThrow();
     const shifted = {
       ratings: { votes: 0, value: 0 },
       popularity: 0,
@@ -607,12 +620,17 @@ describe("versioned fixture contract", () => {
     const unshifted: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
       ["Date is not shifted", { ...shifted, added: "2026-11-06T06:47:10Z" }],
       ["Date is not shifted", { ...shifted, episode: { airDate: "2025-11-21" } }],
-      ["Identifying year is not shifted", { ...shifted, series: { year: 2025 } }],
+      ["Identifying year is not neutralized", { ...shifted, series: { year: 2025 } }],
       [
         "Identifying ratings is not neutralized",
         { ...shifted, ratings: { votes: 8_123, value: 8.9 } },
       ],
       ["Identifying popularity is not neutralized", { ...shifted, popularity: 12.5 }],
+      ["Identifying runtime is not neutralized", { ...shifted, runtime: 24 }],
+      ["Identifying airTime is not neutralized", { ...shifted, airTime: "21:30" }],
+      ["Identifying year is not neutralized", { ...shifted, year: "1984" }],
+      ["Identifying runtime is not neutralized", { ...shifted, runtime: "24" }],
+      ["Identifying runtime is not neutralized", { ...shifted, runtime: [24] }],
     ];
     for (const [refusal, row] of unshifted) {
       expect(

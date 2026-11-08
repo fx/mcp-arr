@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import path from "node:path";
 import {
+  capturedBy,
   classifyValue,
   coversValue,
   identifyingFieldOf,
@@ -11,10 +12,12 @@ import {
 } from "./identifying-content.mjs";
 
 export {
+  capturedBy,
   classifyValue,
   contextualFieldProbes,
   coversValue,
   createIdentifyingNeutralizer,
+  factFieldKeys,
   identifyingFieldKeys,
   identifyingFieldOf,
   isNeutralIdentifyingValue,
@@ -690,6 +693,12 @@ export function validateFixture(value, options) {
     options.legacy === false ? undefined : legacyStandInsFor(relativePath),
   );
   if (!minimumFixtureTuples.includes(tuple)) {
+    // A newer fixture is one a capture wrote, and says so; see `capturedBy`.
+    if (metadataRecord.capturedBy !== capturedBy) {
+      throw new Error(
+        `Fixture recorded at ${version} carries no capture provenance; recapture it rather than copying a body`,
+      );
+    }
     validateShiftedFacts(body, "fixture.body");
   }
 

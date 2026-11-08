@@ -147,6 +147,16 @@ export declare const structuralRules: readonly {
   readonly probe?: (value: string) => ProbePlacement;
 }[];
 
+/** What a capture writes into a newer fixture's metadata to say it wrote the body. */
+export declare const capturedBy: string;
+
+/** Every key a fact is named by, and how a newer fixture's value is verified. */
+export declare const factFieldKeys: readonly {
+  readonly key: string;
+  readonly field: string;
+  readonly verified: "value" | "provenance";
+}[];
+
 /** Every key an identifying field is named by. */
 export declare const identifyingFieldKeys: readonly string[];
 

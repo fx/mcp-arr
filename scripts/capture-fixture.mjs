@@ -41,6 +41,7 @@ import { fileURLToPath } from "node:url";
 import { createSanitizer } from "./capture-sanitizer.mjs";
 import {
   approvedFixtures,
+  capturedBy,
   captureTargetFor,
   validateFixture,
   validateSanitizedValue,
@@ -291,6 +292,7 @@ async function main() {
       apiVersion: approved.apiVersion,
       version: approved.version,
       endpoint: approved.endpoint,
+      capturedBy,
     },
     body: sanitize(body),
   };

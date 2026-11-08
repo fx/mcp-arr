@@ -3,7 +3,8 @@
     "application": "radarr",
     "apiVersion": "v3",
     "version": "6.4.4.10685",
-    "endpoint": "/api/v3/language"
+    "endpoint": "/api/v3/language",
+    "capturedBy": "identifying-content-capture-1"
   },
   "body": [
     {

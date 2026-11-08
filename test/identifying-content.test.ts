@@ -1,9 +1,13 @@
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { createSanitizer } from "../scripts/capture-sanitizer.mjs";
 import {
+  capturedBy,
   contextualFieldProbes,
+  factFieldKeys,
   identifyingFieldKeys,
   structuralRules,
+  validateFixture,
   validateSanitizedValue,
 } from "./support/fixtures.js";
 
@@ -107,6 +111,91 @@ describe("every structural rule and identifying field", () => {
         const label = `${placement.label}: ${JSON.stringify(written)}`;
         expect(JSON.stringify(written), label).not.toMatch(leaked);
         expect(() => validateSanitizedValue(written, "body"), label).not.toThrow();
+      }
+    });
+  }
+});
+
+/**
+ * Every fact a fixture recorded at a newer version may hold, probed in every
+ * representation the applications write one in.
+ *
+ * A fact is screened by value only where a fixture recorded at a newer
+ * version holds it, since a capture wrote that body and the minimum's predate
+ * the shift. So each probe is placed in such a fixture, carrying the capture's
+ * provenance, and must be refused; a byte count, which no value can show to
+ * be scaled, must be refused without that provenance instead. The capture
+ * must then write each probe in a form the same fixture accepts.
+ */
+const factProbes: readonly unknown[] = [
+  123,
+  "123",
+  "1984",
+  "English",
+  { name: "English" },
+  ["English"],
+];
+
+const fixtureRoot = fileURLToPath(new URL("./fixtures", import.meta.url));
+const newerFile = `${fixtureRoot}/sonarr/v3/4.0.20.3014/qualityprofile.json`;
+
+function newerFixture(body: unknown, marked = true) {
+  return {
+    metadata: {
+      application: "sonarr",
+      apiVersion: "v3",
+      version: "4.0.20.3014",
+      endpoint: "/api/v3/qualityprofile",
+      ...(marked ? { capturedBy } : {}),
+    },
+    body,
+  };
+}
+
+function validateNewer(body: unknown, marked = true) {
+  return validateFixture(newerFixture(body, marked), {
+    fixtureRoot,
+    filePath: newerFile,
+    legacy: false,
+  });
+}
+
+describe("every fact a newer fixture holds", () => {
+  it("names every fact field, and says how each is verified", () => {
+    expect(factFieldKeys.map(({ field }) => field).sort()).toEqual(
+      expect.arrayContaining([
+        "airTime",
+        "byteCount",
+        "language",
+        "languages",
+        "popularity",
+        "ratings",
+        "runtime",
+        "year",
+      ]),
+    );
+  });
+
+  for (const { key, field, verified } of factFieldKeys) {
+    it(`refuses ${key} (${field}) in every representation, and captures each neutrally`, () => {
+      for (const probe of factProbes) {
+        const body = [{ [key]: probe }];
+        const label = `${key}: ${JSON.stringify(probe)}`;
+        const numeric = typeof probe === "number" || /^\d+$/u.test(String(probe));
+        if (verified === "provenance" && numeric) {
+          // No value shows a byte count was scaled; only the provenance can.
+          expect(() => validateNewer(body, false), label).toThrow("carries no capture provenance");
+        } else {
+          expect(() => validateNewer(body), label).toThrow(/is not neutralized|is not shifted/u);
+        }
+
+        const written = capture(body);
+        expect(JSON.stringify(written), label).not.toContain("English");
+        expect(JSON.stringify(written), label).not.toMatch(/"(?:123|1984)"|:(?:123|1984)\b/u);
+        expect(
+          () => validateNewer(written),
+          `${label} -> ${JSON.stringify(written)}`,
+        ).not.toThrow();
       }
     });
   }

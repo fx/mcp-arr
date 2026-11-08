@@ -288,6 +288,9 @@ const factFields = new Set([
 /** The facts that are numbers, which a history event's data writes as text. */
 const numericFactFields = new Set(["popularity", "year", "runtime", "byteCount"]);
 
+/** The facts a capture writes as a number whatever type they arrive in, a rating's included. */
+const numericFacts = new Set([...numericFactFields, "ratings"]);
+
 const isNumericText = (value) => /^-?\d+(?:\.\d+)?$/u.test(value);
 
 const isUnset = (value) => value === null || value === undefined || value === "" || value === 0;
@@ -298,7 +301,14 @@ const isUnset = (value) => value === null || value === undefined || value === ""
  * was recorded with.
  */
 export function isNeutralIdentifyingValue(field, value, legacy = undefined) {
-  if (isUnset(value) || factFields.has(field)) {
+  if (isUnset(value)) {
+    return true;
+  }
+  // A language written as its name alone is checkable at every version.
+  if ((field === "language" || field === "languages") && typeof value === "string") {
+    return standInForms.languageName.test(value) || legacy?.text?.includes(value) === true;
+  }
+  if (factFields.has(field)) {
     return true;
   }
   const element = elementFields[field];
@@ -850,6 +860,13 @@ export const structuralRules = [
   },
   {
     why: "product",
+    keys: ["capturedBy"],
+    when: (_parent, container) => container === "metadata",
+    accept: (value) => value === capturedBy,
+    probe: () => ({ parent: {}, container: "metadata" }),
+  },
+  {
+    why: "product",
     keys: ["apiVersion"],
     when: (_parent, container) => container === "metadata",
     accept: (value) => ["v1", "v3"].includes(value),
@@ -985,9 +1002,13 @@ export function classifyValue(key, parent, container, value) {
       if (field === "airTime") {
         return /^\d{1,2}:\d{2}$/u.test(value) ? field : "text";
       }
+      // A language may be written as its name alone.
+      if (field === "language" || field === "languages") {
+        return "language";
+      }
       // A number written as text, as a history event's data holds it, is
       // still the number its field expects.
-      if (numericFactFields.has(field) && isNumericText(value)) {
+      if (numericFacts.has(field) && isNumericText(value)) {
         return field;
       }
       if (factFields.has(field)) {
@@ -1026,10 +1047,13 @@ export function coversValue(field, value) {
   if (field === "airTime") {
     return typeof value === "string" && /^\d{1,2}:\d{2}$/u.test(value);
   }
+  if (field === "language" || field === "languages") {
+    return typeof value === "string";
+  }
   if (factFields.has(field)) {
     return (
       typeof value === "number" ||
-      (numericFactFields.has(field) && typeof value === "string" && isNumericText(value))
+      (numericFacts.has(field) && typeof value === "string" && isNumericText(value))
     );
   }
   return typeof value === "string" || typeof value === "number";
@@ -1037,6 +1061,19 @@ export function coversValue(field, value) {
 
 /** Every key a field is named by, for the test that probes each one. */
 export const identifyingFieldKeys = Object.keys(fieldsByKey);
+
+/**
+ * Every key a fact is named by, and whether a newer fixture's value can be
+ * verified as neutral (`value`) or only trusted through its provenance
+ * (`provenance`), for the test that probes each one.
+ */
+export const factFieldKeys = Object.entries(fieldsByKey)
+  .filter(([, field]) => factFields.has(field))
+  .map(([key, field]) => ({
+    key,
+    field,
+    verified: field === "byteCount" ? "provenance" : "value",
+  }));
 
 /**
  * Where each field named by its context rather than its key sits, for the
@@ -1119,8 +1156,8 @@ function zeroNumbers(value) {
 export function createIdentifyingNeutralizer(options = {}) {
   const assigned = new Map();
   const dayOffset = options.dayOffset ?? minimumDayOffset + randomInt(0, dayOffsetSpread);
-  // Never one, so a scaled count never repeats the original.
-  const sizeFactor = options.sizeFactor ?? randomInt(1_001, 2_000) / 1_000;
+  // At least a tenth larger, so a scaled count never rounds back to the original.
+  const sizeFactor = options.sizeFactor ?? randomInt(1_100, 2_000) / 1_000;
 
   const ordinalFor = (field, value) => {
     let byValue = assigned.get(field);
@@ -1147,6 +1184,10 @@ export function createIdentifyingNeutralizer(options = {}) {
     if (match === null) {
       return undefined;
     }
+    // The applications' stand-in for no date at all is not one to move.
+    if (match[1] === "0001") {
+      return value;
+    }
     const day = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
     const moved = new Date(day + dayOffset * 86_400_000).toISOString().slice(0, 10);
     return `${moved}${value.slice(10)}`;
@@ -1167,7 +1208,16 @@ export function createIdentifyingNeutralizer(options = {}) {
     return absolute ? ["/media/example", ...mapped].join("/") : mapped.join("/");
   };
 
+  /** A language as a record, by its name alone, or by an id, each kept in its own type. */
   const language = (entry) => {
+    if (typeof entry === "string") {
+      return entry === "" || standInForms.languageName.test(entry)
+        ? entry
+        : `Example Language ${ordinalFor("language", entry)}`;
+    }
+    if (typeof entry === "number") {
+      return 0;
+    }
     if (!isRecord(entry) || typeof entry.name !== "string") {
       return entry;
     }
@@ -1243,8 +1293,11 @@ export function createIdentifyingNeutralizer(options = {}) {
     if (isUnset(value)) {
       return value;
     }
-    if (numericFactFields.has(field) && typeof value === "string" && isNumericText(value)) {
-      return String(neutralize(field, Number(value)));
+    // A fact keeps the type it arrived in: a number written as text is
+    // neutralized as the number and written back as text, and other text
+    // where a number belongs is left unset rather than carried.
+    if (numericFacts.has(field) && typeof value === "string") {
+      return isNumericText(value) ? String(neutralize(field, Number(value))) : "";
     }
     const element = elementFields[field];
     if (element !== undefined) {
@@ -1276,21 +1329,26 @@ export function createIdentifyingNeutralizer(options = {}) {
         return zeroNumbers(value);
       case "popularity":
         return typeof value === "number" ? 0 : value;
-      case "year":
-        // The year its middle moves to, so a year and the dates it holds agree.
-        return typeof value === "number" && Number.isSafeInteger(value) && value > 0
-          ? Number(shiftDate(`${String(value).padStart(4, "0")}-07-01`)?.slice(0, 4))
-          : value;
+      case "year": {
+        if (typeof value !== "number") {
+          return value;
+        }
+        // The year its middle moves to, so a year and the dates it holds
+        // agree, and never one before the shifted calendar starts.
+        const middle = `${String(Math.max(1, Math.trunc(value))).padStart(4, "0")}-07-01`;
+        return Math.max(Number(shiftDate(middle)?.slice(0, 4)), earliestShiftedYear);
+      }
       case "runtime":
         return typeof value === "number" ? standInRuntimeMinutes : value;
       case "airTime":
-        return typeof value === "string" ? standInAirTime : value;
+        // An air time written any other way than as text is left unset.
+        return typeof value === "string" ? standInAirTime : 0;
       case "byteCount":
         return typeof value === "number" ? Math.round(value * sizeFactor) : value;
       case "language":
         return language(value);
       case "languages":
-        return Array.isArray(value) ? value.map(language) : value;
+        return Array.isArray(value) ? value.map(language) : language(value);
       case "mediaRunTime":
         return typeof value === "string" ? "30:00" : value;
       case "mediaLanguages":
@@ -1334,33 +1392,94 @@ export function validateShiftedFacts(value, location, container = undefined) {
     for (const [key, child] of Object.entries(value)) {
       const field = identifyingFieldOf(key, value, container);
       const at = `${location}.${key}`;
-      if (field === "year" && typeof child === "number" && child !== 0) {
-        if (child < earliestShiftedYear) {
-          throw new Error(`Identifying year is not shifted at ${at}`);
-        }
-      }
-      if (
-        (field === "ratings" || field === "popularity") &&
-        JSON.stringify(zeroNumbers(child)) !== JSON.stringify(child)
-      ) {
+      if (field !== undefined && factFields.has(field) && !isNeutralFact(field, child)) {
         throw new Error(`Identifying ${field} is not neutralized at ${at}`);
-      }
-      const languages = field === "language" ? [child] : field === "languages" ? child : [];
-      for (const entry of Array.isArray(languages) ? languages : []) {
-        if (
-          isRecord(entry) &&
-          typeof entry.name === "string" &&
-          !/^Example Language \d+$/u.test(entry.name)
-        ) {
-          throw new Error(`Identifying language is not neutralized at ${at}`);
-        }
       }
       validateShiftedFacts(child, at, key);
     }
     return;
   }
+  // A fact nested in a list is held to the same form as one that is not.
+  const field = container === undefined ? undefined : fieldsByKey[container];
+  // Text that is neither a number nor an air time is judged as text by the
+  // screens every fixture is held to.
+  const judgedAsFact =
+    typeof value === "number" ||
+    (typeof value === "string" && (isNumericText(value) || field === "airTime"));
+  if (
+    field !== undefined &&
+    factFields.has(field) &&
+    judgedAsFact &&
+    !isNeutralFact(field, value)
+  ) {
+    throw new Error(`Identifying ${field} is not neutralized at ${location}`);
+  }
   const match = typeof value === "string" ? datePrefixPattern.exec(value) : null;
-  if (match !== null && Number(match[1]) < earliestShiftedYear) {
+  if (match !== null && match[1] !== "0001" && Number(match[1]) < earliestShiftedYear) {
     throw new Error(`Date is not shifted at ${location}`);
   }
 }
+
+/**
+ * Whether one fact a newer fixture holds is in the form the capture writes,
+ * in any representation the capture accepts: a number or a number written as
+ * text, a language by name, by record, or by id, or a list of them. A byte
+ * count cannot be told from a scaled one, which is why a newer fixture must
+ * carry the capture's provenance as well; see {@link capturedBy}.
+ */
+function isNeutralFact(field, value) {
+  if (isUnset(value)) {
+    return true;
+  }
+  if (field === "language" || field === "languages") {
+    const entries = Array.isArray(value) ? value : [value];
+    return entries.every(
+      (entry) =>
+        isUnset(entry) ||
+        Array.isArray(entry) ||
+        (typeof entry === "string" && standInForms.languageName.test(entry)) ||
+        (isRecord(entry) &&
+          (typeof entry.name !== "string" || standInForms.languageName.test(entry.name))),
+    );
+  }
+  if (field === "ratings" && isRecord(value)) {
+    return JSON.stringify(zeroNumbers(value)) === JSON.stringify(value);
+  }
+  // A list or a record of anything else is judged by its leaves.
+  if (Array.isArray(value) || isRecord(value)) {
+    return true;
+  }
+  const number =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && isNumericText(value)
+        ? Number(value)
+        : undefined;
+  switch (field) {
+    case "year":
+      return number !== undefined && number >= earliestShiftedYear;
+    case "runtime":
+      return number === standInRuntimeMinutes;
+    case "popularity":
+    case "ratings":
+      return number === 0;
+    case "airTime":
+      return value === standInAirTime;
+    case "byteCount":
+      return number !== undefined;
+    default:
+      return false;
+  }
+}
+
+/**
+ * What a capture writes into a fixture's metadata to say it wrote the body.
+ *
+ * A scaled byte count looks like any other, so a newer fixture's sizes can
+ * only be trusted as far as its provenance can: the fixture contract requires
+ * a newer fixture to carry this mark, which a body copied by hand from an
+ * instance does not. It guards against an unsanitized body being committed by
+ * mistake, not against one forged on purpose, and it records nothing about the
+ * capture's offset or factor, which would undo them.
+ */
+export const capturedBy = "identifying-content-capture-1";

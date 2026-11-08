@@ -3,7 +3,8 @@
     "application": "sonarr",
     "apiVersion": "v3",
     "version": "4.0.20.3014",
-    "endpoint": "/api/v3/language"
+    "endpoint": "/api/v3/language",
+    "capturedBy": "identifying-content-capture-1"
   },
   "body": [
     {
