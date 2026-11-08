@@ -55,9 +55,15 @@ interface CallResult {
   };
 }
 
+/**
+ * The `arr` toolset is named here rather than left to the spawn helper: the
+ * fourteen names this file asserts belong to that toolset, and the assertion
+ * must not move with either default.
+ */
 const configuredInstance = {
   SONARR_URL: "https://sonarr.example.invalid/sonarr",
   SONARR_API_KEY: "sonarr-secret-key",
+  ARR_MCP_TOOLSET: "arr",
 };
 
 interface WireSession {

@@ -2,6 +2,8 @@
 
 An MCP server for Sonarr, Radarr, and Prowlarr, launched locally over stdio or run as a remote service over Streamable HTTP.
 
+By default it publishes the [media tools](#media-tools): a handful of tools that find, add, follow, and fix movies and TV series without the caller knowing which application does what. The fourteen [`arr` tools](#arr-tools), which expose the applications' own model, are the advanced option, selected with `ARR_MCP_TOOLSET=arr` (see [Choose a toolset](#choose-a-toolset)).
+
 ## Requirements
 
 - Node.js 20 or newer
@@ -74,7 +76,7 @@ export ARR_MCP_AUTH_TOKEN="$(openssl rand -hex 32)"
 npx -y mcp-arr
 ```
 
-On startup it writes one line to stderr naming where it listens and which toolsets it publishes (see [Media tools](#media-tools)), and serves:
+On startup it writes one line to stderr naming where it listens and which toolsets it publishes (see [Choose a toolset](#choose-a-toolset)), and serves:
 
 - `POST /mcp` — MCP over Streamable HTTP. Every request must carry `Authorization: Bearer <token>`.
 - `GET /healthz` — `200` while the process accepts requests. It needs no token, contacts no instance, and names nothing about the deployment, so it is safe for an orchestrator's liveness probe.
@@ -160,7 +162,9 @@ services:
 
 ## Verify a connection
 
-Call `arr_capabilities` first. It contacts each configured instance and reports, per application:
+Under the default `media` toolset, call `media_status` with no arguments. It reads every configured instance and returns an overview of the kinds of title this deployment serves; a kind whose instance cannot be read is reported as an error beside the others rather than failing the call.
+
+With the `arr` toolset selected, call `arr_capabilities` first. It contacts each configured instance and reports, per application:
 
 - `state` — `available`, `unconfigured`, `unavailable` (configured but not reachable), or `unsupported` (older than the minimum version below)
 - `version` — the version the instance reports, when it answered
@@ -174,7 +178,63 @@ One unreachable instance never fails the whole report, and an unconfigured appli
 
 Minimum supported versions are Sonarr 4.0.19.2979 and Radarr 6.3.0.10514 (both API v3) and Prowlarr 2.5.2.5491 (API v1). Newer releases are accepted.
 
-## Implemented surface
+## Media tools
+
+The default toolset is for callers that want to find, add, follow, and fix movies and TV series without knowing how Sonarr, Radarr, and Prowlarr divide the work. It talks about movies and series rather than applications, and it picks the quality profile and root folder itself.
+
+Five tools are published, and a sixth where the operator enables it:
+
+- `media_find` — takes `text`, 1 to 200 characters and not only whitespace, and an optional `kind` of `movie` or `series`, and searches every kind this server serves when `kind` is absent. It returns at most five titles per kind, best match first, each with its `kind`, its `id` (the TMDB id of a movie, the TVDB id of a series), its `title`, its `year` when known, and `in_library`. A kind that cannot be searched — its instance is down, say — is listed under `unavailable` beside the other kind's titles rather than failing the call. It changes nothing.
+- `media_add` — takes the `kind` and `id` a find returned, an optional `resolution`, and, for a series only, an optional `episodes` of `all` (the default) or `future`. It adds the title monitored and starts a search for it, and reports `added`. A title already in the library is left exactly as it is and reported `already_in_library`, including when another call added it a moment earlier, so adding twice never creates a duplicate.
+
+- `media_status` — takes nothing for an overview, or a `kind` and `id` for one title. The overview lists the downloads in progress or stuck, the titles imported in the last seven days, and what is due in the next fourteen, each with its date. A title's status says whether it is in the library and, if it is, whether it is monitored, the resolution it targets, the resolutions of the files it has, how many movies or episodes it has and how many released ones it monitors but lacks, its next due date, and its downloads. A download is named by its title, and for a series by an `episodes` label such as `S02E01–E10`; a season pack is one download however many episodes it covers. Its state is `queued`, `downloading` (with a whole-number `progress`), `waiting`, `importing`, or `stuck`, and a stuck download carries a one-sentence `reason` and the `remedy` `media_fix` would apply: `replace`, `import`, or `none`. Every list holds at most ten entries and carries a `*_total` when it was cut. It changes nothing.
+- `media_fix` — takes a `kind` and `id` and fixes up to ten of that title's stuck downloads, reading each again immediately before acting on it. A failed or stalled download is replaced: its release is blocked, it is removed from the downloader with its data, and the instance searches for another release. A download that finished but whose import is blocked is imported, only when every file in it imports with no correction and the library's own records show no file for anything it maps to. Anything else is left alone with its reason. It never chooses to delete or replace a file already in the library, and it checks the library once more right before sending an import. The one case it cannot prevent is the instance itself importing another download for the same movie or episode in the seconds before it runs this import, which then replaces that file. The result says what was done to each download and how many stuck ones were left for another call. A download this server is already fixing, or whose import it started and has not yet seen finish, is reported as already being fixed rather than acted on twice — by this call or any other, over either transport.
+- `media_search_again` — takes a `kind` and `id` and, for a series, an optional `season` and an `episode` within it. It searches again for exactly the released movie or episodes in that scope that the library monitors and has no file for, and for nothing the library already has; an episode of a series the library does not monitor, or in a season it does not monitor, is skipped, unless that one episode is named by its `season` and `episode`, which searches for it monitored or not. When nothing is missing it searches for nothing. It reports how many it searched for.
+- `media_remove` — published only when `ARR_MCP_MEDIA_ALLOW_REMOVE` is `true`. Takes a `kind`, an `id`, and an optional `delete_files` that defaults to `false`. It removes the title from the library, deleting its files only when asked, and never stops it being added again. A title that is not in the library, including one another call just removed, is reported as `not_in_library` and nothing changes.
+
+`resolution` is one of `480p`, `576p`, `720p`, `1080p`, and `2160p`. A profile's resolution is that of its cutoff quality, or the highest in its cutoff group. The server uses a profile whose resolution is the one asked for or, where none is, the nearest, the lower of two equally near winning; among several it prefers the configured default, then the profile allowing the fewest qualities, then the name that sorts first. The result reports the resolution the title now targets, so you can see when the request was not met exactly.
+
+New titles are added with these defaults, and removal is enabled with the last of these variables. All of them are accepted only when `media` is selected, as it is by default; with `ARR_MCP_TOOLSET=arr` alone, setting one fails startup:
+
+| Variable | Meaning |
+|---|---|
+| `ARR_MCP_MEDIA_MOVIE_QUALITY_PROFILE` | Quality profile name for new movies |
+| `ARR_MCP_MEDIA_MOVIE_ROOT_FOLDER` | Root folder path for new movies |
+| `ARR_MCP_MEDIA_SERIES_QUALITY_PROFILE` | Quality profile name for new series |
+| `ARR_MCP_MEDIA_SERIES_ROOT_FOLDER` | Root folder path for new series |
+| `ARR_MCP_MEDIA_ALLOW_REMOVE` | `true` publishes `media_remove`; absent or `false` does not |
+
+Each is optional. `ARR_MCP_MEDIA_ALLOW_REMOVE` accepts exactly `true` or `false`. Where a profile or folder variable is absent and the instance has exactly one root folder or quality profile, that one is used; where it has several, an add fails with `deployment_configuration` naming the variable to set — unless the call names a `resolution`, which chooses the profile by itself. A variable that names a profile or folder the instance does not have fails every add of that kind the same way, so a stale setting is reported rather than bypassed. Names and paths are matched exactly as written. The defaults are checked when a title is added rather than at startup, so an instance that is down when the server starts does not stop it from starting.
+
+**Set the defaults before relying on `media_add` without a `resolution`.** Most instances have more than one quality profile, and on those an add that names no `resolution` fails with `deployment_configuration` until `ARR_MCP_MEDIA_MOVIE_QUALITY_PROFILE` or `ARR_MCP_MEDIA_SERIES_QUALITY_PROFILE` is set. Set the root folder variable too wherever an instance has more than one root folder:
+
+```json
+{
+  "env": {
+    "ARR_MCP_MEDIA_MOVIE_QUALITY_PROFILE": "HD-1080p",
+    "ARR_MCP_MEDIA_SERIES_QUALITY_PROFILE": "HD-1080p",
+    "ARR_MCP_MEDIA_SERIES_ROOT_FOLDER": "/tv"
+  }
+}
+```
+
+## Choose a toolset
+
+`ARR_MCP_TOOLSET` selects what the server publishes, and is read once at startup. It applies to both transports alike: a remote service publishes exactly the tools the same settings publish over stdio. It accepts:
+
+- absent, or `media` — only the [`media_` tools](#media-tools)
+- `arr` — only the fourteen [`arr_` tools](#arr-tools), exactly as they were before the `media` toolset existed
+- `media,arr` in either order, or `all` — both toolsets side by side, each tool exactly as it is on its own
+
+Earlier releases published the `arr` tools when `ARR_MCP_TOOLSET` was absent. To keep exactly what such a release published, set `ARR_MCP_TOOLSET=arr`; to add the media tools beside them, set `ARR_MCP_TOOLSET=all`.
+
+Anything else — an unknown name, a name given twice, an empty entry, or `all` combined with a name — fails startup with a message naming the variable but never the value you set.
+
+With only `media` selected, `arr_capabilities` is not published; a kind whose instance cannot be reached is reported by the `media` tools themselves.
+
+## Arr tools
+
+The `arr` toolset is the advanced option, for an operator who knows how Sonarr, Radarr, and Prowlarr divide the work and wants their own model: application names, quality profile and root folder references, queue item kinds, and plan and apply. Select it with `ARR_MCP_TOOLSET=arr`, or beside the media tools with `ARR_MCP_TOOLSET=all` (see [Choose a toolset](#choose-a-toolset)).
 
 All fourteen tools publish every argument they accept as a property of one object schema, with each variant's own required and optional arguments described in that schema's documentation. Output schemas are published broadened — the result envelope's four top-level keys and where each application's payload sits, and nothing below that — because the same envelope repeated once per tool was most of a listing every session pays for before making a call. What a payload contains is published instead as dot-paths generated from the schema the envelope is validated against, carried in that schema's own documentation; that is where to look up the fields a view returns.
 
@@ -197,55 +257,6 @@ Those same paths are what the five collection queries take as an optional `proje
 Every mutation tool accepts `mode: "plan"` and `mode: "apply"`. Prowlarr has no media library, so no `arr_library_query` view is offered for it.
 
 Library records are returned with an opaque `reference`. That reference — not an upstream identifier — is what the views that take a parent (`seasons`, `episodes`, `episode_files`, `movie_files`) and the identifier filter (`media`) accept, so read the parent view first and pass the reference back. References are held in memory, expire after fifteen minutes, and do not survive a restart; a stale one is reported as `stale_reference` and is recovered by repeating the query that produced it.
-
-## Media tools
-
-The server has a second, much smaller toolset for callers that want to find, add, follow, and fix movies and TV series without knowing how Sonarr, Radarr, and Prowlarr divide the work. It talks about movies and series rather than applications, and it picks the quality profile and root folder itself. It is opt-in for now: all six of its tools are implemented, but the fourteen `arr` tools stay the default until the `media` toolset has been verified against live instances, and some of the instance answers its newest tools depend on have not yet been recorded from one.
-
-`ARR_MCP_TOOLSET` selects what the server publishes, and is read once at startup. It applies to both transports alike: a remote service publishes exactly the tools the same settings publish over stdio. It accepts:
-
-- absent, or `arr` — the fourteen `arr_` tools above, exactly as before
-- `media` — only the `media_` tools
-- `media,arr` in either order, or `all` — both toolsets side by side, each tool exactly as it is on its own
-
-Anything else — an unknown name, a name given twice, an empty entry, or `all` combined with a name — fails startup with a message naming the variable but never the value you set.
-
-With only `media` selected, `arr_capabilities` is not published; a kind whose instance cannot be reached is reported by the `media` tools themselves.
-
-Five tools are published, and a sixth where the operator enables it:
-
-- `media_find` — takes `text`, 1 to 200 characters and not only whitespace, and an optional `kind` of `movie` or `series`, and searches every kind this server serves when `kind` is absent. It returns at most five titles per kind, best match first, each with its `kind`, its `id` (the TMDB id of a movie, the TVDB id of a series), its `title`, its `year` when known, and `in_library`. A kind that cannot be searched — its instance is down, say — is listed under `unavailable` beside the other kind's titles rather than failing the call. It changes nothing.
-- `media_add` — takes the `kind` and `id` a find returned, an optional `resolution`, and, for a series only, an optional `episodes` of `all` (the default) or `future`. It adds the title monitored and starts a search for it, and reports `added`. A title already in the library is left exactly as it is and reported `already_in_library`, including when another call added it a moment earlier, so adding twice never creates a duplicate.
-
-- `media_status` — takes nothing for an overview, or a `kind` and `id` for one title. The overview lists the downloads in progress or stuck, the titles imported in the last seven days, and what is due in the next fourteen, each with its date. A title's status says whether it is in the library and, if it is, whether it is monitored, the resolution it targets, the resolutions of the files it has, how many movies or episodes it has and how many released ones it monitors but lacks, its next due date, and its downloads. A download is named by its title, and for a series by an `episodes` label such as `S02E01–E10`; a season pack is one download however many episodes it covers. Its state is `queued`, `downloading` (with a whole-number `progress`), `waiting`, `importing`, or `stuck`, and a stuck download carries a one-sentence `reason` and the `remedy` `media_fix` would apply: `replace`, `import`, or `none`. Every list holds at most ten entries and carries a `*_total` when it was cut. It changes nothing.
-- `media_fix` — takes a `kind` and `id` and fixes up to ten of that title's stuck downloads, reading each again immediately before acting on it. A failed or stalled download is replaced: its release is blocked, it is removed from the downloader with its data, and the instance searches for another release. A download that finished but whose import is blocked is imported, only when every file in it imports with no correction and the library's own records show no file for anything it maps to. Anything else is left alone with its reason. It never chooses to delete or replace a file already in the library, and it checks the library once more right before sending an import. The one case it cannot prevent is the instance itself importing another download for the same movie or episode in the seconds before it runs this import, which then replaces that file. The result says what was done to each download and how many stuck ones were left for another call. A download this server is already fixing, or whose import it started and has not yet seen finish, is reported as already being fixed rather than acted on twice — by this call or any other, over either transport.
-- `media_search_again` — takes a `kind` and `id` and, for a series, an optional `season` and an `episode` within it. It searches again for exactly the released movie or episodes in that scope that the library monitors and has no file for, and for nothing the library already has; an episode of a series the library does not monitor, or in a season it does not monitor, is skipped, unless that one episode is named by its `season` and `episode`, which searches for it monitored or not. When nothing is missing it searches for nothing. It reports how many it searched for.
-- `media_remove` — published only when `ARR_MCP_MEDIA_ALLOW_REMOVE` is `true`. Takes a `kind`, an `id`, and an optional `delete_files` that defaults to `false`. It removes the title from the library, deleting its files only when asked, and never stops it being added again. A title that is not in the library, including one another call just removed, is reported as `not_in_library` and nothing changes.
-
-`resolution` is one of `480p`, `576p`, `720p`, `1080p`, and `2160p`. A profile's resolution is that of its cutoff quality, or the highest in its cutoff group. The server uses a profile whose resolution is the one asked for or, where none is, the nearest, the lower of two equally near winning; among several it prefers the configured default, then the profile allowing the fewest qualities, then the name that sorts first. The result reports the resolution the title now targets, so you can see when the request was not met exactly.
-
-New titles are added with these defaults, and removal is enabled with the last of these variables. All of them are accepted only when `media` is selected:
-
-| Variable | Meaning |
-|---|---|
-| `ARR_MCP_MEDIA_MOVIE_QUALITY_PROFILE` | Quality profile name for new movies |
-| `ARR_MCP_MEDIA_MOVIE_ROOT_FOLDER` | Root folder path for new movies |
-| `ARR_MCP_MEDIA_SERIES_QUALITY_PROFILE` | Quality profile name for new series |
-| `ARR_MCP_MEDIA_SERIES_ROOT_FOLDER` | Root folder path for new series |
-| `ARR_MCP_MEDIA_ALLOW_REMOVE` | `true` publishes `media_remove`; absent or `false` does not |
-
-Each is optional. `ARR_MCP_MEDIA_ALLOW_REMOVE` accepts exactly `true` or `false`. Where a profile or folder variable is absent and the instance has exactly one root folder or quality profile, that one is used; where it has several, an add fails with `deployment_configuration` naming the variable to set — unless the call names a `resolution`, which chooses the profile by itself. A variable that names a profile or folder the instance does not have fails every add of that kind the same way, so a stale setting is reported rather than bypassed. Names and paths are matched exactly as written. The defaults are checked when a title is added rather than at startup, so an instance that is down when the server starts does not stop it from starting.
-
-```json
-{
-  "env": {
-    "ARR_MCP_TOOLSET": "media",
-    "ARR_MCP_MEDIA_MOVIE_QUALITY_PROFILE": "HD-1080p",
-    "ARR_MCP_MEDIA_SERIES_QUALITY_PROFILE": "HD-1080p",
-    "ARR_MCP_MEDIA_SERIES_ROOT_FOLDER": "/tv"
-  }
-}
-```
 
 ## Development
 

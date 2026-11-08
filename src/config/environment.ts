@@ -64,15 +64,10 @@ export type ToolsetName = (typeof toolsetNames)[number];
 const allToolsetsAlias = "all";
 
 /**
- * What an absent selection publishes.
- *
- * `arr` for now, deliberately departing from Tool Contracts, which makes
- * `media` the default: flipping it is the breaking change, and it waits until
- * the whole `media` toolset exists and has been verified against live
- * instances. Until then a process that names no toolset publishes exactly what
- * it published before the selection existed.
+ * What an absent selection publishes: the `media` toolset, as Tool Contracts
+ * requires. A deployment that wants the fourteen `arr` tools names `arr`.
  */
-const defaultToolsets: readonly ToolsetName[] = ["arr"];
+const defaultToolsets: readonly ToolsetName[] = ["media"];
 
 /**
  * The deployment defaults the `media` toolset adds new titles with, one
@@ -467,7 +462,9 @@ function parseToolsetNames(
 function parseToolsets(env: EnvironmentRecord, problems: string[]): ToolsetSelection {
   const names = parseToolsetNames(env, problems);
   if (names === undefined) {
-    return { names: defaultToolsets };
+    // Never read: the problem just recorded rejects startup. `arr` alone keeps
+    // the selection's own invariant, which no media defaults would break.
+    return { names: ["arr"] };
   }
   if (!names.includes("media")) {
     for (const variable of [...mediaDefaultVariableNames, mediaAllowRemoveVariable]) {

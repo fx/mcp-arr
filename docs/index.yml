@@ -270,7 +270,7 @@ changes:
     path: changes/0033-media-default-toolset.md
     description: Make media the default toolset after a live sweep, keeping arr behind ARR_MCP_TOOLSET=arr
     spec: tool-contracts
-    status: draft
+    status: complete
     depends_on: ["0031", "0032"]
   - id: "0034"
     name: container-image
