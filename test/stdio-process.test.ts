@@ -217,6 +217,7 @@ describe("built stdio process", () => {
           instances: [],
           upstreamTimeoutMs: 30_000,
           transport: { kind: "stdio" },
+          toolsets: { names: ["arr"] },
         }),
         createRuntime: () => ({
           registry: { adapters: [], adapter: () => undefined, probe: async () => [] },

@@ -4,7 +4,7 @@
 
 This specification defines the `media` toolset: the smallest set of tools that manages a media library across the supported applications, talking about movies, TV series, and downloads rather than about Sonarr, Radarr, and Prowlarr. Inputs and results carry only what a caller needs for its next step. A caller finds a title, adds it, asks how it is going, and asks for a stuck download to be fixed. The server decides which application handles the request, which quality profile and root folder to use, and which upstream steps to run. Which toolset a process publishes, and the conventions every published tool shares, are owned by [Tool Contracts](../tool-contracts/).
 
-**Status:** unimplemented. [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) implements `media_find` and `media_add` with the identity, footprint, and default rules they need; [0032-media-toolset-activity](../../changes/0032-media-toolset-activity.md) implements the other four tools; [0033-media-default-toolset](../../changes/0033-media-default-toolset.md) makes this the default toolset.
+**Status:** partially implemented. [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) implemented `media_find` and `media_add` with the identity, footprint, and default rules they need, published when `ARR_MCP_TOOLSET` selects `media`; until the rest lands the toolset publishes only those two, so it offers no tool that refuses unconditionally. `media_status`, `media_fix`, `media_search_again`, and `media_remove` are pending in [0032-media-toolset-activity](../../changes/0032-media-toolset-activity.md); [0033-media-default-toolset](../../changes/0033-media-default-toolset.md) makes this the default toolset.
 
 ## Background
 
@@ -128,7 +128,9 @@ A caller asks for a resolution, never for a quality profile. The server turns on
 
 ### Find
 
-- `media_find` MUST accept `text`, a search text of 1 to 200 characters, and an optional `kind`, and MUST search every configured kind when `kind` is absent.
+- `media_find` MUST accept `text`, a search text of 1 to 200 characters containing at least one character that is not whitespace, and an optional `kind`, and MUST search every configured kind when `kind` is absent.
+- Whitespace surrounding `text` MUST be ignored: the search MUST be for the text without it.
+- A `text` that is only whitespace MUST be refused with `invalid_input` before any upstream request, since it names nothing to search for.
 - Each returned title MUST carry exactly its kind, id, title, year when known, and `in_library`.
 - `media_find` MUST return at most 5 titles per kind, in the order the metadata source ranked them.
 - A kind that could not be searched MUST be named in the result as unavailable, with its normalized error, beside the titles of the kinds that could, rather than failing the call.
@@ -145,6 +147,12 @@ A caller asks for a resolution, never for a quality profile. The server turns on
 - **GIVEN** both kinds are configured and the series instance is unreachable
 - **WHEN** a caller finds a title with no kind
 - **THEN** the movie matches are returned and the series kind is reported unavailable, in one successful result
+
+#### Scenario: Search text that is only whitespace
+
+- **GIVEN** both kinds are configured
+- **WHEN** a caller finds `"   "`
+- **THEN** the call fails with `invalid_input`, and no instance is asked anything
 
 ### Add
 
@@ -352,3 +360,4 @@ The `arr` toolset's plan and apply exist so a caller can inspect effects before 
 | Date | Change | Document |
 |------|--------|----------|
 | 2026-11-07 | Initial desired-state specification created | [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) |
+| 2026-11-08 | `media_find` refuses search text that is only whitespace and ignores surrounding whitespace | [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) |

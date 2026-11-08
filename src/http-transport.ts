@@ -10,7 +10,12 @@ import type { AddressInfo } from "node:net";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { type AdapterRegistry, createAdapterRegistry } from "./adapters/registry.js";
-import type { EnvironmentConfiguration, HttpTransportConfiguration } from "./config/environment.js";
+import type {
+  EnvironmentConfiguration,
+  HttpTransportConfiguration,
+  ToolsetName,
+  ToolsetSelection,
+} from "./config/environment.js";
 import type { Runtime } from "./process.js";
 import { createServer } from "./server.js";
 import { systemClock } from "./state/clock.js";
@@ -106,7 +111,7 @@ export interface HttpRuntime extends Runtime {
 }
 
 export interface HttpRuntimeDependencies {
-  createServer: (context: ToolContext) => ConnectableServer;
+  createServer: (context: ToolContext, toolsets: ToolsetSelection) => ConnectableServer;
   createTransport: () => RequestTransport;
   /**
    * The signal aborts at the end of shutdown, and every upstream request the
@@ -296,6 +301,17 @@ function readBoundedBody(request: IncomingMessage): Promise<Buffer | undefined> 
  * over that one context — the pinned SDK cannot reuse a stateless transport,
  * and nothing but the context needs to outlive a request.
  */
+/**
+ * The selected toolsets as the startup line names them: "the arr toolset",
+ * "the media toolset", or "the arr and media toolsets". Built from the closed
+ * toolset names, so it can carry nothing an operator wrote.
+ */
+export function describeToolsets(names: readonly ToolsetName[]): string {
+  return names.length === 1
+    ? `the ${names.join("")} toolset`
+    : `the ${names.slice(0, -1).join(", ")} and ${names.at(-1) ?? ""} toolsets`;
+}
+
 export function createHttpRuntime(
   configuration: HttpEnvironmentConfiguration,
   dependencies: HttpRuntimeDependencies = defaultHttpRuntimeDependencies,
@@ -373,7 +389,9 @@ export function createHttpRuntime(
     }
 
     const transport = dependencies.createTransport();
-    const server = dependencies.createServer(context);
+    // The selection the process started with, for every request alike, so the
+    // published tool list is fixed for the process and the same as stdio's.
+    const server = dependencies.createServer(context, configuration.toolsets);
     response.once("close", () => {
       void transport.close().catch(() => undefined);
       void server.close().catch(() => undefined);
@@ -472,7 +490,7 @@ export function createHttpRuntime(
           const bound = httpServer.address() as AddressInfo;
           dependencies.writeStderr(
             `mcp-arr: listening on http://${formatAuthority(host, bound.port)}${mcpPath} ` +
-              "with the arr toolset\n",
+              `with ${describeToolsets(configuration.toolsets.names)}\n`,
           );
           // The listener is what keeps this process alive now. A closed or
           // absent stdin must neither hold it open nor end it.

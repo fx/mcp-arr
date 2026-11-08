@@ -9,7 +9,12 @@ import type { LibraryPaging } from "../../src/adapters/library/requests.js";
 import type { LibraryViewData } from "../../src/adapters/library/service.js";
 import { type ApplicationId, describeApplication } from "../../src/applications.js";
 import { createUpstreamClient, type UpstreamClient } from "../../src/http/client.js";
-import { type FixtureApplication, fixturePathFor, loadFixture } from "./fixtures.js";
+import {
+  type FixtureApplication,
+  type FixtureVersionOf,
+  fixturePathFor,
+  loadFixture,
+} from "./fixtures.js";
 import { fixtureRoot, testApiKeys } from "./tool-context.js";
 
 export interface UpstreamCall {
@@ -74,12 +79,23 @@ export function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-/** The recorded response body for one application's route. */
-export async function fixtureBody<TBody = unknown>(
-  application: FixtureApplication,
+/**
+ * The recorded response body for one application's route: the one recorded at
+ * the application's minimum supported version, or at `options.version` when a
+ * test reads a body only a newer instance returns.
+ */
+export async function fixtureBody<
+  TBody = unknown,
+  TApplication extends FixtureApplication = FixtureApplication,
+>(
+  application: TApplication,
   route: string,
+  options: { readonly version?: FixtureVersionOf<TApplication> } = {},
 ): Promise<TBody> {
-  const fixture = await loadFixture<TBody>(fixtureRoot, fixturePathFor(application, route));
+  const fixture = await loadFixture<TBody>(
+    fixtureRoot,
+    fixturePathFor(application, route, options),
+  );
   return fixture.body;
 }
 

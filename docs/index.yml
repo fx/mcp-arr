@@ -256,7 +256,7 @@ changes:
     path: changes/0031-media-toolset-library.md
     description: Add the startup toolset selection and the opt-in media_find and media_add tools
     spec: media-toolset
-    status: draft
+    status: complete
     depends_on: []
   - id: "0032"
     name: media-toolset-activity

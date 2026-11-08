@@ -12,6 +12,7 @@ import { schemaFailures } from "./support/json-schema.js";
 import {
   allApplicationsEnvironment,
   applicationForUrl,
+  arrToolset,
   createTestToolContext,
   jsonResponse,
   loadStatusFixtures,
@@ -39,7 +40,7 @@ function fixtureBody(application: ApplicationId): Record<string, unknown> {
 }
 
 async function connect(context: ToolContext): Promise<Client> {
-  const server = createServer(context);
+  const server = createServer(context, arrToolset);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "tool-protocol-test", version: "1.0.0" });
   closeables.push(client, server);

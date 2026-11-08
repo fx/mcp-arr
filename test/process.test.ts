@@ -67,6 +67,7 @@ const inertRegistry: AdapterRegistry = {
   adapters: [],
   adapter: () => undefined,
   probe: async () => [],
+  withholdSecrets: (text) => text,
 };
 
 function createRuntime(): Runtime {

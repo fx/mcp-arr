@@ -23,7 +23,7 @@ Related behavior:
 
 ### Toolset Selection
 
-**Status:** unimplemented. [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) adds the selection with `arr` as its default; [0033-media-default-toolset](../../changes/0033-media-default-toolset.md) makes `media` the default.
+**Status:** implemented with an interim default. [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) added the selection, and until [0033-media-default-toolset](../../changes/0033-media-default-toolset.md) makes `media` the default, an absent `ARR_MCP_TOOLSET` publishes the `arr` toolset, departing from the default requirement below.
 
 - The server MUST publish the toolsets selected at startup by `ARR_MCP_TOOLSET`: `media`, `arr`, or both, written as the comma-separated list `media,arr` in either order or as the alias `all`.
 - `all` MUST stand alone; a list that combines it with a toolset name MUST reject startup.

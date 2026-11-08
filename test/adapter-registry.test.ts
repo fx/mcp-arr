@@ -4,7 +4,9 @@ import {
   type ApplicationCapability,
   createAdapterRegistry,
   createApplicationAdapter,
+  minimumMarkableSecretLength,
   systemStatusPath,
+  withholdSecrets,
 } from "../src/adapters/registry.js";
 import {
   type ApplicationId,
@@ -363,5 +365,54 @@ describe("createApplicationAdapter", () => {
       },
     });
     expect(JSON.stringify(capability)).not.toContain(apiKeys.sonarr);
+  });
+});
+
+describe("withholdSecrets", () => {
+  it("replaces every occurrence of a configured secret, whatever its case", () => {
+    expect(
+      withholdSecrets("a Plain-Key-Value then plain-key-value then PLAIN-KEY-VALUE", [
+        "Plain-Key-Value",
+      ]),
+    ).toBe("a [redacted key] then [redacted key] then [redacted key]");
+  });
+
+  it("marks a secret of the minimum length and withholds text carrying a shorter one", () => {
+    expect(minimumMarkableSecretLength).toBe(8);
+    expect(withholdSecrets("x 12345678 y", ["12345678"])).toBe("x [redacted key] y");
+    expect(withholdSecrets("x key-123 y", ["key-123"])).toBeUndefined();
+    expect(withholdSecrets("x KEY-123 y", ["key-123"])).toBeUndefined();
+    // Text that does not carry the short secret is untouched.
+    expect(withholdSecrets("an ordinary title", ["key-123"])).toBe("an ordinary title");
+  });
+
+  it("takes the longer of two overlapping secrets whole", () => {
+    expect(withholdSecrets("x abcdefgh-ijklmnop y", ["abcdefgh", "abcdefgh-ijklmnop"])).toBe(
+      "x [redacted key] y",
+    );
+  });
+
+  it("matches a secret literally, regular-expression characters included", () => {
+    expect(withholdSecrets("x a.b*c+d(e)f y", ["a.b*c+d(e)f"])).toBe("x [redacted key] y");
+    expect(withholdSecrets("x aXbYcZdQeRf y", ["a.b*c+d(e)f"])).toBe("x aXbYcZdQeRf y");
+  });
+
+  it("ignores an empty secret", () => {
+    expect(withholdSecrets("an ordinary title", [""])).toBe("an ordinary title");
+  });
+
+  it("is offered by the registry over the configured keys and no others", () => {
+    const registry = createAdapterRegistry(
+      parseEnvironment({
+        SONARR_URL: "https://sonarr.example.invalid",
+        SONARR_API_KEY: "Sonarr-Plain-Key",
+        RADARR_URL: "https://radarr.example.invalid",
+        RADARR_API_KEY: "key-123",
+      }),
+    );
+
+    expect(registry.withholdSecrets("x Sonarr-Plain-Key y")).toBe("x [redacted key] y");
+    expect(registry.withholdSecrets("x key-123 y")).toBeUndefined();
+    expect(registry.withholdSecrets("x Other-Plain-Key y")).toBe("x Other-Plain-Key y");
   });
 });

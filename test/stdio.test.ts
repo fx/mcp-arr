@@ -37,6 +37,7 @@ function createDependencies(): {
     adapters: [],
     adapter: () => undefined,
     probe: async () => [],
+    withholdSecrets: (text) => text,
   };
   const registered: EnvironmentConfiguration[] = [];
   const contexts: ToolContext[] = [];

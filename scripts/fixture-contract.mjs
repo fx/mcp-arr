@@ -75,7 +75,7 @@ const recordedVersions = {
         "config/downloadclient",
         "importlistexclusion/paged",
       ],
-      "4.0.20.3014": [],
+      "4.0.20.3014": ["qualityprofile"],
     },
   },
   radarr: {
@@ -113,7 +113,7 @@ const recordedVersions = {
         "customformat",
         "exclusions/paged",
       ],
-      "6.4.4.10685": [],
+      "6.4.4.10685": ["qualityprofile"],
     },
   },
   prowlarr: {

@@ -12,6 +12,7 @@ import { createToolError } from "../src/tools/errors.js";
 import type { ItemOutcome, ToolResult } from "../src/tools/results.js";
 import {
   allApplicationsEnvironment,
+  arrToolset,
   createTestToolContext,
   jsonResponse,
 } from "./support/tool-context.js";
@@ -862,7 +863,7 @@ describe("arr_job_cancel", () => {
 
 describe("job tools over the MCP protocol", () => {
   async function connect(context: ToolContext): Promise<Client> {
-    const server = createServer(context);
+    const server = createServer(context, arrToolset);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "tool-jobs-test", version: "1.0.0" });
     closeables.push(client, server);

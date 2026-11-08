@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { ToolsetSelection } from "./config/environment.js";
 import type { ToolContext } from "./tools/dispatch.js";
 import { registerTools } from "./tools/register.js";
 
@@ -35,12 +36,12 @@ const SERVER_INFO = {
 } as const;
 
 /**
- * Builds a server with the full published tool set already registered. The
- * tool context is injected so a test can supply its own adapter registry and
+ * Builds a server with the selected toolsets already registered. The tool
+ * context is injected so a test can supply its own adapter registry and
  * operation inventory without a network.
  */
-export function createServer(context: ToolContext): McpServer {
+export function createServer(context: ToolContext, toolsets: ToolsetSelection): McpServer {
   const server = new McpServer(SERVER_INFO);
-  registerTools(server, context);
+  registerTools(server, context, toolsets);
   return server;
 }
