@@ -59,7 +59,7 @@ const sonarrStatus = {
 async function runCapture(
   url: string | undefined,
   args: readonly string[],
-  application: "sonarr" | "radarr" = "sonarr",
+  application: "sonarr" | "radarr" | "prowlarr" = "sonarr",
 ): Promise<{ code: number | null; stderr: string }> {
   const environment: Record<string, string> = { PATH: process.env.PATH ?? "" };
   if (url !== undefined) {
@@ -442,8 +442,8 @@ describe("fixture capture procedure", () => {
       seriesId: 113,
       title: "Example Title 3",
       downloadId: "example-download-1",
-      downloadClient: "Example Download Client 1",
-      indexer: "Example Indexer 1",
+      downloadClient: "Example Service 1",
+      indexer: "Example Service 2",
       episode: { id: 11_807, title: "Example Title 2", tvdbId: 100_002 },
     });
     expect(second).toMatchObject({
@@ -452,6 +452,290 @@ describe("fixture capture procedure", () => {
       episode: { title: "Example Title 4", tvdbId: 100_003 },
     });
   });
+
+  /**
+   * One case per route shape whose identifying fields the queue rows above do
+   * not carry: what each route's body says about a library or its services,
+   * and the stand-in a capture writes for it.
+   */
+  const identifyingSites: ReadonlyArray<{
+    readonly site: string;
+    readonly application: "sonarr" | "radarr" | "prowlarr";
+    readonly route: string;
+    readonly body: unknown;
+    readonly originals: readonly string[];
+    readonly expected: unknown;
+  }> = [
+    {
+      site: "an episode file's paths, release, and media information",
+      application: "sonarr",
+      route: "episodefile",
+      body: [
+        {
+          id: 1,
+          seriesId: 113,
+          relativePath: "Season 01/Another World - S01E01 - A First Meeting.mkv",
+          path: "/data/tv/Another World/Season 01/Another World - S01E01 - A First Meeting.mkv",
+          sceneName: "Another.World.S01E01.1080p.WEB-DL-SubsPlease",
+          releaseGroup: "SubsPlease",
+          size: 1_000,
+          mediaInfo: {
+            runTime: "23:41",
+            audioLanguages: "jpn",
+            subtitles: "eng/spa",
+            videoCodec: "x265",
+          },
+          customFormats: [{ id: 3, name: "DV Boost" }],
+        },
+      ],
+      originals: [
+        "Another World",
+        "A First Meeting",
+        "SubsPlease",
+        "/data/tv",
+        "23:41",
+        "jpn",
+        "DV Boost",
+      ],
+      expected: [
+        {
+          id: 1,
+          seriesId: 113,
+          // A path keeps its depth and its file's extension, and a folder the
+          // two paths share stays shared.
+          relativePath: "example-1/example-2.mkv",
+          path: "/media/example/example-3/example-4/example-5/example-1/example-2.mkv",
+          sceneName: "Example Title 1",
+          releaseGroup: "EXAMPLEGRP1",
+          size: expect.any(Number),
+          mediaInfo: {
+            runTime: "30:00",
+            audioLanguages: "und",
+            subtitles: "und",
+            videoCodec: "x265",
+          },
+          customFormats: [{ id: 3, name: "Example Format 1" }],
+        },
+      ],
+    },
+    {
+      site: "a provider's name, beside the product it is",
+      application: "sonarr",
+      route: "indexer",
+      body: [
+        { id: 2, name: "Treasure Maps (Prowlarr)", implementation: "Torznab", protocol: "torrent" },
+      ],
+      originals: ["Treasure Maps"],
+      expected: [
+        { id: 2, name: "Example Service 1", implementation: "Torznab", protocol: "torrent" },
+      ],
+    },
+    {
+      site: "a quality profile's and its formats' names",
+      application: "radarr",
+      route: "qualityprofile",
+      body: [
+        {
+          id: 4,
+          name: "Max Ultra HD",
+          cutoff: 1,
+          items: [{ quality: { id: 1, name: "Bluray-2160p" }, allowed: true }],
+          formatItems: [{ format: 3, name: "DV Boost", score: 100 }],
+        },
+      ],
+      originals: ["Max Ultra HD", "DV Boost"],
+      expected: [
+        {
+          id: 4,
+          name: "Example Profile 1",
+          cutoff: 1,
+          items: [{ quality: { id: 1, name: "Bluray-2160p" }, allowed: true }],
+          formatItems: [{ format: 3, name: "Example Format 1", score: 100 }],
+        },
+      ],
+    },
+    {
+      site: "an import candidate's file, folder, and rejections",
+      application: "sonarr",
+      route: "manualimport",
+      body: [
+        {
+          id: 9,
+          name: "Another World - S01E01",
+          folderName: "Another World",
+          path: "/data/downloads/Another World/Another World - S01E01.mkv",
+          relativePath: "Another World - S01E01.mkv",
+          rejections: [{ reason: "Not an upgrade for Another World S01E01", type: "permanent" }],
+        },
+      ],
+      originals: ["Another World", "/data/downloads"],
+      expected: [
+        {
+          id: 9,
+          name: "example-1",
+          folderName: "example-2",
+          path: "/media/example/example-3/example-4/example-2/example-1.mkv",
+          relativePath: "example-1.mkv",
+          rejections: [{ reason: "Example message 1", type: "permanent" }],
+        },
+      ],
+    },
+    {
+      site: "a disk's label, path, and space",
+      application: "sonarr",
+      route: "diskspace",
+      body: [{ path: "/mnt/vault", label: "Vault", freeSpace: 2_000, totalSpace: 8_000 }],
+      originals: ["vault", "Vault"],
+      expected: [
+        {
+          path: "/media/example/example-1/example-2",
+          label: "Example Disk 1",
+          freeSpace: expect.any(Number),
+          totalSpace: expect.any(Number),
+        },
+      ],
+    },
+    {
+      site: "a history event's release, services, and download",
+      application: "sonarr",
+      route: "history",
+      body: {
+        page: 1,
+        records: [
+          {
+            id: 5,
+            eventType: "grabbed",
+            sourceTitle: "Another.World.S01E01.1080p",
+            downloadId: "ABCDEF0123456789ABCDEF0123456789ABCDEF01",
+            data: {
+              indexer: "Treasure Maps",
+              downloadClientName: "My Downloader",
+              releaseGroup: "SubsPlease",
+              torrentInfoHash: "abcdef0123456789abcdef0123456789abcdef01",
+              guid: "tm-123456",
+              message: "Grabbed from Treasure Maps",
+            },
+          },
+        ],
+      },
+      originals: [
+        "Another",
+        "Treasure Maps",
+        "My Downloader",
+        "SubsPlease",
+        "abcdef0123",
+        "ABCDEF0123",
+        "tm-123456",
+      ],
+      expected: {
+        page: 1,
+        records: [
+          {
+            id: 5,
+            eventType: "grabbed",
+            sourceTitle: "Example Title 1",
+            // The info hash is the download's id, whatever its case.
+            downloadId: "example-download-1",
+            data: {
+              indexer: "Example Service 1",
+              downloadClientName: "Example Service 2",
+              releaseGroup: "EXAMPLEGRP1",
+              torrentInfoHash: "example-download-1",
+              guid: "example-guid-1",
+              message: "Example message 1",
+            },
+          },
+        ],
+      },
+    },
+    {
+      site: "a Prowlarr indexer's definition, address, and name",
+      application: "prowlarr",
+      route: "indexer",
+      body: [
+        {
+          id: 1,
+          name: "Treasure Maps",
+          definitionName: "treasuremaps",
+          indexerUrls: ["treasure-maps-mirror"],
+          implementation: "Cardigann",
+          appProfileId: 1,
+        },
+      ],
+      originals: ["Treasure", "treasure"],
+      expected: [
+        {
+          id: 1,
+          name: "Example Service 1",
+          definitionName: "example-definition-1",
+          indexerUrls: ["example-indexer-url-1"],
+          implementation: "Cardigann",
+          appProfileId: 1,
+        },
+      ],
+    },
+    {
+      site: "a movie's trailer, artwork, popularity, and alternate titles",
+      application: "radarr",
+      route: "movie",
+      body: [
+        {
+          id: 8,
+          title: "Another World",
+          youTubeTrailerId: "dQw4w9WgXcQ",
+          remotePoster: "poster.jpg",
+          popularity: 41.2,
+          alternateTitles: [{ title: "Isekai Love" }],
+          movieTitles: ["Another World"],
+        },
+      ],
+      originals: ["Another World", "dQw4w9WgXcQ", "poster", "41.2", "Isekai"],
+      expected: [
+        {
+          id: 8,
+          title: "Example Title 1",
+          youTubeTrailerId: "example-trailer-1",
+          remotePoster: "/media/example/artwork-1",
+          popularity: 0,
+          alternateTitles: [{ title: "Example Title 2" }],
+          movieTitles: ["Example Title 1"],
+        },
+      ],
+    },
+  ];
+
+  for (const { site, application, route, body, originals, expected } of identifyingSites) {
+    it(`replaces ${site}`, async () => {
+      const fixtureRoot = await temporaryFixtureRoot();
+      const status = {
+        sonarr: { appName: "Sonarr", version: "4.0.19.2979" },
+        radarr: { appName: "Radarr", version: "6.3.0.10514" },
+        prowlarr: { appName: "Prowlarr", version: "2.5.2.5491" },
+      }[application];
+      const api = application === "prowlarr" ? "/api/v1" : "/api/v3";
+      const url = await startStub({
+        [`${api}/system/status`]: { body: JSON.stringify(status) },
+        [`${api}/${route}`]: { body: JSON.stringify(body) },
+      });
+
+      const { code, stderr } = await runCapture(
+        url,
+        ["--application", application, "--route", route, "--fixture-root", fixtureRoot],
+        application,
+      );
+
+      expect(code, stderr).toBe(0);
+      const file = path.join(
+        fixtureRoot,
+        `${application}/${api.slice(5)}/${status.version}/${route.replaceAll("/", "-")}.json`,
+      );
+      const written = await readFile(file, "utf8");
+      for (const original of originals) {
+        expect(written, original).not.toContain(original);
+      }
+      expect((JSON.parse(written) as { body: unknown }).body).toEqual(expected);
+    });
+  }
 
   it("reports what a dry run would write without writing it", async () => {
     const fixtureRoot = await temporaryFixtureRoot();

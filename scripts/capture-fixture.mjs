@@ -293,9 +293,10 @@ function createSanitizer(screen) {
   const isProviderField = (value) =>
     typeof value.name === "string" && Object.hasOwn(value, "value");
 
-  const sanitize = (value) => {
+  /** `container` is the key the value sits under, which decides what some fields name. */
+  const sanitize = (value, container = undefined) => {
     if (Array.isArray(value)) {
-      return value.map(sanitize);
+      return value.map((item) => sanitize(item, container));
     }
     if (typeof value === "object" && value !== null) {
       const redactSiblingValue = isProviderField(value);
@@ -311,16 +312,17 @@ function createSanitizer(screen) {
         // value is rather than dropped, which would take its value with it and
         // lose a field the shape has.
         const sanitizedKey = disposition === "rename" ? replace(key) : key;
-        const field = disposition === "keep" ? identifyingFieldOf(key, value) : undefined;
+        const field =
+          disposition === "keep" ? identifyingFieldOf(key, value, container) : undefined;
         entries.push([
           sanitizedKey,
           field !== undefined
             ? // Screened as well, for what a stand-in leaves in place, such as
-              // the text beside a rating's numbers.
-              sanitize(identifying.neutralize(field, child))
+              // the text beside a rating's numbers or a rejection's own fields.
+              sanitize(identifying.neutralize(field, child), key)
             : redactSiblingValue && key === "value"
               ? redact(child)
-              : sanitize(child),
+              : sanitize(child, key),
         ]);
       }
       // A replaced key could land on one the object already has, and building
@@ -465,7 +467,7 @@ async function main() {
   const fixtureRoot = path.resolve(options.fixtureRoot ?? defaultFixtureRoot);
   const filePath = path.join(fixtureRoot, approved.relativePath);
   try {
-    validateFixture(fixture, { filePath, fixtureRoot });
+    validateFixture(fixture, { filePath, fixtureRoot, legacy: false });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     fail(

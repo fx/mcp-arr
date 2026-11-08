@@ -1,7 +1,18 @@
-import { randomInt } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import path from "node:path";
+import {
+  identifyingFieldOf,
+  isNeutralIdentifyingValue,
+  legacyStandInsFor,
+  validateShiftedFacts,
+} from "./identifying-content.mjs";
+
+export {
+  createIdentifyingNeutralizer,
+  identifyingFieldOf,
+  isNeutralIdentifyingValue,
+} from "./identifying-content.mjs";
 
 /**
  * The recorded fixture contract: which fixtures exist, what each one must
@@ -330,387 +341,6 @@ const identifyingKeyParts = ["host", "instance", "ipaddress", "localaddress", "u
 const identifyingKeys = new Set(["ip"]);
 
 /**
- * The fields that identify a library, or the services behind it, by what they
- * hold rather than by what they are called.
- *
- * The screens above refuse a credential, a host, a path, or an address
- * wherever it appears, but a recorded body says more than that: the titles,
- * overviews, artwork, and metadata ids of the series and movies in someone's
- * library, and the names they gave their indexers and download clients. None
- * of it is a secret, and all of it is personal, so no fixture may carry it.
- * A fixture owes these fields their presence and their type, never their
- * text: each one is held to a stand-in the capture writes — text naming an
- * example, an id from a reserved block — and a value that is not one is
- * refused.
- *
- * Three kinds of value are held to a shared vocabulary instead, because the
- * minimum's fixtures were recorded with them and they name no one: the
- * genres and content ratings the metadata sources define, and a quality
- * definition's own title where it is the quality's name. A rating's numbers
- * cannot be told apart from a stand-in, so they are replaced at capture and
- * not screened.
- *
- * `downloadId` is replaced by an ordinal rather than by a digest of the real
- * value: a digest anyone can compute lets anyone confirm a guessed download,
- * and an ordinal keeps what the code needs, which is that the rows of one
- * download still share one value.
- *
- * A title is identified by its facts as well as by its text: the year it
- * started, when it airs, how long it runs, its language, and how large its
- * files are. Those are replaced too — a year moved with the dates, a fixed
- * runtime and air time, an example language, and every byte count scaled by
- * one factor so a download's progress still reads the same — and every date
- * in a captured body is moved by one offset of whole days, chosen at random
- * for each capture and recorded nowhere, so their order and spacing survive
- * and their calendar does not. A fact is a number or a date anyone could hold,
- * so only a fixture recorded at a newer version, which a capture with these
- * rules wrote, is screened for them; the minimum's were recorded before it.
- */
-const identifyingTextFields = {
-  title: "title",
-  originalTitle: "title",
-  seriesTitle: "title",
-  movieTitle: "title",
-  sortTitle: "sortTitle",
-  cleanTitle: "cleanTitle",
-  titleSlug: "titleSlug",
-  overview: "overview",
-  network: "network",
-  studio: "studio",
-  certification: "certification",
-  indexer: "indexer",
-  indexerName: "indexer",
-  // The name an operator gave a client, which defaults to the product's but
-  // need not be one. The product itself is the provider's `implementation`.
-  downloadClient: "downloadClient",
-  downloadClientName: "downloadClient",
-  downloadId: "downloadId",
-};
-
-/** The facts about a title that are replaced rather than screened. */
-const identifyingFactFields = {
-  year: "year",
-  movieYear: "year",
-  runtime: "runtime",
-  airTime: "airTime",
-  size: "byteCount",
-  sizeleft: "byteCount",
-  sizeOnDisk: "byteCount",
-  originalLanguage: "language",
-  languages: "languages",
-};
-
-/**
- * How far a capture moves its dates: about two centuries and up to ten years
- * more, so a shifted date reads as synthetic at a glance and any date a
- * library holds lands after {@link earliestShiftedYear}.
- */
-const minimumDayOffset = 80_000;
-const dayOffsetSpread = 3_653;
-
-/** No shifted date falls before this year, and no unshifted one a library holds after it. */
-const earliestShiftedYear = 2100;
-
-/** A date, or a date and time, that a capture moves; the time and zone are kept as written. */
-const datePrefixPattern = /^(\d{4})-(\d{2})-(\d{2})(?=$|T\d{2}:\d{2})/u;
-
-/** The runtime and air time every captured title is given. */
-const standInRuntimeMinutes = 30;
-const standInAirTime = "20:00";
-
-/** Where each metadata source's stand-in ids start; an id is the base plus an ordinal. */
-const externalIdBases = { tvdbId: 100_000, tmdbId: 200_000, tvMazeId: 400_000, tvRageId: 500_000 };
-
-const maxStandInOrdinal = 9_999;
-
-/** The genres the metadata sources define, which name a kind of story and no one's library. */
-const genreVocabulary = new Set([
-  "Action",
-  "Adventure",
-  "Animation",
-  "Anime",
-  "Biography",
-  "Children",
-  "Comedy",
-  "Crime",
-  "Documentary",
-  "Drama",
-  "Family",
-  "Fantasy",
-  "History",
-  "Horror",
-  "Music",
-  "Musical",
-  "Mystery",
-  "Reality",
-  "Romance",
-  "Science Fiction",
-  "Sport",
-  "Thriller",
-  "War",
-  "Western",
-]);
-
-/** The content ratings the rating boards define. */
-const certificationVocabulary = /^(?:G|PG|PG-13|R|NC-17|NR|TV-(?:Y|Y7|G|PG|14|MA))$/u;
-
-/** A stand-in the minimum's fixtures record as a download: a window of one repeating hex run. */
-function isHexRunStandIn(value) {
-  if (!/^[a-f0-9]{40}$/u.test(value)) {
-    return false;
-  }
-  const letters = "abcdef";
-  const digits = "1234567890";
-  for (let index = 2; index < value.length; index += 1) {
-    const alphabet = index % 2 === 0 ? letters : digits;
-    const previous = alphabet.indexOf(value[index - 2]);
-    if (previous < 0 || value[index] !== alphabet[(previous + 1) % alphabet.length]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
- * Which identifying field a key holds within its object, if it holds one.
- *
- * Exported so the capture replaces exactly what the screen refuses.
- */
-export function identifyingFieldOf(key, parent) {
-  if (Object.hasOwn(identifyingTextFields, key)) {
-    // A quality definition is titled by the quality's own name until an
-    // operator renames it; only the rename is theirs.
-    if (key === "title" && isRecord(parent.quality) && parent.quality.name === parent.title) {
-      return undefined;
-    }
-    return identifyingTextFields[key];
-  }
-  if (Object.hasOwn(identifyingFactFields, key)) {
-    return identifyingFactFields[key];
-  }
-  if (Object.hasOwn(externalIdBases, key)) {
-    return `externalId:${key}`;
-  }
-  if (key === "imdbId") {
-    return "imdbId";
-  }
-  if (key === "genres") {
-    return "genres";
-  }
-  if (key === "ratings") {
-    return "ratings";
-  }
-  // A tag is an id and the label an operator chose for it.
-  if (key === "label" && Object.keys(parent).every((name) => name === "id" || name === "label")) {
-    return "tagLabel";
-  }
-  if ((key === "url" || key === "remoteUrl") && "coverType" in parent) {
-    return "artwork";
-  }
-  return undefined;
-}
-
-const namesAnExample = (value) => typeof value === "string" && /example/iu.test(value);
-
-/** Whether a value an identifying field holds is a stand-in, or says the field is unset. */
-export function isNeutralIdentifyingValue(field, value) {
-  if (value === null || value === undefined || value === "" || value === 0) {
-    return true;
-  }
-  if (field.startsWith("externalId:")) {
-    return /^[1-9]0\d{4}$/u.test(String(value));
-  }
-  switch (field) {
-    case "imdbId":
-      return typeof value === "string" && /^tt000\d{4}$/u.test(value);
-    case "overview":
-      return typeof value === "string" && value.startsWith("A sanitized ");
-    case "certification":
-      return (
-        namesAnExample(value) || (typeof value === "string" && certificationVocabulary.test(value))
-      );
-    case "downloadId":
-      return namesAnExample(value) || (typeof value === "string" && isHexRunStandIn(value));
-    case "genres":
-      return (
-        Array.isArray(value) &&
-        value.every((genre) => namesAnExample(genre) || genreVocabulary.has(genre))
-      );
-    case "ratings":
-    case "year":
-    case "runtime":
-    case "airTime":
-    case "byteCount":
-    case "language":
-    case "languages":
-      return true;
-    case "artwork":
-      return (
-        typeof value === "string" && (value.startsWith("/media/example/") || namesAnExample(value))
-      );
-    default:
-      return namesAnExample(value);
-  }
-}
-
-/** Replaces every number in a value with zero, keeping its shape. */
-function zeroNumbers(value) {
-  if (Array.isArray(value)) {
-    return value.map(zeroNumbers);
-  }
-  if (isRecord(value)) {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, child]) => [key, zeroNumbers(child)]),
-    );
-  }
-  return typeof value === "number" ? 0 : value;
-}
-
-/**
- * The stand-ins one capture writes for identifying fields.
- *
- * Each distinct original value of one field gets its own stand-in, the same
- * every time it recurs within the capture, so a series and the episode rows
- * that name it, or two rows of one download, still agree after it. Nothing
- * of the original survives in its stand-in, which is an ordinal.
- */
-export function createIdentifyingNeutralizer(options = {}) {
-  const assigned = new Map();
-  const dayOffset = options.dayOffset ?? minimumDayOffset + randomInt(0, dayOffsetSpread);
-  // Never one, so a scaled count never repeats the original.
-  const sizeFactor = options.sizeFactor ?? randomInt(1_001, 2_000) / 1_000;
-
-  const ordinalFor = (field, value) => {
-    let byValue = assigned.get(field);
-    if (byValue === undefined) {
-      byValue = new Map();
-      assigned.set(field, byValue);
-    }
-    const key = JSON.stringify(value);
-    let ordinal = byValue.get(key);
-    if (ordinal === undefined) {
-      ordinal = byValue.size + 1;
-      if (ordinal > maxStandInOrdinal) {
-        throw new Error(
-          `More than ${maxStandInOrdinal} distinct values of ${field} in one capture`,
-        );
-      }
-      byValue.set(key, ordinal);
-    }
-    return ordinal;
-  };
-
-  const standIn = (field, value) => {
-    const n = ordinalFor(field, value);
-    if (field.startsWith("externalId:")) {
-      const id = externalIdBases[field.slice("externalId:".length)] + n;
-      return typeof value === "number" ? id : String(id);
-    }
-    switch (field) {
-      case "title":
-        return `Example Title ${n}`;
-      case "sortTitle":
-        return `example title ${n}`;
-      case "cleanTitle":
-        return `exampletitle${n}`;
-      case "titleSlug":
-        return `example-title-${n}`;
-      case "overview":
-        return "A sanitized overview recorded only to fix the payload shape";
-      case "network":
-        return `Example Network ${n}`;
-      case "studio":
-        return `Example Studio ${n}`;
-      case "certification":
-        return `Example Certification ${n}`;
-      case "indexer":
-        return `Example Indexer ${n}`;
-      case "downloadClient":
-        return `Example Download Client ${n}`;
-      case "downloadId":
-        return `example-download-${n}`;
-      case "imdbId":
-        return `tt${String(n).padStart(7, "0")}`;
-      case "tagLabel":
-        return `example-tag-${n}`;
-      case "artwork":
-        return `/media/example/artwork-${n}`;
-      default:
-        throw new Error(`No stand-in is defined for ${field}`);
-    }
-  };
-
-  const language = (entry) =>
-    isRecord(entry) && typeof entry.name === "string"
-      ? {
-          ...entry,
-          id: ordinalFor("language", entry.name),
-          name: `Example Language ${ordinalFor("language", entry.name)}`,
-        }
-      : entry;
-
-  /**
-   * A date, or a date and time, moved by this capture's offset with its time
-   * and zone as written; anything else is not a date and is left alone.
-   */
-  const shiftDate = (value) => {
-    const match = typeof value === "string" ? datePrefixPattern.exec(value) : null;
-    if (match === null) {
-      return undefined;
-    }
-    const day = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-    const moved = new Date(day + dayOffset * 86_400_000).toISOString().slice(0, 10);
-    return `${moved}${value.slice(match[0].length)}`;
-  };
-
-  return {
-    shiftDate,
-
-    /** The stand-in for what one identifying field held, of the same type. */
-    neutralize(field, value) {
-      if (value === null || value === undefined || value === "" || value === 0) {
-        return value;
-      }
-      if (field === "ratings") {
-        return zeroNumbers(value);
-      }
-      if (field === "year") {
-        // The year its middle moves to, so a year and the dates it holds agree.
-        return typeof value === "number" && Number.isSafeInteger(value) && value > 0
-          ? Number(shiftDate(`${String(value).padStart(4, "0")}-07-01`)?.slice(0, 4))
-          : value;
-      }
-      if (field === "runtime") {
-        return typeof value === "number" ? standInRuntimeMinutes : value;
-      }
-      if (field === "airTime") {
-        return typeof value === "string" ? standInAirTime : value;
-      }
-      if (field === "byteCount") {
-        return typeof value === "number" ? Math.round(value * sizeFactor) : value;
-      }
-      if (field === "language") {
-        return language(value);
-      }
-      if (field === "languages") {
-        return Array.isArray(value) ? value.map(language) : value;
-      }
-      if (field === "genres") {
-        return Array.isArray(value)
-          ? value.map((genre) =>
-              typeof genre === "string" ? `Example Genre ${ordinalFor(field, genre)}` : genre,
-            )
-          : value;
-      }
-      if (typeof value !== "string" && typeof value !== "number") {
-        throw new Error(`An identifying ${field} holds neither text nor a number`);
-      }
-      return standIn(field, value);
-    },
-  };
-}
-
-/**
  * What may precede an absolute path for it to read as one.
  *
  * A leading slash is what distinguishes an absolute path from the separator in
@@ -909,10 +539,10 @@ function validateApprovedRoute(relativePath, endpoint) {
  * value and replace what they refuse, rather than carrying its own copy of the
  * rules.
  */
-export function validateSanitizedValue(value, location) {
+export function validateSanitizedValue(value, location, legacy = undefined, container = undefined) {
   if (Array.isArray(value)) {
     value.forEach((item, index) => {
-      validateSanitizedValue(item, `${location}[${index}]`);
+      validateSanitizedValue(item, `${location}[${index}]`, legacy, container);
     });
     return;
   }
@@ -928,15 +558,15 @@ export function validateSanitizedValue(value, location) {
       ) {
         throw new Error(`Identifying key is not allowed at ${location}.${key}`);
       }
-      const field = identifyingFieldOf(key, value);
-      if (field !== undefined && !isNeutralIdentifyingValue(field, child)) {
+      const field = identifyingFieldOf(key, value, container);
+      if (field !== undefined && !isNeutralIdentifyingValue(field, child, legacy)) {
         throw new Error(`Identifying ${field} is not neutralized at ${location}.${key}`);
       }
       // A key is text an instance chose as readily as a value is. Upstream
       // keys a path or a URL where a payload is a dictionary of them, and a key
       // held only to the name lists above would carry one through untouched.
       screenText(key, `${location}.${key}`);
-      validateSanitizedValue(child, `${location}.${key}`);
+      validateSanitizedValue(child, `${location}.${key}`, legacy, key);
     }
     return;
   }
@@ -957,48 +587,6 @@ function screenText(text, location) {
     if (pattern.test(scanned)) {
       throw new Error(`Sensitive ${description} is not allowed at ${location}`);
     }
-  }
-}
-
-/**
- * Holds a fixture recorded at a newer version to the facts a capture writes:
- * every date moved past {@link earliestShiftedYear}, every year with it, and
- * every language an example. A minimum's fixture was recorded before the
- * capture moved dates, and its dates are the ones its tests are written
- * against, so it is not held to this.
- */
-function validateShiftedFacts(value, location) {
-  if (Array.isArray(value)) {
-    value.forEach((item, index) => {
-      validateShiftedFacts(item, `${location}[${index}]`);
-    });
-    return;
-  }
-  if (isRecord(value)) {
-    for (const [key, child] of Object.entries(value)) {
-      const field = identifyingFieldOf(key, value);
-      const at = `${location}.${key}`;
-      if (
-        field === "year" &&
-        typeof child === "number" &&
-        child !== 0 &&
-        child < earliestShiftedYear
-      ) {
-        throw new Error(`Identifying year is not shifted at ${at}`);
-      }
-      const languages = field === "language" ? [child] : field === "languages" ? child : [];
-      for (const entry of Array.isArray(languages) ? languages : []) {
-        if (isRecord(entry) && typeof entry.name === "string" && !namesAnExample(entry.name)) {
-          throw new Error(`Identifying language is not neutralized at ${at}`);
-        }
-      }
-      validateShiftedFacts(child, at);
-    }
-    return;
-  }
-  const match = typeof value === "string" ? datePrefixPattern.exec(value) : null;
-  if (match !== null && Number(match[1]) < earliestShiftedYear) {
-    throw new Error(`Date is not shifted at ${location}`);
   }
 }
 
@@ -1049,7 +637,17 @@ export function validateFixture(value, options) {
   const sanitizedMetadata = Object.fromEntries(
     Object.entries(metadataRecord).filter(([key]) => key !== "endpoint"),
   );
-  validateSanitizedValue({ metadata: sanitizedMetadata, body }, "fixture");
+  const relativePath = path
+    .relative(path.resolve(options.fixtureRoot), path.resolve(options.filePath))
+    .split(path.sep)
+    .join("/");
+  // A capture is held to the exact forms it writes; only a recorded fixture
+  // may hold the legacy values listed against its own file.
+  validateSanitizedValue(
+    { metadata: sanitizedMetadata, body },
+    "fixture",
+    options.legacy === false ? undefined : legacyStandInsFor(relativePath),
+  );
   if (!minimumFixtureTuples.includes(tuple)) {
     validateShiftedFacts(body, "fixture.body");
   }

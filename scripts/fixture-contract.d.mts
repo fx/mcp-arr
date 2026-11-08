@@ -134,11 +134,16 @@ export declare function createFixtureInventory(
   recorded: Readonly<Record<string, RecordedApplication>>,
 ): FixtureInventory;
 
-export declare function validateSanitizedValue(value: unknown, location: string): void;
+export declare function validateSanitizedValue(
+  value: unknown,
+  location: string,
+  legacy?: Readonly<Record<string, readonly unknown[]>>,
+  container?: string,
+): void;
 
 export declare function validateFixture<TBody = unknown>(
   value: unknown,
-  options: { filePath: string; fixtureRoot: string },
+  options: { filePath: string; fixtureRoot: string; legacy?: boolean },
 ): VersionedFixture<TBody>;
 
 export declare function loadFixture<TBody = unknown>(

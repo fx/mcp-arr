@@ -332,7 +332,7 @@ describe("versioned fixture contract", () => {
   it("allows schema path fields when their values are neutral", () => {
     const fixture = validFixture();
     (fixture.body as Record<string, unknown>).path = "/media/example";
-    (fixture.body as Record<string, unknown>).rootFolderPath = "/media/example/library";
+    (fixture.body as Record<string, unknown>).rootFolderPath = "/media/example/example-1";
 
     expect(() => validate(fixture)).not.toThrow();
   });
@@ -376,82 +376,138 @@ describe("versioned fixture contract", () => {
     }
   });
 
-  it("refuses what identifies a library or its services, and accepts the stand-ins", () => {
-    // Real-looking values a capture must never write: a library's titles and
-    // text, metadata ids outside the reserved blocks, an operator's names.
+  it("refuses what identifies a library or its services, and accepts only the stand-ins", () => {
+    // For each field, a real-looking value and one that merely mentions an
+    // example: neither is a stand-in, and both are refused.
     const identifying: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
       ["title", { title: "Love Begins in Another World" }],
+      ["title", { title: "An Example of a Real Title" }],
       ["title", { originalTitle: "Another World" }],
-      ["title", { seriesTitle: "Another World" }],
-      ["sortTitle", { sortTitle: "love begins in another world" }],
+      ["title", { sourceTitle: "Another.World.S01E01.1080p" }],
+      ["title", { sceneName: "Another World S01E01" }],
+      ["titles", { movieTitles: ["Example Title 1", "Another World"] }],
+      ["sortTitle", { sortTitle: "example title of the world" }],
       ["cleanTitle", { cleanTitle: "lovebeginsinanotherworld" }],
-      ["titleSlug", { titleSlug: "love-begins-in-another-world" }],
-      ["overview", { overview: "Two strangers meet in a world that is not theirs." }],
-      ["network", { network: "A Real Broadcaster" }],
+      ["titleSlug", { titleSlug: "example-love-begins" }],
+      ["overview", { overview: "A sanitized overview, but really: two strangers meet." }],
+      ["network", { network: "Example Real Broadcaster" }],
       ["studio", { studio: "A Real Studio" }],
-      ["indexer", { indexer: "Treasure Maps (Prowlarr)" }],
-      ["indexer", { indexerName: "Treasure Maps" }],
-      ["downloadClient", { downloadClient: "SABnzbd" }],
+      ["service", { indexer: "Treasure Maps (Prowlarr)" }],
+      ["service", { indexer: "Example of My Indexer" }],
+      ["service", { downloadClient: "SABnzbd" }],
+      ["service", { implementation: "Newznab", name: "My Private Tracker" }],
+      ["service", { appProfileId: 1, name: "Example Tracker I Use" }],
       ["downloadId", { downloadId: "SABnzbd_nzo_8f2k1q" }],
-      ["downloadId", { downloadId: "0123456789abcdef0123456789abcdef01234567" }],
+      ["downloadId", { downloadId: "example-download-of-mine" }],
+      ["downloadId", { torrentInfoHash: "0123456789abcdef0123456789abcdef01234567" }],
       ["externalId:tvdbId", { tvdbId: 469_794 }],
+      ["externalId:tvdbId", { tvdbId: 200_001 }],
       ["externalId:tmdbId", { tmdbId: 11 }],
       ["externalId:tvMazeId", { tvMazeId: 65_001 }],
       ["externalId:tvRageId", { tvRageId: "12345" }],
       ["imdbId", { imdbId: "tt1234567" }],
+      ["trailer", { youTubeTrailerId: "dQw4w9WgXcQ" }],
       ["genres", { genres: ["Drama", "Isekai Romance"] }],
       ["certification", { certification: "Kids 7+" }],
       ["tagLabel", { label: "private-tracker" }],
+      ["tagLabel", { label: "example-of-mine" }],
+      ["diskLabel", { path: "/media/example", label: "My Big Disk", freeSpace: 1 }],
       ["artwork", { coverType: "poster", url: "poster.jpg" }],
+      ["artwork", { coverType: "poster", url: "/media/example/poster.jpg" }],
+      ["path", { relativePath: "Season 01/Another World - S01E01.mkv" }],
+      ["path", { path: "/media/example/series/Another World" }],
+      ["path", { folderName: "Another World", name: "x" }],
+      ["path", { folderName: "example-1", name: "Another World - S01E01" }],
+      ["query", { query: "another world" }],
+      ["guid", { guid: "example-indexer-a-1001" }],
+      ["definition", { definitionName: "torrentleech" }],
+      ["indexerUrls", { indexerUrls: ["example-tracker"] }],
+      ["releaseGroup", { releaseGroup: "EXAMPLEGRP" }],
+      ["releaseGroups", { releaseGroups: ["SubsPlease"] }],
+      ["message", { message: "Indexers unavailable due to failures: Treasure Maps" }],
+      ["message", { errorMessage: "Example client reported failure" }],
+      ["messages", { messages: ["Not an upgrade for existing movie file"] }],
+      ["message", { rejections: [{ reason: "Example of a reason", type: "permanent" }] }],
+      ["mediaRunTime", { runTime: "45:12" }],
+      ["mediaLanguages", { audioLanguages: "eng/jpn" }],
+      ["mediaLanguages", { subtitles: "eng" }],
+      ["formatName", { customFormats: [{ id: 1, name: "DV Boost" }] }],
+      ["formatName", { format: 1, name: "Remux", score: 10 }],
+      ["formatName", { implementation: "ReleaseTitleSpecification", negate: false, name: "x" }],
+      ["profileName", { items: [], cutoff: 1, name: "Max Ultra HD" }],
+      ["profileName", { enableRss: true, name: "Example of My Profile" }],
     ];
     for (const [field, nested] of identifying) {
       const fixture = validFixture();
       (fixture.body as Record<string, unknown>).nested = [{ inner: nested }];
       expect(() => validate(fixture), JSON.stringify(nested)).toThrow(
-        `Identifying ${field} is not neutralized at fixture.body.nested[0].inner.`,
+        `Identifying ${field} is not neutralized at fixture.body.nested[0].inner`,
       );
     }
 
-    // The stand-ins a capture writes, the forms the minimum's fixtures were
-    // recorded with, and the values that say a field is unset all pass.
+    // The exact forms a capture writes, the shared vocabularies, and the values
+    // that say a field is unset all pass.
     const fixture = validFixture();
     (fixture.body as Record<string, unknown>).nested = [
       {
         title: "Example Title 1",
+        movieTitles: ["Example Title 2"],
         sortTitle: "example title 1",
         cleanTitle: "exampletitle1",
         titleSlug: "example-title-1",
         overview: "A sanitized overview recorded only to fix the payload shape",
         network: "Example Network 1",
-        studio: "Example Studio",
-        indexer: "Example Indexer 1",
-        downloadClient: "Example Download Client 1",
+        studio: "Example Studio 1",
+        indexer: "Example Service 1",
+        downloadClient: "Example Service 2",
         downloadId: "example-download-1",
+        torrentInfoHash: "example-download-1",
         tvdbId: 100_001,
         tmdbId: 200_001,
         tvMazeId: 0,
         tvRageId: null,
         imdbId: "tt0000001",
+        youTubeTrailerId: "",
         genres: ["Example Genre 1", "Drama", "Science Fiction"],
         certification: "PG-13",
         ratings: { votes: 300, value: 7.5 },
         images: [{ coverType: "poster", url: "/media/example/artwork-1", remoteUrl: "" }],
+        path: "/media/example/example-1/example-2",
+        relativePath: "example-3/example-4.mkv",
+        query: "example query 1",
+        guid: "example-guid-1",
+        definitionName: "example-definition-1",
+        indexerUrls: ["example-indexer-url-1"],
+        releaseGroup: "EXAMPLEGRP1",
+        message: "Example message 1",
+        messages: ["Example message 2"],
+        rejections: [{ reason: "Example message 3", type: "permanent" }],
+        mediaInfo: { runTime: "30:00", audioLanguages: "und", subtitles: "" },
+        customFormats: [{ id: 1, name: "Example Format 1" }],
       },
       { id: 7, label: "example-tag-1" },
-      { downloadId: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0", imdbId: "" },
-      // A quality definition is titled by its quality until an operator renames it.
+      { path: "/media/example", label: "Example Disk 1", freeSpace: 1 },
+      { items: [], cutoff: 1, name: "HD-1080p" },
+      { implementation: "Newznab", name: "Example Service 3" },
+      { folderName: "example-5", name: "example-6" },
+      // Structural: a quality's own title, a provider field's label and name,
+      // a language's and a command's names.
       { quality: { id: 7, name: "Bluray-1080p" }, title: "Bluray-1080p" },
-      // A provider field's label is the application's text, not a tag's.
       { name: "apiPath", label: "API Path", value: "" },
+      { id: 1, name: "English" },
+      { name: "RefreshSeries", commandName: "Refresh Series" },
     ];
     expect(() => validate(fixture)).not.toThrow();
 
-    // A renamed quality definition is the operator's text, and is held to a stand-in.
-    const renamed = validFixture();
-    (renamed.body as Record<string, unknown>).nested = [
-      { quality: { id: 7, name: "Bluray-1080p" }, title: "My Favourite Quality" },
-    ];
-    expect(() => validate(renamed)).toThrow("Identifying title is not neutralized");
+    // A legacy value is accepted only in the file it is listed against.
+    const legacy = validFixture();
+    (legacy.metadata as Record<string, unknown>).endpoint = "/api/v3/indexer";
+    legacy.body = [{ implementation: "Newznab", name: "Example Usenet Indexer" }];
+    expect(() => validate(legacy, "sonarr/v3/4.0.19.2979/indexer.json")).not.toThrow();
+    (legacy.metadata as Record<string, unknown>).endpoint = "/api/v3/tag";
+    expect(() => validate(legacy, "sonarr/v3/4.0.19.2979/tag.json")).toThrow(
+      "Identifying service is not neutralized",
+    );
   });
 
   it("holds a newer version's fixture to shifted dates, years, and example languages", () => {
@@ -466,6 +522,8 @@ describe("versioned fixture contract", () => {
       body: [row],
     });
     const shifted = {
+      ratings: { votes: 0, value: 0 },
+      popularity: 0,
       added: "2251-06-09T06:47:10Z",
       episode: { airDate: "2251-06-10" },
       series: { year: 2251, originalLanguage: { id: 1, name: "Example Language 1" } },
@@ -479,6 +537,11 @@ describe("versioned fixture contract", () => {
       ["Date is not shifted", { ...shifted, added: "2026-11-06T06:47:10Z" }],
       ["Date is not shifted", { ...shifted, episode: { airDate: "2025-11-21" } }],
       ["Identifying year is not shifted", { ...shifted, series: { year: 2025 } }],
+      [
+        "Identifying ratings is not neutralized",
+        { ...shifted, ratings: { votes: 8_123, value: 8.9 } },
+      ],
+      ["Identifying popularity is not neutralized", { ...shifted, popularity: 12.5 }],
       [
         "Identifying language is not neutralized",
         { ...shifted, languages: [{ id: 8, name: "Japanese" }] },
