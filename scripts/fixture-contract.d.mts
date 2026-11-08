@@ -134,11 +134,19 @@ export declare function createFixtureInventory(
   recorded: Readonly<Record<string, RecordedApplication>>,
 ): FixtureInventory;
 
+/** The languages the applications ship, held to their recorded language routes. */
+export declare const shippedLanguages: readonly string[];
+
 export declare function validateSanitizedValue(
   value: unknown,
   location: string,
   legacy?: Readonly<Record<string, readonly unknown[]>>,
-  container?: string,
+  context?: {
+    readonly key?: string;
+    readonly parent?: Readonly<Record<string, unknown>>;
+    readonly container?: string;
+    readonly classified?: boolean;
+  },
 ): void;
 
 export declare function validateFixture<TBody = unknown>(

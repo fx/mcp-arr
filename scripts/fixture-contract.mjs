@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import path from "node:path";
 import {
   classifyValue,
+  identifyingFieldOf,
   isNeutralIdentifyingValue,
   legacyStandInsFor,
   validateShiftedFacts,
@@ -11,7 +12,9 @@ import {
 export {
   classifyValue,
   createIdentifyingNeutralizer,
+  identifyingFieldOf,
   isNeutralIdentifyingValue,
+  shippedLanguages,
   structuralAllowlistSize,
 } from "./identifying-content.mjs";
 
@@ -88,7 +91,7 @@ const recordedVersions = {
         "config/downloadclient",
         "importlistexclusion/paged",
       ],
-      "4.0.20.3014": ["qualityprofile", "queue", "queue/details"],
+      "4.0.20.3014": ["qualityprofile", "queue", "queue/details", "language"],
     },
   },
   radarr: {
@@ -126,7 +129,7 @@ const recordedVersions = {
         "customformat",
         "exclusions/paged",
       ],
-      "6.4.4.10685": ["qualityprofile", "queue"],
+      "6.4.4.10685": ["qualityprofile", "queue", "language"],
     },
   },
   prowlarr: {
@@ -540,10 +543,11 @@ function validateApprovedRoute(relativePath, endpoint) {
  * value and replace what they refuse, rather than carrying its own copy of the
  * rules.
  */
-export function validateSanitizedValue(value, location, legacy = undefined, container = undefined) {
+export function validateSanitizedValue(value, location, legacy = undefined, context = {}) {
   if (Array.isArray(value)) {
+    // A list's items sit where the list does, however deeply lists nest.
     value.forEach((item, index) => {
-      validateSanitizedValue(item, `${location}[${index}]`, legacy, container);
+      validateSanitizedValue(item, `${location}[${index}]`, legacy, context);
     });
     return;
   }
@@ -563,25 +567,16 @@ export function validateSanitizedValue(value, location, legacy = undefined, cont
       // keys a path or a URL where a payload is a dictionary of them, and a key
       // held only to the name lists above would carry one through untouched.
       screenText(key, `${location}.${key}`);
-      validateSanitizedValue(child, `${location}.${key}`, legacy, key);
-      // Every string is identifying unless a rule recognizes it as
-      // structure, so it is screened here with the key it sits under, an
-      // element of a list of strings included — after the screens above, so a
-      // credential or a host is refused as what it is.
-      const strings = Array.isArray(child) ? child.filter((item) => typeof item === "string") : [];
-      const field = classifyValue(key, value, container, Array.isArray(child) ? undefined : child);
+      const field = identifyingFieldOf(key, value, context.key);
+      const at = `${location}.${key}`;
+      validateSanitizedValue(child, at, legacy, {
+        key,
+        parent: value,
+        container: context.key,
+        classified: field !== undefined,
+      });
       if (field !== undefined && !isNeutralIdentifyingValue(field, child, legacy)) {
-        throw new Error(`Identifying ${field} is not neutralized at ${location}.${key}`);
-      }
-      if (field === undefined) {
-        for (const item of strings) {
-          if (
-            classifyValue(key, value, container, item) === "text" &&
-            !isNeutralIdentifyingValue("text", item, legacy)
-          ) {
-            throw new Error(`Identifying text is not neutralized at ${location}.${key}`);
-          }
-        }
+        throw new Error(`Identifying ${field} is not neutralized at ${at}`);
       }
     }
     return;
@@ -591,6 +586,16 @@ export function validateSanitizedValue(value, location, legacy = undefined, cont
   }
 
   screenText(value, location);
+  // Every string is identifying unless a rule recognizes it as structure,
+  // wherever it sits — under a key, in a list of lists, or at the root — and
+  // it is judged after the screens above, so a credential or a host is
+  // refused as what it is. A string a named field holds was judged with it.
+  if (context.classified !== true) {
+    const field = classifyValue(context.key, context.parent ?? {}, context.container, value);
+    if (field !== undefined && !isNeutralIdentifyingValue(field, value, legacy)) {
+      throw new Error(`Identifying ${field} is not neutralized at ${location}`);
+    }
+  }
 }
 
 /** Refuses one piece of text, whether it arrived as a value or as a key. */

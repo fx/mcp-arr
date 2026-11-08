@@ -747,6 +747,47 @@ describe("fixture capture procedure", () => {
     ],
   });
 
+  identifyingSites.push(
+    {
+      site: "text in lists of lists, text that only starts with a date, and unknown values",
+      application: "sonarr",
+      route: "series",
+      body: [
+        {
+          id: 12,
+          newList: [["My Private Movie"], [{ note: "My Private Note" }]],
+          added: "2101-01-01T12:00 My Private Movie",
+          airDateUtc: "2025-11-20T16:30:00Z",
+          status: "treasuremaps",
+          languages: [{ id: 1, name: "English" }],
+          language: { id: 2, name: "My Private Language", nameLower: "my private language" },
+          mediaInfo: { videoCodec: "My Private Film", audioCodec: "EAC3 Atmos" },
+        },
+      ],
+      originals: ["My Private", "treasuremaps", "2025-11-20"],
+      expected: [
+        {
+          id: 12,
+          newList: [["Example text 1"], [{ note: "Example text 2" }]],
+          added: "Example text 3",
+          airDateUtc: expect.stringMatching(/^2\d{3}-\d{2}-\d{2}T16:30:00Z$/u),
+          status: "Example text 4",
+          languages: [{ id: 1, name: "Example Language 1" }],
+          language: { id: 2, name: "Example Language 2", nameLower: "Example text 5" },
+          mediaInfo: { videoCodec: "Example text 6", audioCodec: "EAC3 Atmos" },
+        },
+      ],
+    },
+    {
+      site: "text at the root of a body",
+      application: "sonarr",
+      route: "tag",
+      body: ["My Private Movie", ["My Private Note"]],
+      originals: ["My Private"],
+      expected: ["Example text 1", ["Example text 2"]],
+    },
+  );
+
   for (const { site, application, route, body, originals, expected } of identifyingSites) {
     it(`replaces ${site}`, async () => {
       const fixtureRoot = await temporaryFixtureRoot();

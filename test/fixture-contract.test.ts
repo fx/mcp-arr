@@ -15,6 +15,7 @@ import {
   loadFixture,
   minimumFixtureTuples,
   type RecordedApplication,
+  shippedLanguages,
   validateFixture,
 } from "./support/fixtures.js";
 
@@ -56,7 +57,7 @@ function validFixture(): Record<string, unknown> {
  * them rather than the rule that free text elsewhere is identifying.
  */
 function asDescriptorText(texts: readonly string[]): Record<string, unknown>[] {
-  return texts.map((helpText) => ({ name: "example", helpText }));
+  return texts.map((helpText, order) => ({ order, name: "example", helpText }));
 }
 
 function validate(value: unknown, relativePath = approvedFixtureInventory[0] ?? "") {
@@ -107,6 +108,7 @@ describe("versioned fixture contract", () => {
       "sonarr/v3/4.0.20.3014/qualityprofile.json",
       "sonarr/v3/4.0.20.3014/queue.json",
       "sonarr/v3/4.0.20.3014/queue-details.json",
+      "sonarr/v3/4.0.20.3014/language.json",
       "radarr/v3/6.3.0.10514/system-status.json",
       "radarr/v3/6.3.0.10514/movie.json",
       "radarr/v3/6.3.0.10514/movie-lookup.json",
@@ -138,6 +140,7 @@ describe("versioned fixture contract", () => {
       "radarr/v3/6.3.0.10514/exclusions-paged.json",
       "radarr/v3/6.4.4.10685/qualityprofile.json",
       "radarr/v3/6.4.4.10685/queue.json",
+      "radarr/v3/6.4.4.10685/language.json",
       "prowlarr/v1/2.5.2.5491/system-status.json",
       "prowlarr/v1/2.5.2.5491/indexer.json",
       "prowlarr/v1/2.5.2.5491/indexerstatus.json",
@@ -455,6 +458,23 @@ describe("versioned fixture contract", () => {
       ["text", { someFieldNoOneHasSeen: "Another World" }],
       ["text", { status: "Another World is downloading" }],
       ["text", { indexerFlags: ["freeleech", "Another World only"] }],
+      // Text is judged wherever it sits, lists of lists included.
+      ["text", { newList: [["My Private Movie"]] }],
+      ["text", { records: [{ notes: [[{ note: "My Private Movie" }]] }] }],
+      // Only a whole date or a whole duration is one.
+      ["text", { added: "2101-01-01T12:00 My Private Movie" }],
+      ["text", { timeleft: "00:25:00 for My Private Movie" }],
+      // A recognized value, not merely a recognized shape.
+      ["text", { id: 1, name: "My Private Language", nameLower: "my private language" }],
+      ["text", { id: 1, name: "English", nameLower: "my private language" }],
+      ["text", { mediaInfo: { videoCodec: "My Private Film" } }],
+      ["text", { status: "treasuremaps" }],
+      ["text", { source: "MyPrivateTracker" }],
+      ["text", { implementation: "My Private Film" }],
+      ["text", { configContract: "TreasureMaps" }],
+      ["text", { appName: "Treasuremaps" }],
+      ["text", { name: "my private film", commandName: "my private film" }],
+      ["text", { fields: [{ helpText: "My Private Movie" }] }],
     ];
     for (const [field, nested] of identifying) {
       const fixture = validFixture();
@@ -527,6 +547,38 @@ describe("versioned fixture contract", () => {
     expect(() => validate(legacy, "sonarr/v3/4.0.19.2979/tag.json")).toThrow(
       "Identifying service is not neutralized",
     );
+  });
+
+  it("refuses text at the root of a body", () => {
+    const fixture = validFixture();
+    (fixture.metadata as Record<string, unknown>).endpoint = "/api/v3/tag";
+    fixture.body = ["My Private Movie"];
+    expect(() => validate(fixture, "sonarr/v3/4.0.19.2979/tag.json")).toThrow(
+      "Identifying text is not neutralized at fixture.body[0]",
+    );
+    fixture.body = [["My Private Movie"]];
+    expect(() => validate(fixture, "sonarr/v3/4.0.19.2979/tag.json")).toThrow(
+      "Identifying text is not neutralized at fixture.body[0][0]",
+    );
+  });
+
+  it("recognizes exactly the languages the applications' own language routes list", async () => {
+    const recorded = new Set<string>();
+    for (const [application, version] of [
+      ["sonarr", "4.0.20.3014"],
+      ["radarr", "6.4.4.10685"],
+    ] as const) {
+      const relativePath =
+        application === "sonarr"
+          ? fixturePathFor("sonarr", "language", { version: "4.0.20.3014" })
+          : fixturePathFor("radarr", "language", { version: "6.4.4.10685" });
+      const { body } = await loadFixture<{ name: string }[]>(fixtureRoot, relativePath);
+      expect(body.length, `${application} ${version}`).toBeGreaterThan(40);
+      for (const language of body) {
+        recorded.add(language.name);
+      }
+    }
+    expect([...shippedLanguages].sort()).toEqual([...recorded].sort());
   });
 
   it("holds a newer version's fixture to shifted dates, years, and example languages", () => {

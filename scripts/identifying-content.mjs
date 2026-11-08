@@ -398,6 +398,282 @@ const qualityVocabulary = new Set([
   "WORKPRINT",
 ]);
 
+/**
+ * The languages Sonarr 4.0.20.3014 and Radarr 6.4.4.10685 ship, as their own
+ * `language` routes list them; the recorded `language` fixtures at those
+ * versions are the evidence, and a test holds this list to them.
+ */
+const languageVocabulary = new Set([
+  "Afrikaans",
+  "Albanian",
+  "Any",
+  "Arabic",
+  "Bengali",
+  "Bosnian",
+  "Bulgarian",
+  "Catalan",
+  "Chinese",
+  "Croatian",
+  "Czech",
+  "Danish",
+  "Dutch",
+  "English",
+  "Estonian",
+  "Finnish",
+  "Flemish",
+  "French",
+  "Georgian",
+  "German",
+  "Greek",
+  "Hebrew",
+  "Hindi",
+  "Hungarian",
+  "Icelandic",
+  "Indonesian",
+  "Italian",
+  "Japanese",
+  "Kannada",
+  "Korean",
+  "Latvian",
+  "Lithuanian",
+  "Macedonian",
+  "Malayalam",
+  "Marathi",
+  "Mongolian",
+  "Norwegian",
+  "Original",
+  "Persian",
+  "Polish",
+  "Portuguese",
+  "Portuguese (Brazil)",
+  "Romanian",
+  "Romansh",
+  "Russian",
+  "Serbian",
+  "Slovak",
+  "Slovenian",
+  "Spanish",
+  "Spanish (Latino)",
+  "Swedish",
+  "Tagalog",
+  "Tamil",
+  "Telugu",
+  "Thai",
+  "Turkish",
+  "Ukrainian",
+  "Unknown",
+  "Urdu",
+  "Vietnamese",
+]);
+
+/** The codec names the applications' media-information formatters write. */
+const codecVocabulary = new Set([
+  "AAC",
+  "AC3",
+  "AV1",
+  "DivX",
+  "DTS",
+  "DTS-ES",
+  "DTS-HD HRA",
+  "DTS-HD MA",
+  "DTS-X",
+  "EAC3",
+  "EAC3 Atmos",
+  "FLAC",
+  "h264",
+  "h265",
+  "MP2",
+  "MP3",
+  "MPEG",
+  "MPEG2",
+  "Opus",
+  "PCM",
+  "TrueHD",
+  "TrueHD Atmos",
+  "VC1",
+  "Vorbis",
+  "VP8",
+  "VP9",
+  "WMA",
+  "x264",
+  "x265",
+  "XviD",
+]);
+
+/**
+ * The words each enumerated field takes, as the applications' APIs define
+ * them. A word outside its field's list is treated as text and neutralized,
+ * which fails closed: a fixture recorded with a state no one has listed says
+ * so in review rather than passing a name through.
+ */
+const enumerations = {
+  status: [
+    // A queue item.
+    "unknown",
+    "queued",
+    "paused",
+    "downloading",
+    "completed",
+    "failed",
+    "warning",
+    "delay",
+    "downloadClientUnavailable",
+    "fallback",
+    // A command.
+    "started",
+    "aborted",
+    "cancelled",
+    "orphaned",
+    // A series and a movie.
+    "continuing",
+    "ended",
+    "upcoming",
+    "deleted",
+    "tba",
+    "announced",
+    "inCinemas",
+    "released",
+  ],
+  trackedDownloadState: [
+    "unknown",
+    "downloading",
+    "importBlocked",
+    "importPending",
+    "importing",
+    "imported",
+    "failedPending",
+    "failed",
+    "ignored",
+  ],
+  trackedDownloadStatus: ["ok", "warning", "error", "unknown"],
+  eventType: [
+    "unknown",
+    "grabbed",
+    "seriesFolderImported",
+    "downloadFolderImported",
+    "downloadFailed",
+    "episodeFileDeleted",
+    "episodeFileRenamed",
+    "downloadIgnored",
+    "movieFileDeleted",
+    "movieFolderImported",
+    "movieFileRenamed",
+    "releaseGrabbed",
+    "indexerQuery",
+    "indexerRss",
+    "indexerAuth",
+    "indexerInfo",
+  ],
+  protocol: ["unknown", "usenet", "torrent"],
+  seriesType: ["standard", "daily", "anime"],
+  monitorNewItems: ["all", "none"],
+  minimumAvailability: ["tba", "announced", "inCinemas", "released", "deleted"],
+  finaleType: ["series", "season", "midseason"],
+  coverType: ["unknown", "poster", "banner", "fanart", "screenshot", "headshot", "clearlogo"],
+  sortDirection: ["default", "ascending", "descending"],
+  modifier: ["none", "regional", "screener", "rawhd", "brdisk", "remux"],
+  trigger: ["unspecified", "manual", "scheduled"],
+  result: ["unknown", "successful", "unsuccessful"],
+  // A setting's privacy, and an indexer's.
+  privacy: ["normal", "password", "apiKey", "userName", "public", "private", "semiPrivate"],
+  syncLevel: ["disabled", "addOnly", "fullSync"],
+  listType: ["program", "plex", "trakt", "simkl", "other", "advanced"],
+  shouldMonitor: [
+    "unknown",
+    "none",
+    "all",
+    "future",
+    "missing",
+    "existing",
+    "firstSeason",
+    "lastSeason",
+    "latestSeason",
+    "pilot",
+    "recent",
+    "monitorSpecials",
+    "unmonitorSpecials",
+    "skip",
+  ],
+  releaseType: ["unknown", "singleEpisode", "multiEpisode", "seasonPack"],
+  grabMethod: ["Proxy", "Redirect"],
+  queryType: ["search", "tvsearch", "movie", "music", "book"],
+  sourceType: ["tmdb", "mappings", "user", "indexer"],
+  type: [
+    // A health check, a rejection, and a rating.
+    "ok",
+    "notice",
+    "warning",
+    "error",
+    "permanent",
+    "temporary",
+    "user",
+    "critic",
+    // A provider setting's input.
+    "textbox",
+    "textarea",
+    "select",
+    "password",
+    "checkbox",
+    "number",
+    "path",
+    "filePath",
+    "url",
+    "tag",
+    "tagSelect",
+    "captcha",
+    "action",
+    "device",
+    "oAuth",
+    "keyValueList",
+    "info",
+  ],
+  scanType: ["Progressive", "Interlaced", "MBAFF", "PAFF"],
+  indexerFlags: [
+    "freeleech",
+    "halfleech",
+    "doubleUpload",
+    "internal",
+    "scene",
+    "freeleech75",
+    "freeleech25",
+    "nuked",
+    "G_Freeleech",
+    "G_Halfleech",
+    "G_DoubleUpload",
+    "PTP_Golden",
+    "PTP_Approved",
+    "HDB_Internal",
+    "AHD_Internal",
+    "G_Scene",
+    "G_Freeleech75",
+    "G_Freeleech25",
+    "AHD_UserRelease",
+  ],
+};
+
+/** The sources a quality is recorded from. */
+const qualitySources = [
+  "unknown",
+  "television",
+  "televisionRaw",
+  "web",
+  "webRip",
+  "dvd",
+  "bluray",
+  "blurayRaw",
+  "cam",
+  "telesync",
+  "telecine",
+  "workprint",
+  "dvdscr",
+  // Radarr's words for some of the same.
+  "tv",
+  "webdl",
+  "webrip",
+];
+
+const applicationNames = ["Sonarr", "Radarr", "Prowlarr"];
+
 const isIdentifier = (value) => identifierShape.test(value);
 
 /** A command's display name is its name, spaced before each capital. */
@@ -406,57 +682,59 @@ const spacedCommandName = (parent) => {
   return typeof name === "string" ? name.replace(/(?<=[a-z0-9])(?=[A-Z])/gu, " ") : undefined;
 };
 
+/** Whether an object is a provider's settings descriptor rather than anything named `fields`. */
+const isDescriptor = (parent, container) =>
+  (container === "fields" || container === "selectOptions") &&
+  typeof parent.name === "string" &&
+  ("order" in parent || "type" in parent || "value" in parent);
+
 const structuralRules = [
+  ...Object.entries(enumerations).map(([key, words]) => ({
+    why: "enum",
+    keys: [key],
+    accept: (value) => words.includes(value),
+  })),
   {
     why: "enum",
-    keys: [
-      "status",
-      "trackedDownloadState",
-      "trackedDownloadStatus",
-      "eventType",
-      "protocol",
-      "seriesType",
-      "monitorNewItems",
-      "minimumAvailability",
-      "finaleType",
-      "coverType",
-      "sortKey",
-      "sortDirection",
-      "modifier",
-      "trigger",
-      "result",
-      "privacy",
-      "syncLevel",
-      "listType",
-      "shouldMonitor",
-      "releaseType",
-      "grabMethod",
-      "queryType",
-      "sourceType",
-      "type",
-      "source",
-      "scanType",
-      "indexerFlags",
-    ],
-    accept: isIdentifier,
+    // A quality's source, a health check by its class, or an application.
+    keys: ["source"],
+    accept: (value) =>
+      qualitySources.includes(value) ||
+      applicationNames.includes(value) ||
+      /^[A-Z][A-Za-z]*Check$/u.test(value),
+  },
+  {
+    why: "enum",
+    // The field a page is sorted by is one this server asked for.
+    keys: ["sortKey"],
+    accept: (value) => /^[a-z][A-Za-z]*(?:\.[a-z][A-Za-z]*)?$/u.test(value),
   },
   {
     why: "product",
-    keys: ["implementation", "implementationName", "configContract", "appName"],
-    accept: isIdentifier,
+    // A provider's implementation is the class the application names it by.
+    keys: ["implementation"],
+    accept: (value) => /^[A-Z][A-Za-z0-9]*$/u.test(value),
+  },
+  {
+    why: "product",
+    keys: ["implementationName"],
+    accept: (value) =>
+      /^[A-Za-z][A-Za-z0-9.]*(?: [A-Z][A-Za-z0-9.]*){0,2}$/u.test(value) && value.length <= 24,
+  },
+  {
+    why: "product",
+    keys: ["configContract"],
+    accept: (value) => /^[A-Z][A-Za-z0-9]*Settings$/u.test(value),
+  },
+  {
+    why: "product",
+    keys: ["appName"],
+    accept: (value) => applicationNames.includes(value),
   },
   {
     why: "product",
     keys: ["videoCodec", "audioCodec"],
-    accept: (value) =>
-      /^[A-Za-z0-9][A-Za-z0-9.+-]{0,15}(?: [A-Za-z0-9.+-]{1,8}){0,2}$/u.test(value),
-  },
-  {
-    why: "product",
-    // What a fixture says about itself.
-    keys: ["application", "apiVersion"],
-    when: (_parent, container) => container === "metadata",
-    accept: isIdentifier,
+    accept: (value) => codecVocabulary.has(value),
   },
   {
     why: "product",
@@ -464,12 +742,25 @@ const structuralRules = [
     accept: (value) => /^\d+(?:\.\d+){1,3}$/u.test(value),
   },
   {
+    why: "product",
+    // What a fixture says about itself.
+    keys: ["application"],
+    when: (_parent, container) => container === "metadata",
+    accept: (value) => ["sonarr", "radarr", "prowlarr"].includes(value),
+  },
+  {
+    why: "product",
+    keys: ["apiVersion"],
+    when: (_parent, container) => container === "metadata",
+    accept: (value) => /^v\d$/u.test(value),
+  },
+  {
     why: "enum",
     // A command, named in its own record or in the body of one.
     keys: ["name"],
     when: (parent, container) =>
       container === "body" || "commandName" in parent || "isLongRunning" in parent,
-    accept: isIdentifier,
+    accept: (value) => /^[A-Z][A-Za-z]*$/u.test(value),
   },
   {
     why: "enum",
@@ -499,26 +790,33 @@ const structuralRules = [
   {
     why: "descriptor",
     keys: ["name"],
-    when: (parent, container) =>
-      container === "fields" ||
-      container === "selectOptions" ||
-      ("privacy" in parent && "order" in parent),
+    when: isDescriptor,
     accept: isIdentifier,
   },
   {
     why: "descriptor",
+    // The application's own words for a setting, never the operator's.
     keys: ["label", "helpText", "helpTextWarning", "section", "unit", "hint", "placeholder"],
-    when: (_parent, container) => container === "fields" || container === "selectOptions",
+    when: isDescriptor,
     accept: () => true,
   },
   {
     why: "vocabulary",
     // The application's own list of languages, which configures nothing.
-    keys: ["name", "nameLower"],
+    keys: ["name"],
     when: (parent) => "nameLower" in parent,
-    accept: (value) => /^[A-Za-z][A-Za-z ()-]{1,30}$/u.test(value),
+    accept: (value) => languageVocabulary.has(value),
+  },
+  {
+    why: "vocabulary",
+    keys: ["nameLower"],
+    accept: (value, parent) =>
+      languageVocabulary.has(parent.name) && value === parent.name.toLowerCase(),
   },
 ];
+
+/** The shipped language list, for the test that holds it to the recorded routes. */
+export const shippedLanguages = [...languageVocabulary];
 
 const structuralRulesByKey = new Map();
 for (const rule of structuralRules) {
@@ -543,7 +841,7 @@ function isStructuralShape(value) {
     /^-?\d+(?:\.\d+)?$/u.test(value) ||
     /^(?:true|false)$/iu.test(value) ||
     /^\*+$/u.test(value) ||
-    /^\d{1,3}:\d{2}(?::\d{2})?(?:\.\d+)?$/u.test(value) ||
+    /^(?:\d+\.)?\d{1,3}:\d{2}(?::\d{2})?(?:\.\d+)?$/u.test(value) ||
     datePrefixPattern.test(value)
   );
 }
@@ -585,8 +883,12 @@ const dayOffsetSpread = 3_653;
 /** No shifted date falls before this year, and no unshifted one a library holds after it. */
 export const earliestShiftedYear = 2100;
 
-/** A date, or a date and time, that a capture moves; the time and zone are kept as written. */
-export const datePrefixPattern = /^(\d{4})-(\d{2})-(\d{2})(?=$|T\d{2}:\d{2})/u;
+/**
+ * A whole date, or a whole date and time, that a capture moves; the time and
+ * zone are kept as written. Text that merely starts with a date is text.
+ */
+export const datePrefixPattern =
+  /^(\d{4})-(\d{2})-(\d{2})(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,7})?)?(?:Z|[+-]\d{2}:\d{2})?)?$/u;
 
 /** The runtime and air time every captured title is given. */
 const standInRuntimeMinutes = 30;
@@ -649,7 +951,7 @@ export function createIdentifyingNeutralizer(options = {}) {
     }
     const day = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
     const moved = new Date(day + dayOffset * 86_400_000).toISOString().slice(0, 10);
-    return `${moved}${value.slice(match[0].length)}`;
+    return `${moved}${value.slice(10)}`;
   };
 
   const path = (value) => {

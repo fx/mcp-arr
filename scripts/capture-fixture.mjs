@@ -43,6 +43,7 @@ import {
   captureTargetFor,
   classifyValue,
   createIdentifyingNeutralizer,
+  identifyingFieldOf,
   validateFixture,
   validateSanitizedValue,
 } from "./fixture-contract.mjs";
@@ -219,9 +220,11 @@ function createSanitizer(screen) {
     }
   };
 
+  // Only the screens that refuse a credential, a host, a path, or an address
+  // decide this; which text identifies a library is decided by its field.
   const refusesValue = (value) => {
     try {
-      screen(value, "value");
+      screen(value, "value", undefined, { classified: true });
       return false;
     } catch {
       return true;
@@ -293,10 +296,14 @@ function createSanitizer(screen) {
   const isProviderField = (value) =>
     typeof value.name === "string" && Object.hasOwn(value, "value");
 
-  /** `container` is the key the value sits under, which decides what some fields name. */
-  const sanitize = (value, container = undefined) => {
+  /**
+   * `context` is where a value sits: the key it is under, the object that key
+   * is in, and the key that object sits under, which decide what some fields
+   * name. A list's items, however deeply lists nest, sit where the list does.
+   */
+  const sanitize = (value, context = {}) => {
     if (Array.isArray(value)) {
-      return value.map((item) => sanitize(item, container));
+      return value.map((item) => sanitize(item, context));
     }
     if (typeof value === "object" && value !== null) {
       const redactSiblingValue = isProviderField(value);
@@ -313,26 +320,17 @@ function createSanitizer(screen) {
         // lose a field the shape has.
         const sanitizedKey = disposition === "rename" ? replace(key) : key;
         const field =
-          disposition === "keep"
-            ? classifyValue(key, value, container, Array.isArray(child) ? undefined : child)
-            : undefined;
+          disposition === "keep" ? identifyingFieldOf(key, value, context.key) : undefined;
+        const at = { key, parent: value, container: context.key };
         entries.push([
           sanitizedKey,
           field !== undefined
             ? // Screened as well, for what a stand-in leaves in place, such as
               // the text beside a rating's numbers or a rejection's own fields.
-              sanitize(identifying.neutralize(field, child), key)
+              sanitize(identifying.neutralize(field, child), { ...at, classified: true })
             : redactSiblingValue && key === "value"
               ? redact(child)
-              : Array.isArray(child)
-                ? // A list of strings is held to its key element by element.
-                  child.map((item) =>
-                    typeof item === "string" &&
-                    classifyValue(key, value, container, item) === "text"
-                      ? identifying.neutralize("text", item)
-                      : sanitize(item, key),
-                  )
-                : sanitize(child, key),
+              : sanitize(child, at),
         ]);
       }
       // A replaced key could land on one the object already has, and building
@@ -346,6 +344,14 @@ function createSanitizer(screen) {
       // the prototype setter, so an upstream key of that name would silently
       // take its whole subtree out of the fixture.
       return Object.fromEntries(entries);
+    }
+    if (typeof value === "string" && context.classified !== true) {
+      // Every string is identifying unless a rule recognizes it as
+      // structure, wherever it sits; a named field's was replaced with it.
+      const field = classifyValue(context.key, context.parent ?? {}, context.container, value);
+      if (field !== undefined) {
+        return identifying.neutralize(field, value);
+      }
     }
     const shifted = identifying.shiftDate(value);
     if (shifted !== undefined) {
