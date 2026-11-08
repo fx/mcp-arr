@@ -191,7 +191,7 @@ A caller asks for a resolution, never for a quality profile. The server turns on
 - A `downloading` download MUST also carry its progress as a whole percentage, and a `stuck` download MUST also carry a one-sentence reason and the remedy `media_fix` would apply to it if state did not change: `replace`, `import`, or `none`.
 - A download for which this process has started an import that has not yet finished MUST be reported `importing`.
 - The overview MUST carry the kinds this deployment serves, its downloads, the titles imported in the last 7 days with their dates, and the titles or episodes due in the next 14 days with their dates.
-- A title's status MUST carry `in_library`; for a title in the library it MUST also carry whether it is monitored, the resolution its profile targets when it has one, the distinct resolutions of the files the library holds for it, how many of its released movies or episodes the library has and lacks, its downloads, and its next due date when one is known.
+- A title's status MUST carry `in_library`; for a title in the library it MUST also carry whether it is monitored, the resolution its profile targets when it has one, the distinct resolutions of the files the library holds for it, how many of its movies or episodes the library has, how many of its monitored, released ones it lacks, its downloads, and its next due date when one is known. An episode is monitored only when it and its series both are; a movie or episode the library does not monitor is never counted as lacking, however long it has been released.
 - Every list in a status result MUST hold at most 10 entries, and a list cut short MUST carry the total it was cut from.
 - `media_status` MUST NOT change any upstream state.
 
@@ -200,6 +200,12 @@ A caller asks for a resolution, never for a quality profile. The server turns on
 - **GIVEN** one download is progressing and another failed in the download client
 - **WHEN** a caller asks for the overview
 - **THEN** the first is reported `downloading` with its percentage, and the second is reported `stuck` with its reason and the remedy `replace`
+
+#### Scenario: An unmonitored season is not missing
+
+- **GIVEN** a series in the library monitors only season 1, and seasons 1 and 2 each have released episodes with no file
+- **WHEN** a caller asks for its status
+- **THEN** the count of what it lacks covers season 1's episodes only
 
 #### Scenario: Status of a title not in the library
 
@@ -243,7 +249,9 @@ A caller asks for a resolution, never for a quality profile. The server turns on
 ### Search Again
 
 - `media_search_again` MUST accept a title's kind and id and, for a series, an optional `season` and an optional `episode` within that season.
-- It MUST start the application's own search for exactly the released movies or episodes within the requested scope that the library has no file for, and MUST NOT search for media the library already has or choose or download a specific release itself.
+- For a movie, a whole series, or a season, it MUST start the application's own search for exactly the released, monitored movies or episodes within that scope that the library has no file for, an episode being monitored only when it and its series both are; it MUST NOT search for a movie or episode the library does not monitor.
+- For one episode named by its `season` and `episode`, it MUST start the search for that episode when it is released and the library has no file for it, whether or not it is monitored: naming it is an explicit request.
+- It MUST NOT search for media the library already has or choose or download a specific release itself.
 - When nothing in scope is missing, it MUST start no search.
 - A title that is not in the library MUST fail with `conflict` and a remediation pointing to `media_add`.
 - The result MUST carry only the title, the scope, and how many movies or episodes were searched for; the search's outcome is observed through [Status](#status).
@@ -253,6 +261,18 @@ A caller asks for a resolution, never for a quality profile. The server turns on
 - **GIVEN** a series in the library is missing episodes in season 2
 - **WHEN** a caller searches season 2 again
 - **THEN** a search starts for season 2's missing episodes only, and the result names the series, season 2, and how many episodes were searched for
+
+#### Scenario: An unmonitored season is skipped
+
+- **GIVEN** a series in the library monitors only season 1, and seasons 1 and 2 each have released episodes with no file
+- **WHEN** a caller searches the whole series again
+- **THEN** a search starts for season 1's missing episodes only, and searching season 2 alone starts no search
+
+#### Scenario: Search one named episode of an unmonitored season
+
+- **GIVEN** a series in the library does not monitor season 2, and its released episode 3 has no file
+- **WHEN** a caller searches season 2, episode 3 again
+- **THEN** a search starts for that episode, and the result reports one searched for
 
 #### Scenario: Nothing is missing
 
@@ -364,3 +384,4 @@ The `arr` toolset's plan and apply exist so a caller can inspect effects before 
 | 2026-11-07 | Initial desired-state specification created | [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) |
 | 2026-11-07 | Accepted the import remedy's residual race after the final library check | [0032-media-toolset-activity](../../changes/0032-media-toolset-activity.md) |
 | 2026-11-08 | `media_find` refuses search text that is only whitespace and ignores surrounding whitespace | [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) |
+| 2026-11-08 | What a title lacks, and what a movie, series, or season search covers, are the monitored, released media only; one named episode is searched monitored or not | [0032-media-toolset-activity](../../changes/0032-media-toolset-activity.md) |
