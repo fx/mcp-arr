@@ -1,5 +1,6 @@
 import { randomInt } from "node:crypto";
 import { legacyStandIns } from "./legacy-stand-ins.mjs";
+import { descriptorText, providerImplementations } from "./structural-vocabulary.mjs";
 
 /**
  * What identifies a library, or the services behind it, in a recorded body —
@@ -284,6 +285,11 @@ const factFields = new Set([
   "languages",
 ]);
 
+/** The facts that are numbers, which a history event's data writes as text. */
+const numericFactFields = new Set(["popularity", "year", "runtime", "byteCount"]);
+
+const isNumericText = (value) => /^-?\d+(?:\.\d+)?$/u.test(value);
+
 const isUnset = (value) => value === null || value === undefined || value === "" || value === 0;
 
 /**
@@ -333,34 +339,6 @@ export function isNeutralIdentifyingValue(field, value, legacy = undefined) {
       return standInForms[field]?.test(text) === true;
   }
 }
-
-/**
- * What is structural, recognized positively; every other string a body holds
- * is identifying.
- *
- * Text is identifying unless one of these rules recognizes it, so a field an
- * upstream adds later is neutralized at capture and refused by the screen
- * until someone decides it is structural and says why here. Each rule names
- * the keys it covers, the context it applies in where a key means several
- * things, the values it accepts, and which kind of structure it is:
- *
- * - `enum`: a state, event, type, or command word the application defines,
- *   accepted only in the shape of an identifier, so free text under the same
- *   key is still refused;
- * - `product`: the name of a product, an implementation, a settings contract,
- *   a codec, or a version;
- * - `quality`: a name from the applications' built-in quality definitions, or
- *   a media file's dimensions;
- * - `descriptor`: the text of a provider's settings schema, which the
- *   application writes, never an operator's value;
- * - `vocabulary`: a closed list the application ships.
- *
- * Numbers are not identifying by default: ids, counts, flags, and scores are
- * what the code reads. The numbers that do identify a title — metadata ids,
- * years, runtimes, ratings, popularity, and byte counts — are named in
- * `fieldsByKey`.
- */
-const identifierShape = /^[A-Za-z][A-Za-z0-9]*(?:[_-][A-Za-z0-9]+)*$/u;
 
 /** The applications' built-in quality names. */
 const qualityVocabulary = new Set([
@@ -674,13 +652,95 @@ const qualitySources = [
 
 const applicationNames = ["Sonarr", "Radarr", "Prowlarr"];
 
-const isIdentifier = (value) => identifierShape.test(value);
+/**
+ * The health checks the applications run, by the class each is reported
+ * under; a check outside this list is text.
+ */
+const healthChecks = [
+  "ApiKeyValidationCheck",
+  "AppDataLocationCheck",
+  "ApplicationLongTermStatusCheck",
+  "ApplicationStatusCheck",
+  "DotnetVersionCheck",
+  "DownloadClientCheck",
+  "DownloadClientRemovesCompletedDownloadsCheck",
+  "DownloadClientRootFolderCheck",
+  "DownloadClientSortingCheck",
+  "DownloadClientStatusCheck",
+  "ImportListRootFolderCheck",
+  "ImportListStatusCheck",
+  "ImportMechanismCheck",
+  "IndexerDownloadClientCheck",
+  "IndexerJackettAllCheck",
+  "IndexerLongTermStatusCheck",
+  "IndexerNoDefinitionCheck",
+  "IndexerProxyStatusCheck",
+  "IndexerRssCheck",
+  "IndexerSearchCheck",
+  "IndexerStatusCheck",
+  "IndexerVIPCheck",
+  "MountCheck",
+  "NotificationStatusCheck",
+  "OutdatedDefinitionCheck",
+  "PackageGlobalMessageCheck",
+  "ProxyCheck",
+  "RecyclingBinCheck",
+  "RemotePathMappingCheck",
+  "RemovedMovieCheck",
+  "RemovedSeriesCheck",
+  "RootFolderCheck",
+  "SystemTimeCheck",
+  "UpdateCheck",
+];
 
-/** A command's display name is its name, spaced before each capital. */
-const spacedCommandName = (parent) => {
-  const name = typeof parent.name === "string" ? parent.name : parent.body?.name;
-  return typeof name === "string" ? name.replace(/(?<=[a-z0-9])(?=[A-Z])/gu, " ") : undefined;
-};
+/** The commands the applications run, by name; a command's display name is its name spaced. */
+const commandNames = [
+  "ApplicationCheckUpdate",
+  "ApplicationIndexerSync",
+  "ApplicationUpdate",
+  "Backup",
+  "CheckHealth",
+  "CleanUpRecycleBin",
+  "ClearBlocklist",
+  "ClearLog",
+  "CutoffUnmetEpisodeSearch",
+  "CutoffUnmetMoviesSearch",
+  "DeleteLogFiles",
+  "DeleteUpdateLogFiles",
+  "DownloadedEpisodesScan",
+  "DownloadedMoviesScan",
+  "EpisodeSearch",
+  "Housekeeping",
+  "ImportListSync",
+  "IndexerDefinitionUpdate",
+  "ManualImport",
+  "MessagingCleanup",
+  "MissingEpisodeSearch",
+  "MissingMoviesSearch",
+  "MoveMovie",
+  "MoveSeries",
+  "MoviesSearch",
+  "ProcessMonitoredDownloads",
+  "RefreshCollections",
+  "RefreshMonitoredDownloads",
+  "RefreshMovie",
+  "RefreshSeries",
+  "RenameFiles",
+  "RenameMovie",
+  "RenameSeries",
+  "ResetApiKey",
+  "RssSync",
+  "SeasonSearch",
+  "SeriesSearch",
+];
+
+/** The fields a page is sorted by, as this server asks for them and the recorded pages echo them. */
+const sortKeys = ["airDateUtc", "date", "id", "sortTitle", "timeleft"];
+
+/** A command's display name: its name, spaced before each capital. */
+const displayNameOf = (name) => name.replace(/(?<=[a-z0-9])(?=[A-Z])/gu, " ");
+
+const commandOf = (parent) => (typeof parent.name === "string" ? parent.name : parent.body?.name);
 
 /** Whether an object is a provider's settings descriptor rather than anything named `fields`. */
 const isDescriptor = (parent, container) =>
@@ -688,11 +748,51 @@ const isDescriptor = (parent, container) =>
   typeof parent.name === "string" &&
   ("order" in parent || "type" in parent || "value" in parent);
 
-const structuralRules = [
+const allImplementationNames = new Set(
+  Object.values(providerImplementations).flatMap((entry) => entry.names),
+);
+const allContracts = new Set(
+  Object.values(providerImplementations).flatMap((entry) => entry.contracts),
+);
+
+/** The display names or contracts one implementation is published under, or any when none is named. */
+const publishedFor = (parent, property, all) => {
+  const entry =
+    typeof parent.implementation === "string"
+      ? providerImplementations[parent.implementation]
+      : undefined;
+  return entry === undefined ? all : new Set(entry[property]);
+};
+
+const descriptorSets = Object.fromEntries(
+  Object.entries(descriptorText).map(([key, values]) => [key, new Set(values)]),
+);
+
+/**
+ * What is structural, recognized positively by its exact value; every other
+ * string a body holds is identifying.
+ *
+ * No rule is a pattern. Each rule names the keys it covers, the context it
+ * applies in where a key means several things, the closed set of values it
+ * accepts — from the applications' API enumerations, their provider schemas,
+ * their built-in definitions, or this server's own requests — and which kind
+ * of structure it is (`enum`, `product`, `quality`, `descriptor`, or
+ * `vocabulary`). Only a value's form decides for numbers, flags, whole dates,
+ * durations, the empty string, and the applications' masked secret; see
+ * {@link isStructuralShape}. A value no rule lists is text: neutralized at
+ * capture and refused by the screen, so a field or a word an upstream adds
+ * later fails closed until it is listed here.
+ *
+ * Every rule also states a `probe`: where a value it judges sits, so the
+ * contract test can put a title-like value there and show the rule refuses
+ * it. A rule added without one fails that test.
+ */
+export const structuralRules = [
   ...Object.entries(enumerations).map(([key, words]) => ({
     why: "enum",
     keys: [key],
     accept: (value) => words.includes(value),
+    probe: () => ({ parent: {} }),
   })),
   {
     why: "enum",
@@ -701,45 +801,44 @@ const structuralRules = [
     accept: (value) =>
       qualitySources.includes(value) ||
       applicationNames.includes(value) ||
-      /^[A-Z][A-Za-z]*Check$/u.test(value),
+      healthChecks.includes(value),
+    probe: () => ({ parent: {} }),
   },
   {
     why: "enum",
-    // The field a page is sorted by is one this server asked for.
     keys: ["sortKey"],
-    accept: (value) => /^[a-z][A-Za-z]*(?:\.[a-z][A-Za-z]*)?$/u.test(value),
+    accept: (value) => sortKeys.includes(value),
+    probe: () => ({ parent: {} }),
   },
   {
     why: "product",
-    // A provider's implementation is the class the application names it by.
     keys: ["implementation"],
-    accept: (value) => /^[A-Z][A-Za-z0-9]*$/u.test(value),
+    accept: (value) => Object.hasOwn(providerImplementations, value),
+    probe: () => ({ parent: {} }),
   },
   {
     why: "product",
     keys: ["implementationName"],
-    accept: (value) =>
-      /^[A-Za-z][A-Za-z0-9.]*(?: [A-Z][A-Za-z0-9.]*){0,2}$/u.test(value) && value.length <= 24,
+    accept: (value, parent) => publishedFor(parent, "names", allImplementationNames).has(value),
+    probe: () => ({ parent: { implementation: "Newznab" } }),
   },
   {
     why: "product",
     keys: ["configContract"],
-    accept: (value) => /^[A-Z][A-Za-z0-9]*Settings$/u.test(value),
+    accept: (value, parent) => publishedFor(parent, "contracts", allContracts).has(value),
+    probe: () => ({ parent: { implementation: "Newznab" } }),
   },
   {
     why: "product",
     keys: ["appName"],
     accept: (value) => applicationNames.includes(value),
+    probe: () => ({ parent: {} }),
   },
   {
     why: "product",
     keys: ["videoCodec", "audioCodec"],
     accept: (value) => codecVocabulary.has(value),
-  },
-  {
-    why: "product",
-    keys: ["version"],
-    accept: (value) => /^\d+(?:\.\d+){1,3}$/u.test(value),
+    probe: () => ({ parent: {}, container: "mediaInfo" }),
   },
   {
     why: "product",
@@ -747,12 +846,14 @@ const structuralRules = [
     keys: ["application"],
     when: (_parent, container) => container === "metadata",
     accept: (value) => ["sonarr", "radarr", "prowlarr"].includes(value),
+    probe: () => ({ parent: {}, container: "metadata" }),
   },
   {
     why: "product",
     keys: ["apiVersion"],
     when: (_parent, container) => container === "metadata",
-    accept: (value) => /^v\d$/u.test(value),
+    accept: (value) => ["v1", "v3"].includes(value),
+    probe: () => ({ parent: {}, container: "metadata" }),
   },
   {
     why: "enum",
@@ -760,18 +861,26 @@ const structuralRules = [
     keys: ["name"],
     when: (parent, container) =>
       container === "body" || "commandName" in parent || "isLongRunning" in parent,
-    accept: (value) => /^[A-Z][A-Za-z]*$/u.test(value),
+    accept: (value) => commandNames.includes(value),
+    probe: () => ({ parent: { isLongRunning: false } }),
   },
   {
     why: "enum",
     keys: ["commandName"],
-    accept: (value, parent) => value === spacedCommandName(parent),
+    accept: (value, parent) => {
+      const name = commandOf(parent);
+      return (
+        typeof name === "string" && commandNames.includes(name) && value === displayNameOf(name)
+      );
+    },
+    probe: (value) => ({ parent: { name: value.replaceAll(" ", "") } }),
   },
   {
     why: "quality",
     keys: ["name"],
     when: (_parent, container) => container === "quality",
     accept: (value) => qualityVocabulary.has(value),
+    probe: () => ({ parent: {}, container: "quality" }),
   },
   {
     why: "quality",
@@ -780,25 +889,31 @@ const structuralRules = [
     keys: ["title"],
     when: (parent) => isRecord(parent.quality) && parent.quality.name === parent.title,
     accept: (value) => qualityVocabulary.has(value),
-  },
-  {
-    why: "quality",
-    keys: ["resolution"],
-    when: (_parent, container) => container === "mediaInfo",
-    accept: (value) => /^\d{2,5}x\d{2,5}$/u.test(value),
+    probe: (value) => ({ parent: { quality: { id: 1, name: value } } }),
   },
   {
     why: "descriptor",
-    keys: ["name"],
-    when: isDescriptor,
-    accept: isIdentifier,
+    keys: [
+      "name",
+      "label",
+      "helpText",
+      "helpTextWarning",
+      "section",
+      "unit",
+      "hint",
+      "placeholder",
+    ],
+    when: (parent, container) => container === "fields" && isDescriptor(parent, container),
+    accept: (value, _parent, key) => descriptorSets[key]?.has(value) === true,
+    probe: () => ({ parent: { order: 0, name: "apiKey" }, container: "fields" }),
   },
   {
     why: "descriptor",
-    // The application's own words for a setting, never the operator's.
-    keys: ["label", "helpText", "helpTextWarning", "section", "unit", "hint", "placeholder"],
-    when: isDescriptor,
-    accept: () => true,
+    keys: ["name", "hint"],
+    when: (parent, container) => container === "selectOptions" && isDescriptor(parent, container),
+    accept: (value, _parent, key) =>
+      (key === "name" ? descriptorSets.optionName : descriptorSets.optionHint)?.has(value) === true,
+    probe: () => ({ parent: { value: 0, name: "example" }, container: "selectOptions" }),
   },
   {
     why: "vocabulary",
@@ -806,12 +921,14 @@ const structuralRules = [
     keys: ["name"],
     when: (parent) => "nameLower" in parent,
     accept: (value) => languageVocabulary.has(value),
+    probe: () => ({ parent: { nameLower: "english" } }),
   },
   {
     why: "vocabulary",
     keys: ["nameLower"],
     accept: (value, parent) =>
       languageVocabulary.has(parent.name) && value === parent.name.toLowerCase(),
+    probe: () => ({ parent: { name: "English" } }),
   },
 ];
 
@@ -832,13 +949,17 @@ export const structuralAllowlistSize = {
 };
 
 /**
- * Text whose shape says what it is rather than whom it is about: a number, a
- * flag, a date, a duration, or the applications' stand-in for a set secret.
+ * Text whose form says what it is rather than whom it is about, and the only
+ * text recognized by form: a number (a version's dotted numbers and a media
+ * file's dimensions included), a flag, a whole date or date-time, a duration,
+ * the empty string, or the applications' stand-in for a set secret.
  */
 function isStructuralShape(value) {
   return (
     value === "" ||
     /^-?\d+(?:\.\d+)?$/u.test(value) ||
+    /^\d+(?:\.\d+){2,3}$/u.test(value) ||
+    /^\d{2,5}x\d{2,5}$/u.test(value) ||
     /^(?:true|false)$/iu.test(value) ||
     /^\*+$/u.test(value) ||
     /^(?:\d+\.)?\d{1,3}:\d{2}(?::\d{2})?(?:\.\d+)?$/u.test(value) ||
@@ -854,6 +975,25 @@ function isStructuralShape(value) {
 export function classifyValue(key, parent, container, value) {
   const field = identifyingFieldOf(key, parent, container);
   if (field !== undefined) {
+    // A string is judged as what it is, not as what its field expects: one
+    // item of a list field is that list's element, and a string where a
+    // number, a record, or a time belongs is text.
+    if (typeof value === "string") {
+      if (Object.hasOwn(elementFields, field)) {
+        return elementFields[field];
+      }
+      if (field === "airTime") {
+        return /^\d{1,2}:\d{2}$/u.test(value) ? field : "text";
+      }
+      // A number written as text, as a history event's data holds it, is
+      // still the number its field expects.
+      if (numericFactFields.has(field) && isNumericText(value)) {
+        return field;
+      }
+      if (factFields.has(field)) {
+        return "text";
+      }
+    }
     return field;
   }
   if (typeof value !== "string" || isStructuralShape(value)) {
@@ -862,10 +1002,68 @@ export function classifyValue(key, parent, container, value) {
   const rules = structuralRulesByKey.get(key) ?? [];
   const recognized = rules.some(
     (rule) =>
-      (rule.when === undefined || rule.when(parent, container)) && rule.accept(value, parent),
+      (rule.when === undefined || rule.when(parent, container)) && rule.accept(value, parent, key),
   );
   return recognized ? undefined : "text";
 }
+
+/**
+ * Whether a named field's own check covers a value as it is, so the value
+ * needs no further judgment: text or a number where a text or id field
+ * belongs, a number where a fact is one, a time where an air time belongs, or
+ * a list of strings where a list field belongs (its direct items only).
+ * Anything else — a record, a list where a string belongs, a string where a
+ * number belongs — is judged leaf by leaf instead, so a field's name is never
+ * taken for proof that what it holds was neutralized.
+ */
+export function coversValue(field, value) {
+  if (field === undefined || value === null || value === undefined) {
+    return false;
+  }
+  if (Object.hasOwn(elementFields, field)) {
+    return Array.isArray(value) && value.every((item) => !Array.isArray(item));
+  }
+  if (field === "airTime") {
+    return typeof value === "string" && /^\d{1,2}:\d{2}$/u.test(value);
+  }
+  if (factFields.has(field)) {
+    return (
+      typeof value === "number" ||
+      (numericFactFields.has(field) && typeof value === "string" && isNumericText(value))
+    );
+  }
+  return typeof value === "string" || typeof value === "number";
+}
+
+/** Every key a field is named by, for the test that probes each one. */
+export const identifyingFieldKeys = Object.keys(fieldsByKey);
+
+/**
+ * Where each field named by its context rather than its key sits, for the
+ * same test: a value placed under `key`, in an object holding `parent`'s
+ * fields, under `container`.
+ */
+export const contextualFieldProbes = [
+  { field: "service", key: "name", parent: { implementation: "Newznab" } },
+  { field: "service", key: "name", parent: { appProfileId: 1 } },
+  { field: "formatName", key: "name", parent: { specifications: [] } },
+  { field: "formatName", key: "name", parent: { format: 1, score: 0 } },
+  { field: "formatName", key: "name", parent: { id: 1 }, container: "customFormats" },
+  {
+    field: "formatName",
+    key: "name",
+    parent: { implementation: "SizeSpecification", negate: false },
+  },
+  { field: "profileName", key: "name", parent: { items: [], cutoff: 1 } },
+  { field: "profileName", key: "name", parent: { enableRss: true } },
+  { field: "profileGroup", key: "name", parent: { id: 1001, allowed: true, items: [] } },
+  { field: "path", key: "name", parent: { folderName: "example-1" } },
+  { field: "tagLabel", key: "label", parent: { id: 1 } },
+  { field: "diskLabel", key: "label", parent: { freeSpace: 1 } },
+  { field: "artwork", key: "url", parent: { coverType: "poster" } },
+  { field: "artwork", key: "remoteUrl", parent: { coverType: "poster" } },
+  { field: "message", key: "reason", parent: { type: "permanent" }, container: "rejections" },
+];
 
 /** The legacy values one recorded fixture may hold, by field. */
 export function legacyStandInsFor(relativePath) {
@@ -1045,6 +1243,9 @@ export function createIdentifyingNeutralizer(options = {}) {
     if (isUnset(value)) {
       return value;
     }
+    if (numericFactFields.has(field) && typeof value === "string" && isNumericText(value)) {
+      return String(neutralize(field, Number(value)));
+    }
     const element = elementFields[field];
     if (element !== undefined) {
       // A rejection may be an object; the caller screens its reason as a field.
@@ -1097,10 +1298,8 @@ export function createIdentifyingNeutralizer(options = {}) {
       case "path":
         return typeof value === "string" ? path(value) : value;
       default:
-        if (typeof value !== "string" && typeof value !== "number") {
-          throw new Error(`An identifying ${field} holds neither text nor a number`);
-        }
-        return text(field, value);
+        // Any other shape is judged leaf by leaf by the caller.
+        return typeof value === "string" || typeof value === "number" ? text(field, value) : value;
     }
   };
 

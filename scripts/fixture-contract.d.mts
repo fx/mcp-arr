@@ -134,6 +134,28 @@ export declare function createFixtureInventory(
   recorded: Readonly<Record<string, RecordedApplication>>,
 ): FixtureInventory;
 
+/** Where a value one structural rule or one named field judges sits, for a probe. */
+export interface ProbePlacement {
+  readonly parent: Readonly<Record<string, unknown>>;
+  readonly container?: string;
+}
+
+/** The structural allowlist: each rule's keys, and where a value it judges sits. */
+export declare const structuralRules: readonly {
+  readonly why: string;
+  readonly keys: readonly string[];
+  readonly probe?: (value: string) => ProbePlacement;
+}[];
+
+/** Every key an identifying field is named by. */
+export declare const identifyingFieldKeys: readonly string[];
+
+/** Where each identifying field named by its context sits. */
+export declare const contextualFieldProbes: readonly (ProbePlacement & {
+  readonly field: string;
+  readonly key: string;
+})[];
+
 /** The languages the applications ship, held to their recorded language routes. */
 export declare const shippedLanguages: readonly string[];
 

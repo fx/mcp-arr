@@ -17,6 +17,7 @@ import {
   type RecordedApplication,
   shippedLanguages,
   validateFixture,
+  validateSanitizedValue,
 } from "./support/fixtures.js";
 
 const fixtureRoot = fileURLToPath(new URL("./fixtures", import.meta.url));
@@ -52,12 +53,11 @@ function validFixture(): Record<string, unknown> {
 }
 
 /**
- * Text placed where the fixture contract accepts any text as structure — a
- * provider's settings description — so a test of the other screens reaches
- * them rather than the rule that free text elsewhere is identifying.
+ * Screens text with every rule but the one that free text is identifying, by
+ * listing it as legacy text — so a test of the other screens reaches them.
  */
-function asDescriptorText(texts: readonly string[]): Record<string, unknown>[] {
-  return texts.map((helpText, order) => ({ order, name: "example", helpText }));
+function screenAsListedText(texts: readonly string[]): void {
+  validateSanitizedValue({ nested: texts }, "fixture", { text: texts });
 }
 
 function validate(value: unknown, relativePath = approvedFixtureInventory[0] ?? "") {
@@ -323,13 +323,13 @@ describe("versioned fixture contract", () => {
   });
 
   it("allows a media file name but still rejects a hostname wearing one", () => {
-    const fixture = validFixture();
-    (fixture.body as Record<string, unknown>).fields = asDescriptorText([
-      "Season 01/Example Series - S01E01 - Example Pilot Bluray-1080p.mkv",
-      "/media/example/movies/Example Movie (2021) Bluray-1080p.mkv",
-      "Example Subtitle Track.srt",
-    ]);
-    expect(() => validate(fixture)).not.toThrow();
+    expect(() =>
+      screenAsListedText([
+        "Season 01/Example Series - S01E01 - Example Pilot Bluray-1080p.mkv",
+        "/media/example/movies/Example Movie (2021) Bluray-1080p.mkv",
+        "Example Subtitle Track.srt",
+      ]),
+    ).not.toThrow();
 
     for (const disguised of [
       ["fixture", "example", "invalid", "mkv"].join("."),
@@ -646,13 +646,12 @@ describe("versioned fixture contract", () => {
   it("keeps a relative path a name rather than a path", () => {
     // The boundary the path screens anchor on never includes a character a path
     // segment can end in, so an ordinary relative file name still passes.
-    const fixture = validFixture();
-    (fixture.body as Record<string, unknown>).fields = asDescriptorText([
+    const texts = [
       "Season 01/Example Series - S01E01 - Example Pilot Bluray-1080p.mkv",
       "Example Movie (2021)/Example Movie (2021) Bluray-1080p.mkv",
-    ]);
+    ];
 
-    expect(() => validate(fixture)).not.toThrow();
+    expect(() => screenAsListedText(texts)).not.toThrow();
   });
 });
 

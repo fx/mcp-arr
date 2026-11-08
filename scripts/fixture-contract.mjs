@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import path from "node:path";
 import {
   classifyValue,
+  coversValue,
   identifyingFieldOf,
   isNeutralIdentifyingValue,
   legacyStandInsFor,
@@ -11,11 +12,15 @@ import {
 
 export {
   classifyValue,
+  contextualFieldProbes,
+  coversValue,
   createIdentifyingNeutralizer,
+  identifyingFieldKeys,
   identifyingFieldOf,
   isNeutralIdentifyingValue,
   shippedLanguages,
   structuralAllowlistSize,
+  structuralRules,
 } from "./identifying-content.mjs";
 
 /**
@@ -545,9 +550,15 @@ function validateApprovedRoute(relativePath, endpoint) {
  */
 export function validateSanitizedValue(value, location, legacy = undefined, context = {}) {
   if (Array.isArray(value)) {
-    // A list's items sit where the list does, however deeply lists nest.
+    // A list's items sit where the list does, however deeply lists nest;
+    // only its direct items are covered by the field that named the list.
     value.forEach((item, index) => {
-      validateSanitizedValue(item, `${location}[${index}]`, legacy, context);
+      validateSanitizedValue(
+        item,
+        `${location}[${index}]`,
+        legacy,
+        Array.isArray(item) ? { ...context, classified: false } : context,
+      );
     });
     return;
   }
@@ -568,16 +579,25 @@ export function validateSanitizedValue(value, location, legacy = undefined, cont
       // held only to the name lists above would carry one through untouched.
       screenText(key, `${location}.${key}`);
       const field = identifyingFieldOf(key, value, context.key);
+      const covered = coversValue(field, child);
       const at = `${location}.${key}`;
       validateSanitizedValue(child, at, legacy, {
         key,
         parent: value,
         container: context.key,
-        classified: field !== undefined,
+        classified: covered,
       });
-      if (field !== undefined && !isNeutralIdentifyingValue(field, child, legacy)) {
+      if (covered && !isNeutralIdentifyingValue(field, child, legacy)) {
         throw new Error(`Identifying ${field} is not neutralized at ${at}`);
       }
+    }
+    return;
+  }
+  if (typeof value === "number" && context.classified !== true) {
+    // A number is structural unless a named field holds it, however deeply.
+    const field = identifyingFieldOf(context.key, context.parent ?? {}, context.container);
+    if (field !== undefined && !isNeutralIdentifyingValue(field, value, legacy)) {
+      throw new Error(`Identifying ${field} is not neutralized at ${location}`);
     }
     return;
   }

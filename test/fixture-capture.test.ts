@@ -895,10 +895,12 @@ describe("fixture capture procedure", () => {
       "utf8",
     );
     expect(written).not.toContain("CANARY");
-    // Every field survives with its name and its type, because that is the
-    // shape a fixture owes; only the text it held is gone. A value that is not
-    // text cannot be a credential and is left alone, so a select field and a
-    // numeric setting still record what they record.
+    // Every field survives with its type, because that is the shape a fixture
+    // owes; only the text it held is gone. A setting keeps its name where the
+    // applications' schemas define it, and one only a tracker's own
+    // definition names — a passkey's, say — is text like any other. A value
+    // that is not text cannot be a credential and is left alone, so a select
+    // field and a numeric setting still record what they record.
     const fields = (
       JSON.parse(written) as { body: Array<{ fields: Array<Record<string, unknown>> }> }
     ).body[0]?.fields;
@@ -906,13 +908,13 @@ describe("fixture capture procedure", () => {
       "baseUrl",
       "apiKey",
       "password",
-      "passkey",
-      "rssKey",
-      "torrent_pass",
+      expect.stringMatching(/^Example text \d+$/u),
+      expect.stringMatching(/^Example text \d+$/u),
+      expect.stringMatching(/^Example text \d+$/u),
       "categories",
       "minimumSeeders",
       "vipExpiration",
-      "maskedKey",
+      expect.stringMatching(/^Example text \d+$/u),
     ]);
     expect(fields?.[0]?.value).not.toBe("example-indexer");
     expect(typeof fields?.[0]?.value).toBe("string");
