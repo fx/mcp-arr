@@ -116,6 +116,20 @@ async function expectRefusal(
   return stderr;
 }
 
+/**
+ * Runs a capture that is expected to be refused, and asserts the throwaway
+ * root holds nothing afterwards — under any version's directory, which is what
+ * a refusal about which version to write under has to show.
+ */
+async function expectNothingWritten(url: string, args: readonly string[]): Promise<string> {
+  const fixtureRoot = await temporaryFixtureRoot();
+  const { code, stderr } = await runCapture(url, [...args, "--fixture-root", fixtureRoot]);
+
+  expect(code).toBe(1);
+  await expect(readdir(fixtureRoot)).resolves.toEqual([]);
+  return stderr;
+}
+
 describe("fixture capture procedure", () => {
   it("refuses a route the named application answers with 404", async () => {
     const url = await startStub({ "/api/v3/system/status": sonarrStatus });
@@ -178,11 +192,7 @@ describe("fixture capture procedure", () => {
       "/api/v3/tag": { body: "[]" },
     });
 
-    const stderr = await expectRefusal(
-      url,
-      ["--application", "sonarr", "--route", "tag"],
-      "sonarr/v3/4.0.19.2979/tag.json",
-    );
+    const stderr = await expectNothingWritten(url, ["--application", "sonarr", "--route", "tag"]);
 
     expect(stderr).toContain("reports 4.1.0.1");
     expect(stderr).toContain("recorded only at 4.0.19.2979, 4.0.20.3014");
@@ -194,11 +204,7 @@ describe("fixture capture procedure", () => {
       "/api/v3/tag": { body: "[]" },
     });
 
-    const stderr = await expectRefusal(
-      url,
-      ["--application", "sonarr", "--route", "tag"],
-      "sonarr/v3/4.0.19.2979/tag.json",
-    );
+    const stderr = await expectNothingWritten(url, ["--application", "sonarr", "--route", "tag"]);
 
     expect(stderr).toContain("reports an unreported version");
   });
@@ -208,7 +214,6 @@ describe("fixture capture procedure", () => {
     // is approved only at the minimum. Its body is evidence for the version it
     // came from alone, so it is neither written there unapproved nor filed
     // under the minimum's name.
-    const fixtureRoot = await temporaryFixtureRoot();
     const url = await startStub({
       "/api/v3/system/status": {
         body: JSON.stringify({ appName: "Sonarr", version: "4.0.20.3014" }),
@@ -216,19 +221,10 @@ describe("fixture capture procedure", () => {
       "/api/v3/tag": { body: "[]" },
     });
 
-    const { code, stderr } = await runCapture(url, [
-      "--application",
-      "sonarr",
-      "--route",
-      "tag",
-      "--fixture-root",
-      fixtureRoot,
-    ]);
+    const stderr = await expectNothingWritten(url, ["--application", "sonarr", "--route", "tag"]);
 
-    expect(code).toBe(1);
     expect(stderr).toContain("reports 4.0.20.3014, a recorded version");
     expect(stderr).toContain("tag is approved only at 4.0.19.2979");
-    await expect(readdir(fixtureRoot)).resolves.toEqual([]);
   });
 
   it("refuses a route the inventory does not approve, before reading anything", async () => {
