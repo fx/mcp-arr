@@ -192,6 +192,7 @@ export function registerTools(
       registry: context.registry,
       defaults: toolsets.media ?? noMediaDefaults,
       claims: context.state.downloadClaims,
+      titleLocks: context.state.titleLocks,
       clock: context.state.clock,
     };
     // `media_remove` is published only where the operator enabled it, so no

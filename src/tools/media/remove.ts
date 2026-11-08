@@ -24,8 +24,19 @@ export interface RemoveRequest {
  * instance answers with a 404 — are both `not_in_library`, and nothing is
  * changed. A delete whose answer was lost is settled by reading the title
  * again: gone means this call removed it, still there means it did not.
+ *
+ * Removals of one title run one at a time, across every call this process
+ * serves, so a second removal reads the library only after the first has
+ * settled and finds the title gone, whether or not the instance would have
+ * answered its delete with a 404.
  */
-export async function removeTitle(
+export function removeTitle(context: MediaContext, request: RemoveRequest): Promise<RemoveResult> {
+  return context.titleLocks.run(`${request.kind}:${request.id}`, () =>
+    removeTitleOnce(context, request),
+  );
+}
+
+async function removeTitleOnce(
   context: MediaContext,
   request: RemoveRequest,
 ): Promise<RemoveResult> {

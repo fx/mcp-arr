@@ -1274,6 +1274,38 @@ describe("HTTP transport toolset selection", () => {
     expect(sonarr.requests).toContain("command/3001");
   });
 
+  it("removes a title once when two HTTP requests remove it at the same time", async () => {
+    const radarr = await fixture("radarr");
+    const state = createWorkflowState();
+    const harness = await startHarness(
+      {
+        ...instanceEnvironment([radarr]),
+        ARR_MCP_TOOLSET: "media",
+        ARR_MCP_MEDIA_ALLOW_REMOVE: "true",
+      },
+      5_000,
+      { createState: () => state },
+    );
+
+    const calls = await Promise.all(
+      [1, 2].map((id) =>
+        harness.call(id, "tools/call", {
+          name: "media_remove",
+          arguments: { kind: "movie", id: 200001 },
+        }),
+      ),
+    );
+
+    const outcomes = calls.map(
+      (call) => (call.message as ToolCallMessage).result?.structuredContent?.outcome,
+    );
+    expect(outcomes.sort()).toEqual(["not_in_library", "removed"]);
+    // One delete was sent: the second request read the library after the first
+    // had settled, rather than racing it to the instance.
+    expect(radarr.requests.filter((route) => route === "movie/8")).toHaveLength(1);
+    expect(state.titleLocks.size).toBe(0);
+  });
+
   it("holds a replacement whose answer was lost across HTTP requests", async () => {
     const sonarr = await fixture("sonarr");
     const state = createWorkflowState();

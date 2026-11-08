@@ -4,6 +4,7 @@ import { createDownloadClaims, type DownloadClaims } from "./download-claims.js"
 import { createJobStore, type JobStore } from "./jobs.js";
 import { createPlanStore, type PlanStore } from "./plans.js";
 import { createReferenceStore, type ReferenceStore } from "./references.js";
+import { createTitleLocks, type TitleLocks } from "./title-locks.js";
 
 /**
  * Every piece of state this server owns.
@@ -17,8 +18,8 @@ import { createReferenceStore, type ReferenceStore } from "./references.js";
  * reference expire, bind to an application, and reject a previous lifetime by
  * exactly the same code that governs a queue or release reference.
  *
- * The download claims are the `media` toolset's one piece of state, and they
- * live here rather than with a `media` call because a call is short-lived: an
+ * The download claims and the title locks are the `media` toolset's state,
+ * and they live here rather than with a `media` call because a call is short-lived: an
  * HTTP request builds its server and its `media` context afresh, and only
  * this state outlives it.
  */
@@ -29,6 +30,7 @@ export interface WorkflowState {
   readonly applies: ApplyRecordStore;
   readonly jobs: JobStore;
   readonly downloadClaims: DownloadClaims;
+  readonly titleLocks: TitleLocks;
 }
 
 export interface WorkflowStateOptions {
@@ -57,5 +59,6 @@ export function createWorkflowState(options: WorkflowStateOptions = {}): Workflo
     applies: createApplyRecordStore(references, clock),
     jobs: createJobStore(references, clock),
     downloadClaims: createDownloadClaims(),
+    titleLocks: createTitleLocks(),
   };
 }

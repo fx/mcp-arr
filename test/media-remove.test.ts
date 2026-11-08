@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { systemClock } from "../src/state/clock.js";
 import { createDownloadClaims } from "../src/state/download-claims.js";
+import { createTitleLocks } from "../src/state/title-locks.js";
 import type { RemoveResult } from "../src/tools/media/schemas.js";
 import { callMediaTool, createMediaContext, noMediaDefaults } from "./support/media.js";
 import { type ActivityInstances, createActivityInstances } from "./support/media-activity.js";
@@ -12,18 +13,23 @@ import { allApplicationsEnvironment } from "./support/tool-context.js";
  */
 
 let instances: ActivityInstances;
+/** The process every call in a test belongs to, as every HTTP request and the stdio session share one. */
+let processState: Parameters<typeof createMediaContext>[3];
 
 beforeEach(async () => {
   instances = await createActivityInstances();
+  processState = {
+    claims: createDownloadClaims(),
+    clock: systemClock,
+    titleLocks: createTitleLocks(),
+  };
 });
 
+/** One call, through a context of its own over the process's shared state, as an HTTP request builds one. */
 function remove(input: unknown) {
   return callMediaTool<RemoveResult>(
     "media_remove",
-    createMediaContext(instances, noMediaDefaults, allApplicationsEnvironment, {
-      claims: createDownloadClaims(),
-      clock: systemClock,
-    }),
+    createMediaContext(instances, noMediaDefaults, allApplicationsEnvironment, processState),
     input,
   );
 }
@@ -84,6 +90,42 @@ describe("media_remove", () => {
       "removed",
     ]);
     expect(instances.state("radarr").titles.some((record) => record.id === 8)).toBe(false);
+  });
+
+  it("removes a title once when two calls overlap, even where every delete is answered", async () => {
+    // An instance that answers a delete of a record already gone with success
+    // gives the second call no 404 to learn from; only the order of the two
+    // calls can tell them apart.
+    instances.intercept((request) => {
+      if (request.method !== "DELETE" || !/^movie\/\d+$/u.test(request.route)) {
+        return undefined;
+      }
+      instances.state("radarr").titles = instances
+        .state("radarr")
+        .titles.filter((record) => record.id !== 8);
+      return new Response(null, { status: 200 });
+    });
+
+    const [left, right] = await Promise.all([
+      remove({ kind: "movie", id: 200_001 }),
+      remove({ kind: "movie", id: 200_001 }),
+    ]);
+
+    expect([left.content.outcome, right.content.outcome].sort()).toEqual([
+      "not_in_library",
+      "removed",
+    ]);
+    expect(deletes()).toHaveLength(1);
+  });
+
+  it("does not hold one title's removal behind another's", async () => {
+    const [movie, series] = await Promise.all([
+      remove({ kind: "movie", id: 200_001 }),
+      remove({ kind: "series", id: 100_001 }),
+    ]);
+
+    expect([movie.content.outcome, series.content.outcome]).toEqual(["removed", "removed"]);
+    expect(deletes()).toHaveLength(2);
   });
 
   it("reports a record another call removed between the read and the delete as not_in_library", async () => {
