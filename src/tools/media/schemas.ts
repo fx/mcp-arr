@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { objectInput, variantUnion } from "../schemas/publish.js";
-import { mediaErrorSchema, mediaErrorShape } from "./errors.js";
+import { mediaErrorSchema } from "./errors.js";
 import { titleKinds } from "./kinds.js";
 import { resolutions } from "./resolution.js";
 
@@ -10,10 +10,10 @@ import { resolutions } from "./resolution.js";
  * Every property here is one the Media Toolset specification names for its
  * tool, and nothing else: no detail level, paging, projection, or reference.
  * Each result is validated against its internal schema before it leaves the
- * process, and published through a copy that differs only in publishing an
- * error's code as a string — the enum would cost every listing its whole
- * vocabulary, and its members name the concepts this toolset keeps out of its
- * published surface.
+ * process, and published through a copy built from plainer leaves — see
+ * {@link Leaves}. Among them, an error's code is published as a string: the
+ * enum would cost every listing its whole vocabulary, and its members name
+ * the concepts this toolset keeps out of its published surface.
  */
 
 export const titleKindSchema = z.enum(titleKinds);
@@ -22,6 +22,75 @@ export const titleKindSchema = z.enum(titleKinds);
 export const titleIdSchema = z.number().int().min(1);
 
 export const resolutionSchema = z.enum(resolutions);
+
+/** The most entries any list in a status or fix result holds. */
+export const maxListedEntries = 10;
+
+/** A season number, zero for specials. */
+const seasonSchema = z.number().int().min(0);
+
+/** An episode number within its season. */
+const episodeSchema = z.number().int().min(1);
+
+const countSchema = z.number().int().min(0);
+
+/**
+ * The leaves a result shape is built from.
+ *
+ * Every tool validates its results against the exact leaves and publishes a
+ * copy built from plain ones: every bound an exact leaf adds is
+ * restated in each property the listing carries, and the Media Toolset
+ * specification caps that listing, so the published copy keeps every field
+ * and every closed vocabulary a caller branches on — a state, a remedy, an
+ * outcome — and leaves the numeric and length bounds, and the kind a result
+ * echoes back from its input, to validation, which still applies them. Every
+ * input still publishes the kinds in full.
+ */
+interface Leaves<TError extends z.ZodType, TKind extends z.ZodType> {
+  /** A title's kind, which a caller passes back as it came. */
+  readonly kind: TKind;
+  /** A positive whole number: a title's id, a year. */
+  readonly positive: z.ZodNumber;
+  readonly count: z.ZodNumber;
+  readonly season: z.ZodNumber;
+  readonly episode: z.ZodNumber;
+  readonly progress: z.ZodNumber;
+  readonly text: z.ZodString;
+  readonly error: TError;
+  /** A list a result bounds to {@link maxListedEntries}. */
+  list<TItem extends z.ZodType>(item: TItem): z.ZodArray<TItem>;
+}
+
+const exactLeaves: Leaves<typeof mediaErrorSchema, typeof titleKindSchema> = {
+  kind: titleKindSchema,
+  positive: titleIdSchema,
+  count: countSchema,
+  season: seasonSchema,
+  episode: episodeSchema,
+  progress: z.number().int().min(0).max(100),
+  text: z.string().min(1),
+  error: mediaErrorSchema,
+  list: (item) => z.array(item).max(maxListedEntries),
+};
+
+const publishedErrorLeaf = z.strictObject({
+  code: z.string(),
+  message: z.string(),
+  recoverable: z.boolean(),
+  remediation: z.string(),
+});
+
+const publishedLeaves: Leaves<typeof publishedErrorLeaf, z.ZodString> = {
+  kind: z.string(),
+  positive: z.number(),
+  count: z.number(),
+  season: z.number(),
+  episode: z.number(),
+  progress: z.number(),
+  text: z.string(),
+  error: publishedErrorLeaf,
+  list: (item) => z.array(item),
+};
 
 /** The longest search text `media_find` accepts, in characters. */
 export const maxFindTextLength = 200;
@@ -65,22 +134,30 @@ export const addInputSchema = variantUnion(
   ]),
 );
 
-const foundTitleSchema = z.strictObject({
-  kind: titleKindSchema,
-  id: titleIdSchema,
-  title: z.string().min(1),
-  year: z.number().int().min(1).optional(),
-  in_library: z.boolean(),
-});
-
-export type FoundTitle = z.infer<typeof foundTitleSchema>;
-
-function findResultShape<TError extends z.ZodType>(error: TError) {
+function foundTitleShape<TError extends z.ZodType, TKind extends z.ZodType>(
+  leaves: Leaves<TError, TKind>,
+) {
   return z.strictObject({
-    titles: z.array(foundTitleSchema),
-    unavailable: z.array(z.strictObject({ kind: titleKindSchema, error })),
-    warnings: z.array(z.string().min(1)),
-    errors: z.array(error),
+    kind: leaves.kind,
+    id: leaves.positive,
+    title: leaves.text,
+    year: leaves.positive.optional(),
+    in_library: z.boolean(),
+  });
+}
+
+export type FoundTitle = z.infer<
+  ReturnType<typeof foundTitleShape<typeof mediaErrorSchema, typeof titleKindSchema>>
+>;
+
+function findResultShape<TError extends z.ZodType, TKind extends z.ZodType>(
+  leaves: Leaves<TError, TKind>,
+) {
+  return z.strictObject({
+    titles: z.array(foundTitleShape(leaves)),
+    unavailable: z.array(z.strictObject({ kind: leaves.kind, error: leaves.error })),
+    warnings: z.array(leaves.text),
+    errors: z.array(leaves.error),
   });
 }
 
@@ -88,24 +165,223 @@ export const addOutcomes = ["added", "already_in_library"] as const;
 
 export type AddOutcome = (typeof addOutcomes)[number];
 
-function addResultShape<TError extends z.ZodType>(error: TError) {
+function addResultShape<TError extends z.ZodType, TKind extends z.ZodType>(
+  leaves: Leaves<TError, TKind>,
+) {
   return z.strictObject({
-    kind: titleKindSchema.optional(),
-    id: titleIdSchema.optional(),
-    title: z.string().min(1).optional(),
+    kind: leaves.kind.optional(),
+    id: leaves.positive.optional(),
+    title: leaves.text.optional(),
     outcome: z.enum(addOutcomes).optional(),
     resolution: resolutionSchema.optional(),
-    warnings: z.array(z.string().min(1)),
-    errors: z.array(error),
+    warnings: z.array(leaves.text),
+    errors: z.array(leaves.error),
   });
 }
 
-const publishedErrorSchema = mediaErrorShape(z.string());
+export const downloadStates = ["queued", "downloading", "waiting", "importing", "stuck"] as const;
 
-export const findOutputSchema = findResultShape(mediaErrorSchema);
-export const findPublishedOutputSchema = findResultShape(publishedErrorSchema);
-export const addOutputSchema = addResultShape(mediaErrorSchema);
-export const addPublishedOutputSchema = addResultShape(publishedErrorSchema);
+export type DownloadState = (typeof downloadStates)[number];
+
+export const remedies = ["replace", "import", "none"] as const;
+
+export type Remedy = (typeof remedies)[number];
+
+/**
+ * Two forms: nothing, for the overview, or a title's kind and id together.
+ * The rule that neither comes without the other is what the forms are, so the
+ * published description states it from the same union that validates.
+ */
+export const statusInputSchema = variantUnion(
+  z.union([z.strictObject({}), z.strictObject({ kind: titleKindSchema, id: titleIdSchema })]),
+);
+
+/** One download, named by the title it is for rather than by any of its rows. */
+function downloadShape<TError extends z.ZodType, TKind extends z.ZodType>(
+  leaves: Leaves<TError, TKind>,
+) {
+  return z.strictObject({
+    kind: leaves.kind,
+    id: leaves.positive,
+    title: leaves.text.optional(),
+    episodes: leaves.text.optional(),
+    state: z.enum(downloadStates),
+    resolution: resolutionSchema.optional(),
+    progress: leaves.progress.optional(),
+    reason: leaves.text.optional(),
+    remedy: z.enum(remedies).optional(),
+  });
+}
+
+/** A title, or some of its episodes, beside the date something happened or is due. */
+function datedShape<TError extends z.ZodType, TKind extends z.ZodType>(
+  leaves: Leaves<TError, TKind>,
+) {
+  return z.strictObject({
+    kind: leaves.kind,
+    id: leaves.positive,
+    title: leaves.text.optional(),
+    episodes: leaves.text.optional(),
+    date: leaves.text,
+  });
+}
+
+function statusResultShape<TError extends z.ZodType, TKind extends z.ZodType>(
+  leaves: Leaves<TError, TKind>,
+) {
+  const list = <TItem extends z.ZodType>(item: TItem) => leaves.list(item).optional();
+  return z.strictObject({
+    kinds: z.array(leaves.kind).optional(),
+    kind: leaves.kind.optional(),
+    id: leaves.positive.optional(),
+    title: leaves.text.optional(),
+    in_library: z.boolean().optional(),
+    monitored: z.boolean().optional(),
+    resolution: resolutionSchema.optional(),
+    file_resolutions: z.array(resolutionSchema).optional(),
+    have: leaves.count.optional(),
+    missing: leaves.count.optional(),
+    next_due: leaves.text.optional(),
+    downloads: list(downloadShape(leaves)),
+    downloads_total: leaves.count.optional(),
+    imported: list(datedShape(leaves)),
+    imported_total: leaves.count.optional(),
+    upcoming: list(datedShape(leaves)),
+    upcoming_total: leaves.count.optional(),
+    warnings: z.array(leaves.text),
+    errors: z.array(leaves.error),
+  });
+}
+
+export type ReportedDownload = z.infer<
+  ReturnType<typeof downloadShape<typeof mediaErrorSchema, typeof titleKindSchema>>
+>;
+export type DatedTitle = z.infer<
+  ReturnType<typeof datedShape<typeof mediaErrorSchema, typeof titleKindSchema>>
+>;
+
+export const fixInputSchema = objectInput(
+  z.strictObject({
+    kind: titleKindSchema,
+    id: titleIdSchema,
+  }),
+);
+
+export const fixActions = ["replaced", "import_started", "none"] as const;
+
+export type FixAction = (typeof fixActions)[number];
+
+function fixedDownloadShape<TError extends z.ZodType, TKind extends z.ZodType>(
+  leaves: Leaves<TError, TKind>,
+) {
+  return z.strictObject({
+    title: leaves.text.optional(),
+    episodes: leaves.text.optional(),
+    action: z.enum(fixActions),
+    reason: leaves.text.optional(),
+  });
+}
+
+export type FixedDownload = z.infer<
+  ReturnType<typeof fixedDownloadShape<typeof mediaErrorSchema, typeof titleKindSchema>>
+>;
+
+function fixResultShape<TError extends z.ZodType, TKind extends z.ZodType>(
+  leaves: Leaves<TError, TKind>,
+) {
+  return z.strictObject({
+    kind: leaves.kind.optional(),
+    id: leaves.positive.optional(),
+    title: leaves.text.optional(),
+    downloads: leaves.list(fixedDownloadShape(leaves)).optional(),
+    remaining: leaves.count.optional(),
+    warnings: z.array(leaves.text),
+    errors: z.array(leaves.error),
+  });
+}
+
+/**
+ * Three forms: a movie, a series or one season of it, and one episode of a
+ * season. The two rules between properties — only a series has seasons, and
+ * an episode is named within its season — are what the forms are, so the
+ * published description states them from the same union that validates.
+ */
+export const searchAgainInputSchema = variantUnion(
+  z.union([
+    z.strictObject({ kind: z.literal("movie"), id: titleIdSchema }),
+    z.strictObject({
+      kind: z.literal("series"),
+      id: titleIdSchema,
+      season: seasonSchema.optional(),
+    }),
+    z.strictObject({
+      kind: z.literal("series"),
+      id: titleIdSchema,
+      season: seasonSchema,
+      episode: episodeSchema,
+    }),
+  ]),
+);
+
+function searchAgainResultShape<TError extends z.ZodType, TKind extends z.ZodType>(
+  leaves: Leaves<TError, TKind>,
+) {
+  return z.strictObject({
+    kind: leaves.kind.optional(),
+    id: leaves.positive.optional(),
+    title: leaves.text.optional(),
+    season: leaves.season.optional(),
+    episode: leaves.episode.optional(),
+    searched: leaves.count.optional(),
+    warnings: z.array(leaves.text),
+    errors: z.array(leaves.error),
+  });
+}
+
+export const removeInputSchema = objectInput(
+  z.strictObject({
+    kind: titleKindSchema,
+    id: titleIdSchema,
+    delete_files: z.boolean().default(false),
+  }),
+);
+
+export const removeOutcomes = ["removed", "not_in_library"] as const;
+
+export type RemoveOutcome = (typeof removeOutcomes)[number];
+
+function removeResultShape<TError extends z.ZodType, TKind extends z.ZodType>(
+  leaves: Leaves<TError, TKind>,
+) {
+  return z.strictObject({
+    kind: leaves.kind.optional(),
+    id: leaves.positive.optional(),
+    title: leaves.text.optional(),
+    outcome: z.enum(removeOutcomes).optional(),
+    files_deleted: z.boolean().optional(),
+    warnings: z.array(leaves.text),
+    errors: z.array(leaves.error),
+  });
+}
+
+export const findOutputSchema = findResultShape(exactLeaves);
+export const findPublishedOutputSchema = findResultShape(publishedLeaves);
+export const addOutputSchema = addResultShape(exactLeaves);
+export const addPublishedOutputSchema = addResultShape(publishedLeaves);
 
 export type FindResult = z.infer<typeof findOutputSchema>;
 export type AddResult = z.infer<typeof addOutputSchema>;
+
+export const statusOutputSchema = statusResultShape(exactLeaves);
+export const statusPublishedOutputSchema = statusResultShape(publishedLeaves);
+export const fixOutputSchema = fixResultShape(exactLeaves);
+export const fixPublishedOutputSchema = fixResultShape(publishedLeaves);
+export const searchAgainOutputSchema = searchAgainResultShape(exactLeaves);
+export const searchAgainPublishedOutputSchema = searchAgainResultShape(publishedLeaves);
+export const removeOutputSchema = removeResultShape(exactLeaves);
+export const removePublishedOutputSchema = removeResultShape(publishedLeaves);
+
+export type StatusResult = z.infer<typeof statusOutputSchema>;
+export type FixResult = z.infer<typeof fixOutputSchema>;
+export type SearchAgainResult = z.infer<typeof searchAgainOutputSchema>;
+export type RemoveResult = z.infer<typeof removeOutputSchema>;

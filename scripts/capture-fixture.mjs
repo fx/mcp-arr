@@ -38,8 +38,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createSanitizer } from "./capture-sanitizer.mjs";
 import {
   approvedFixtures,
+  capturedBy,
   captureTargetFor,
   validateFixture,
   validateSanitizedValue,
@@ -180,150 +182,6 @@ async function readRoute(client, route, query = {}) {
   }
 }
 
-/**
- * Replaces what the fixture screens refuse, keeping the shape intact.
- *
- * The screens decide; this only supplies the replacement, and it takes the
- * decision from the refusal they raise rather than from a second copy of their
- * rules. A key the screens name as secret-bearing or identifying is dropped
- * outright: a credential's field name is what makes it findable, and no fixture
- * needs it. Anything else refused — a value, or a key whose own text is a path
- * or a URL — becomes a neutral stand-in, distinct per original text so that two
- * fields which carried the same text still carry the same text afterwards. What
- * a fixture owes is its field shapes, not its text.
- */
-function createSanitizer(screen) {
-  const replacements = new Map();
-
-  /** `keep`, `drop` — the name itself is the disclosure — or `rename`. */
-  const keyDisposition = (key) => {
-    try {
-      screen({ [key]: 1 }, "value");
-      return "keep";
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      return /^(?:Secret-bearing|Identifying) key/u.test(message) ? "drop" : "rename";
-    }
-  };
-
-  const refusesValue = (value) => {
-    try {
-      screen(value, "value");
-      return false;
-    } catch {
-      return true;
-    }
-  };
-
-  const replace = (value) => {
-    const existing = replacements.get(value);
-    if (existing !== undefined) {
-      return existing;
-    }
-    const ordinal = replacements.size + 1;
-    // A value that reads as an absolute path stays one, so a path field keeps
-    // describing a path. `/media/example` is the one prefix the screens allow.
-    const isPath =
-      value.startsWith("/") || /^[a-z]:[\\/]/iu.test(value) || value.startsWith("\\\\");
-    const fresh = isPath ? `/media/example/example-${ordinal}` : `example-value-${ordinal}`;
-    replacements.set(value, fresh);
-    return fresh;
-  };
-
-  /**
-   * The two texts a provider field's value carries as meaning, not as content.
-   *
-   * A blank value is how these applications say a credential is unset, and a
-   * run of asterisks is what they substitute for one that is set — the
-   * configuration adapter reads both as state rather than as text. Replacing
-   * either would make a recaptured fixture claim the opposite of what the
-   * instance said, which is the class of defect this whole change exists to
-   * end. Neither can carry a credential: one is empty and the other is the
-   * applications' own stand-in for the secret they are not disclosing.
-   */
-  const statesRatherThanCarries = (value) => value.trim() === "" || /^\*+$/u.test(value.trim());
-
-  /** Replaces every string inside a value, however it is nested. */
-  const redact = (value) => {
-    if (Array.isArray(value)) {
-      return value.map(redact);
-    }
-    if (typeof value === "object" && value !== null) {
-      return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, redact(child)]));
-    }
-    if (typeof value !== "string" || statesRatherThanCarries(value)) {
-      return value;
-    }
-    return replace(value);
-  };
-
-  /**
-   * Whether this object is a dynamically described provider field.
-   *
-   * These applications describe a provider's settings as a list of
-   * `{ name, value }` pairs, so a credential arrives under the property name
-   * `value` with its real name as a sibling. Screening the property name alone
-   * sees `value`, finds nothing to object to, and writes the credential — the
-   * one shape where what a field holds is stated beside it rather than by the
-   * key it is under.
-   *
-   * Every such value is replaced, not only those whose sibling name the secret
-   * list happens to spell. That list cannot be the test here: a private tracker
-   * calls its credential `passkey`, `authkey`, `rssKey` or `torrent_pass`, a
-   * Cardigann definition may call it anything at all, and adding `key` or
-   * `pass` to the list instead would refuse `sortKey` in every paged fixture.
-   * A provider field's value is instance configuration that no fixture's shape
-   * depends on — the shape is the field's presence, its name and its type, and
-   * all three survive — so the safe rule is the one that does not need to
-   * recognize the credential to protect it.
-   */
-  const isProviderField = (value) =>
-    typeof value.name === "string" && Object.hasOwn(value, "value");
-
-  const sanitize = (value) => {
-    if (Array.isArray(value)) {
-      return value.map(sanitize);
-    }
-    if (typeof value === "object" && value !== null) {
-      const redactSiblingValue = isProviderField(value);
-      const entries = [];
-      for (const [key, child] of Object.entries(value)) {
-        const disposition = keyDisposition(key);
-        if (disposition === "drop") {
-          continue;
-        }
-        // A key is text the instance chose too. Where a payload is a dictionary
-        // its keys carry paths and URLs, and one held only to the name lists
-        // would be written verbatim — so such a key is replaced exactly as a
-        // value is rather than dropped, which would take its value with it and
-        // lose a field the shape has.
-        const sanitizedKey = disposition === "rename" ? replace(key) : key;
-        entries.push([
-          sanitizedKey,
-          redactSiblingValue && key === "value" ? redact(child) : sanitize(child),
-        ]);
-      }
-      // A replaced key could land on one the object already has, and building
-      // the object would then drop a field rather than record it. This tool
-      // refuses rather than writing something the instance did not answer.
-      const keys = entries.map(([key]) => key);
-      if (new Set(keys).size !== keys.length) {
-        fail("A sanitized key collided with another. Nothing was written.");
-      }
-      // Built as entries rather than assigned: `result.__proto__ = …` invokes
-      // the prototype setter, so an upstream key of that name would silently
-      // take its whole subtree out of the fixture.
-      return Object.fromEntries(entries);
-    }
-    if (typeof value === "string" && refusesValue(value)) {
-      return replace(value);
-    }
-    return value;
-  };
-
-  return { sanitize, replacements };
-}
-
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   // Parsed before anything is read, so a malformed argument fails without
@@ -427,13 +285,14 @@ async function main() {
     fail(`${approved.route} answered with a ${typeof body} rather than an object or array`);
   }
 
-  const { sanitize, replacements } = createSanitizer(validateSanitizedValue);
+  const { sanitize, replacements } = createSanitizer(validateSanitizedValue, fail);
   const fixture = {
     metadata: {
       application: approved.application,
       apiVersion: approved.apiVersion,
       version: approved.version,
       endpoint: approved.endpoint,
+      capturedBy,
     },
     body: sanitize(body),
   };
@@ -441,7 +300,7 @@ async function main() {
   const fixtureRoot = path.resolve(options.fixtureRoot ?? defaultFixtureRoot);
   const filePath = path.join(fixtureRoot, approved.relativePath);
   try {
-    validateFixture(fixture, { filePath, fixtureRoot });
+    validateFixture(fixture, { filePath, fixtureRoot, legacy: false });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     fail(

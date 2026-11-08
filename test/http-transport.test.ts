@@ -8,6 +8,7 @@ import {
 import { type AddressInfo, connect, createServer as createNetServer } from "node:net";
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it } from "vitest";
+import { downloadIdentity } from "../src/adapters/activity/parse.js";
 import { type EnvironmentRecord, parseEnvironment } from "../src/config/environment.js";
 import {
   createFailedAuthenticationThrottle,
@@ -20,7 +21,9 @@ import {
   readPresentedCredential,
 } from "../src/http-transport.js";
 import { createManualClock, type ManualClock } from "../src/state/clock.js";
-import { mediaToolNames, toolNames } from "../src/tools/names.js";
+import { createWorkflowState } from "../src/state/workflow.js";
+import { publishedMediaToolNames, toolNames } from "../src/tools/names.js";
+import { activityFixture } from "./support/activity.js";
 import {
   type FixtureInstance,
   type FixtureInstanceOptions,
@@ -1161,17 +1164,22 @@ describe("HTTP transport toolset selection", () => {
   }
 
   for (const [label, selection, names, words] of [
-    ["media", { ARR_MCP_TOOLSET: "media" }, [...mediaToolNames], "the media toolset"],
+    [
+      "media",
+      { ARR_MCP_TOOLSET: "media" },
+      [...publishedMediaToolNames(false)],
+      "the media toolset",
+    ],
     [
       "all",
       { ARR_MCP_TOOLSET: "all" },
-      [...toolNames, ...mediaToolNames],
+      [...toolNames, ...publishedMediaToolNames(false)],
       "the arr and media toolsets",
     ],
     [
       "media,arr with defaults",
       { ARR_MCP_TOOLSET: "media,arr", ARR_MCP_MEDIA_MOVIE_QUALITY_PROFILE: "Example HD" },
-      [...toolNames, ...mediaToolNames],
+      [...toolNames, ...publishedMediaToolNames(false)],
       "the arr and media toolsets",
     ],
   ] as const) {
@@ -1207,5 +1215,138 @@ describe("HTTP transport toolset selection", () => {
     expect(result?.isError).toBe(false);
     expect(result?.content?.[0]?.text).toBe("media_find: found 2 title(s) (series 2)");
     expect(sonarr.requests).toContain("series/lookup");
+  });
+
+  it("shares the process's download claims between HTTP requests", async () => {
+    const sonarr = await fixture("sonarr");
+    const state = createWorkflowState();
+    let created = 0;
+    const harness = await startHarness(
+      { ...instanceEnvironment([sonarr]), ARR_MCP_TOOLSET: "media" },
+      5_000,
+      {
+        createState: () => {
+          created += 1;
+          return state;
+        },
+      },
+    );
+    // An import this process started for the recorded blocked download, whose
+    // command the instance reports still running.
+    const rows = await activityFixture<Record<string, unknown>[]>("sonarr", "queue/details");
+    const blocked = rows.find((row) => row.id === 502);
+    const key = `sonarr\u0000id:${downloadIdentity(String(blocked?.downloadId))}`;
+    state.downloadClaims.tryClaim(key);
+    state.downloadClaims.markPending(key, {
+      action: "import",
+      application: "sonarr",
+      commandId: "3001",
+      attemptedAt: Date.now(),
+      mediaId: 12,
+      episodeIds: [1003],
+    });
+
+    const status = await harness.call(1, "tools/call", {
+      name: "media_status",
+      arguments: { kind: "series", id: 100001 },
+    });
+    const fixed = await harness.call(2, "tools/call", {
+      name: "media_fix",
+      arguments: { kind: "series", id: 100001 },
+    });
+
+    const statusContent = (status.message as ToolCallMessage).result?.structuredContent;
+    expect(statusContent?.downloads).toEqual([
+      expect.objectContaining({ episodes: "S02E01", state: "importing" }),
+      expect.objectContaining({ episodes: "S01E01", state: "downloading" }),
+    ]);
+    expect((fixed.message as ToolCallMessage).result?.structuredContent?.downloads).toEqual([
+      {
+        title: "Example Series",
+        episodes: "S02E01",
+        action: "none",
+        reason: "It is already being fixed.",
+      },
+    ]);
+    expect(created).toBe(1);
+    expect(sonarr.queueResolutions).toEqual([]);
+    expect(sonarr.commands).toEqual([]);
+    expect(sonarr.requests).toContain("command/3001");
+  });
+
+  it("removes a title once when two HTTP requests remove it at the same time", async () => {
+    const radarr = await fixture("radarr");
+    const state = createWorkflowState();
+    const harness = await startHarness(
+      {
+        ...instanceEnvironment([radarr]),
+        ARR_MCP_TOOLSET: "media",
+        ARR_MCP_MEDIA_ALLOW_REMOVE: "true",
+      },
+      5_000,
+      { createState: () => state },
+    );
+
+    const calls = await Promise.all(
+      [1, 2].map((id) =>
+        harness.call(id, "tools/call", {
+          name: "media_remove",
+          arguments: { kind: "movie", id: 200001 },
+        }),
+      ),
+    );
+
+    const outcomes = calls.map(
+      (call) => (call.message as ToolCallMessage).result?.structuredContent?.outcome,
+    );
+    expect(outcomes.sort()).toEqual(["not_in_library", "removed"]);
+    // One delete was sent: the second request read the library after the first
+    // had settled, rather than racing it to the instance.
+    expect(radarr.requests.filter((route) => route === "movie/8")).toHaveLength(1);
+    expect(state.titleLocks.size).toBe(0);
+  });
+
+  it("holds a replacement whose answer was lost across HTTP requests", async () => {
+    const sonarr = await fixture("sonarr");
+    const state = createWorkflowState();
+    const harness = await startHarness(
+      { ...instanceEnvironment([sonarr]), ARR_MCP_TOOLSET: "media" },
+      5_000,
+      { createState: () => state },
+    );
+    const rows = await activityFixture<Record<string, unknown>[]>("sonarr", "queue/details");
+    const blocked = rows.find((row) => row.id === 502);
+    const key = `sonarr\u0000id:${downloadIdentity(String(blocked?.downloadId))}`;
+    state.downloadClaims.tryClaim(key);
+    state.downloadClaims.markPending(key, {
+      action: "replace",
+      application: "sonarr",
+      attemptedAt: state.clock.now(),
+      mediaId: 12,
+      episodeIds: [],
+    });
+
+    const status = await harness.call(1, "tools/call", {
+      name: "media_status",
+      arguments: { kind: "series", id: 100001 },
+    });
+    const fixed = await harness.call(2, "tools/call", {
+      name: "media_fix",
+      arguments: { kind: "series", id: 100001 },
+    });
+
+    expect((status.message as ToolCallMessage).result?.structuredContent?.downloads).toEqual([
+      expect.objectContaining({
+        state: "stuck",
+        remedy: "none",
+        reason: "It is already being fixed.",
+      }),
+      expect.objectContaining({ state: "downloading" }),
+    ]);
+    expect((fixed.message as ToolCallMessage).result?.structuredContent?.downloads).toEqual([
+      expect.objectContaining({ action: "none", reason: "It is already being fixed." }),
+    ]);
+    expect(sonarr.queueResolutions).toEqual([]);
+    expect(state.downloadClaims.size).toBe(1);
   });
 });

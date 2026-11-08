@@ -402,6 +402,7 @@ describe("activity canary and untrusted status messages", () => {
       "origin",
       "progress",
       "quality",
+      "resolution",
       "title",
     ]);
     expect(Object.keys(group ?? {}).sort()).toEqual(["messages", "title"]);

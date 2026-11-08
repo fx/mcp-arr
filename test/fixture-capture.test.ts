@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { observeChildProcess } from "../scripts/child-process.mjs";
+import { capturedBy, fixturePathFor, validateFixture } from "./support/fixtures.js";
 
 /**
  * The capture procedure's refusals.
@@ -59,7 +60,7 @@ const sonarrStatus = {
 async function runCapture(
   url: string | undefined,
   args: readonly string[],
-  application: "sonarr" | "radarr" = "sonarr",
+  application: "sonarr" | "radarr" | "prowlarr" = "sonarr",
 ): Promise<{ code: number | null; stderr: string }> {
   const environment: Record<string, string> = { PATH: process.env.PATH ?? "" };
   if (url !== undefined) {
@@ -286,10 +287,552 @@ describe("fixture capture procedure", () => {
     expect(written).not.toContain("apiKey");
     expect(written).not.toContain("/srv/private");
     expect(written).not.toContain("tracker.invalid");
-    expect(record).toMatchObject({ id: 7, label: "Example Tag" });
+    // A label beside other fields is no tag's, and text no rule recognizes is
+    // replaced; the record's shape survives.
+    expect(record).toMatchObject({ id: 7, label: expect.stringMatching(/^Example text \d+$/u) });
     // The subtree under a prototype-named key is kept rather than silently lost.
     expect(Object.values(record)).toContainEqual({ retained: true });
   });
+
+  it("replaces what identifies a library with stand-ins that still agree with each other", async () => {
+    const fixtureRoot = await temporaryFixtureRoot();
+    const series = {
+      id: 113,
+      title: "Love Begins in Another World",
+      sortTitle: "love begins in another world",
+      cleanTitle: "lovebeginsinanotherworld",
+      titleSlug: "love-begins-in-another-world",
+      overview: "Two strangers meet in a world that is not theirs.",
+      network: "A Real Broadcaster",
+      genres: ["Animation", "Isekai Romance"],
+      certification: "TV-14",
+      ratings: { votes: 41, value: 8.2 },
+      images: [{ coverType: "poster", url: "poster.jpg", remoteUrl: "" }],
+      tvdbId: 469_794,
+      tvMazeId: 65_001,
+      tvRageId: 0,
+      imdbId: "tt1234567",
+      tags: [3],
+      year: 2025,
+      firstAired: "2025-11-21T00:00:00Z",
+      airTime: "01:30",
+      runtime: 24,
+      originalLanguage: { id: 8, name: "Japanese" },
+    };
+    const row = (id: number, episodeId: number, episodeTitle: string, airDay: number) => ({
+      id,
+      seriesId: 113,
+      episodeId,
+      series,
+      episode: {
+        id: episodeId,
+        title: episodeTitle,
+        tvdbId: 9_000_000 + episodeId,
+        airDate: `2025-11-${airDay}`,
+        airDateUtc: `2025-11-${airDay - 1}T16:30:00Z`,
+        runtime: 24,
+      },
+      languages: [{ id: 8, name: "Japanese" }],
+      size: 4_000_000_000,
+      sizeleft: 1_000_000_000,
+      added: "2026-11-06T06:47:10.123Z",
+      title: "Love Begins S01 1080p",
+      downloadId: "SABnzbd_nzo_8f2k1q",
+      downloadClient: "My Downloader",
+      indexer: "Treasure Maps (Prowlarr)",
+      status: "completed",
+    });
+    const url = await startStub({
+      "/api/v3/system/status": sonarrStatus,
+      "/api/v3/queue/details": {
+        body: JSON.stringify([
+          row(1, 11_807, "A First Meeting", 21),
+          row(2, 11_808, "A Second Look", 28),
+        ]),
+      },
+    });
+
+    const { code } = await runCapture(url, [
+      "--application",
+      "sonarr",
+      "--route",
+      "queue/details",
+      "--query",
+      "seriesId=113",
+      "--fixture-root",
+      fixtureRoot,
+    ]);
+
+    expect(code).toBe(0);
+    const written = await readFile(
+      // A capture from an instance at the minimum writes the minimum's file.
+      path.join(fixtureRoot, fixturePathFor("sonarr", "queue/details")),
+      "utf8",
+    );
+    // A capture at the minimum is not pre-existing evidence: what it wrote
+    // passes the strict screen, and says a capture wrote it.
+    expect(() =>
+      validateFixture(JSON.parse(written), {
+        fixtureRoot,
+        filePath: path.join(fixtureRoot, fixturePathFor("sonarr", "queue/details")),
+        legacy: false,
+      }),
+    ).not.toThrow();
+    expect((JSON.parse(written) as { metadata: { capturedBy?: string } }).metadata.capturedBy).toBe(
+      capturedBy,
+    );
+    for (const original of [
+      "Love Begins",
+      "love",
+      "Two strangers",
+      "Real Broadcaster",
+      "Isekai",
+      "469794",
+      "65001",
+      "tt1234567",
+      "9011807",
+      "A First Meeting",
+      "SABnzbd",
+      "My Downloader",
+      "Treasure Maps",
+      "Japanese",
+      "01:30",
+    ]) {
+      expect(written, original).not.toContain(original);
+    }
+    type Row = Record<string, unknown> & {
+      series: Record<string, unknown>;
+      episode: Record<string, string>;
+      size: number;
+      sizeleft: number;
+    };
+    const [first, second] = (JSON.parse(written) as { body: Row[] }).body;
+    const { year, firstAired, airTime, runtime, originalLanguage, ...text } = first?.series ?? {};
+    // The facts that place a title: one offset for every date, a year moved
+    // with them, a runtime and an air time anyone could have, an example language.
+    const shiftedDays =
+      (Date.parse(firstAired as string) - Date.parse("2025-11-21T00:00:00Z")) / 86_400_000;
+    expect(Number.isInteger(shiftedDays)).toBe(true);
+    expect(new Date(firstAired as string).getUTCFullYear()).toBeGreaterThanOrEqual(2100);
+    expect(
+      Math.abs((year as number) - new Date(firstAired as string).getUTCFullYear()),
+    ).toBeLessThanOrEqual(1);
+    expect([airTime, runtime, first?.episode.runtime]).toEqual(["20:00", 30, 30]);
+    expect(originalLanguage).toEqual({ id: 0, name: "Example Language 1" });
+    expect(first?.languages).toEqual([{ id: 0, name: "Example Language 1" }]);
+    const shifted = (instant: string, original: string) =>
+      (Date.parse(instant) - Date.parse(original)) / 86_400_000;
+    expect(shifted(first?.episode.airDateUtc ?? "", "2025-11-20T16:30:00Z")).toBe(shiftedDays);
+    expect(shifted(first?.episode.airDate ?? "", "2025-11-21")).toBe(shiftedDays);
+    expect(shifted(second?.episode.airDateUtc ?? "", "2025-11-27T16:30:00Z")).toBe(shiftedDays);
+    // The time and the zone are kept as written.
+    expect(first?.added).toMatch(/^\d{4}-\d{2}-\d{2}T06:47:10\.123Z$/u);
+    expect(shifted(first?.added as string, "2026-11-06T06:47:10.123Z")).toBe(shiftedDays);
+    // Every byte count is scaled by one factor, so progress reads the same.
+    expect(first?.size).not.toBe(4_000_000_000);
+    expect(first?.sizeleft ?? 0).toBeGreaterThan(0);
+    expect((first?.sizeleft ?? 0) / (first?.size ?? 1)).toBeCloseTo(0.25, 6);
+    expect(text).toEqual({
+      id: 113,
+      title: "Example Title 1",
+      sortTitle: "example title 1",
+      cleanTitle: "exampletitle1",
+      titleSlug: "example-title-1",
+      overview: "A sanitized overview recorded only to fix the payload shape",
+      network: "Example Network 1",
+      genres: ["Example Genre 1", "Example Genre 2"],
+      certification: "Example Certification 1",
+      ratings: { votes: 0, value: 0 },
+      images: [{ coverType: "poster", url: "/media/example/artwork-1", remoteUrl: "" }],
+      tvdbId: 100_001,
+      tvMazeId: 400_001,
+      tvRageId: 0,
+      imdbId: "tt0000001",
+      tags: [3],
+    });
+    // Each distinct value has its own stand-in, the same wherever it recurs,
+    // so the two rows of one download, and of one series, still agree.
+    expect(second?.series).toEqual(first?.series);
+    expect(first).toMatchObject({
+      id: 1,
+      seriesId: 113,
+      title: "Example Title 3",
+      downloadId: "example-download-1",
+      downloadClient: "Example Service 1",
+      indexer: "Example Service 2",
+      episode: { id: 11_807, title: "Example Title 2", tvdbId: 100_002 },
+    });
+    expect(second).toMatchObject({
+      title: "Example Title 3",
+      downloadId: "example-download-1",
+      episode: { title: "Example Title 4", tvdbId: 100_003 },
+    });
+  });
+
+  /**
+   * One case per route shape whose identifying fields the queue rows above do
+   * not carry: what each route's body says about a library or its services,
+   * and the stand-in a capture writes for it.
+   */
+  const identifyingSites: Array<{
+    readonly site: string;
+    readonly application: "sonarr" | "radarr" | "prowlarr";
+    readonly route: string;
+    readonly body: unknown;
+    readonly originals: readonly string[];
+    readonly expected: unknown;
+  }> = [
+    {
+      site: "an episode file's paths, release, and media information",
+      application: "sonarr",
+      route: "episodefile",
+      body: [
+        {
+          id: 1,
+          seriesId: 113,
+          relativePath: "Season 01/Another World - S01E01 - A First Meeting.mkv",
+          path: "/data/tv/Another World/Season 01/Another World - S01E01 - A First Meeting.mkv",
+          sceneName: "Another.World.S01E01.1080p.WEB-DL-SubsPlease",
+          releaseGroup: "SubsPlease",
+          size: 1_000,
+          mediaInfo: {
+            runTime: "23:41",
+            audioLanguages: "jpn",
+            subtitles: "eng/spa",
+            videoCodec: "x265",
+          },
+          customFormats: [{ id: 3, name: "DV Boost" }],
+        },
+      ],
+      originals: [
+        "Another World",
+        "A First Meeting",
+        "SubsPlease",
+        "/data/tv",
+        "23:41",
+        "jpn",
+        "DV Boost",
+      ],
+      expected: [
+        {
+          id: 1,
+          seriesId: 113,
+          // A path keeps its depth and its file's extension, and a folder the
+          // two paths share stays shared.
+          relativePath: "example-1/example-2.mkv",
+          path: "/media/example/example-3/example-4/example-5/example-1/example-2.mkv",
+          sceneName: "Example Title 1",
+          releaseGroup: "EXAMPLEGRP1",
+          size: expect.any(Number),
+          mediaInfo: {
+            runTime: "30:00",
+            audioLanguages: "und",
+            subtitles: "und",
+            videoCodec: "x265",
+          },
+          customFormats: [{ id: 3, name: "Example Format 1" }],
+        },
+      ],
+    },
+    {
+      site: "a provider's name, beside the product it is",
+      application: "sonarr",
+      route: "indexer",
+      body: [
+        { id: 2, name: "Treasure Maps (Prowlarr)", implementation: "Torznab", protocol: "torrent" },
+      ],
+      originals: ["Treasure Maps"],
+      expected: [
+        { id: 2, name: "Example Service 1", implementation: "Torznab", protocol: "torrent" },
+      ],
+    },
+    {
+      site: "a quality profile's and its formats' names",
+      application: "radarr",
+      route: "qualityprofile",
+      body: [
+        {
+          id: 4,
+          name: "Max Ultra HD",
+          cutoff: 1,
+          items: [
+            { quality: { id: 1, name: "Bluray-2160p" }, allowed: true },
+            { id: 1001, name: "My Private Collection", allowed: true, items: [] },
+            { id: 1002, name: "WEB 1080p", allowed: true, items: [] },
+          ],
+          formatItems: [{ format: 3, name: "DV Boost", score: 100 }],
+          language: { id: 8, name: "Japanese" },
+        },
+      ],
+      originals: ["Max Ultra HD", "DV Boost", "My Private Collection", "Japanese"],
+      expected: [
+        {
+          id: 4,
+          name: "Example Profile 1",
+          cutoff: 1,
+          items: [
+            { quality: { id: 1, name: "Bluray-2160p" }, allowed: true },
+            { id: 1001, name: "Example Group 1", allowed: true, items: [] },
+            // A group the application creates keeps its own name.
+            { id: 1002, name: "WEB 1080p", allowed: true, items: [] },
+          ],
+          formatItems: [{ format: 3, name: "Example Format 1", score: 100 }],
+          language: { id: 0, name: "Example Language 1" },
+        },
+      ],
+    },
+    {
+      site: "an import candidate's file, folder, and rejections",
+      application: "sonarr",
+      route: "manualimport",
+      body: [
+        {
+          id: 9,
+          name: "Another World - S01E01",
+          folderName: "Another World",
+          path: "/data/downloads/Another World/Another World - S01E01.mkv",
+          relativePath: "Another World - S01E01.mkv",
+          rejections: [{ reason: "Not an upgrade for Another World S01E01", type: "permanent" }],
+        },
+      ],
+      originals: ["Another World", "/data/downloads"],
+      expected: [
+        {
+          id: 9,
+          name: "example-1",
+          folderName: "example-2",
+          path: "/media/example/example-3/example-4/example-2/example-1.mkv",
+          relativePath: "example-1.mkv",
+          rejections: [{ reason: "Example message 1", type: "permanent" }],
+        },
+      ],
+    },
+    {
+      site: "a disk's label, path, and space",
+      application: "sonarr",
+      route: "diskspace",
+      body: [{ path: "/mnt/vault", label: "Vault", freeSpace: 2_000, totalSpace: 8_000 }],
+      originals: ["vault", "Vault"],
+      expected: [
+        {
+          path: "/media/example/example-1/example-2",
+          label: "Example Disk 1",
+          freeSpace: expect.any(Number),
+          totalSpace: expect.any(Number),
+        },
+      ],
+    },
+    {
+      site: "a history event's release, services, and download",
+      application: "sonarr",
+      route: "history",
+      body: {
+        page: 1,
+        records: [
+          {
+            id: 5,
+            eventType: "grabbed",
+            sourceTitle: "Another.World.S01E01.1080p",
+            downloadId: "ABCDEF0123456789ABCDEF0123456789ABCDEF01",
+            data: {
+              indexer: "Treasure Maps",
+              downloadClientName: "My Downloader",
+              releaseGroup: "SubsPlease",
+              torrentInfoHash: "abcdef0123456789abcdef0123456789abcdef01",
+              guid: "tm-123456",
+              message: "Grabbed from Treasure Maps",
+              reason: "The download of Another World failed",
+            },
+          },
+        ],
+      },
+      originals: [
+        "Another",
+        "Treasure Maps",
+        "My Downloader",
+        "SubsPlease",
+        "abcdef0123",
+        "ABCDEF0123",
+        "tm-123456",
+      ],
+      expected: {
+        page: 1,
+        records: [
+          {
+            id: 5,
+            eventType: "grabbed",
+            sourceTitle: "Example Title 1",
+            // The info hash is the download's id, whatever its case.
+            downloadId: "example-download-1",
+            data: {
+              indexer: "Example Service 1",
+              downloadClientName: "Example Service 2",
+              releaseGroup: "EXAMPLEGRP1",
+              torrentInfoHash: "example-download-1",
+              guid: "example-guid-1",
+              message: "Example message 1",
+              reason: "Example text 1",
+            },
+          },
+        ],
+      },
+    },
+    {
+      site: "a Prowlarr indexer's definition, address, and name",
+      application: "prowlarr",
+      route: "indexer",
+      body: [
+        {
+          id: 1,
+          name: "Treasure Maps",
+          definitionName: "treasuremaps",
+          indexerUrls: ["treasure-maps-mirror"],
+          implementation: "Cardigann",
+          appProfileId: 1,
+        },
+      ],
+      originals: ["Treasure", "treasure"],
+      expected: [
+        {
+          id: 1,
+          name: "Example Service 1",
+          definitionName: "example-definition-1",
+          indexerUrls: ["example-indexer-url-1"],
+          implementation: "Cardigann",
+          appProfileId: 1,
+        },
+      ],
+    },
+    {
+      site: "a movie's trailer, artwork, popularity, and alternate titles",
+      application: "radarr",
+      route: "movie",
+      body: [
+        {
+          id: 8,
+          title: "Another World",
+          youTubeTrailerId: "dQw4w9WgXcQ",
+          remotePoster: "poster.jpg",
+          popularity: 41.2,
+          alternateTitles: [{ title: "Isekai Love" }],
+          movieTitles: ["Another World"],
+        },
+      ],
+      originals: ["Another World", "dQw4w9WgXcQ", "poster", "41.2", "Isekai"],
+      expected: [
+        {
+          id: 8,
+          title: "Example Title 1",
+          youTubeTrailerId: "example-trailer-1",
+          remotePoster: "/media/example/artwork-1",
+          popularity: 0,
+          alternateTitles: [{ title: "Example Title 2" }],
+          movieTitles: ["Example Title 1"],
+        },
+      ],
+    },
+  ];
+
+  identifyingSites.push({
+    site: "a field no rule recognizes, and free text under an enumeration's key",
+    application: "sonarr",
+    route: "series",
+    body: [
+      {
+        id: 12,
+        status: "continuing",
+        seriesType: "Another World's own type",
+        someFieldNoOneHasSeen: "Another World",
+        someNewList: ["Another World", "Love Begins"],
+        someNewPath: "/srv/library/Another World",
+      },
+    ],
+    originals: ["Another World", "Love Begins", "/srv/library"],
+    expected: [
+      {
+        id: 12,
+        status: "continuing",
+        seriesType: "Example text 1",
+        someFieldNoOneHasSeen: "Example text 2",
+        someNewList: ["Example text 2", "Example text 3"],
+        // Text that is a path keeps its shape.
+        someNewPath: "/media/example/example-1/example-2/example-3",
+      },
+    ],
+  });
+
+  identifyingSites.push(
+    {
+      site: "text in lists of lists, text that only starts with a date, and unknown values",
+      application: "sonarr",
+      route: "series",
+      body: [
+        {
+          id: 12,
+          newList: [["My Private Movie"], [{ note: "My Private Note" }]],
+          added: "2101-01-01T12:00 My Private Movie",
+          airDateUtc: "2025-11-20T16:30:00Z",
+          status: "treasuremaps",
+          languages: [{ id: 1, name: "English" }],
+          language: { id: 2, name: "My Private Language", nameLower: "my private language" },
+          mediaInfo: { videoCodec: "My Private Film", audioCodec: "EAC3 Atmos" },
+        },
+      ],
+      originals: ["My Private", "treasuremaps", "2025-11-20"],
+      expected: [
+        {
+          id: 12,
+          newList: [["Example text 1"], [{ note: "Example text 2" }]],
+          added: "Example text 3",
+          airDateUtc: expect.stringMatching(/^2\d{3}-\d{2}-\d{2}T16:30:00Z$/u),
+          status: "Example text 4",
+          languages: [{ id: 0, name: "Example Language 1" }],
+          // Every leaf under a language is the language: its id zero, its text an example.
+          language: { id: 0, name: "Example Language 2", nameLower: "Example Language 3" },
+          mediaInfo: { videoCodec: "Example text 5", audioCodec: "EAC3 Atmos" },
+        },
+      ],
+    },
+    {
+      site: "text at the root of a body",
+      application: "sonarr",
+      route: "tag",
+      body: ["My Private Movie", ["My Private Note"]],
+      originals: ["My Private"],
+      expected: ["Example text 1", ["Example text 2"]],
+    },
+  );
+
+  for (const { site, application, route, body, originals, expected } of identifyingSites) {
+    it(`replaces ${site}`, async () => {
+      const fixtureRoot = await temporaryFixtureRoot();
+      const status = {
+        sonarr: { appName: "Sonarr", version: "4.0.19.2979" },
+        radarr: { appName: "Radarr", version: "6.3.0.10514" },
+        prowlarr: { appName: "Prowlarr", version: "2.5.2.5491" },
+      }[application];
+      const api = application === "prowlarr" ? "/api/v1" : "/api/v3";
+      const url = await startStub({
+        [`${api}/system/status`]: { body: JSON.stringify(status) },
+        [`${api}/${route}`]: { body: JSON.stringify(body) },
+      });
+
+      const { code, stderr } = await runCapture(
+        url,
+        ["--application", application, "--route", route, "--fixture-root", fixtureRoot],
+        application,
+      );
+
+      expect(code, stderr).toBe(0);
+      // Each stub reports its application's minimum, whose file is written.
+      const file = path.join(fixtureRoot, fixturePathFor(application, route));
+      const written = await readFile(file, "utf8");
+      for (const original of originals) {
+        expect(written, original).not.toContain(original);
+      }
+      expect((JSON.parse(written) as { body: unknown }).body).toEqual(expected);
+    });
+  }
 
   it("reports what a dry run would write without writing it", async () => {
     const fixtureRoot = await temporaryFixtureRoot();
@@ -365,10 +908,12 @@ describe("fixture capture procedure", () => {
       "utf8",
     );
     expect(written).not.toContain("CANARY");
-    // Every field survives with its name and its type, because that is the
-    // shape a fixture owes; only the text it held is gone. A value that is not
-    // text cannot be a credential and is left alone, so a select field and a
-    // numeric setting still record what they record.
+    // Every field survives with its type, because that is the shape a fixture
+    // owes; only the text it held is gone. A setting keeps its name where the
+    // applications' schemas define it, and one only a tracker's own
+    // definition names — a passkey's, say — is text like any other. A value
+    // that is not text cannot be a credential and is left alone, so a select
+    // field and a numeric setting still record what they record.
     const fields = (
       JSON.parse(written) as { body: Array<{ fields: Array<Record<string, unknown>> }> }
     ).body[0]?.fields;
@@ -376,13 +921,13 @@ describe("fixture capture procedure", () => {
       "baseUrl",
       "apiKey",
       "password",
-      "passkey",
-      "rssKey",
-      "torrent_pass",
+      expect.stringMatching(/^Example text \d+$/u),
+      expect.stringMatching(/^Example text \d+$/u),
+      expect.stringMatching(/^Example text \d+$/u),
       "categories",
       "minimumSeeders",
       "vipExpiration",
-      "maskedKey",
+      expect.stringMatching(/^Example text \d+$/u),
     ]);
     expect(fields?.[0]?.value).not.toBe("example-indexer");
     expect(typeof fields?.[0]?.value).toBe("string");

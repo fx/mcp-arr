@@ -1,8 +1,10 @@
 import { z } from "zod";
 import { toolResultSchema } from "../results.js";
 import {
+  calendarWindowMessage,
   configurationReferenceSchema,
   isoDateSchema,
+  isUsableCalendarWindow,
   maxBulkItems,
   mediaApplicationSchema,
   mediaFileReferenceSchema,
@@ -20,47 +22,6 @@ const monitoredFilter = z.boolean().optional();
 const mediaSelection = z.array(mediaReferenceSchema).min(1).max(maxBulkItems);
 
 const seasonNumberSchema = z.int().min(0).max(1000);
-
-/**
- * The widest calendar window one call may ask for.
- *
- * Neither application pages its calendar endpoint, so the width of the window
- * decides how much an instance is asked to assemble and send. A year covers
- * every scheduling question this view exists to answer, and reaching further is
- * a different query rather than a wider one.
- */
-export const maxCalendarWindowDays = 366;
-
-const dayMs = 86_400_000;
-
-/**
- * Reads one calendar bound, refusing a date that does not exist.
- *
- * The date schema fixes only the shape, and `Date.parse` answers a day that is
- * shaped correctly but absent from its month by rolling it forward:
- * `2026-02-30` becomes `2026-03-02`, and `2027-02-29` becomes `2027-03-01`.
- * Accepting that would send the instance a different window than the caller
- * asked for and report nothing, which is worse than refusing the input — so the
- * parsed instant is formatted back and kept only when it is byte-identical to
- * what arrived. Every real date round-trips unchanged.
- */
-function readCalendarBound(value: string): number | undefined {
-  const parsed = Date.parse(`${value}T00:00:00Z`);
-  if (Number.isNaN(parsed)) {
-    return undefined;
-  }
-  return new Date(parsed).toISOString().slice(0, 10) === value ? parsed : undefined;
-}
-
-/** Whether a calendar window names two real dates, in order, and is bounded. */
-function isUsableCalendarWindow(start: string, end: string): boolean {
-  const from = readCalendarBound(start);
-  const to = readCalendarBound(end);
-  if (from === undefined || to === undefined || to < from) {
-    return false;
-  }
-  return to - from <= (maxCalendarWindowDays - 1) * dayMs;
-}
 
 /**
  * The typed library views. A view names a normalized concept rather than an
@@ -143,7 +104,7 @@ export const libraryQueryInputSchema = variantUnion(
         monitored: monitoredFilter,
       })
       .refine((value) => isUsableCalendarWindow(value.start, value.end), {
-        error: `start and end must be real dates, in order, and cover at most ${maxCalendarWindowDays} days including both bounds`,
+        error: calendarWindowMessage,
       }),
     z.strictObject({
       /** Metadata lookup. Reading a lookup result never adds it to a library. */

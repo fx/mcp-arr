@@ -134,11 +134,56 @@ export declare function createFixtureInventory(
   recorded: Readonly<Record<string, RecordedApplication>>,
 ): FixtureInventory;
 
-export declare function validateSanitizedValue(value: unknown, location: string): void;
+/** Where a value one structural rule or one named field judges sits, for a probe. */
+export interface ProbePlacement {
+  readonly parent: Readonly<Record<string, unknown>>;
+  readonly container?: string;
+}
+
+/** The structural allowlist: each rule's keys, and where a value it judges sits. */
+export declare const structuralRules: readonly {
+  readonly why: string;
+  readonly keys: readonly string[];
+  readonly probe?: (value: string) => ProbePlacement;
+}[];
+
+/** What a capture writes into a newer fixture's metadata to say it wrote the body. */
+export declare const capturedBy: string;
+
+/** Every key a fact is named by, and how a newer fixture's value is verified. */
+export declare const factFieldKeys: readonly {
+  readonly key: string;
+  readonly field: string;
+  readonly verified: "value" | "provenance";
+}[];
+
+/** Every key an identifying field is named by. */
+export declare const identifyingFieldKeys: readonly string[];
+
+/** Where each identifying field named by its context sits. */
+export declare const contextualFieldProbes: readonly (ProbePlacement & {
+  readonly field: string;
+  readonly key: string;
+})[];
+
+/** The languages the applications ship, held to their recorded language routes. */
+export declare const shippedLanguages: readonly string[];
+
+export declare function validateSanitizedValue(
+  value: unknown,
+  location: string,
+  legacy?: Readonly<Record<string, readonly unknown[]>>,
+  context?: {
+    readonly key?: string;
+    readonly parent?: Readonly<Record<string, unknown>>;
+    readonly container?: string;
+    readonly classified?: boolean;
+  },
+): void;
 
 export declare function validateFixture<TBody = unknown>(
   value: unknown,
-  options: { filePath: string; fixtureRoot: string },
+  options: { filePath: string; fixtureRoot: string; legacy?: boolean },
 ): VersionedFixture<TBody>;
 
 export declare function loadFixture<TBody = unknown>(

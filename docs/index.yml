@@ -263,7 +263,7 @@ changes:
     path: changes/0032-media-toolset-activity.md
     description: Complete the media toolset with status, fix, search again, and opt-in remove
     spec: media-toolset
-    status: draft
+    status: complete
     depends_on: ["0031"]
   - id: "0033"
     name: media-default-toolset

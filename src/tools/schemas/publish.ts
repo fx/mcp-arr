@@ -394,7 +394,9 @@ function describeVariants(
     const body =
       required.length === 0 ? tail : `${required.join(", ")}${tail === "" ? "" : `; ${tail}`}`;
     if (discriminator === undefined || values.length === 0) {
-      return `- ${body}`;
+      // A form that takes nothing is a form too, and has to be named as one,
+      // or the line that offers it reads as a stray bullet.
+      return `- ${body === "" ? "no arguments" : body}`;
     }
     const label = `${discriminator}=${values.join("|")}`;
     if (required.length > 0) {

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createAdapterRegistry } from "../src/adapters/registry.js";
 import { parseEnvironment } from "../src/config/environment.js";
+import { systemClock } from "../src/state/clock.js";
+import { createDownloadClaims } from "../src/state/download-claims.js";
+import { createTitleLocks } from "../src/state/title-locks.js";
 import type { MediaContext } from "../src/tools/media/context.js";
 import { publishedText } from "../src/tools/media/published-text.js";
 import { noMediaDefaults } from "./support/media.js";
@@ -21,6 +24,9 @@ const context: MediaContext = {
     parseEnvironment({ RADARR_URL: "https://radarr.example.invalid", RADARR_API_KEY: key }),
   ),
   defaults: noMediaDefaults,
+  claims: createDownloadClaims(),
+  titleLocks: createTitleLocks(),
+  clock: systemClock,
 };
 
 function publish(text: string): string | undefined {

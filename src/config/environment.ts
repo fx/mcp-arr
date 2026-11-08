@@ -101,6 +101,12 @@ export const mediaDefaultVariableNames: readonly string[] = [
 ];
 
 /**
+ * The variable that publishes `media_remove`. It is a `media` setting like the
+ * defaults above, but a switch rather than a name, so it is parsed on its own.
+ */
+export const mediaAllowRemoveVariable = "ARR_MCP_MEDIA_ALLOW_REMOVE";
+
+/**
  * One application's resolved connection settings.
  *
  * This type deliberately carries the API key and base URL in plain enumerable
@@ -156,6 +162,11 @@ export interface ToolsetSelection {
   readonly names: readonly ToolsetName[];
   /** Present exactly when `media` is selected. */
   readonly media?: MediaDefaults | undefined;
+  /**
+   * Whether `media_remove` is published. Present only when `media` is selected
+   * and {@link mediaAllowRemoveVariable} is set.
+   */
+  readonly mediaAllowRemove?: boolean | undefined;
 }
 
 export interface EnvironmentConfiguration {
@@ -459,7 +470,7 @@ function parseToolsets(env: EnvironmentRecord, problems: string[]): ToolsetSelec
     return { names: defaultToolsets };
   }
   if (!names.includes("media")) {
-    for (const variable of mediaDefaultVariableNames) {
+    for (const variable of [...mediaDefaultVariableNames, mediaAllowRemoveVariable]) {
       if (env[variable] !== undefined) {
         problems.push(`${variable} requires ${toolsetVariable} to select media`);
       }
@@ -482,7 +493,34 @@ function parseToolsets(env: EnvironmentRecord, problems: string[]): ToolsetSelec
       ...(rootFolder === undefined ? {} : { rootFolder }),
     };
   };
-  return { names, media: { movie: kindDefaults("movie"), series: kindDefaults("series") } };
+  const media = { movie: kindDefaults("movie"), series: kindDefaults("series") };
+  const allowRemove = parseAllowRemove(env, problems);
+  return {
+    names,
+    media,
+    ...(allowRemove === undefined ? {} : { mediaAllowRemove: allowRemove }),
+  };
+}
+
+/**
+ * Reads {@link mediaAllowRemoveVariable}: exactly `true` or `false`, after
+ * trimming, and nothing else. A value is never quoted back, for the same
+ * reason a toolset name is not.
+ */
+function parseAllowRemove(env: EnvironmentRecord, problems: string[]): boolean | undefined {
+  const state = readVariable(env, mediaAllowRemoveVariable);
+  if (state.kind === "absent") {
+    return undefined;
+  }
+  if (state.kind === "empty") {
+    problems.push(`${mediaAllowRemoveVariable} is set but empty`);
+    return undefined;
+  }
+  if (state.value !== "true" && state.value !== "false") {
+    problems.push(`${mediaAllowRemoveVariable} must be true or false`);
+    return undefined;
+  }
+  return state.value === "true";
 }
 
 /**

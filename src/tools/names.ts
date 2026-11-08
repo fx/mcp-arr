@@ -53,13 +53,25 @@ const mutationToolNameSet: ReadonlySet<string> = new Set(mutationToolNames);
  *
  * Nothing about the operation registry or the capability report applies to
  * them, so {@link ToolName} stays the `arr` names alone and every structure
- * keyed by it is unaffected. Only the tools that are implemented are listed: a
- * deployment that selects `media` must never be offered a tool that refuses
- * unconditionally.
+ * keyed by it is unaffected. `media_remove` is listed with the rest and
+ * published only when the operator enables it, so a deployment is never
+ * offered a tool that refuses unconditionally.
  */
-export const mediaToolNames = ["media_find", "media_add"] as const;
+export const mediaToolNames = [
+  "media_find",
+  "media_add",
+  "media_status",
+  "media_fix",
+  "media_search_again",
+  "media_remove",
+] as const;
 
 export type MediaToolName = (typeof mediaToolNames)[number];
+
+/** The `media` tools a deployment publishes, `media_remove` only where the operator enabled it. */
+export function publishedMediaToolNames(allowRemove: boolean): readonly MediaToolName[] {
+  return mediaToolNames.filter((name) => allowRemove || name !== "media_remove");
+}
 
 /** Every name either toolset can publish. The two prefixes keep them disjoint. */
 export type PublishedToolName = ToolName | MediaToolName;

@@ -1,7 +1,7 @@
 import type { ApplicationId } from "../../applications.js";
 import type { UpstreamClient } from "../../http/client.js";
 import { createToolError, type ToolError, toolErrorForThrown } from "../../tools/errors.js";
-import { type Continuation, maxPageSize } from "../../tools/schemas/common.js";
+import { type Continuation, isCalendarWindow, maxPageSize } from "../../tools/schemas/common.js";
 import {
   type CalendarEvent,
   isMediaApplication,
@@ -196,6 +196,17 @@ export async function runLibraryQuery(
     return {
       status: "error",
       error: invalid(application, `page size must be between 1 and ${maxPageSize}`),
+    };
+  }
+
+  // The tool schema refuses the same window, and bounds its width besides; a
+  // caller that builds a request itself is held to the dates here, because an
+  // adapter reads both bounds as dates and an instant there would quietly
+  // become no window at all.
+  if (request.view === "calendar" && !isCalendarWindow(request.start, request.end)) {
+    return {
+      status: "error",
+      error: invalid(application, "start and end must be real dates, in order"),
     };
   }
 

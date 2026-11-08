@@ -7,6 +7,9 @@ import {
   parseEnvironment,
 } from "../../src/config/environment.js";
 import type { FetchLike } from "../../src/http/client.js";
+import { type Clock, systemClock } from "../../src/state/clock.js";
+import { createDownloadClaims, type DownloadClaims } from "../../src/state/download-claims.js";
+import { createTitleLocks, type TitleLocks } from "../../src/state/title-locks.js";
 import { toolErrorCodes } from "../../src/tools/errors.js";
 import type { MediaContext } from "../../src/tools/media/context.js";
 import { mediaToolDefinitions } from "../../src/tools/media/definitions.js";
@@ -296,14 +299,26 @@ export async function createMediaInstances(): Promise<MediaInstances> {
 
 export const noMediaDefaults: MediaDefaults = { movie: {}, series: {} };
 
+/** The process state a `media` context shares with every other call. */
+export interface MediaProcessState {
+  readonly claims: DownloadClaims;
+  readonly clock: Clock;
+  /** Shared by every context a test builds over the same state; a fresh set when absent. */
+  readonly titleLocks?: TitleLocks | undefined;
+}
+
 export function createMediaContext(
-  instances: MediaInstances,
+  instances: { readonly fetch: FetchLike },
   defaults: MediaDefaults = noMediaDefaults,
   environment: EnvironmentRecord = allApplicationsEnvironment,
+  state: MediaProcessState = { claims: createDownloadClaims(), clock: systemClock },
 ): MediaContext {
   return {
     registry: createAdapterRegistry(parseEnvironment(environment), { fetch: instances.fetch }),
     defaults,
+    claims: state.claims,
+    titleLocks: state.titleLocks ?? createTitleLocks(),
+    clock: state.clock,
   };
 }
 

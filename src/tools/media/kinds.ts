@@ -23,6 +23,8 @@ interface KindRoute {
   readonly lookup: MediaLookupKind;
   /** The library record a title of this kind becomes. */
   readonly record: MediaRecordKind;
+  /** How a sentence names one title of this kind. */
+  readonly singular: string;
   /** How a sentence names titles of this kind, in the plural. */
   readonly plural: string;
   /** The same, capitalized to open a sentence. */
@@ -34,6 +36,7 @@ export const kindRoutes: Readonly<Record<TitleKind, KindRoute>> = {
     application: "radarr",
     lookup: "movie_lookup",
     record: "movie",
+    singular: "movie",
     plural: "movies",
     pluralSentence: "Movies",
   },
@@ -41,6 +44,7 @@ export const kindRoutes: Readonly<Record<TitleKind, KindRoute>> = {
     application: "sonarr",
     lookup: "series_lookup",
     record: "series",
+    singular: "series",
     plural: "TV series",
     pluralSentence: "TV series",
   },

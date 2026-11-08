@@ -3,7 +3,8 @@
     "application": "sonarr",
     "apiVersion": "v3",
     "version": "4.0.20.3014",
-    "endpoint": "/api/v3/qualityprofile"
+    "endpoint": "/api/v3/qualityprofile",
+    "capturedBy": "identifying-content-capture-1"
   },
   "body": [
     {
@@ -266,12 +267,12 @@
       "formatItems": [
         {
           "format": 5,
-          "name": "Remux",
+          "name": "Example Format 1",
           "score": -10000
         },
         {
           "format": 1,
-          "name": "DV Boost",
+          "name": "Example Format 2",
           "score": 0
         }
       ],
@@ -537,12 +538,12 @@
       "formatItems": [
         {
           "format": 5,
-          "name": "Remux",
+          "name": "Example Format 1",
           "score": -10000
         },
         {
           "format": 1,
-          "name": "DV Boost",
+          "name": "Example Format 2",
           "score": 0
         }
       ],
@@ -808,12 +809,12 @@
       "formatItems": [
         {
           "format": 5,
-          "name": "Remux",
+          "name": "Example Format 1",
           "score": -10000
         },
         {
           "format": 1,
-          "name": "DV Boost",
+          "name": "Example Format 2",
           "score": 0
         }
       ],
@@ -1079,12 +1080,12 @@
       "formatItems": [
         {
           "format": 5,
-          "name": "Remux",
+          "name": "Example Format 1",
           "score": -10000
         },
         {
           "format": 1,
-          "name": "DV Boost",
+          "name": "Example Format 2",
           "score": 0
         }
       ],
@@ -1350,12 +1351,12 @@
       "formatItems": [
         {
           "format": 5,
-          "name": "Remux",
+          "name": "Example Format 1",
           "score": -10000
         },
         {
           "format": 1,
-          "name": "DV Boost",
+          "name": "Example Format 2",
           "score": 0
         }
       ],
@@ -1621,19 +1622,19 @@
       "formatItems": [
         {
           "format": 5,
-          "name": "Remux",
+          "name": "Example Format 1",
           "score": -10000
         },
         {
           "format": 1,
-          "name": "DV Boost",
+          "name": "Example Format 2",
           "score": 0
         }
       ],
       "id": 6
     },
     {
-      "name": "Max Ultra HD",
+      "name": "Example Profile 1",
       "upgradeAllowed": true,
       "cutoff": 21,
       "items": [
@@ -1892,12 +1893,12 @@
       "formatItems": [
         {
           "format": 5,
-          "name": "Remux",
+          "name": "Example Format 1",
           "score": 0
         },
         {
           "format": 1,
-          "name": "DV Boost",
+          "name": "Example Format 2",
           "score": 0
         }
       ],

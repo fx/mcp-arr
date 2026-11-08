@@ -1,0 +1,775 @@
+{
+  "metadata": {
+    "application": "sonarr",
+    "apiVersion": "v3",
+    "version": "4.0.20.3014",
+    "endpoint": "/api/v3/queue",
+    "capturedBy": "identifying-content-capture-1"
+  },
+  "body": {
+    "page": 1,
+    "pageSize": 100,
+    "sortKey": "timeleft",
+    "sortDirection": "ascending",
+    "totalRecords": 6,
+    "records": [
+      {
+        "seriesId": 113,
+        "episodeId": 11807,
+        "seasonNumber": 1,
+        "series": {
+          "title": "Example Title 1",
+          "sortTitle": "example title 1",
+          "status": "ended",
+          "ended": true,
+          "overview": "A sanitized overview recorded only to fix the payload shape",
+          "network": "Example Network 1",
+          "airTime": "20:00",
+          "images": [
+            {
+              "coverType": "banner",
+              "remoteUrl": "/media/example/artwork-1"
+            },
+            {
+              "coverType": "poster",
+              "remoteUrl": "/media/example/artwork-2"
+            },
+            {
+              "coverType": "fanart",
+              "remoteUrl": "/media/example/artwork-3"
+            }
+          ],
+          "originalLanguage": {
+            "id": 0,
+            "name": "Example Language 1"
+          },
+          "seasons": [
+            {
+              "seasonNumber": 1,
+              "monitored": true
+            }
+          ],
+          "year": 2247,
+          "path": "/media/example/example-1/example-2/example-3",
+          "qualityProfileId": 1,
+          "seasonFolder": false,
+          "monitored": true,
+          "monitorNewItems": "all",
+          "useSceneNumbering": false,
+          "runtime": 30,
+          "tvdbId": 100001,
+          "tvRageId": 0,
+          "tvMazeId": 400001,
+          "tmdbId": 200001,
+          "firstAired": "2248-03-09T00:00:00Z",
+          "lastAired": "2248-04-13T00:00:00Z",
+          "seriesType": "standard",
+          "cleanTitle": "exampletitle1",
+          "titleSlug": "example-title-1",
+          "genres": ["Example Genre 1", "Example Genre 2", "Example Genre 3"],
+          "tags": [],
+          "added": "2249-02-22T06:47:05Z",
+          "ratings": {
+            "votes": 0,
+            "value": 0
+          },
+          "languageProfileId": 1,
+          "id": 113
+        },
+        "episode": {
+          "seriesId": 113,
+          "tvdbId": 100002,
+          "episodeFileId": 0,
+          "seasonNumber": 1,
+          "episodeNumber": 1,
+          "title": "Example Title 2",
+          "airDate": "2248-03-09",
+          "airDateUtc": "2248-03-08T16:30:00Z",
+          "lastSearchTime": "2249-02-22T06:47:08Z",
+          "runtime": 30,
+          "overview": "A sanitized overview recorded only to fix the payload shape",
+          "hasFile": false,
+          "monitored": true,
+          "unverifiedSceneNumbering": false,
+          "id": 11807
+        },
+        "languages": [
+          {
+            "id": 0,
+            "name": "Example Language 1"
+          }
+        ],
+        "quality": {
+          "quality": {
+            "id": 3,
+            "name": "WEBDL-1080p",
+            "source": "web",
+            "resolution": 1080
+          },
+          "revision": {
+            "version": 1,
+            "real": 0,
+            "isRepack": false
+          }
+        },
+        "customFormats": [],
+        "customFormatScore": 0,
+        "size": 9759613165,
+        "title": "Example Title 3",
+        "estimatedCompletionTime": "2249-02-24T02:47:30Z",
+        "added": "2249-02-22T06:47:10Z",
+        "status": "completed",
+        "trackedDownloadStatus": "warning",
+        "trackedDownloadState": "importBlocked",
+        "statusMessages": [
+          {
+            "title": "Example Title 3",
+            "messages": ["Example message 1"]
+          }
+        ],
+        "errorMessage": "",
+        "downloadId": "example-download-1",
+        "protocol": "usenet",
+        "downloadClient": "Example Service 1",
+        "downloadClientHasPostImportCategory": false,
+        "indexer": "Example Service 2",
+        "outputPath": "/media/example/example-1/example-4/example-5/example-6",
+        "episodeHasFile": false,
+        "sizeleft": 0,
+        "timeleft": "00:00:00",
+        "id": 1985590422
+      },
+      {
+        "seriesId": 113,
+        "episodeId": 11808,
+        "seasonNumber": 1,
+        "series": {
+          "title": "Example Title 1",
+          "sortTitle": "example title 1",
+          "status": "ended",
+          "ended": true,
+          "overview": "A sanitized overview recorded only to fix the payload shape",
+          "network": "Example Network 1",
+          "airTime": "20:00",
+          "images": [
+            {
+              "coverType": "banner",
+              "remoteUrl": "/media/example/artwork-1"
+            },
+            {
+              "coverType": "poster",
+              "remoteUrl": "/media/example/artwork-2"
+            },
+            {
+              "coverType": "fanart",
+              "remoteUrl": "/media/example/artwork-3"
+            }
+          ],
+          "originalLanguage": {
+            "id": 0,
+            "name": "Example Language 1"
+          },
+          "seasons": [
+            {
+              "seasonNumber": 1,
+              "monitored": true
+            }
+          ],
+          "year": 2247,
+          "path": "/media/example/example-1/example-2/example-3",
+          "qualityProfileId": 1,
+          "seasonFolder": false,
+          "monitored": true,
+          "monitorNewItems": "all",
+          "useSceneNumbering": false,
+          "runtime": 30,
+          "tvdbId": 100001,
+          "tvRageId": 0,
+          "tvMazeId": 400001,
+          "tmdbId": 200001,
+          "firstAired": "2248-03-09T00:00:00Z",
+          "lastAired": "2248-04-13T00:00:00Z",
+          "seriesType": "standard",
+          "cleanTitle": "exampletitle1",
+          "titleSlug": "example-title-1",
+          "genres": ["Example Genre 1", "Example Genre 2", "Example Genre 3"],
+          "tags": [],
+          "added": "2249-02-22T06:47:05Z",
+          "ratings": {
+            "votes": 0,
+            "value": 0
+          },
+          "languageProfileId": 1,
+          "id": 113
+        },
+        "episode": {
+          "seriesId": 113,
+          "tvdbId": 100003,
+          "episodeFileId": 0,
+          "seasonNumber": 1,
+          "episodeNumber": 2,
+          "title": "Example Title 4",
+          "airDate": "2248-03-16",
+          "airDateUtc": "2248-03-15T16:30:00Z",
+          "lastSearchTime": "2249-02-22T06:47:08Z",
+          "runtime": 30,
+          "overview": "A sanitized overview recorded only to fix the payload shape",
+          "hasFile": false,
+          "monitored": true,
+          "unverifiedSceneNumbering": false,
+          "id": 11808
+        },
+        "languages": [
+          {
+            "id": 0,
+            "name": "Example Language 1"
+          }
+        ],
+        "quality": {
+          "quality": {
+            "id": 3,
+            "name": "WEBDL-1080p",
+            "source": "web",
+            "resolution": 1080
+          },
+          "revision": {
+            "version": 1,
+            "real": 0,
+            "isRepack": false
+          }
+        },
+        "customFormats": [],
+        "customFormatScore": 0,
+        "size": 9759613165,
+        "title": "Example Title 3",
+        "estimatedCompletionTime": "2249-02-24T02:47:30Z",
+        "added": "2249-02-22T06:47:10Z",
+        "status": "completed",
+        "trackedDownloadStatus": "warning",
+        "trackedDownloadState": "importBlocked",
+        "statusMessages": [
+          {
+            "title": "Example Title 3",
+            "messages": ["Example message 1"]
+          }
+        ],
+        "errorMessage": "",
+        "downloadId": "example-download-1",
+        "protocol": "usenet",
+        "downloadClient": "Example Service 1",
+        "downloadClientHasPostImportCategory": false,
+        "indexer": "Example Service 2",
+        "outputPath": "/media/example/example-1/example-4/example-5/example-6",
+        "episodeHasFile": false,
+        "sizeleft": 0,
+        "timeleft": "00:00:00",
+        "id": 1316998050
+      },
+      {
+        "seriesId": 113,
+        "episodeId": 11809,
+        "seasonNumber": 1,
+        "series": {
+          "title": "Example Title 1",
+          "sortTitle": "example title 1",
+          "status": "ended",
+          "ended": true,
+          "overview": "A sanitized overview recorded only to fix the payload shape",
+          "network": "Example Network 1",
+          "airTime": "20:00",
+          "images": [
+            {
+              "coverType": "banner",
+              "remoteUrl": "/media/example/artwork-1"
+            },
+            {
+              "coverType": "poster",
+              "remoteUrl": "/media/example/artwork-2"
+            },
+            {
+              "coverType": "fanart",
+              "remoteUrl": "/media/example/artwork-3"
+            }
+          ],
+          "originalLanguage": {
+            "id": 0,
+            "name": "Example Language 1"
+          },
+          "seasons": [
+            {
+              "seasonNumber": 1,
+              "monitored": true
+            }
+          ],
+          "year": 2247,
+          "path": "/media/example/example-1/example-2/example-3",
+          "qualityProfileId": 1,
+          "seasonFolder": false,
+          "monitored": true,
+          "monitorNewItems": "all",
+          "useSceneNumbering": false,
+          "runtime": 30,
+          "tvdbId": 100001,
+          "tvRageId": 0,
+          "tvMazeId": 400001,
+          "tmdbId": 200001,
+          "firstAired": "2248-03-09T00:00:00Z",
+          "lastAired": "2248-04-13T00:00:00Z",
+          "seriesType": "standard",
+          "cleanTitle": "exampletitle1",
+          "titleSlug": "example-title-1",
+          "genres": ["Example Genre 1", "Example Genre 2", "Example Genre 3"],
+          "tags": [],
+          "added": "2249-02-22T06:47:05Z",
+          "ratings": {
+            "votes": 0,
+            "value": 0
+          },
+          "languageProfileId": 1,
+          "id": 113
+        },
+        "episode": {
+          "seriesId": 113,
+          "tvdbId": 100004,
+          "episodeFileId": 0,
+          "seasonNumber": 1,
+          "episodeNumber": 3,
+          "title": "Example Title 5",
+          "airDate": "2248-03-23",
+          "airDateUtc": "2248-03-22T16:30:00Z",
+          "lastSearchTime": "2249-02-22T06:47:08Z",
+          "runtime": 30,
+          "overview": "A sanitized overview recorded only to fix the payload shape",
+          "hasFile": false,
+          "monitored": true,
+          "unverifiedSceneNumbering": false,
+          "id": 11809
+        },
+        "languages": [
+          {
+            "id": 0,
+            "name": "Example Language 1"
+          }
+        ],
+        "quality": {
+          "quality": {
+            "id": 3,
+            "name": "WEBDL-1080p",
+            "source": "web",
+            "resolution": 1080
+          },
+          "revision": {
+            "version": 1,
+            "real": 0,
+            "isRepack": false
+          }
+        },
+        "customFormats": [],
+        "customFormatScore": 0,
+        "size": 9759613165,
+        "title": "Example Title 3",
+        "estimatedCompletionTime": "2249-02-24T02:47:30Z",
+        "added": "2249-02-22T06:47:10Z",
+        "status": "completed",
+        "trackedDownloadStatus": "warning",
+        "trackedDownloadState": "importBlocked",
+        "statusMessages": [
+          {
+            "title": "Example Title 3",
+            "messages": ["Example message 1"]
+          }
+        ],
+        "errorMessage": "",
+        "downloadId": "example-download-1",
+        "protocol": "usenet",
+        "downloadClient": "Example Service 1",
+        "downloadClientHasPostImportCategory": false,
+        "indexer": "Example Service 2",
+        "outputPath": "/media/example/example-1/example-4/example-5/example-6",
+        "episodeHasFile": false,
+        "sizeleft": 0,
+        "timeleft": "00:00:00",
+        "id": 159097003
+      },
+      {
+        "seriesId": 113,
+        "episodeId": 11810,
+        "seasonNumber": 1,
+        "series": {
+          "title": "Example Title 1",
+          "sortTitle": "example title 1",
+          "status": "ended",
+          "ended": true,
+          "overview": "A sanitized overview recorded only to fix the payload shape",
+          "network": "Example Network 1",
+          "airTime": "20:00",
+          "images": [
+            {
+              "coverType": "banner",
+              "remoteUrl": "/media/example/artwork-1"
+            },
+            {
+              "coverType": "poster",
+              "remoteUrl": "/media/example/artwork-2"
+            },
+            {
+              "coverType": "fanart",
+              "remoteUrl": "/media/example/artwork-3"
+            }
+          ],
+          "originalLanguage": {
+            "id": 0,
+            "name": "Example Language 1"
+          },
+          "seasons": [
+            {
+              "seasonNumber": 1,
+              "monitored": true
+            }
+          ],
+          "year": 2247,
+          "path": "/media/example/example-1/example-2/example-3",
+          "qualityProfileId": 1,
+          "seasonFolder": false,
+          "monitored": true,
+          "monitorNewItems": "all",
+          "useSceneNumbering": false,
+          "runtime": 30,
+          "tvdbId": 100001,
+          "tvRageId": 0,
+          "tvMazeId": 400001,
+          "tmdbId": 200001,
+          "firstAired": "2248-03-09T00:00:00Z",
+          "lastAired": "2248-04-13T00:00:00Z",
+          "seriesType": "standard",
+          "cleanTitle": "exampletitle1",
+          "titleSlug": "example-title-1",
+          "genres": ["Example Genre 1", "Example Genre 2", "Example Genre 3"],
+          "tags": [],
+          "added": "2249-02-22T06:47:05Z",
+          "ratings": {
+            "votes": 0,
+            "value": 0
+          },
+          "languageProfileId": 1,
+          "id": 113
+        },
+        "episode": {
+          "seriesId": 113,
+          "tvdbId": 100005,
+          "episodeFileId": 0,
+          "seasonNumber": 1,
+          "episodeNumber": 4,
+          "title": "Example Title 6",
+          "airDate": "2248-03-30",
+          "airDateUtc": "2248-03-29T16:30:00Z",
+          "lastSearchTime": "2249-02-22T06:47:08Z",
+          "runtime": 30,
+          "overview": "A sanitized overview recorded only to fix the payload shape",
+          "hasFile": false,
+          "monitored": true,
+          "unverifiedSceneNumbering": false,
+          "id": 11810
+        },
+        "languages": [
+          {
+            "id": 0,
+            "name": "Example Language 1"
+          }
+        ],
+        "quality": {
+          "quality": {
+            "id": 3,
+            "name": "WEBDL-1080p",
+            "source": "web",
+            "resolution": 1080
+          },
+          "revision": {
+            "version": 1,
+            "real": 0,
+            "isRepack": false
+          }
+        },
+        "customFormats": [],
+        "customFormatScore": 0,
+        "size": 9759613165,
+        "title": "Example Title 3",
+        "estimatedCompletionTime": "2249-02-24T02:47:30Z",
+        "added": "2249-02-22T06:47:10Z",
+        "status": "completed",
+        "trackedDownloadStatus": "warning",
+        "trackedDownloadState": "importBlocked",
+        "statusMessages": [
+          {
+            "title": "Example Title 3",
+            "messages": ["Example message 1"]
+          }
+        ],
+        "errorMessage": "",
+        "downloadId": "example-download-1",
+        "protocol": "usenet",
+        "downloadClient": "Example Service 1",
+        "downloadClientHasPostImportCategory": false,
+        "indexer": "Example Service 2",
+        "outputPath": "/media/example/example-1/example-4/example-5/example-6",
+        "episodeHasFile": false,
+        "sizeleft": 0,
+        "timeleft": "00:00:00",
+        "id": 650491179
+      },
+      {
+        "seriesId": 113,
+        "episodeId": 11811,
+        "seasonNumber": 1,
+        "series": {
+          "title": "Example Title 1",
+          "sortTitle": "example title 1",
+          "status": "ended",
+          "ended": true,
+          "overview": "A sanitized overview recorded only to fix the payload shape",
+          "network": "Example Network 1",
+          "airTime": "20:00",
+          "images": [
+            {
+              "coverType": "banner",
+              "remoteUrl": "/media/example/artwork-1"
+            },
+            {
+              "coverType": "poster",
+              "remoteUrl": "/media/example/artwork-2"
+            },
+            {
+              "coverType": "fanart",
+              "remoteUrl": "/media/example/artwork-3"
+            }
+          ],
+          "originalLanguage": {
+            "id": 0,
+            "name": "Example Language 1"
+          },
+          "seasons": [
+            {
+              "seasonNumber": 1,
+              "monitored": true
+            }
+          ],
+          "year": 2247,
+          "path": "/media/example/example-1/example-2/example-3",
+          "qualityProfileId": 1,
+          "seasonFolder": false,
+          "monitored": true,
+          "monitorNewItems": "all",
+          "useSceneNumbering": false,
+          "runtime": 30,
+          "tvdbId": 100001,
+          "tvRageId": 0,
+          "tvMazeId": 400001,
+          "tmdbId": 200001,
+          "firstAired": "2248-03-09T00:00:00Z",
+          "lastAired": "2248-04-13T00:00:00Z",
+          "seriesType": "standard",
+          "cleanTitle": "exampletitle1",
+          "titleSlug": "example-title-1",
+          "genres": ["Example Genre 1", "Example Genre 2", "Example Genre 3"],
+          "tags": [],
+          "added": "2249-02-22T06:47:05Z",
+          "ratings": {
+            "votes": 0,
+            "value": 0
+          },
+          "languageProfileId": 1,
+          "id": 113
+        },
+        "episode": {
+          "seriesId": 113,
+          "tvdbId": 100006,
+          "episodeFileId": 0,
+          "seasonNumber": 1,
+          "episodeNumber": 5,
+          "title": "Example Title 7",
+          "airDate": "2248-04-06",
+          "airDateUtc": "2248-04-05T16:30:00Z",
+          "lastSearchTime": "2249-02-22T06:47:08Z",
+          "runtime": 30,
+          "overview": "A sanitized overview recorded only to fix the payload shape",
+          "hasFile": false,
+          "monitored": true,
+          "unverifiedSceneNumbering": false,
+          "id": 11811
+        },
+        "languages": [
+          {
+            "id": 0,
+            "name": "Example Language 1"
+          }
+        ],
+        "quality": {
+          "quality": {
+            "id": 3,
+            "name": "WEBDL-1080p",
+            "source": "web",
+            "resolution": 1080
+          },
+          "revision": {
+            "version": 1,
+            "real": 0,
+            "isRepack": false
+          }
+        },
+        "customFormats": [],
+        "customFormatScore": 0,
+        "size": 9759613165,
+        "title": "Example Title 3",
+        "estimatedCompletionTime": "2249-02-24T02:47:30Z",
+        "added": "2249-02-22T06:47:10Z",
+        "status": "completed",
+        "trackedDownloadStatus": "warning",
+        "trackedDownloadState": "importBlocked",
+        "statusMessages": [
+          {
+            "title": "Example Title 3",
+            "messages": ["Example message 1"]
+          }
+        ],
+        "errorMessage": "",
+        "downloadId": "example-download-1",
+        "protocol": "usenet",
+        "downloadClient": "Example Service 1",
+        "downloadClientHasPostImportCategory": false,
+        "indexer": "Example Service 2",
+        "outputPath": "/media/example/example-1/example-4/example-5/example-6",
+        "episodeHasFile": false,
+        "sizeleft": 0,
+        "timeleft": "00:00:00",
+        "id": 728974100
+      },
+      {
+        "seriesId": 113,
+        "episodeId": 11812,
+        "seasonNumber": 1,
+        "series": {
+          "title": "Example Title 1",
+          "sortTitle": "example title 1",
+          "status": "ended",
+          "ended": true,
+          "overview": "A sanitized overview recorded only to fix the payload shape",
+          "network": "Example Network 1",
+          "airTime": "20:00",
+          "images": [
+            {
+              "coverType": "banner",
+              "remoteUrl": "/media/example/artwork-1"
+            },
+            {
+              "coverType": "poster",
+              "remoteUrl": "/media/example/artwork-2"
+            },
+            {
+              "coverType": "fanart",
+              "remoteUrl": "/media/example/artwork-3"
+            }
+          ],
+          "originalLanguage": {
+            "id": 0,
+            "name": "Example Language 1"
+          },
+          "seasons": [
+            {
+              "seasonNumber": 1,
+              "monitored": true
+            }
+          ],
+          "year": 2247,
+          "path": "/media/example/example-1/example-2/example-3",
+          "qualityProfileId": 1,
+          "seasonFolder": false,
+          "monitored": true,
+          "monitorNewItems": "all",
+          "useSceneNumbering": false,
+          "runtime": 30,
+          "tvdbId": 100001,
+          "tvRageId": 0,
+          "tvMazeId": 400001,
+          "tmdbId": 200001,
+          "firstAired": "2248-03-09T00:00:00Z",
+          "lastAired": "2248-04-13T00:00:00Z",
+          "seriesType": "standard",
+          "cleanTitle": "exampletitle1",
+          "titleSlug": "example-title-1",
+          "genres": ["Example Genre 1", "Example Genre 2", "Example Genre 3"],
+          "tags": [],
+          "added": "2249-02-22T06:47:05Z",
+          "ratings": {
+            "votes": 0,
+            "value": 0
+          },
+          "languageProfileId": 1,
+          "id": 113
+        },
+        "episode": {
+          "seriesId": 113,
+          "tvdbId": 100007,
+          "episodeFileId": 0,
+          "seasonNumber": 1,
+          "episodeNumber": 6,
+          "title": "Example Title 8",
+          "airDate": "2248-04-13",
+          "airDateUtc": "2248-04-12T16:30:00Z",
+          "lastSearchTime": "2249-02-22T06:47:08Z",
+          "runtime": 30,
+          "finaleType": "series",
+          "overview": "A sanitized overview recorded only to fix the payload shape",
+          "hasFile": false,
+          "monitored": true,
+          "unverifiedSceneNumbering": false,
+          "id": 11812
+        },
+        "languages": [
+          {
+            "id": 0,
+            "name": "Example Language 1"
+          }
+        ],
+        "quality": {
+          "quality": {
+            "id": 3,
+            "name": "WEBDL-1080p",
+            "source": "web",
+            "resolution": 1080
+          },
+          "revision": {
+            "version": 1,
+            "real": 0,
+            "isRepack": false
+          }
+        },
+        "customFormats": [],
+        "customFormatScore": 0,
+        "size": 9759613165,
+        "title": "Example Title 3",
+        "estimatedCompletionTime": "2249-02-24T02:47:30Z",
+        "added": "2249-02-22T06:47:10Z",
+        "status": "completed",
+        "trackedDownloadStatus": "warning",
+        "trackedDownloadState": "importBlocked",
+        "statusMessages": [
+          {
+            "title": "Example Title 3",
+            "messages": ["Example message 1"]
+          }
+        ],
+        "errorMessage": "",
+        "downloadId": "example-download-1",
+        "protocol": "usenet",
+        "downloadClient": "Example Service 1",
+        "downloadClientHasPostImportCategory": false,
+        "indexer": "Example Service 2",
+        "outputPath": "/media/example/example-1/example-4/example-5/example-6",
+        "episodeHasFile": false,
+        "sizeleft": 0,
+        "timeleft": "00:00:00",
+        "id": 1884042360
+      }
+    ]
+  }
+}

@@ -11,6 +11,7 @@ import {
   authTokenVariable,
   httpHostVariable,
   httpPortVariable,
+  mediaAllowRemoveVariable,
   mediaDefaultVariableNames,
   toolsetVariable,
   transportVariable,
@@ -22,7 +23,7 @@ const projectRoot = fileURLToPath(new URL("../..", import.meta.url));
 /**
  * The configuration variables a spawned server must never inherit: the three
  * instance pairs, the upstream timeout, the transport settings, the toolset
- * selection, and the `media` toolset's defaults.
+ * selection, and the `media` toolset's defaults and removal setting.
  *
  * A developer's own settings would otherwise decide what these tests observe,
  * and — worse — could point a test at a real instance.
@@ -41,6 +42,7 @@ export const configurationVariables: readonly string[] = [
   authTokenVariable,
   toolsetVariable,
   ...mediaDefaultVariableNames,
+  mediaAllowRemoveVariable,
 ];
 
 /** The process environment a host would launch the built server with. */

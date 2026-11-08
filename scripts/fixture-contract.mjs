@@ -1,6 +1,33 @@
 import { readFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import path from "node:path";
+import {
+  capturedBy,
+  classifyValue,
+  coversValue,
+  factOf,
+  identifyingFieldOf,
+  isNeutralFactLeaf,
+  isNeutralIdentifyingValue,
+  legacyStandInsFor,
+  validateShiftedFacts,
+} from "./identifying-content.mjs";
+
+export {
+  capturedBy,
+  classifyValue,
+  contextualFieldProbes,
+  coversValue,
+  createIdentifyingNeutralizer,
+  factFieldKeys,
+  factOf,
+  identifyingFieldKeys,
+  identifyingFieldOf,
+  isNeutralIdentifyingValue,
+  shippedLanguages,
+  structuralAllowlistSize,
+  structuralRules,
+} from "./identifying-content.mjs";
 
 /**
  * The recorded fixture contract: which fixtures exist, what each one must
@@ -75,7 +102,7 @@ const recordedVersions = {
         "config/downloadclient",
         "importlistexclusion/paged",
       ],
-      "4.0.20.3014": ["qualityprofile"],
+      "4.0.20.3014": ["qualityprofile", "queue", "queue/details", "language"],
     },
   },
   radarr: {
@@ -113,7 +140,7 @@ const recordedVersions = {
         "customformat",
         "exclusions/paged",
       ],
-      "6.4.4.10685": ["qualityprofile"],
+      "6.4.4.10685": ["qualityprofile", "queue", "language"],
     },
   },
   prowlarr: {
@@ -527,10 +554,17 @@ function validateApprovedRoute(relativePath, endpoint) {
  * value and replace what they refuse, rather than carrying its own copy of the
  * rules.
  */
-export function validateSanitizedValue(value, location) {
+export function validateSanitizedValue(value, location, legacy = undefined, context = {}) {
   if (Array.isArray(value)) {
+    // A list's items sit where the list does, however deeply lists nest;
+    // only its direct items are covered by the field that named the list.
     value.forEach((item, index) => {
-      validateSanitizedValue(item, `${location}[${index}]`);
+      validateSanitizedValue(
+        item,
+        `${location}[${index}]`,
+        legacy,
+        Array.isArray(item) ? { ...context, classified: false } : context,
+      );
     });
     return;
   }
@@ -550,7 +584,40 @@ export function validateSanitizedValue(value, location) {
       // keys a path or a URL where a payload is a dictionary of them, and a key
       // held only to the name lists above would carry one through untouched.
       screenText(key, `${location}.${key}`);
-      validateSanitizedValue(child, `${location}.${key}`);
+      // A fact's context passes to every descendant, whatever its key.
+      const field =
+        context.fact === undefined ? identifyingFieldOf(key, value, context.key) : undefined;
+      const fact = context.fact ?? factOf(field);
+      const covered = fact === undefined && coversValue(field, child);
+      const at = `${location}.${key}`;
+      validateSanitizedValue(child, at, legacy, {
+        key,
+        parent: value,
+        container: context.key,
+        classified: covered,
+        fact,
+      });
+      if (covered && !isNeutralIdentifyingValue(field, child, legacy)) {
+        throw new Error(`Identifying ${field} is not neutralized at ${at}`);
+      }
+    }
+    return;
+  }
+  if (context.fact !== undefined && typeof value !== "object") {
+    if (typeof value === "string") {
+      screenText(value, location);
+    }
+    // Only a fixture with its own legacy entry is held to the lenient form.
+    if (!isNeutralFactLeaf(context.fact, context.key, value, legacy === undefined, legacy)) {
+      throw new Error(`Identifying ${context.fact} is not neutralized at ${location}`);
+    }
+    return;
+  }
+  if (typeof value === "number" && context.classified !== true) {
+    // A number is structural unless a named field holds it, however deeply.
+    const field = identifyingFieldOf(context.key, context.parent ?? {}, context.container);
+    if (field !== undefined && !isNeutralIdentifyingValue(field, value, legacy)) {
+      throw new Error(`Identifying ${field} is not neutralized at ${location}`);
     }
     return;
   }
@@ -559,6 +626,16 @@ export function validateSanitizedValue(value, location) {
   }
 
   screenText(value, location);
+  // Every string is identifying unless a rule recognizes it as structure,
+  // wherever it sits — under a key, in a list of lists, or at the root — and
+  // it is judged after the screens above, so a credential or a host is
+  // refused as what it is. A string a named field holds was judged with it.
+  if (context.classified !== true) {
+    const field = classifyValue(context.key, context.parent ?? {}, context.container, value);
+    if (field !== undefined && !isNeutralIdentifyingValue(field, value, legacy)) {
+      throw new Error(`Identifying ${field} is not neutralized at ${location}`);
+    }
+  }
 }
 
 /** Refuses one piece of text, whether it arrived as a value or as a key. */
@@ -621,7 +698,27 @@ export function validateFixture(value, options) {
   const sanitizedMetadata = Object.fromEntries(
     Object.entries(metadataRecord).filter(([key]) => key !== "endpoint"),
   );
-  validateSanitizedValue({ metadata: sanitizedMetadata, body }, "fixture");
+  const relativePath = path
+    .relative(path.resolve(options.fixtureRoot), path.resolve(options.filePath))
+    .split(path.sep)
+    .join("/");
+  // Leniency belongs to the evidence recorded before captures neutralized
+  // anything, and to nothing else: only a fixture with its own entry in the
+  // legacy list, validated with that list, may hold legacy values, facts in
+  // their recorded form, or unshifted dates. Every other fixture — a new one
+  // at any version, and every capture, which validates with the list off — is
+  // held to the strict screen and must carry the capture's provenance.
+  const legacy = options.legacy === false ? undefined : legacyStandInsFor(relativePath);
+  validateSanitizedValue({ metadata: sanitizedMetadata, body }, "fixture", legacy);
+  if (legacy === undefined) {
+    // A fixture a capture wrote says so; see `capturedBy`.
+    if (metadataRecord.capturedBy !== capturedBy) {
+      throw new Error(
+        `Fixture recorded at ${version} carries no capture provenance; recapture it rather than copying a body`,
+      );
+    }
+    validateShiftedFacts(body, "fixture.body");
+  }
 
   return { metadata, body };
 }

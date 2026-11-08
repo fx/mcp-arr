@@ -4,6 +4,7 @@ import type { MediaApplication, MediaRef } from "../library/model.js";
 import { mediaRef } from "../library/model.js";
 import {
   type AdapterPage,
+  defaultScanLimit,
   type PageWindow,
   pageNumberFor,
   projectPage,
@@ -42,6 +43,7 @@ import {
   optionalClosedWord,
   parseActivity,
   qualityName,
+  qualityResolution,
   qualitySchema,
   safeLabel,
   safeText,
@@ -290,6 +292,7 @@ export function mapQueueItem(
     media: mediaAssociation(profile, mediaId),
     episode: episodeAssociation(profile, record.episodeId),
     quality: qualityName(record.quality),
+    resolution: qualityResolution(record.quality),
     evidence: {
       status,
       trackedStatus: optionalClosedWord(
@@ -415,6 +418,59 @@ export async function readQueueDetails(
     map: (record) => mapQueueItem(profile, record, request.detail),
   });
   return page.items[0];
+}
+
+/** Every queue row filed under one series or movie, in the order upstream listed them. */
+export interface MediaQueueRows {
+  readonly items: readonly QueueItem[];
+  /**
+   * Set when the scan bound stopped the read before the instance's answer
+   * ended, or when the answer held a row that names no title.
+   */
+  readonly truncated: boolean;
+}
+
+/**
+ * Every queue row of one series or movie.
+ *
+ * The same scoped `queue/details` request {@link readQueueDetails} sends, but
+ * every returned row is mapped rather than only the one a queue item id names,
+ * because a download the applications list once per episode — a season pack —
+ * is several rows, and a caller asking about a title is asking about all of
+ * them. The rows are matched to the media record here as well as by the
+ * request's own scope, so an instance that answered unscoped still yields only
+ * this title's rows. The traversal is bounded by the projection's scan bound,
+ * and a read it cut short says so.
+ */
+export async function readQueueForMedia(
+  client: UpstreamClient,
+  mediaId: number,
+  profile: MediaProfile,
+  detail: DetailLevel,
+): Promise<MediaQueueRows> {
+  const body = await client.get(mediaRoutes.queueDetails, {
+    ...profile.queueInclude,
+    [profile.detailParameter]: mediaId,
+  });
+  const records = parseActivity(
+    z.array(queueRecordSchema),
+    body,
+    profile.application,
+    mediaRoutes.queueDetails,
+  );
+  const page = projectPage({
+    source: records,
+    window: { offset: 0, pageSize: defaultScanLimit },
+    include: (record) => mediaIdOf(profile, record) === mediaId,
+    map: (record) => mapQueueItem(profile, record, detail),
+  });
+  // A row that names no title may be one of this title's — a season pack's
+  // sibling, say — so the read is incomplete rather than merely smaller.
+  const unowned = records.some((record) => mediaIdOf(profile, record) === undefined);
+  return {
+    items: page.items,
+    truncated: unowned || page.hasMore || (page.warnings?.length ?? 0) > 0,
+  };
 }
 
 export type BlocklistUpstream = z.infer<typeof blocklistRecordSchema>;

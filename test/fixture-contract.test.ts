@@ -3,10 +3,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { legacyStandIns } from "../scripts/legacy-stand-ins.mjs";
 import {
   approvedFixtureInventory,
   approvedFixtures,
   approvedFixtureTuples,
+  capturedBy,
   captureTargetFor,
   createFixtureInventory,
   type FixtureTuple,
@@ -15,7 +17,9 @@ import {
   loadFixture,
   minimumFixtureTuples,
   type RecordedApplication,
+  shippedLanguages,
   validateFixture,
+  validateSanitizedValue,
 } from "./support/fixtures.js";
 
 const fixtureRoot = fileURLToPath(new URL("./fixtures", import.meta.url));
@@ -48,6 +52,14 @@ function validFixture(): Record<string, unknown> {
       version: "4.0.19.2979",
     },
   };
+}
+
+/**
+ * Screens text with every rule but the one that free text is identifying, by
+ * listing it as legacy text — so a test of the other screens reaches them.
+ */
+function screenAsListedText(texts: readonly string[]): void {
+  validateSanitizedValue({ nested: texts }, "fixture", { text: texts });
 }
 
 function validate(value: unknown, relativePath = approvedFixtureInventory[0] ?? "") {
@@ -96,6 +108,9 @@ describe("versioned fixture contract", () => {
       "sonarr/v3/4.0.19.2979/config-downloadclient.json",
       "sonarr/v3/4.0.19.2979/importlistexclusion-paged.json",
       "sonarr/v3/4.0.20.3014/qualityprofile.json",
+      "sonarr/v3/4.0.20.3014/queue.json",
+      "sonarr/v3/4.0.20.3014/queue-details.json",
+      "sonarr/v3/4.0.20.3014/language.json",
       "radarr/v3/6.3.0.10514/system-status.json",
       "radarr/v3/6.3.0.10514/movie.json",
       "radarr/v3/6.3.0.10514/movie-lookup.json",
@@ -126,6 +141,8 @@ describe("versioned fixture contract", () => {
       "radarr/v3/6.3.0.10514/customformat.json",
       "radarr/v3/6.3.0.10514/exclusions-paged.json",
       "radarr/v3/6.4.4.10685/qualityprofile.json",
+      "radarr/v3/6.4.4.10685/queue.json",
+      "radarr/v3/6.4.4.10685/language.json",
       "prowlarr/v1/2.5.2.5491/system-status.json",
       "prowlarr/v1/2.5.2.5491/indexer.json",
       "prowlarr/v1/2.5.2.5491/indexerstatus.json",
@@ -199,10 +216,10 @@ describe("versioned fixture contract", () => {
   it("accepts object or array response bodies and keeps status checks object-specific", () => {
     const collectionFixture = validFixture();
     (collectionFixture.metadata as Record<string, unknown>).endpoint = "/api/v3/series";
-    collectionFixture.body = [{ title: "Sanitized fixture" }];
+    collectionFixture.body = [{ title: "Example Series" }];
 
     expect(validate(collectionFixture, "sonarr/v3/4.0.19.2979/series.json").body).toEqual([
-      { title: "Sanitized fixture" },
+      { title: "Example Series" },
     ]);
 
     const statusFixture = validFixture();
@@ -308,13 +325,13 @@ describe("versioned fixture contract", () => {
   });
 
   it("allows a media file name but still rejects a hostname wearing one", () => {
-    const fixture = validFixture();
-    (fixture.body as Record<string, unknown>).nested = [
-      "Season 01/Example Series - S01E01 - Example Pilot Bluray-1080p.mkv",
-      "/media/example/movies/Example Movie (2021) Bluray-1080p.mkv",
-      "Example Subtitle Track.srt",
-    ];
-    expect(() => validate(fixture)).not.toThrow();
+    expect(() =>
+      screenAsListedText([
+        "Season 01/Example Series - S01E01 - Example Pilot Bluray-1080p.mkv",
+        "/media/example/movies/Example Movie (2021) Bluray-1080p.mkv",
+        "Example Subtitle Track.srt",
+      ]),
+    ).not.toThrow();
 
     for (const disguised of [
       ["fixture", "example", "invalid", "mkv"].join("."),
@@ -329,7 +346,7 @@ describe("versioned fixture contract", () => {
   it("allows schema path fields when their values are neutral", () => {
     const fixture = validFixture();
     (fixture.body as Record<string, unknown>).path = "/media/example";
-    (fixture.body as Record<string, unknown>).rootFolderPath = "/media/example/library";
+    (fixture.body as Record<string, unknown>).rootFolderPath = "/media/example/example-1";
 
     expect(() => validate(fixture)).not.toThrow();
   });
@@ -373,16 +390,347 @@ describe("versioned fixture contract", () => {
     }
   });
 
+  it("refuses what identifies a library or its services, and accepts only the stand-ins", () => {
+    // For each field, a real-looking value and one that merely mentions an
+    // example: neither is a stand-in, and both are refused.
+    const identifying: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+      ["title", { title: "Love Begins in Another World" }],
+      ["title", { title: "An Example of a Real Title" }],
+      ["title", { originalTitle: "Another World" }],
+      ["title", { sourceTitle: "Another World S01E01 1080p" }],
+      ["title", { sceneName: "Another World S01E01" }],
+      ["titles", { movieTitles: ["Example Title 1", "Another World"] }],
+      ["sortTitle", { sortTitle: "example title of the world" }],
+      ["cleanTitle", { cleanTitle: "lovebeginsinanotherworld" }],
+      ["titleSlug", { titleSlug: "example-love-begins" }],
+      ["overview", { overview: "A sanitized overview, but really: two strangers meet." }],
+      ["network", { network: "Example Real Broadcaster" }],
+      ["studio", { studio: "A Real Studio" }],
+      ["service", { indexer: "Treasure Maps (Prowlarr)" }],
+      ["service", { indexer: "Example of My Indexer" }],
+      ["service", { downloadClient: "SABnzbd" }],
+      ["service", { implementation: "Newznab", name: "My Private Tracker" }],
+      ["service", { appProfileId: 1, name: "Example Tracker I Use" }],
+      ["downloadId", { downloadId: "SABnzbd_nzo_8f2k1q" }],
+      ["downloadId", { downloadId: "example-download-of-mine" }],
+      ["downloadId", { torrentInfoHash: "0123456789abcdef0123456789abcdef01234567" }],
+      ["externalId:tvdbId", { tvdbId: 469_794 }],
+      ["externalId:tvdbId", { tvdbId: 200_001 }],
+      ["externalId:tmdbId", { tmdbId: 11 }],
+      ["externalId:tvMazeId", { tvMazeId: 65_001 }],
+      ["externalId:tvRageId", { tvRageId: "12345" }],
+      ["imdbId", { imdbId: "tt1234567" }],
+      ["trailer", { youTubeTrailerId: "dQw4w9WgXcQ" }],
+      ["genres", { genres: ["Drama", "Isekai Romance"] }],
+      ["certification", { certification: "Kids 7+" }],
+      ["tagLabel", { label: "private-tracker" }],
+      ["tagLabel", { label: "example-of-mine" }],
+      ["diskLabel", { path: "/media/example", label: "My Big Disk", freeSpace: 1 }],
+      ["artwork", { coverType: "poster", url: "poster" }],
+      ["artwork", { coverType: "poster", url: "/media/example/poster" }],
+      ["path", { relativePath: "Season 01/Another World - S01E01.mkv" }],
+      ["path", { path: "/media/example/series/Another World" }],
+      ["path", { folderName: "Another World", name: "x" }],
+      ["path", { folderName: "example-1", name: "Another World - S01E01" }],
+      ["query", { query: "another world" }],
+      ["guid", { guid: "example-indexer-a-1001" }],
+      ["definition", { definitionName: "torrentleech" }],
+      ["indexerUrls", { indexerUrls: ["example-tracker"] }],
+      ["releaseGroup", { releaseGroup: "EXAMPLEGRP" }],
+      ["releaseGroups", { releaseGroups: ["SubsPlease"] }],
+      ["message", { message: "Indexers unavailable due to failures: Treasure Maps" }],
+      ["message", { errorMessage: "Example client reported failure" }],
+      ["messages", { messages: ["Not an upgrade for existing movie file"] }],
+      ["message", { rejections: [{ reason: "Example of a reason", type: "permanent" }] }],
+      ["mediaRunTime", { runTime: "45:12" }],
+      ["mediaLanguages", { audioLanguages: "eng/jpn" }],
+      ["mediaLanguages", { subtitles: "eng" }],
+      ["formatName", { customFormats: [{ id: 1, name: "DV Boost" }] }],
+      ["formatName", { format: 1, name: "Remux", score: 10 }],
+      ["formatName", { implementation: "ReleaseTitleSpecification", negate: false, name: "x" }],
+      ["profileName", { items: [], cutoff: 1, name: "Max Ultra HD" }],
+      ["profileName", { enableRss: true, name: "Example of My Profile" }],
+      // A quality group's label inside a profile is the operator's.
+      ["profileGroup", { allowed: true, items: [], name: "My Private Collection" }],
+      // Text no rule recognizes is identifying: a failure reason in history,
+      // a profile's language, a field nobody has classified, and free text
+      // under a key whose rule accepts only an enumeration word.
+      ["text", { data: { reason: "The download of Another World failed" } }],
+      ["language", { language: { id: 1, name: "English" } }],
+      ["text", { someFieldNoOneHasSeen: "Another World" }],
+      ["text", { status: "Another World is downloading" }],
+      ["text", { indexerFlags: ["freeleech", "Another World only"] }],
+      // Text is judged wherever it sits, lists of lists included.
+      ["text", { newList: [["My Private Movie"]] }],
+      ["text", { records: [{ notes: [[{ note: "My Private Movie" }]] }] }],
+      // Only a whole date or a whole duration is one.
+      ["text", { added: "2101-01-01T12:00 My Private Movie" }],
+      ["text", { timeleft: "00:25:00 for My Private Movie" }],
+      // A recognized value, not merely a recognized shape.
+      ["text", { id: 1, name: "My Private Language", nameLower: "my private language" }],
+      ["text", { id: 1, name: "English", nameLower: "my private language" }],
+      ["text", { mediaInfo: { videoCodec: "My Private Film" } }],
+      ["text", { status: "treasuremaps" }],
+      ["text", { source: "MyPrivateTracker" }],
+      ["text", { implementation: "My Private Film" }],
+      ["text", { configContract: "TreasureMaps" }],
+      ["text", { appName: "Treasuremaps" }],
+      ["text", { name: "my private film", commandName: "my private film" }],
+      ["text", { fields: [{ helpText: "My Private Movie" }] }],
+    ];
+    for (const [field, nested] of identifying) {
+      const fixture = validFixture();
+      (fixture.body as Record<string, unknown>).nested = [{ inner: nested }];
+      expect(() => validate(fixture), JSON.stringify(nested)).toThrow(
+        `Identifying ${field} is not neutralized at fixture.body.nested[0].inner`,
+      );
+    }
+
+    // The exact forms a capture writes, the shared vocabularies, and the values
+    // that say a field is unset all pass.
+    const fixture = validFixture();
+    (fixture.body as Record<string, unknown>).nested = [
+      {
+        title: "Example Title 1",
+        movieTitles: ["Example Title 2"],
+        sortTitle: "example title 1",
+        cleanTitle: "exampletitle1",
+        titleSlug: "example-title-1",
+        overview: "A sanitized overview recorded only to fix the payload shape",
+        network: "Example Network 1",
+        studio: "Example Studio 1",
+        indexer: "Example Service 1",
+        downloadClient: "Example Service 2",
+        downloadId: "example-download-1",
+        torrentInfoHash: "example-download-1",
+        tvdbId: 100_001,
+        tmdbId: 200_001,
+        tvMazeId: 0,
+        tvRageId: null,
+        imdbId: "tt0000001",
+        youTubeTrailerId: "",
+        genres: ["Example Genre 1", "Drama", "Science Fiction"],
+        certification: "PG-13",
+        ratings: { votes: 300, value: 7.5 },
+        images: [{ coverType: "poster", url: "/media/example/artwork-1", remoteUrl: "" }],
+        path: "/media/example/example-1/example-2",
+        relativePath: "example-3/example-4.mkv",
+        query: "example query 1",
+        guid: "example-guid-1",
+        definitionName: "example-definition-1",
+        indexerUrls: ["example-indexer-url-1"],
+        releaseGroup: "EXAMPLEGRP1",
+        message: "Example message 1",
+        messages: ["Example message 2"],
+        rejections: [{ reason: "Example message 3", type: "permanent" }],
+        mediaInfo: { runTime: "30:00", audioLanguages: "und", subtitles: "" },
+        customFormats: [{ id: 1, name: "Example Format 1" }],
+      },
+      { id: 7, label: "example-tag-1" },
+      { path: "/media/example", label: "Example Disk 1", freeSpace: 1 },
+      { items: [], cutoff: 1, name: "HD-1080p" },
+      { implementation: "Newznab", name: "Example Service 3" },
+      { folderName: "example-5", name: "example-6" },
+      // Structural: a quality's own title, a provider field's label and name,
+      // a language's and a command's names.
+      { quality: { id: 7, name: "Bluray-1080p" }, title: "Bluray-1080p" },
+      { fields: [{ name: "apiPath", label: "API Path", value: "" }] },
+      { id: 1, name: "English", nameLower: "english" },
+      { name: "RefreshSeries", commandName: "Refresh Series" },
+    ];
+    expect(() => validate(fixture)).not.toThrow();
+
+    // A legacy value is accepted only in the file it is listed against.
+    const legacy = validFixture();
+    (legacy.metadata as Record<string, unknown>).endpoint = "/api/v3/indexer";
+    legacy.body = [{ implementation: "Newznab", name: "Example Usenet Indexer" }];
+    expect(() => validate(legacy, fixturePathFor("sonarr", "indexer"))).not.toThrow();
+    (legacy.metadata as Record<string, unknown>).endpoint = "/api/v3/tag";
+    expect(() => validate(legacy, fixturePathFor("sonarr", "tag"))).toThrow(
+      "Identifying service is not neutralized",
+    );
+  });
+
+  it("refuses text at the root of a body", () => {
+    const fixture = validFixture();
+    (fixture.metadata as Record<string, unknown>).endpoint = "/api/v3/tag";
+    fixture.body = ["My Private Movie"];
+    expect(() => validate(fixture, fixturePathFor("sonarr", "tag"))).toThrow(
+      "Identifying text is not neutralized at fixture.body[0]",
+    );
+    fixture.body = [["My Private Movie"]];
+    expect(() => validate(fixture, fixturePathFor("sonarr", "tag"))).toThrow(
+      "Identifying text is not neutralized at fixture.body[0][0]",
+    );
+  });
+
+  it("is lenient only to a listed minimum fixture validated with its legacy list", () => {
+    const codexExample = {
+      ratings: { imdb: { votes: "8123", value: "8.9" } },
+      language: { id: 7 },
+      runtime: { value: 123 },
+    };
+    const atMinimum = (marked: boolean) => ({
+      metadata: {
+        application: "sonarr",
+        apiVersion: "v3",
+        version: "4.0.19.2979",
+        endpoint: "/api/v3/qualityprofile",
+        ...(marked ? { capturedBy } : {}),
+      },
+      body: [codexExample],
+    });
+    const file = path.join(fixtureRoot, fixturePathFor("sonarr", "qualityprofile"));
+
+    // Pre-existing evidence, read with its legacy list: its facts are as recorded.
+    expect(() => validateFixture(atMinimum(false), { fixtureRoot, filePath: file })).not.toThrow();
+    // Anything else at the minimum — a capture's own check included — is strict.
+    expect(() =>
+      validateFixture(atMinimum(false), { fixtureRoot, filePath: file, legacy: false }),
+    ).toThrow(/is not neutralized|carries no capture provenance/u);
+    expect(() =>
+      validateFixture(
+        { ...atMinimum(false), body: [] },
+        { fixtureRoot, filePath: file, legacy: false },
+      ),
+    ).toThrow("carries no capture provenance");
+    expect(() =>
+      validateFixture(atMinimum(true), { fixtureRoot, filePath: file, legacy: false }),
+    ).toThrow(/Identifying (?:ratings|language|runtime) is not neutralized/u);
+  });
+
+  it("lists exactly the minimum fixtures recorded before captures neutralized anything", () => {
+    // A minimum fixture added later has no entry, and is held to the strict
+    // screen with provenance like any capture; listing one is a decision.
+    const minimum = approvedFixtures
+      .filter((fixture) =>
+        minimumFixtureTuples.some(
+          (tuple) => tuple.application === fixture.application && tuple.version === fixture.version,
+        ),
+      )
+      .map((fixture) => fixture.relativePath)
+      .sort();
+    expect(Object.keys(legacyStandIns).sort()).toEqual(minimum);
+  });
+
+  it("recognizes exactly the languages the applications' own language routes list", async () => {
+    const recorded = new Set<string>();
+    for (const [application, version] of [
+      ["sonarr", "4.0.20.3014"],
+      ["radarr", "6.4.4.10685"],
+    ] as const) {
+      const relativePath =
+        application === "sonarr"
+          ? fixturePathFor("sonarr", "language", { version: "4.0.20.3014" })
+          : fixturePathFor("radarr", "language", { version: "6.4.4.10685" });
+      const { body } = await loadFixture<{ name: string }[]>(fixtureRoot, relativePath);
+      expect(body.length, `${application} ${version}`).toBeGreaterThan(40);
+      for (const language of body) {
+        recorded.add(language.name);
+      }
+    }
+    expect([...shippedLanguages].sort()).toEqual([...recorded].sort());
+  });
+
+  it("holds a newer version's fixture to shifted dates, years, and example languages", () => {
+    // Any route approved at the newer version will do; the screen reads the body.
+    const fixtureAt = (version: string, row: Record<string, unknown>) => ({
+      metadata: {
+        application: "sonarr",
+        apiVersion: "v3",
+        version,
+        endpoint: "/api/v3/qualityprofile",
+        capturedBy,
+      },
+      body: [row],
+    });
+    // A newer fixture says a capture wrote it; a minimum's predates the mark.
+    const { capturedBy: _mark, ...unmarked } = fixtureAt("4.0.20.3014", {}).metadata;
+    expect(() =>
+      validate(
+        { metadata: unmarked, body: [] },
+        fixturePathFor("sonarr", "qualityprofile", { version: "4.0.20.3014" }),
+      ),
+    ).toThrow("carries no capture provenance");
+    expect(() =>
+      validate(
+        { metadata: { ...unmarked, version: "4.0.19.2979" }, body: [] },
+        fixturePathFor("sonarr", "qualityprofile"),
+      ),
+    ).not.toThrow();
+    const shifted = {
+      ratings: { votes: 0, value: 0 },
+      popularity: 0,
+      added: "2251-06-09T06:47:10Z",
+      episode: { airDate: "2251-06-10" },
+      series: { year: 2251, originalLanguage: { id: 0, name: "Example Language 1" } },
+      languages: [{ id: 0, name: "Example Language 1" }],
+    };
+    expect(() =>
+      validate(
+        fixtureAt("4.0.20.3014", shifted),
+        fixturePathFor("sonarr", "qualityprofile", { version: "4.0.20.3014" }),
+      ),
+    ).not.toThrow();
+
+    const unshifted: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+      ["Date is not shifted", { ...shifted, added: "2026-11-06T06:47:10Z" }],
+      ["Date is not shifted", { ...shifted, episode: { airDate: "2025-11-21" } }],
+      ["Identifying year is not neutralized", { ...shifted, series: { year: 2025 } }],
+      [
+        "Identifying ratings is not neutralized",
+        { ...shifted, ratings: { votes: 8_123, value: 8.9 } },
+      ],
+      ["Identifying popularity is not neutralized", { ...shifted, popularity: 12.5 }],
+      ["Identifying runtime is not neutralized", { ...shifted, runtime: 24 }],
+      ["Identifying airTime is not neutralized", { ...shifted, airTime: "21:30" }],
+      ["Identifying year is not neutralized", { ...shifted, year: "1984" }],
+      ["Identifying runtime is not neutralized", { ...shifted, runtime: "24" }],
+      ["Identifying runtime is not neutralized", { ...shifted, runtime: [24] }],
+    ];
+    for (const [refusal, row] of unshifted) {
+      expect(
+        () =>
+          validate(
+            fixtureAt("4.0.20.3014", row),
+            fixturePathFor("sonarr", "qualityprofile", { version: "4.0.20.3014" }),
+          ),
+        JSON.stringify(row),
+      ).toThrow(refusal);
+      // The minimum's fixtures were recorded before dates were shifted, and
+      // their tests are written against the dates they hold.
+      expect(() =>
+        validate(fixtureAt("4.0.19.2979", row), fixturePathFor("sonarr", "qualityprofile")),
+      ).not.toThrow();
+    }
+
+    // Every leaf under a language is the language, and a language that is not
+    // an example is refused at every version unless the one fixture it was
+    // recorded in lists it.
+    for (const row of [
+      { ...shifted, languages: [{ id: 8, name: "Japanese" }] },
+      { ...shifted, series: { originalLanguage: { id: 8, name: "Japanese" } } },
+    ]) {
+      for (const [version, file] of [
+        ["4.0.20.3014", fixturePathFor("sonarr", "qualityprofile", { version: "4.0.20.3014" })],
+        ["4.0.19.2979", fixturePathFor("sonarr", "qualityprofile")],
+      ] as const) {
+        expect(() => validate(fixtureAt(version, row), file), version).toThrow(
+          /Identifying languages? is not neutralized/u,
+        );
+      }
+    }
+  });
+
   it("keeps a relative path a name rather than a path", () => {
     // The boundary the path screens anchor on never includes a character a path
     // segment can end in, so an ordinary relative file name still passes.
-    const fixture = validFixture();
-    (fixture.body as Record<string, unknown>).nested = [
+    const texts = [
       "Season 01/Example Series - S01E01 - Example Pilot Bluray-1080p.mkv",
       "Example Movie (2021)/Example Movie (2021) Bluray-1080p.mkv",
     ];
 
-    expect(() => validate(fixture)).not.toThrow();
+    expect(() => screenAsListedText(texts)).not.toThrow();
   });
 });
 
@@ -402,7 +750,7 @@ describe("fixtures recorded at more than one version", () => {
 
     expect(inventory.inventory).toEqual([
       "sonarr/v3/4.0.19.2979/system-status.json",
-      "sonarr/v3/4.0.19.2979/tag.json",
+      fixturePathFor("sonarr", "tag"),
       "sonarr/v3/4.0.20.3014/tag.json",
       "sonarr/v3/4.0.20.3014/series-lookup.json",
       "radarr/v3/6.3.0.10514/tag.json",
@@ -426,9 +774,9 @@ describe("fixtures recorded at more than one version", () => {
     // A route recorded at both versions still resolves to the minimum's by
     // default, so recording a newer body never changes what an existing test
     // reads.
-    expect(inventory.pathFor("sonarr", "tag")).toBe("sonarr/v3/4.0.19.2979/tag.json");
+    expect(inventory.pathFor("sonarr", "tag")).toBe(fixturePathFor("sonarr", "tag"));
     expect(inventory.pathFor("sonarr", "tag", { version: "4.0.19.2979" })).toBe(
-      "sonarr/v3/4.0.19.2979/tag.json",
+      fixturePathFor("sonarr", "tag"),
     );
     expect(inventory.pathFor("sonarr", "tag", { version: "4.0.20.3014" })).toBe(
       "sonarr/v3/4.0.20.3014/tag.json",
@@ -458,7 +806,7 @@ describe("fixtures recorded at more than one version", () => {
     });
     expect(inventory.forReportedVersion("sonarr", "tag", "4.0.19.2979")).toEqual({
       kind: "approved",
-      fixture: expect.objectContaining({ relativePath: "sonarr/v3/4.0.19.2979/tag.json" }),
+      fixture: expect.objectContaining({ relativePath: fixturePathFor("sonarr", "tag") }),
     });
     expect(inventory.forReportedVersion("sonarr", "system/status", "4.0.20.3014")).toEqual({
       kind: "route-not-recorded-at-version",

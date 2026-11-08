@@ -4,7 +4,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ToolsetSelection } from "../src/config/environment.js";
 import { createServer } from "../src/server.js";
-import { mediaToolNames, toolNames } from "../src/tools/names.js";
+import { publishedMediaToolNames, toolNames } from "../src/tools/names.js";
 import { createMediaInstances } from "./support/media.js";
 import { arrToolset, createTestToolContext } from "./support/tool-context.js";
 
@@ -72,8 +72,11 @@ describe("createServer", () => {
     };
 
     expect(await listed(["arr"])).toEqual([...toolNames]);
-    expect(await listed(["media"])).toEqual([...mediaToolNames]);
-    expect(await listed(["arr", "media"])).toEqual([...toolNames, ...mediaToolNames]);
+    expect(await listed(["media"])).toEqual([...publishedMediaToolNames(false)]);
+    expect(await listed(["arr", "media"])).toEqual([
+      ...toolNames,
+      ...publishedMediaToolNames(false),
+    ]);
   });
 
   it("returns media results a client accepts against the published output schemas", async () => {

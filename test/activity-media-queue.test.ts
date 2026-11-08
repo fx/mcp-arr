@@ -1,0 +1,203 @@
+import { describe, expect, it } from "vitest";
+import {
+  radarrProfile,
+  readQueue,
+  readQueueForMedia,
+  sonarrProfile,
+} from "../src/adapters/activity/media.js";
+import { defaultScanLimit } from "../src/adapters/library/paging.js";
+import { classifyDownload, type Download, groupDownloads } from "../src/tools/media/downloads.js";
+import { activityFixture } from "./support/activity.js";
+import { fixturePathFor, loadFixture } from "./support/fixtures.js";
+import { jsonResponse, libraryHarness } from "./support/library.js";
+import { fixtureRoot } from "./support/tool-context.js";
+
+/**
+ * Every queue row of one series or movie, read through the scoped
+ * `queue/details` request. The recorded fixtures hold one series with two rows
+ * and one movie with one each; a season pack and a row with no download
+ * identity have no recording of their own, so they are built inline over a
+ * recorded row.
+ */
+
+type QueueRow = Record<string, unknown>;
+
+async function recorded(application: "sonarr" | "radarr"): Promise<QueueRow[]> {
+  return activityFixture<QueueRow[]>(application, "queue/details");
+}
+
+describe("readQueueForMedia", () => {
+  it("asks for one series' rows and maps every one of them, in upstream order", async () => {
+    const rows = await recorded("sonarr");
+    const { client, calls } = libraryHarness("sonarr", () => jsonResponse(rows));
+
+    const read = await readQueueForMedia(client, 12, sonarrProfile, "summary");
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url.pathname).toMatch(/\/api\/v3\/queue\/details$/u);
+    expect(Object.fromEntries(calls[0]?.url.searchParams ?? [])).toEqual({
+      includeUnknownSeriesItems: "true",
+      includeSeries: "true",
+      includeEpisode: "true",
+      seriesId: "12",
+    });
+    // Row 503 belongs to series 13 and is left out even though the answer
+    // carried it.
+    expect(read.items.map((item) => item.context.queueItemId)).toEqual([502, 501]);
+    expect(read.items.map((item) => item.resolution)).toEqual([1080, 1080]);
+    expect(read.items[0]?.evidence.trackedState).toBe("import_blocked");
+    expect(read.items[0]?.origin?.downloadIdentity).toMatch(/^[0-9a-f]{16}$/u);
+    expect(read.truncated).toBe(false);
+  });
+
+  it("asks for one movie's rows and maps them", async () => {
+    const rows = await recorded("radarr");
+    const { client, calls } = libraryHarness("radarr", () => jsonResponse(rows));
+
+    const read = await readQueueForMedia(client, 9, radarrProfile, "summary");
+
+    expect(calls[0]?.url.searchParams.get("movieId")).toBe("9");
+    expect(read.items.map((item) => item.context.queueItemId)).toEqual([602]);
+    expect(read.items[0]?.resolution).toBe(2160);
+    expect(read.items[0]?.evidence).toMatchObject({
+      trackedState: "import_pending",
+      trackedStatus: "warning",
+    });
+  });
+
+  it("maps every row of a season pack, each carrying the same download identity", async () => {
+    const [blocked] = await recorded("sonarr");
+    const pack = [1003, 1004, 1005].map((episodeId, index) => ({
+      ...blocked,
+      id: 700 + index,
+      episodeId,
+    }));
+    const { client } = libraryHarness("sonarr", () => jsonResponse(pack));
+
+    const read = await readQueueForMedia(client, 12, sonarrProfile, "summary");
+
+    expect(read.items.map((item) => item.episode?.id)).toEqual(["1003", "1004", "1005"]);
+    expect(new Set(read.items.map((item) => item.origin?.downloadIdentity)).size).toBe(1);
+  });
+
+  it("maps a row with no download identity without inventing one", async () => {
+    const [blocked] = await recorded("sonarr");
+    const { downloadId: _dropped, ...unidentified } = blocked as QueueRow;
+    const { client } = libraryHarness("sonarr", () => jsonResponse([unidentified]));
+
+    const read = await readQueueForMedia(client, 12, sonarrProfile, "summary");
+
+    expect(read.items).toHaveLength(1);
+    expect(read.items[0]?.origin?.downloadIdentity).toBeUndefined();
+  });
+
+  it("reports the read incomplete when a row names no title, rather than dropping it", async () => {
+    // A row that does not say whose it is may be one of this title's, a
+    // season pack's sibling say; leaving it out silently would make a
+    // download look smaller than it is.
+    const rows = await recorded("sonarr");
+    const { seriesId: _dropped, ...parentless } = rows[0] as QueueRow;
+    const { client } = libraryHarness("sonarr", () => jsonResponse([...rows, parentless]));
+
+    const read = await readQueueForMedia(client, 12, sonarrProfile, "summary");
+
+    expect(read.items.map((item) => item.context.queueItemId)).toEqual([502, 501]);
+    expect(read.truncated).toBe(true);
+  });
+
+  it("matches rows to the title locally when the scope is not honoured", async () => {
+    const rows = await recorded("sonarr");
+    const { client } = libraryHarness("sonarr", () => jsonResponse(rows));
+
+    const read = await readQueueForMedia(client, 13, sonarrProfile, "summary");
+
+    expect(read.items.map((item) => item.context.queueItemId)).toEqual([503]);
+  });
+
+  it("says when the scan bound stopped the read", async () => {
+    const [blocked] = await recorded("sonarr");
+    const many = Array.from({ length: defaultScanLimit + 1 }, (_, index) => ({
+      ...blocked,
+      id: 10_000 + index,
+    }));
+    const { client } = libraryHarness("sonarr", () => jsonResponse(many));
+
+    const read = await readQueueForMedia(client, 12, sonarrProfile, "summary");
+
+    expect(read.items).toHaveLength(defaultScanLimit);
+    expect(read.truncated).toBe(true);
+  });
+
+  it("fails as an unexpected response on an answer that is not a list of rows", async () => {
+    const { client } = libraryHarness("sonarr", () => jsonResponse({ records: [] }));
+
+    await expect(readQueueForMedia(client, 12, sonarrProfile, "summary")).rejects.toMatchObject({
+      kind: "unexpected-response",
+    });
+  });
+});
+
+/**
+ * The queue as the newer recorded versions answer it. Recorded at Sonarr
+ * 4.0.20.3014, one series has a season pack in the queue: six episode rows of
+ * one download, finished, whose import is blocked. Recorded at Radarr
+ * 6.4.4.10685, the queue is empty.
+ */
+describe("the queue at the newer recorded versions", () => {
+  async function newer<TBody>(relativePath: string): Promise<TBody> {
+    return (await loadFixture<TBody>(fixtureRoot, relativePath)).body;
+  }
+
+  it("reads a season pack's rows as one download, stuck on a blocked import", async () => {
+    const rows = await newer<QueueRow[]>(
+      fixturePathFor("sonarr", "queue/details", { version: "4.0.20.3014" }),
+    );
+    const seriesId = rows[0]?.seriesId as number;
+    const { client } = libraryHarness("sonarr", () => jsonResponse(rows));
+
+    const read = await readQueueForMedia(client, seriesId, sonarrProfile, "summary");
+    const downloads = groupDownloads(read.items);
+
+    expect(read.items).toHaveLength(6);
+    expect(read.truncated).toBe(false);
+    expect(new Set(read.items.map((item) => item.episode?.id)).size).toBe(6);
+    expect(downloads).toHaveLength(1);
+    expect(downloads[0]?.rows).toHaveLength(6);
+    expect(read.items.every((item) => item.evidence.trackedState === "import_blocked")).toBe(true);
+    // Provisional: an import is confirmed only by the scan and the library.
+    expect(classifyDownload(downloads[0] as Download, undefined)).toEqual({
+      state: "stuck",
+      remedy: "import",
+      provisional: true,
+    });
+  });
+
+  it("pages the same rows out of the whole queue, and an empty queue as empty", async () => {
+    const page = await newer<{ records: QueueRow[] }>(
+      fixturePathFor("sonarr", "queue", { version: "4.0.20.3014" }),
+    );
+    const sonarr = libraryHarness("sonarr", () => jsonResponse(page));
+    const read = await readQueue(
+      sonarr.client,
+      { offset: 0, pageSize: 100 },
+      { view: "queue", detail: "summary", paging: { pageSize: 100 } },
+      sonarrProfile,
+    );
+    expect(read.items).toHaveLength(6);
+    expect(read.hasMore).toBe(false);
+    expect(groupDownloads(read.items)).toHaveLength(1);
+
+    const empty = await newer<unknown>(
+      fixturePathFor("radarr", "queue", { version: "6.4.4.10685" }),
+    );
+    const radarr = libraryHarness("radarr", () => jsonResponse(empty));
+    const none = await readQueue(
+      radarr.client,
+      { offset: 0, pageSize: 100 },
+      { view: "queue", detail: "summary", paging: { pageSize: 100 } },
+      radarrProfile,
+    );
+    expect(none.items).toEqual([]);
+    expect(none.hasMore).toBe(false);
+  });
+});

@@ -4,7 +4,7 @@
 
 This specification defines the `media` toolset: the smallest set of tools that manages a media library across the supported applications, talking about movies, TV series, and downloads rather than about Sonarr, Radarr, and Prowlarr. Inputs and results carry only what a caller needs for its next step. A caller finds a title, adds it, asks how it is going, and asks for a stuck download to be fixed. The server decides which application handles the request, which quality profile and root folder to use, and which upstream steps to run. Which toolset a process publishes, and the conventions every published tool shares, are owned by [Tool Contracts](../tool-contracts/).
 
-**Status:** partially implemented. [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) implemented `media_find` and `media_add` with the identity, footprint, and default rules they need, published when `ARR_MCP_TOOLSET` selects `media`; until the rest lands the toolset publishes only those two, so it offers no tool that refuses unconditionally. `media_status`, `media_fix`, `media_search_again`, and `media_remove` are pending in [0032-media-toolset-activity](../../changes/0032-media-toolset-activity.md); [0033-media-default-toolset](../../changes/0033-media-default-toolset.md) makes this the default toolset.
+**Status:** implemented. [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) implemented `media_find` and `media_add` with the identity, footprint, and default rules they need, published when `ARR_MCP_TOOLSET` selects `media`. [0032-media-toolset-activity](../../changes/0032-media-toolset-activity.md) implemented `media_status`, `media_fix`, `media_search_again`, and `media_remove`, which is published only where `ARR_MCP_MEDIA_ALLOW_REMOVE` is `true`, so the toolset offers no tool that refuses unconditionally. All six tools are implemented; `arr` stays the default toolset until [0033-media-default-toolset](../../changes/0033-media-default-toolset.md) makes this one the default.
 
 ## Background
 
@@ -191,7 +191,7 @@ A caller asks for a resolution, never for a quality profile. The server turns on
 - A `downloading` download MUST also carry its progress as a whole percentage, and a `stuck` download MUST also carry a one-sentence reason and the remedy `media_fix` would apply to it if state did not change: `replace`, `import`, or `none`.
 - A download for which this process has started an import that has not yet finished MUST be reported `importing`.
 - The overview MUST carry the kinds this deployment serves, its downloads, the titles imported in the last 7 days with their dates, and the titles or episodes due in the next 14 days with their dates.
-- A title's status MUST carry `in_library`; for a title in the library it MUST also carry whether it is monitored, the resolution its profile targets when it has one, the distinct resolutions of the files the library holds for it, how many of its released movies or episodes the library has and lacks, its downloads, and its next due date when one is known.
+- A title's status MUST carry `in_library`; for a title in the library it MUST also carry whether it is monitored, the resolution its profile targets when it has one, the distinct resolutions of the files the library holds for it, how many of its movies or episodes the library has, how many of its monitored, released ones it lacks, its downloads, and its next due date when one is known. An episode is monitored only when it and its series both are; a movie or episode the library does not monitor is never counted as lacking, however long it has been released.
 - Every list in a status result MUST hold at most 10 entries, and a list cut short MUST carry the total it was cut from.
 - `media_status` MUST NOT change any upstream state.
 
@@ -200,6 +200,12 @@ A caller asks for a resolution, never for a quality profile. The server turns on
 - **GIVEN** one download is progressing and another failed in the download client
 - **WHEN** a caller asks for the overview
 - **THEN** the first is reported `downloading` with its percentage, and the second is reported `stuck` with its reason and the remedy `replace`
+
+#### Scenario: An unmonitored season is not missing
+
+- **GIVEN** a series in the library monitors only season 1, and seasons 1 and 2 each have released episodes with no file
+- **WHEN** a caller asks for its status
+- **THEN** the count of what it lacks covers season 1's episodes only
 
 #### Scenario: Status of a title not in the library
 
@@ -215,7 +221,8 @@ A caller asks for a resolution, never for a quality profile. The server turns on
 - A `stuck` download whose remedy is `import` MUST have its import started, and that remedy MUST apply only when every file the download holds is importable without any correction and the library's own records show no file for any movie or episode those files map to.
 - Where the library's records cannot establish that a mapped movie or episode has no file, the remedy MUST be `none`.
 - A `stuck` download whose remedy is `none` MUST be left untouched.
-- `media_fix` MUST NOT delete or replace any file already in the library, MUST NOT act on a download in any state other than `stuck`, and MUST NOT act on any other title's downloads.
+- A remedy `media_fix` chooses MUST NOT delete or replace any file already in the library; `media_fix` MUST NOT act on a download in any state other than `stuck`, and MUST NOT act on any other title's downloads.
+- Immediately before an import is sent, `media_fix` MUST check once more that the library's records show no file for every movie or episode the import is for, and MUST otherwise not send it and report the download `none` with its reason. A file that appears for one of those movies or episodes after that final check and before the instance runs the import, for example from the instance's own automatic import of another download, is outside what this server can observe or prevent, because the applications' manual import cannot be told to refuse an existing file when it runs; that case is accepted.
 - `media_fix` MUST re-read each download immediately before acting on it, and MUST decide its remedy from that reading rather than from any earlier status result.
 - The result MUST carry, for each download the call considered, its title and `episodes` label exactly as [Status](#status) reports them, and either the action taken, `replaced` or `import_started`, or `none` with a one-sentence reason, and MUST carry how many stuck downloads it left for a later call; a title with nothing stuck MUST produce an empty list.
 - While one call in this process is acting on a download, or has started an import for it that has not been seen to finish, no other `media_fix` call MUST act on that download; a call that meets such a download MUST report it `none` with a reason saying it is already being fixed.
@@ -242,7 +249,9 @@ A caller asks for a resolution, never for a quality profile. The server turns on
 ### Search Again
 
 - `media_search_again` MUST accept a title's kind and id and, for a series, an optional `season` and an optional `episode` within that season.
-- It MUST start the application's own search for exactly the released movies or episodes within the requested scope that the library has no file for, and MUST NOT search for media the library already has or choose or download a specific release itself.
+- For a movie, a whole series, or a season, it MUST start the application's own search for exactly the released, monitored movies or episodes within that scope that the library has no file for, an episode being monitored only when it and its series both are; it MUST NOT search for a movie or episode the library does not monitor.
+- For one episode named by its `season` and `episode`, it MUST start the search for that episode when it is released and the library has no file for it, whether or not it is monitored: naming it is an explicit request.
+- It MUST NOT search for media the library already has or choose or download a specific release itself.
 - When nothing in scope is missing, it MUST start no search.
 - A title that is not in the library MUST fail with `conflict` and a remediation pointing to `media_add`.
 - The result MUST carry only the title, the scope, and how many movies or episodes were searched for; the search's outcome is observed through [Status](#status).
@@ -252,6 +261,18 @@ A caller asks for a resolution, never for a quality profile. The server turns on
 - **GIVEN** a series in the library is missing episodes in season 2
 - **WHEN** a caller searches season 2 again
 - **THEN** a search starts for season 2's missing episodes only, and the result names the series, season 2, and how many episodes were searched for
+
+#### Scenario: An unmonitored season is skipped
+
+- **GIVEN** a series in the library monitors only season 1, and seasons 1 and 2 each have released episodes with no file
+- **WHEN** a caller searches the whole series again
+- **THEN** a search starts for season 1's missing episodes only, and searching season 2 alone starts no search
+
+#### Scenario: Search one named episode of an unmonitored season
+
+- **GIVEN** a series in the library does not monitor season 2, and its released episode 3 has no file
+- **WHEN** a caller searches season 2, episode 3 again
+- **THEN** a search starts for that episode, and the result reports one searched for
 
 #### Scenario: Nothing is missing
 
@@ -318,7 +339,7 @@ And the remedy for a `stuck` download:
 
 `media_add` reuses the `arr` toolset's lookup-by-id and duplicate detection, so an add can never create a second record for a title. Its idempotency comes from that state check rather than from an apply record: repeating an add finds the record the first call made.
 
-`media_fix` gets the same property from a per-download claim plus its re-read. Before acting on a download, a call claims it in process memory, keyed by the download rather than by any one queue row, since a season pack is listed once per episode, and a concurrent call that finds the claim leaves the download alone; so two overlapping calls cannot both act on one download, whichever remedy applies. A replacement's claim lasts until its removal request has returned, after which the download has left the queue and a later call's re-read finds nothing to act on. An import's claim lasts longer, because starting one only queues work upstream and until it runs the download still looks stuck: the claim is held, and the download reported `importing`, until the upstream work is seen to finish. A repeated or concurrent call therefore cannot act twice on the same download within one process lifetime. After a restart that memory is gone. By then the first import has normally finished, and the library-file check refuses to import files into movies or episodes the library now holds; the residual case, a restart while an import is still queued upstream, is accepted.
+`media_fix` gets the same property from a per-download claim plus its re-read. Before acting on a download, a call claims it in process memory, keyed by the download rather than by any one queue row, since a season pack is listed once per episode, and a concurrent call that finds the claim leaves the download alone; so two overlapping calls cannot both act on one download, whichever remedy applies. A replacement's claim lasts until its removal request has returned, after which the download has left the queue and a later call's re-read finds nothing to act on. An import's claim lasts longer, because starting one only queues work upstream and until it runs the download still looks stuck: the claim is held, and the download reported `importing`, until the upstream work is seen to finish. A repeated or concurrent call therefore cannot act twice on the same download within one process lifetime. After a restart that memory is gone. By then the first import has normally finished, and the library-file check refuses to import files into movies or episodes the library now holds; the residual case, a restart while an import is still queued upstream, is accepted. The library-file check is made once more immediately before the import is sent, but it cannot close the gap after it: a file the instance imports from another download for the same movie or episode, between that check and running this import, is replaced, and [Fix](#fix) accepts that case.
 
 Whether a mapped movie or episode already has a file is read from the library's own movie and episode records, never from the import scan. The scan's own existing-file marker depends on fields the supported versions do not send; see [tasks](../../tasks.md).
 
@@ -326,7 +347,8 @@ Whether a mapped movie or episode already has a file is read from the library's 
 
 The `arr` toolset's plan and apply exist so a caller can inspect effects before committing to them. The `media` toolset trades that for a narrower set of effects, each of which is either additive or confined to a download that is already failing:
 
-- Without `media_remove`, which is published only when the operator enables it, no `media` tool deletes or replaces a library file. `media_fix` removes only a stuck download and its incomplete data from the download client, and imports only into movies and episodes the library has no file for.
+- Without `media_remove`, which is published only when the operator enables it, no `media` tool chooses to delete or replace a library file. `media_fix` removes only a stuck download and its incomplete data from the download client, and imports only into movies and episodes the library's records show no file for when it checks them one last time, immediately before sending the import.
+- One narrow case remains: if, in the seconds between that last check and the instance running the import, the instance itself imports another download for the same movie or episode, this import replaces that file, because the applications' manual import cannot be told to refuse an existing file. That case is accepted.
 - Removal from the library exists only when the operator enables it, and deletes files only when the call asks.
 - Every remedy is decided from a reading taken immediately before it is applied.
 
@@ -360,4 +382,6 @@ The `arr` toolset's plan and apply exist so a caller can inspect effects before 
 | Date | Change | Document |
 |------|--------|----------|
 | 2026-11-07 | Initial desired-state specification created | [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) |
+| 2026-11-07 | Accepted the import remedy's residual race after the final library check | [0032-media-toolset-activity](../../changes/0032-media-toolset-activity.md) |
 | 2026-11-08 | `media_find` refuses search text that is only whitespace and ignores surrounding whitespace | [0031-media-toolset-library](../../changes/0031-media-toolset-library.md) |
+| 2026-11-08 | What a title lacks, and what a movie, series, or season search covers, are the monitored, released media only; one named episode is searched monitored or not | [0032-media-toolset-activity](../../changes/0032-media-toolset-activity.md) |

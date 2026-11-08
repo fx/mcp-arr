@@ -1,7 +1,7 @@
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ApplicationId } from "../src/applications.js";
-import { mediaToolNames, toolNames } from "../src/tools/names.js";
+import { mediaToolNames, publishedMediaToolNames, toolNames } from "../src/tools/names.js";
 import {
   type FixtureInstance,
   instanceEnvironment,
@@ -54,10 +54,14 @@ function responseBytes(stdout: string, id: number): number {
   return Buffer.byteLength(`${line}\n`, "utf8");
 }
 
-async function readListing(toolset: string | undefined): Promise<PublishedListing> {
+async function readListing(
+  toolset: string | undefined,
+  extra: Readonly<Record<string, string>>,
+): Promise<PublishedListing> {
   const child = spawnBuiltServer({
     ...placeholderInstances,
     ...(toolset === undefined ? {} : { ARR_MCP_TOOLSET: toolset }),
+    ...extra,
   });
   try {
     await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
@@ -79,30 +83,35 @@ async function readListing(toolset: string | undefined): Promise<PublishedListin
 const listings = new Map<string, Promise<PublishedListing>>();
 
 /** One spawn per selection, shared by every assertion that reads it. */
-function listing(toolset: string | undefined): Promise<PublishedListing> {
-  const key = toolset ?? "(absent)";
+function listing(
+  toolset: string | undefined,
+  extra: Readonly<Record<string, string>> = {},
+): Promise<PublishedListing> {
+  const key = `${toolset ?? "(absent)"} ${JSON.stringify(extra)}`;
   let pending = listings.get(key);
   if (pending === undefined) {
-    pending = readListing(toolset);
+    pending = readListing(toolset, extra);
     listings.set(key, pending);
   }
   return pending;
 }
 
+/** The setting that publishes `media_remove`. */
+const removalEnabled = { ARR_MCP_MEDIA_ALLOW_REMOVE: "true" };
+
 /**
  * The most the `media` listing may cost on the wire, in bytes.
  *
  * A recorded measurement plus a margin, as the `arr` listing's ceiling is: it
- * was read off a spawned server at 4,659 bytes with `media_find` and
- * `media_add` published. The Media Toolset specification caps the complete
- * listing at 12,000 bytes once all six tools exist, and this ceiling sits far
- * below that so it guards what is published today rather than what may be.
+ * was read off a spawned server at 11,866 bytes with all six `media` tools
+ * published, `media_remove` included, which is the listing the Media Toolset
+ * specification caps at 12,000 bytes.
  *
  * The margin is smaller than the smallest single `media` tool definition —
  * which the test computes from the listing itself — so a regression that
  * publishes one tool twice, or republishes one in full, cannot hide under it.
  */
-const mediaListingByteCeiling = 5_200;
+const mediaListingByteCeiling = 11_900;
 
 /** The Media Toolset specification's cap on the complete listing. */
 const mediaListingSpecificationCap = 12_000;
@@ -113,6 +122,10 @@ const rootCombinators = ["anyOf", "oneOf", "allOf"] as const;
 const specifiedInputs: Readonly<Record<string, readonly string[]>> = {
   media_find: ["text", "kind"],
   media_add: ["kind", "id", "resolution", "episodes"],
+  media_status: ["kind", "id"],
+  media_fix: ["kind", "id"],
+  media_search_again: ["kind", "id", "season", "episode"],
+  media_remove: ["kind", "id", "delete_files"],
 };
 
 const started: FixtureInstance[] = [];
@@ -136,8 +149,29 @@ interface ToolCallResult {
 }
 
 describe("media toolset over stdio", () => {
-  it("publishes exactly the implemented media tools with flat, closed input roots", async () => {
-    const { tools, stdout, stderr } = await listing("media");
+  it("publishes five media tools, and media_remove only when removal is enabled", async () => {
+    const without = await listing("media");
+    const enabled = await listing("media", removalEnabled);
+    const disabled = await listing("media", { ARR_MCP_MEDIA_ALLOW_REMOVE: "false" });
+
+    expect(without.tools.map((tool) => tool.name)).toEqual([
+      "media_find",
+      "media_add",
+      "media_status",
+      "media_fix",
+      "media_search_again",
+    ]);
+    expect(disabled.tools).toEqual(without.tools);
+    expect(enabled.tools.map((tool) => tool.name)).toEqual([...mediaToolNames]);
+    expect(enabled.tools.slice(0, -1)).toEqual(without.tools);
+    for (const published of [without, enabled, disabled]) {
+      assertCleanProtocolStdout(published.stdout);
+      expect(published.stderr).toBe("");
+    }
+  });
+
+  it("publishes the media tools with flat, closed input roots", async () => {
+    const { tools, stdout, stderr } = await listing("media", removalEnabled);
 
     expect(tools.map((tool) => tool.name)).toEqual([...mediaToolNames]);
     for (const tool of tools) {
@@ -164,13 +198,44 @@ describe("media toolset over stdio", () => {
     expect(
       (tools[0]?.inputSchema?.properties as Record<string, Record<string, unknown>>)?.text?.pattern,
     ).toBe("\\S");
+    // The rules between properties are stated from the unions that validate.
+    const statusTool = tools.find((tool) => tool.name === "media_status");
+    expect(statusTool?.inputSchema?.description).toContain("- no arguments\n- kind, id");
+    const searchAgain = tools.find((tool) => tool.name === "media_search_again");
+    expect(searchAgain?.inputSchema?.description).toContain(
+      "- kind=movie, id\n- kind=series, id; optional season\n- kind=series, id, season, episode",
+    );
+    const annotations = Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations]));
+    expect(annotations.media_status).toEqual({
+      readOnlyHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    });
+    expect(annotations.media_fix).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    });
+    expect(annotations.media_search_again).toEqual({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    });
+    expect(annotations.media_remove).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    });
 
     assertCleanProtocolStdout(stdout);
     expect(stderr).toBe("");
   });
 
   it("names no application or application concept anywhere in a published media tool", async () => {
-    const { tools } = await listing("media");
+    const { tools } = await listing("media", removalEnabled);
 
     for (const tool of tools) {
       const published = JSON.stringify({
@@ -196,7 +261,7 @@ describe("media toolset over stdio", () => {
   });
 
   it("keeps the media listing under its recorded ceiling, with a margin below one tool", async () => {
-    const { tools, bytes } = await listing("media");
+    const { tools, bytes } = await listing("media", removalEnabled);
     const smallestTool = Math.min(
       ...tools.map((tool) => Buffer.byteLength(JSON.stringify(tool), "utf8")),
     );
@@ -218,7 +283,7 @@ describe("media toolset over stdio", () => {
       expect(
         both.tools.map((tool) => tool.name),
         toolset,
-      ).toEqual([...toolNames, ...mediaToolNames]);
+      ).toEqual([...toolNames, ...publishedMediaToolNames(false)]);
       expect(both.tools, toolset).toEqual([...arr.tools, ...media.tools]);
       assertCleanProtocolStdout(both.stdout);
       expect(both.stderr, toolset).toBe("");
@@ -325,6 +390,130 @@ describe("media toolset over stdio", () => {
         arguments: { kind: "movie", id: 200004, episodes: "future" },
       })) as ToolCallResult;
       expect(invalid.result?.isError).toBe(true);
+
+      await child.terminateGracefully();
+      assertCleanProtocolStdout(child.stdout);
+      expect(child.stderr).toBe("");
+      for (const key of [sonarr.apiKey, radarr.apiKey]) {
+        expect(child.stdout).not.toContain(key);
+      }
+    } finally {
+      await child.forceCleanup().catch(() => undefined);
+    }
+  }, 30_000);
+  it("reports, fixes, searches, and removes over the protocol and keeps stdout clean", async () => {
+    const sonarr = await instance("sonarr");
+    const radarr = await instance("radarr");
+    const child = spawnBuiltServer(
+      {
+        ...instanceEnvironment([sonarr, radarr]),
+        ARR_MCP_TOOLSET: "media",
+        ...removalEnabled,
+      },
+      15_000,
+    );
+
+    try {
+      await child.initializeSession(1, LATEST_PROTOCOL_VERSION);
+
+      const status = (await child.request(2, "tools/call", {
+        name: "media_status",
+        arguments: { kind: "series", id: 100001 },
+      })) as ToolCallResult;
+      expect(status.result?.isError).toBe(false);
+      expect(status.result?.structuredContent).toMatchObject({
+        kind: "series",
+        id: 100001,
+        title: "Example Series",
+        in_library: true,
+        monitored: true,
+        file_resolutions: ["720p", "1080p"],
+        downloads: [
+          {
+            kind: "series",
+            id: 100001,
+            episodes: "S02E01",
+            state: "stuck",
+            resolution: "1080p",
+            reason: "A file could not be matched to a movie or episode.",
+            remedy: "none",
+          },
+          { episodes: "S01E01", state: "downloading", progress: 66, resolution: "1080p" },
+        ],
+        errors: [],
+      });
+
+      const fixed = (await child.request(3, "tools/call", {
+        name: "media_fix",
+        arguments: { kind: "series", id: 100001 },
+      })) as ToolCallResult;
+      expect(fixed.result?.isError).toBe(false);
+      expect(fixed.result?.structuredContent).toEqual({
+        kind: "series",
+        id: 100001,
+        title: "Example Series",
+        downloads: [
+          {
+            title: "Example Series",
+            episodes: "S02E01",
+            action: "none",
+            reason: "A file could not be matched to a movie or episode.",
+          },
+        ],
+        remaining: 0,
+        warnings: [],
+        errors: [],
+      });
+      expect(fixed.result?.content?.[0]?.text).toBe(
+        "media_fix: series 100001: 0 replaced, 0 import(s) started, 1 left alone, 0 remaining",
+      );
+      expect(sonarr.queueResolutions).toEqual([]);
+      expect(sonarr.commands).toEqual([]);
+
+      const searched = (await child.request(4, "tools/call", {
+        name: "media_search_again",
+        // Named by its number, so searched although it is not monitored.
+        arguments: { kind: "series", id: 100001, season: 2, episode: 1 },
+      })) as ToolCallResult;
+      expect(searched.result?.isError).toBe(false);
+      expect(searched.result?.structuredContent).toEqual({
+        kind: "series",
+        id: 100001,
+        title: "Example Series",
+        season: 2,
+        episode: 1,
+        searched: 1,
+        warnings: [],
+        errors: [],
+      });
+      expect(sonarr.commands).toEqual([
+        { name: "EpisodeSearch", body: { name: "EpisodeSearch", episodeIds: [1003] } },
+      ]);
+
+      const removed = (await child.request(5, "tools/call", {
+        name: "media_remove",
+        arguments: { kind: "movie", id: 200003 },
+      })) as ToolCallResult;
+      expect(removed.result?.isError).toBe(false);
+      expect(removed.result?.structuredContent).toEqual({
+        kind: "movie",
+        id: 200003,
+        title: "Example Archived Movie",
+        outcome: "removed",
+        files_deleted: false,
+        warnings: [],
+        errors: [],
+      });
+      expect(radarr.requests).toContain("movie/10");
+      // The double records a removal under its collection; movie 200003 is
+      // library record 10, the only one it removed.
+      expect(radarr.writes).toEqual([
+        {
+          method: "DELETE",
+          route: "movie",
+          query: { deleteFiles: "false", addImportExclusion: "false" },
+        },
+      ]);
 
       await child.terminateGracefully();
       assertCleanProtocolStdout(child.stdout);

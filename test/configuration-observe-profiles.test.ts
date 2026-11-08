@@ -305,7 +305,7 @@ describe("observing resources", () => {
 
     expect(calls[0]?.url.pathname).toBe("/api/v3/exclusions/paged");
     expect(exclusion.fields).toEqual([
-      { name: "tmdbId", value: 11 },
+      { name: "tmdbId", value: 200_001 },
       { name: "movieTitle", value: "Example Movie" },
       { name: "movieYear", value: 2001 },
     ]);
