@@ -712,13 +712,21 @@ async function titleStatus(
   let nextDue: string | undefined;
   if (kind === "movie") {
     have = record.hasFile === true ? 1 : 0;
-    missing = record.hasFile === false && record.isAvailable === true ? 1 : 0;
+    missing =
+      record.monitored === true && record.hasFile === false && record.isAvailable === true ? 1 : 0;
     nextDue = earliestAfter(record.releaseDates, now);
   } else {
+    // Missing is what the library is after: a released episode it monitors,
+    // of a series it monitors, that has no file.
     for (const episode of episodes) {
       if (episode.hasFile === true) {
         have += 1;
-      } else if (episode.hasFile === false && passed(episode.airDateUtc, now) === true) {
+      } else if (
+        record.monitored === true &&
+        episode.monitored === true &&
+        episode.hasFile === false &&
+        passed(episode.airDateUtc, now) === true
+      ) {
         missing += 1;
       }
     }

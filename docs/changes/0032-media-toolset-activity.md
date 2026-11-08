@@ -55,6 +55,7 @@ Additionally, because `media_fix` acts without a plan:
 - A test MUST prove that a row with no download identity is never given the `import` remedy.
 - A test MUST prove that a concurrent duplicate `media_remove` reports `not_in_library`.
 - A test MUST prove `media_search_again` sends only ids with no file, and sends nothing for a title whose scope has nothing missing.
+- A test MUST prove that `media_status` counts as lacking, and a movie, series, or season search covers, only monitored media, and that one named episode is searched monitored or not.
 
 ### Functional requirements
 
@@ -112,8 +113,8 @@ What implementing them requires of this change:
   Items are handled one at a time, each with its own outcome, as queue resolution already does.
 - **Concurrent removals.** A `media_remove` whose delete finds no record reports `not_in_library`.
 - **`media_search_again`.** Never issue a whole-title command, because `SeriesSearch` and `SeasonSearch` also search episodes that already have files and can grab upgrades.
-  - For a movie, read the movie record. If it has no file and is released, send `MoviesSearch` for that one movie; otherwise send nothing.
-  - For a series, read its episodes within the scope (all, one season, or one episode). Keep the released episodes with no file, and send one `EpisodeSearch` for exactly those ids. If none qualify, send nothing.
+  - For a movie, read the movie record. If it is monitored, has no file, and is released, send `MoviesSearch` for that one movie; otherwise send nothing.
+  - For a series, read its episodes within the scope (all, one season, or one episode). For the whole series or a season, keep the released, monitored episodes of a monitored series with no file; for one named episode, keep it when it is released and has no file, monitored or not. Send one `EpisodeSearch` for exactly those ids. If none qualify, send nothing.
   
   The search goes through `startSearchCommand`, and the job projection is discarded rather than returned. The result's count is the number of ids searched for.
 - **`media_remove`.** Delete the library record through the existing deletion helpers, with `deleteFiles` from the input and the import-exclusion flag always `false`. Register the tool only when `ARR_MCP_MEDIA_ALLOW_REMOVE` is `true`. Parse that variable alongside the other `media` defaults.

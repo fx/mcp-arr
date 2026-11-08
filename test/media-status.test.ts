@@ -18,7 +18,8 @@ import { allApplicationsEnvironment } from "./support/tool-context.js";
  * `media_status` over the recorded library, queue, history, and calendar.
  *
  * Recorded, series 100001 is library record 12 with two queue rows — 501
- * downloading S01E01 and 502 a blocked import of S02E01 — and movie 200002 is
+ * downloading S01E01 and 502 a blocked import of S02E01, an episode it lacks
+ * and does not monitor — and movie 200002 is
  * record 9, whose one row 602 is pending import with a warning. The recorded
  * import scans match their files to other episodes and another movie, so
  * neither blocked import can be finished.
@@ -76,7 +77,8 @@ describe("media_status for one title", () => {
       monitored: true,
       file_resolutions: ["720p", "1080p"],
       have: 2,
-      missing: 1,
+      // S02E01 lacks its file, but is not monitored.
+      missing: 0,
       downloads: [
         {
           kind: "series",
@@ -102,7 +104,7 @@ describe("media_status for one title", () => {
       errors: [],
     });
     expect(summary).toBe(
-      "media_status: series 100001 in library, 2 had, 1 missing, 2 download(s) shown (1 stuck)",
+      "media_status: series 100001 in library, 2 had, 0 missing, 2 download(s) shown (1 stuck)",
     );
     expect(forbiddenTermsIn(JSON.stringify(content))).toEqual([]);
   });
@@ -127,6 +129,32 @@ describe("media_status for one title", () => {
         },
       ],
     });
+  });
+
+  it("counts as missing only the released media it lacks and monitors", async () => {
+    const lacking = instances.state("sonarr").episodes.find((episode) => episode.id === 1003);
+    const series = instances.state("sonarr").titles.find((record) => record.id === 12);
+    const movie = instances.state("radarr").titles.find((record) => record.id === 9);
+    if (lacking === undefined || series === undefined || movie === undefined) {
+      throw new Error("Recorded library records are missing");
+    }
+    const missing = async (kind: "series" | "movie", id: number) =>
+      (await status({ kind, id })).content.missing;
+
+    lacking.monitored = true;
+    expect(await missing("series", 100_001)).toBe(1);
+    // The episode is monitored, but its series is not.
+    series.monitored = false;
+    expect(await missing("series", 100_001)).toBe(0);
+    // Not yet aired, so not missing however it is monitored.
+    series.monitored = true;
+    clock.set(Date.parse("2026-09-01T00:00:00Z"));
+    expect(await missing("series", 100_001)).toBe(0);
+
+    movie.isAvailable = true;
+    expect(await missing("movie", 200_002)).toBe(1);
+    movie.monitored = false;
+    expect(await missing("movie", 200_002)).toBe(0);
   });
 
   it("reports a title not in the library with nothing else about it", async () => {

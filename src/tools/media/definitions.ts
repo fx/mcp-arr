@@ -366,8 +366,9 @@ export const mediaToolDefinitions: readonly MediaToolDefinition[] = [
     name: "media_search_again",
     title: "Search again for missing media",
     description:
-      "Search again for the released movie or episodes in scope that the library has no " +
-      "file for, and nothing else. Reports how many.",
+      "Search again for the released, monitored movie or episodes in scope that the library " +
+      "has no file for, and nothing else; one named episode is searched monitored or not. " +
+      "Reports how many.",
     inputSchema: searchAgainInputSchema,
     outputSchema: searchAgainOutputSchema,
     publishedOutputSchema: searchAgainPublishedOutputSchema,

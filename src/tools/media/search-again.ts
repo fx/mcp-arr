@@ -32,15 +32,18 @@ function released(value: string | undefined, now: number): boolean {
 
 /**
  * Searches again for exactly the released media in scope that the library
- * has no file for, and for nothing else.
+ * has no file for and monitors, and for nothing else.
  *
  * A whole-title search is never sent, because it also searches media the
  * library already has and can replace a file with an upgrade; the search is
  * for the movie, or for an explicit list of episodes, chosen here. A record
  * counts as missing only when it says `hasFile: false` — one that does not say
- * is not searched for — and when nothing qualifies, nothing is sent. The
- * search's own progress is not returned: it is observed through
- * `media_status`.
+ * is not searched for — and when nothing qualifies, nothing is sent. A movie,
+ * a series, or a season searches only what the library monitors — an episode
+ * only where its series is monitored too — so a search never reaches media
+ * the user stopped wanting; one episode named by its number is asked for
+ * explicitly, and is searched for monitored or not. The search's own progress
+ * is not returned: it is observed through `media_status`.
  */
 export async function searchAgain(
   context: MediaContext,
@@ -66,7 +69,8 @@ export async function searchAgain(
 
   try {
     if (kind === "movie") {
-      const missing = record.hasFile === false && record.isAvailable === true;
+      const missing =
+        record.monitored === true && record.hasFile === false && record.isAvailable === true;
       if (!missing) {
         return { ...named, searched: 0, warnings: [], errors: [] };
       }
@@ -89,8 +93,14 @@ export async function searchAgain(
     if (scoped.length === 0 && (request.season !== undefined || request.episode !== undefined)) {
       return { ...named, searched: 0, warnings: [nothingInScopeWarning], errors: [] };
     }
+    const asked = request.episode !== undefined;
     const episodeIds = scoped
-      .filter((episode) => episode.hasFile === false && released(episode.airDateUtc, now))
+      .filter(
+        (episode) =>
+          episode.hasFile === false &&
+          released(episode.airDateUtc, now) &&
+          (asked || (record.monitored === true && episode.monitored === true)),
+      )
       .map((episode) => episode.id);
     if (episodeIds.length === 0) {
       return { ...named, searched: 0, warnings: [], errors: [] };

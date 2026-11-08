@@ -103,7 +103,7 @@ const removalEnabled = { ARR_MCP_MEDIA_ALLOW_REMOVE: "true" };
  * The most the `media` listing may cost on the wire, in bytes.
  *
  * A recorded measurement plus a margin, as the `arr` listing's ceiling is: it
- * was read off a spawned server at 11,791 bytes with all six `media` tools
+ * was read off a spawned server at 11,866 bytes with all six `media` tools
  * published, `media_remove` included, which is the listing the Media Toolset
  * specification caps at 12,000 bytes.
  *
@@ -472,7 +472,8 @@ describe("media toolset over stdio", () => {
 
       const searched = (await child.request(4, "tools/call", {
         name: "media_search_again",
-        arguments: { kind: "series", id: 100001, season: 2 },
+        // Named by its number, so searched although it is not monitored.
+        arguments: { kind: "series", id: 100001, season: 2, episode: 1 },
       })) as ToolCallResult;
       expect(searched.result?.isError).toBe(false);
       expect(searched.result?.structuredContent).toEqual({
@@ -480,6 +481,7 @@ describe("media toolset over stdio", () => {
         id: 100001,
         title: "Example Series",
         season: 2,
+        episode: 1,
         searched: 1,
         warnings: [],
         errors: [],
