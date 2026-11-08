@@ -607,7 +607,8 @@ export function validateSanitizedValue(value, location, legacy = undefined, cont
     if (typeof value === "string") {
       screenText(value, location);
     }
-    if (!isNeutralFactLeaf(context.fact, context.key, value, false, legacy)) {
+    // Only a fixture with its own legacy entry is held to the lenient form.
+    if (!isNeutralFactLeaf(context.fact, context.key, value, legacy === undefined, legacy)) {
       throw new Error(`Identifying ${context.fact} is not neutralized at ${location}`);
     }
     return;
@@ -701,15 +702,16 @@ export function validateFixture(value, options) {
     .relative(path.resolve(options.fixtureRoot), path.resolve(options.filePath))
     .split(path.sep)
     .join("/");
-  // A capture is held to the exact forms it writes; only a recorded fixture
-  // may hold the legacy values listed against its own file.
-  validateSanitizedValue(
-    { metadata: sanitizedMetadata, body },
-    "fixture",
-    options.legacy === false ? undefined : legacyStandInsFor(relativePath),
-  );
-  if (!minimumFixtureTuples.includes(tuple)) {
-    // A newer fixture is one a capture wrote, and says so; see `capturedBy`.
+  // Leniency belongs to the evidence recorded before captures neutralized
+  // anything, and to nothing else: only a fixture with its own entry in the
+  // legacy list, validated with that list, may hold legacy values, facts in
+  // their recorded form, or unshifted dates. Every other fixture — a new one
+  // at any version, and every capture, which validates with the list off — is
+  // held to the strict screen and must carry the capture's provenance.
+  const legacy = options.legacy === false ? undefined : legacyStandInsFor(relativePath);
+  validateSanitizedValue({ metadata: sanitizedMetadata, body }, "fixture", legacy);
+  if (legacy === undefined) {
+    // A fixture a capture wrote says so; see `capturedBy`.
     if (metadataRecord.capturedBy !== capturedBy) {
       throw new Error(
         `Fixture recorded at ${version} carries no capture provenance; recapture it rather than copying a body`,

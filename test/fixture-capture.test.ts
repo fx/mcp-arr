@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { observeChildProcess } from "../scripts/child-process.mjs";
-import { fixturePathFor } from "./support/fixtures.js";
+import { capturedBy, fixturePathFor, validateFixture } from "./support/fixtures.js";
 
 /**
  * The capture procedure's refusals.
@@ -368,6 +368,18 @@ describe("fixture capture procedure", () => {
       // A capture from an instance at the minimum writes the minimum's file.
       path.join(fixtureRoot, fixturePathFor("sonarr", "queue/details")),
       "utf8",
+    );
+    // A capture at the minimum is not pre-existing evidence: what it wrote
+    // passes the strict screen, and says a capture wrote it.
+    expect(() =>
+      validateFixture(JSON.parse(written), {
+        fixtureRoot,
+        filePath: path.join(fixtureRoot, fixturePathFor("sonarr", "queue/details")),
+        legacy: false,
+      }),
+    ).not.toThrow();
+    expect((JSON.parse(written) as { metadata: { capturedBy?: string } }).metadata.capturedBy).toBe(
+      capturedBy,
     );
     for (const original of [
       "Love Begins",

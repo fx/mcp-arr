@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { legacyStandIns } from "../scripts/legacy-stand-ins.mjs";
 import {
   approvedFixtureInventory,
   approvedFixtures,
@@ -561,6 +562,55 @@ describe("versioned fixture contract", () => {
     expect(() => validate(fixture, fixturePathFor("sonarr", "tag"))).toThrow(
       "Identifying text is not neutralized at fixture.body[0][0]",
     );
+  });
+
+  it("is lenient only to a listed minimum fixture validated with its legacy list", () => {
+    const codexExample = {
+      ratings: { imdb: { votes: "8123", value: "8.9" } },
+      language: { id: 7 },
+      runtime: { value: 123 },
+    };
+    const atMinimum = (marked: boolean) => ({
+      metadata: {
+        application: "sonarr",
+        apiVersion: "v3",
+        version: "4.0.19.2979",
+        endpoint: "/api/v3/qualityprofile",
+        ...(marked ? { capturedBy } : {}),
+      },
+      body: [codexExample],
+    });
+    const file = path.join(fixtureRoot, fixturePathFor("sonarr", "qualityprofile"));
+
+    // Pre-existing evidence, read with its legacy list: its facts are as recorded.
+    expect(() => validateFixture(atMinimum(false), { fixtureRoot, filePath: file })).not.toThrow();
+    // Anything else at the minimum — a capture's own check included — is strict.
+    expect(() =>
+      validateFixture(atMinimum(false), { fixtureRoot, filePath: file, legacy: false }),
+    ).toThrow(/is not neutralized|carries no capture provenance/u);
+    expect(() =>
+      validateFixture(
+        { ...atMinimum(false), body: [] },
+        { fixtureRoot, filePath: file, legacy: false },
+      ),
+    ).toThrow("carries no capture provenance");
+    expect(() =>
+      validateFixture(atMinimum(true), { fixtureRoot, filePath: file, legacy: false }),
+    ).toThrow(/Identifying (?:ratings|language|runtime) is not neutralized/u);
+  });
+
+  it("lists exactly the minimum fixtures recorded before captures neutralized anything", () => {
+    // A minimum fixture added later has no entry, and is held to the strict
+    // screen with provenance like any capture; listing one is a decision.
+    const minimum = approvedFixtures
+      .filter((fixture) =>
+        minimumFixtureTuples.some(
+          (tuple) => tuple.application === fixture.application && tuple.version === fixture.version,
+        ),
+      )
+      .map((fixture) => fixture.relativePath)
+      .sort();
+    expect(Object.keys(legacyStandIns).sort()).toEqual(minimum);
   });
 
   it("recognizes exactly the languages the applications' own language routes list", async () => {

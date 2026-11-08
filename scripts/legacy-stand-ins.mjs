@@ -1,18 +1,32 @@
 /**
- * The legacy values each minimum-version fixture was recorded with, in the
- * fields that identify a library or its services, listed against the one file
- * each comes from.
+ * The minimum-version fixtures recorded before the capture neutralized
+ * anything, each listed against its own file with the legacy values it holds
+ * in the fields that identify a library or its services.
  *
- * These fixtures were written before the capture neutralized identifying
- * content, with hand-chosen stand-ins in the "Example …" style rather than the
- * exact forms the capture now writes. Every value here is one of those
- * stand-ins, checked when it was listed; none is a real library's. The screen
- * accepts a value outside the exact forms only where this list names it for
- * that file, so a value cannot be added to a fixture by resembling one, and a
- * fixture captured from now on, which writes only the exact forms, needs no
- * entry here.
+ * These fixtures were written with hand-chosen stand-ins in the "Example …"
+ * style rather than the exact forms the capture now writes, with their facts
+ * in recorded form and their dates unshifted. Every value here is one of those
+ * stand-ins, checked when it was listed; none is a real library's. An entry is
+ * also what makes a file pre-existing evidence: only a fixture listed here, and
+ * only while this list is in use, is held to the lenient screen and needs no
+ * capture provenance, so a file holding no legacy value is listed with an
+ * empty entry. Any other fixture, at any version — one added later, and every
+ * capture, which validates with this list off — is held to the strict screen
+ * and must carry the provenance mark the capture writes.
  */
 export const legacyStandIns = {
+  "sonarr/v3/4.0.19.2979/system-status.json": {},
+  "sonarr/v3/4.0.19.2979/queue-status.json": {},
+  "sonarr/v3/4.0.19.2979/qualitydefinition.json": {},
+  "sonarr/v3/4.0.19.2979/language.json": {},
+  "radarr/v3/6.3.0.10514/system-status.json": {},
+  "radarr/v3/6.3.0.10514/queue-status.json": {},
+  "radarr/v3/6.3.0.10514/command.json": {},
+  "radarr/v3/6.3.0.10514/qualitydefinition.json": {},
+  "radarr/v3/6.3.0.10514/language.json": {},
+  "prowlarr/v1/2.5.2.5491/system-status.json": {},
+  "prowlarr/v1/2.5.2.5491/indexerstatus.json": {},
+  "prowlarr/v1/2.5.2.5491/command.json": {},
   "prowlarr/v1/2.5.2.5491/applications.json": {
     service: [
       "Example Movie Application",
