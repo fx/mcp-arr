@@ -2,16 +2,17 @@ import { readFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import path from "node:path";
 import {
-  identifyingFieldOf,
+  classifyValue,
   isNeutralIdentifyingValue,
   legacyStandInsFor,
   validateShiftedFacts,
 } from "./identifying-content.mjs";
 
 export {
+  classifyValue,
   createIdentifyingNeutralizer,
-  identifyingFieldOf,
   isNeutralIdentifyingValue,
+  structuralAllowlistSize,
 } from "./identifying-content.mjs";
 
 /**
@@ -558,15 +559,30 @@ export function validateSanitizedValue(value, location, legacy = undefined, cont
       ) {
         throw new Error(`Identifying key is not allowed at ${location}.${key}`);
       }
-      const field = identifyingFieldOf(key, value, container);
-      if (field !== undefined && !isNeutralIdentifyingValue(field, child, legacy)) {
-        throw new Error(`Identifying ${field} is not neutralized at ${location}.${key}`);
-      }
       // A key is text an instance chose as readily as a value is. Upstream
       // keys a path or a URL where a payload is a dictionary of them, and a key
       // held only to the name lists above would carry one through untouched.
       screenText(key, `${location}.${key}`);
       validateSanitizedValue(child, `${location}.${key}`, legacy, key);
+      // Every string is identifying unless a rule recognizes it as
+      // structure, so it is screened here with the key it sits under, an
+      // element of a list of strings included — after the screens above, so a
+      // credential or a host is refused as what it is.
+      const strings = Array.isArray(child) ? child.filter((item) => typeof item === "string") : [];
+      const field = classifyValue(key, value, container, Array.isArray(child) ? undefined : child);
+      if (field !== undefined && !isNeutralIdentifyingValue(field, child, legacy)) {
+        throw new Error(`Identifying ${field} is not neutralized at ${location}.${key}`);
+      }
+      if (field === undefined) {
+        for (const item of strings) {
+          if (
+            classifyValue(key, value, container, item) === "text" &&
+            !isNeutralIdentifyingValue("text", item, legacy)
+          ) {
+            throw new Error(`Identifying text is not neutralized at ${location}.${key}`);
+          }
+        }
+      }
     }
     return;
   }

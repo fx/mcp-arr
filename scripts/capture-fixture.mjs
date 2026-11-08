@@ -41,8 +41,8 @@ import { fileURLToPath } from "node:url";
 import {
   approvedFixtures,
   captureTargetFor,
+  classifyValue,
   createIdentifyingNeutralizer,
-  identifyingFieldOf,
   validateFixture,
   validateSanitizedValue,
 } from "./fixture-contract.mjs";
@@ -313,7 +313,9 @@ function createSanitizer(screen) {
         // lose a field the shape has.
         const sanitizedKey = disposition === "rename" ? replace(key) : key;
         const field =
-          disposition === "keep" ? identifyingFieldOf(key, value, container) : undefined;
+          disposition === "keep"
+            ? classifyValue(key, value, container, Array.isArray(child) ? undefined : child)
+            : undefined;
         entries.push([
           sanitizedKey,
           field !== undefined
@@ -322,7 +324,15 @@ function createSanitizer(screen) {
               sanitize(identifying.neutralize(field, child), key)
             : redactSiblingValue && key === "value"
               ? redact(child)
-              : sanitize(child, key),
+              : Array.isArray(child)
+                ? // A list of strings is held to its key element by element.
+                  child.map((item) =>
+                    typeof item === "string" &&
+                    classifyValue(key, value, container, item) === "text"
+                      ? identifying.neutralize("text", item)
+                      : sanitize(item, key),
+                  )
+                : sanitize(child, key),
         ]);
       }
       // A replaced key could land on one the object already has, and building

@@ -104,6 +104,9 @@ const fieldsByKey = {
   freeSpace: "byteCount",
   totalSpace: "byteCount",
   originalLanguage: "language",
+  // A profile's language is neutralized like a title's: one rule is simpler
+  // than telling a configured choice from a described fact, and no code reads it.
+  language: "language",
   languages: "languages",
 };
 
@@ -165,6 +168,10 @@ function nameFieldOf(parent, container) {
   if ("folderName" in parent) {
     return "path";
   }
+  // A quality group inside a profile is labelled by whoever made the group.
+  if ("allowed" in parent && "items" in parent && !("quality" in parent)) {
+    return "profileGroup";
+  }
   return undefined;
 }
 
@@ -209,6 +216,9 @@ const profileVocabulary = new Set([
   "HD - 720p/1080p",
 ]);
 
+/** The quality groups the applications create inside their install-time profiles. */
+const profileGroupVocabulary = new Set(["WEB 480p", "WEB 720p", "WEB 1080p", "WEB 2160p"]);
+
 /** The extensions a stand-in path keeps on its last segment, so a file still reads as one. */
 const keptExtensions = /\.(?:mkv|mp4|m4v|avi|ts|wmv|iso|srt|ass|sub|idx|nfo)$/iu;
 
@@ -246,6 +256,11 @@ const standInForms = {
   tagLabel: /^example-tag-\d+$/u,
   diskLabel: /^Example Disk \d+$/u,
   genre: /^Example Genre \d+$/u,
+  profileGroup: /^Example Group \d+$/u,
+  languageName: /^Example Language \d+$/u,
+  // What a capture writes for any other text: free text, or a provider
+  // field's value.
+  text: /^(?:Example text \d+|example-value-\d+)$/u,
 };
 
 /** The element field of a field that holds a list. */
@@ -307,9 +322,251 @@ export function isNeutralIdentifyingValue(field, value, legacy = undefined) {
       return standInForms.genre.test(text) || genreVocabulary.has(text);
     case "profileName":
       return standInForms.profileName.test(text) || profileVocabulary.has(text);
+    case "profileGroup":
+      return standInForms.profileGroup.test(text) || profileGroupVocabulary.has(text);
+    case "text":
+      // Text no field names can only have been written by a capture.
+      return (
+        text === overviewStandIn || Object.values(standInForms).some((form) => form.test(text))
+      );
     default:
       return standInForms[field]?.test(text) === true;
   }
+}
+
+/**
+ * What is structural, recognized positively; every other string a body holds
+ * is identifying.
+ *
+ * Text is identifying unless one of these rules recognizes it, so a field an
+ * upstream adds later is neutralized at capture and refused by the screen
+ * until someone decides it is structural and says why here. Each rule names
+ * the keys it covers, the context it applies in where a key means several
+ * things, the values it accepts, and which kind of structure it is:
+ *
+ * - `enum`: a state, event, type, or command word the application defines,
+ *   accepted only in the shape of an identifier, so free text under the same
+ *   key is still refused;
+ * - `product`: the name of a product, an implementation, a settings contract,
+ *   a codec, or a version;
+ * - `quality`: a name from the applications' built-in quality definitions, or
+ *   a media file's dimensions;
+ * - `descriptor`: the text of a provider's settings schema, which the
+ *   application writes, never an operator's value;
+ * - `vocabulary`: a closed list the application ships.
+ *
+ * Numbers are not identifying by default: ids, counts, flags, and scores are
+ * what the code reads. The numbers that do identify a title — metadata ids,
+ * years, runtimes, ratings, popularity, and byte counts — are named in
+ * `fieldsByKey`.
+ */
+const identifierShape = /^[A-Za-z][A-Za-z0-9]*(?:[_-][A-Za-z0-9]+)*$/u;
+
+/** The applications' built-in quality names. */
+const qualityVocabulary = new Set([
+  "BR-DISK",
+  "Bluray-1080p",
+  "Bluray-1080p Remux",
+  "Bluray-2160p",
+  "Bluray-2160p Remux",
+  "Bluray-480p",
+  "Bluray-576p",
+  "Bluray-720p",
+  "CAM",
+  "DVD",
+  "DVD-R",
+  "DVDSCR",
+  "HDTV-1080p",
+  "HDTV-2160p",
+  "HDTV-720p",
+  "REGIONAL",
+  "Raw-HD",
+  "Remux-1080p",
+  "Remux-2160p",
+  "SDTV",
+  "TELECINE",
+  "TELESYNC",
+  "Unknown",
+  "WEBDL-1080p",
+  "WEBDL-2160p",
+  "WEBDL-480p",
+  "WEBDL-720p",
+  "WEBRip-1080p",
+  "WEBRip-2160p",
+  "WEBRip-480p",
+  "WEBRip-720p",
+  "WORKPRINT",
+]);
+
+const isIdentifier = (value) => identifierShape.test(value);
+
+/** A command's display name is its name, spaced before each capital. */
+const spacedCommandName = (parent) => {
+  const name = typeof parent.name === "string" ? parent.name : parent.body?.name;
+  return typeof name === "string" ? name.replace(/(?<=[a-z0-9])(?=[A-Z])/gu, " ") : undefined;
+};
+
+const structuralRules = [
+  {
+    why: "enum",
+    keys: [
+      "status",
+      "trackedDownloadState",
+      "trackedDownloadStatus",
+      "eventType",
+      "protocol",
+      "seriesType",
+      "monitorNewItems",
+      "minimumAvailability",
+      "finaleType",
+      "coverType",
+      "sortKey",
+      "sortDirection",
+      "modifier",
+      "trigger",
+      "result",
+      "privacy",
+      "syncLevel",
+      "listType",
+      "shouldMonitor",
+      "releaseType",
+      "grabMethod",
+      "queryType",
+      "sourceType",
+      "type",
+      "source",
+      "scanType",
+      "indexerFlags",
+    ],
+    accept: isIdentifier,
+  },
+  {
+    why: "product",
+    keys: ["implementation", "implementationName", "configContract", "appName"],
+    accept: isIdentifier,
+  },
+  {
+    why: "product",
+    keys: ["videoCodec", "audioCodec"],
+    accept: (value) =>
+      /^[A-Za-z0-9][A-Za-z0-9.+-]{0,15}(?: [A-Za-z0-9.+-]{1,8}){0,2}$/u.test(value),
+  },
+  {
+    why: "product",
+    // What a fixture says about itself.
+    keys: ["application", "apiVersion"],
+    when: (_parent, container) => container === "metadata",
+    accept: isIdentifier,
+  },
+  {
+    why: "product",
+    keys: ["version"],
+    accept: (value) => /^\d+(?:\.\d+){1,3}$/u.test(value),
+  },
+  {
+    why: "enum",
+    // A command, named in its own record or in the body of one.
+    keys: ["name"],
+    when: (parent, container) =>
+      container === "body" || "commandName" in parent || "isLongRunning" in parent,
+    accept: isIdentifier,
+  },
+  {
+    why: "enum",
+    keys: ["commandName"],
+    accept: (value, parent) => value === spacedCommandName(parent),
+  },
+  {
+    why: "quality",
+    keys: ["name"],
+    when: (_parent, container) => container === "quality",
+    accept: (value) => qualityVocabulary.has(value),
+  },
+  {
+    why: "quality",
+    // A quality definition is titled by its quality's own name until an
+    // operator renames it; only a rename is theirs.
+    keys: ["title"],
+    when: (parent) => isRecord(parent.quality) && parent.quality.name === parent.title,
+    accept: (value) => qualityVocabulary.has(value),
+  },
+  {
+    why: "quality",
+    keys: ["resolution"],
+    when: (_parent, container) => container === "mediaInfo",
+    accept: (value) => /^\d{2,5}x\d{2,5}$/u.test(value),
+  },
+  {
+    why: "descriptor",
+    keys: ["name"],
+    when: (parent, container) =>
+      container === "fields" ||
+      container === "selectOptions" ||
+      ("privacy" in parent && "order" in parent),
+    accept: isIdentifier,
+  },
+  {
+    why: "descriptor",
+    keys: ["label", "helpText", "helpTextWarning", "section", "unit", "hint", "placeholder"],
+    when: (_parent, container) => container === "fields" || container === "selectOptions",
+    accept: () => true,
+  },
+  {
+    why: "vocabulary",
+    // The application's own list of languages, which configures nothing.
+    keys: ["name", "nameLower"],
+    when: (parent) => "nameLower" in parent,
+    accept: (value) => /^[A-Za-z][A-Za-z ()-]{1,30}$/u.test(value),
+  },
+];
+
+const structuralRulesByKey = new Map();
+for (const rule of structuralRules) {
+  for (const key of rule.keys) {
+    structuralRulesByKey.set(key, [...(structuralRulesByKey.get(key) ?? []), rule]);
+  }
+}
+
+/** How large the structural allowlist is: its rules, and the keys they cover. */
+export const structuralAllowlistSize = {
+  rules: structuralRules.length,
+  keys: structuralRulesByKey.size,
+};
+
+/**
+ * Text whose shape says what it is rather than whom it is about: a number, a
+ * flag, a date, a duration, or the applications' stand-in for a set secret.
+ */
+function isStructuralShape(value) {
+  return (
+    value === "" ||
+    /^-?\d+(?:\.\d+)?$/u.test(value) ||
+    /^(?:true|false)$/iu.test(value) ||
+    /^\*+$/u.test(value) ||
+    /^\d{1,3}:\d{2}(?::\d{2})?(?:\.\d+)?$/u.test(value) ||
+    datePrefixPattern.test(value)
+  );
+}
+
+/**
+ * How one value a body holds is treated: as the identifying field its key
+ * names, as structure a rule recognizes, or, failing both, as identifying
+ * text — the default for every string.
+ */
+export function classifyValue(key, parent, container, value) {
+  const field = identifyingFieldOf(key, parent, container);
+  if (field !== undefined) {
+    return field;
+  }
+  if (typeof value !== "string" || isStructuralShape(value)) {
+    return undefined;
+  }
+  const rules = structuralRulesByKey.get(key) ?? [];
+  const recognized = rules.some(
+    (rule) =>
+      (rule.when === undefined || rule.when(parent, container)) && rule.accept(value, parent),
+  );
+  return recognized ? undefined : "text";
 }
 
 /** The legacy values one recorded fixture may hold, by field. */
@@ -473,6 +730,10 @@ export function createIdentifyingNeutralizer(options = {}) {
         return `Example Disk ${n}`;
       case "genre":
         return `Example Genre ${n}`;
+      case "profileGroup":
+        return `Example Group ${n}`;
+      case "text":
+        return `Example text ${n}`;
       default:
         throw new Error(`No stand-in is defined for ${field}`);
     }
@@ -494,6 +755,19 @@ export function createIdentifyingNeutralizer(options = {}) {
         // A profile the application created on install keeps its own name.
         return typeof value === "string" && profileVocabulary.has(value)
           ? value
+          : text(field, value);
+      case "profileGroup":
+        return typeof value === "string" && profileGroupVocabulary.has(value)
+          ? value
+          : text(field, value);
+      case "text":
+        // A stand-in this capture already wrote, such as a language's name, stays.
+        if (isNeutralIdentifyingValue("text", value)) {
+          return value;
+        }
+        // Unrecognized text keeps the one shape code may read from it: a path.
+        return typeof value === "string" && /^(?:[\\/]|[a-z]:[\\/])/iu.test(value)
+          ? path(value)
           : text(field, value);
       case "ratings":
         return zeroNumbers(value);

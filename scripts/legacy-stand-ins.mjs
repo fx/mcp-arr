@@ -19,6 +19,13 @@ export const legacyStandIns = {
       "Example Paused Application",
       "Example Series Application",
     ],
+    text: [
+      "CANARY-PROWLARR-APPLICATION-APIKEY-0008",
+      "example-movie-application",
+      "example-paused-application",
+      "example-prowlarr",
+      "example-series-application",
+    ],
   },
   "prowlarr/v1/2.5.2.5491/appprofile.json": {
     profileName: ["Example App Profile"],
@@ -33,16 +40,29 @@ export const legacyStandIns = {
     definition: ["exampletracker"],
     indexerUrl: ["example-tracker"],
     service: ["Example Indexer A", "Example Indexer B", "Example Indexer C", "Example Indexer D"],
+    text: [
+      "CANARY-CARDIGANN-INFO-0007",
+      "CANARY-CARDIGANN-PASSKEY-0006",
+      "CANARY-CARDIGANN-PASSWORD-0005",
+      "CANARY-PROWLARR-INDEXER-APIKEY-0010",
+      "created",
+      "example-operator",
+      "example-tracker",
+      "example-usenet-indexer",
+      "exampletracker",
+    ],
   },
   "prowlarr/v1/2.5.2.5491/indexerstats.json": {
     service: ["Example Indexer", "Example Usenet Indexer"],
   },
   "prowlarr/v1/2.5.2.5491/notification.json": {
     service: ["Example Webhook"],
+    text: ["CANARY-PROWLARR-NOTIFICATION-PASSWORD-0009", "example-operator", "example-webhook"],
   },
   "prowlarr/v1/2.5.2.5491/search.json": {
     guid: ["example-indexer-a-7007", "example-indexer-a-8008"],
     service: ["Example Indexer A"],
+    text: ["TV", "TV HD"],
     title: [
       "Example Series S01E02 1080p WEB-DL x264-EXAMPLEGRP",
       "Example Series S01E02 720p WEB-DL x264-EXAMPLEGRP",
@@ -54,6 +74,7 @@ export const legacyStandIns = {
   "radarr/v3/6.3.0.10514/blocklist.json": {
     message: ["The release was blocked after the download failed"],
     service: ["Example Indexer"],
+    text: ["English"],
     title: ["Example Fallback 2019 WEBDL-1080p"],
   },
   "radarr/v3/6.3.0.10514/calendar.json": {
@@ -72,6 +93,7 @@ export const legacyStandIns = {
     releaseGroup: ["EXAMPLEGRP"],
     sortTitle: ["example awaited movie", "example movie", "example staggered movie"],
     studio: ["Example Studio"],
+    text: ["Director Cut", "English"],
     title: [
       "Example Awaited Movie",
       "Example Collection",
@@ -95,14 +117,24 @@ export const legacyStandIns = {
       "Example Movie Sequel",
     ],
   },
+  "radarr/v3/6.3.0.10514/config-downloadclient.json": {
+    text: ["_UNPACK_|_FAILED_"],
+  },
   "radarr/v3/6.3.0.10514/customformat.json": {
     formatName: ["Example Format", "Example Release Title Specification"],
+    text: ["example-release-tag"],
   },
   "radarr/v3/6.3.0.10514/diskspace.json": {
     diskLabel: ["Media"],
   },
   "radarr/v3/6.3.0.10514/downloadclient.json": {
     service: ["Example Torrent Client"],
+    text: [
+      "CANARY-RADARR-DOWNLOADCLIENT-PASSWORD-0004",
+      "example-download-client",
+      "example-operator",
+      "radarr",
+    ],
   },
   "radarr/v3/6.3.0.10514/exclusions-paged.json": {
     title: ["Example Movie"],
@@ -114,6 +146,7 @@ export const legacyStandIns = {
     downloadId: ["b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1"],
     releaseGroup: ["ExampleGroup"],
     service: ["Example Client", "Example Indexer"],
+    text: ["English"],
     title: ["Example Movie 2021 Bluray-1080p"],
   },
   "radarr/v3/6.3.0.10514/history.json": {
@@ -124,6 +157,7 @@ export const legacyStandIns = {
     path: ["/media/example/downloads/complete/example", "/media/example/library/example"],
     releaseGroup: ["ExampleGroup"],
     service: ["Example Client", "Example Indexer"],
+    text: ["English", "Upgrade"],
     title: [
       "Example Fallback 2019 WEBDL-1080p",
       "Example Movie 2021 Bluray-1080p",
@@ -143,6 +177,7 @@ export const legacyStandIns = {
       "sample.mkv",
     ],
     releaseGroup: ["ExampleGroup"],
+    text: ["English"],
     title: ["Example Movie"],
   },
   "radarr/v3/6.3.0.10514/movie-lookup.json": {
@@ -155,6 +190,7 @@ export const legacyStandIns = {
     releaseGroup: ["EXAMPLEGRP"],
     sortTitle: ["example movie", "example unadded movie"],
     studio: ["Example Other Studio", "Example Studio"],
+    text: ["Director Cut", "English"],
     title: [
       "Example Collection",
       "Example Movie",
@@ -179,6 +215,7 @@ export const legacyStandIns = {
     releaseGroup: ["EXAMPLEGRP"],
     sortTitle: ["example archived movie", "example awaited movie", "example movie"],
     studio: ["Example Studio"],
+    text: ["Director Cut", "English"],
     title: [
       "Example Archived Movie",
       "Example Awaited Movie",
@@ -196,9 +233,11 @@ export const legacyStandIns = {
       "Example Movie (2021) Bluray-1080p.mkv",
     ],
     releaseGroup: ["EXAMPLEGRP"],
+    text: ["Director Cut", "English"],
   },
   "radarr/v3/6.3.0.10514/qualityprofile.json": {
     profileName: ["Example Any", "Example Bluray"],
+    text: ["English"],
   },
   "radarr/v3/6.3.0.10514/queue-details.json": {
     downloadId: [
@@ -213,6 +252,7 @@ export const legacyStandIns = {
       "Example Usenet Client",
       "Example Usenet Indexer",
     ],
+    text: ["English"],
     title: ["Example Movie 2021 Bluray-1080p", "Example Sequel 2023 WEBDL-2160p"],
   },
   "radarr/v3/6.3.0.10514/queue.json": {
@@ -228,6 +268,7 @@ export const legacyStandIns = {
       "Example Usenet Client",
       "Example Usenet Indexer",
     ],
+    text: ["English"],
     title: [
       "Example Fallback 2019 WEBDL-1080p",
       "Example Movie 2021 Bluray-1080p",
@@ -240,6 +281,7 @@ export const legacyStandIns = {
     message: ["Quality WEBRip-1080p is not wanted in profile"],
     releaseGroup: ["EXAMPLEGRP", "OTHERGRP"],
     service: ["Example Indexer A", "Example Indexer B"],
+    text: ["Director's Cut", "English", "French"],
     title: [
       "Example Movie",
       "Example Movie 2021 1080p BluRay x264-EXAMPLEGRP",
@@ -266,6 +308,7 @@ export const legacyStandIns = {
     path: ["/media/example/movies/Example Movie (2021)"],
     sortTitle: ["example movie"],
     studio: ["Example Studio"],
+    text: ["English"],
     title: ["Example Collection", "Example Movie", "Example Movie Alternate"],
   },
   "radarr/v3/6.3.0.10514/wanted-missing.json": {
@@ -279,11 +322,13 @@ export const legacyStandIns = {
     ],
     sortTitle: ["example awaited movie", "example missing movie"],
     studio: ["Example Studio"],
+    text: ["English"],
     title: ["Example Awaited Movie", "Example Missing Movie"],
   },
   "sonarr/v3/4.0.19.2979/blocklist.json": {
     message: ["The release was blocked after the download failed"],
     service: ["Example Indexer", "Example Usenet Indexer"],
+    text: ["English"],
     title: ["Example Anime S01E14 WEBDL-720p", "Example Series S02E01 WEBDL-1080p"],
   },
   "sonarr/v3/4.0.19.2979/calendar.json": {
@@ -299,6 +344,9 @@ export const legacyStandIns = {
   },
   "sonarr/v3/4.0.19.2979/command.json": {
     message: ["Completed", "Refreshing series"],
+  },
+  "sonarr/v3/4.0.19.2979/config-downloadclient.json": {
+    text: ["_UNPACK_|_FAILED_"],
   },
   "sonarr/v3/4.0.19.2979/diskspace.json": {
     diskLabel: ["Media"],
@@ -325,6 +373,7 @@ export const legacyStandIns = {
       "Season 02/Example Series - S02E02 - Example Follow Up WEBDL-720p.mkv",
     ],
     releaseGroup: ["EXAMPLEGRP"],
+    text: ["English"],
   },
   "sonarr/v3/4.0.19.2979/health.json": {
     message: [
@@ -340,6 +389,7 @@ export const legacyStandIns = {
     ],
     releaseGroup: ["ExampleGroup"],
     service: ["Example Client", "Example Indexer"],
+    text: ["English", "The download client reported the download as failed"],
     title: [
       "Example Series S01E01 Bluray-1080p",
       "Example Series S02E01 WEBDL-1080p",
@@ -356,6 +406,7 @@ export const legacyStandIns = {
     path: ["/media/example/downloads/complete/example", "/media/example/library/example"],
     releaseGroup: ["ExampleGroup"],
     service: ["Example Client", "Example Indexer"],
+    text: ["English", "The download client reported the transfer as failed", "Upgrade"],
     title: [
       "Example Anime S01E14 WEBDL-720p",
       "Example Series S01E01 Bluray-1080p",
@@ -366,12 +417,20 @@ export const legacyStandIns = {
   "sonarr/v3/4.0.19.2979/importlist.json": {
     path: ["/media/example/series"],
     service: ["Example Import List"],
+    text: ["CANARY-SONARR-IMPORTLIST-APIKEY-0003", "example-source"],
   },
   "sonarr/v3/4.0.19.2979/importlistexclusion-paged.json": {
     title: ["Example Other Series", "Example Series"],
   },
   "sonarr/v3/4.0.19.2979/indexer.json": {
     service: ["Example Torrent Indexer", "Example Usenet Indexer"],
+    text: [
+      "CANARY-SONARR-INDEXER-APIKEY-0001",
+      "example-api-path",
+      "example-torrent-indexer",
+      "example-usenet-indexer",
+      "extended=1",
+    ],
   },
   "sonarr/v3/4.0.19.2979/manualimport.json": {
     formatName: ["Example Format"],
@@ -392,6 +451,7 @@ export const legacyStandIns = {
       "example-series",
     ],
     releaseGroup: ["ExampleGroup"],
+    text: ["English"],
     title: ["Example Series"],
   },
   "sonarr/v3/4.0.19.2979/qualityprofile.json": {
@@ -413,6 +473,7 @@ export const legacyStandIns = {
       "Example Usenet Client",
       "Example Usenet Indexer",
     ],
+    text: ["English"],
     title: [
       "Example Anime S01E14 WEBDL-720p",
       "Example Series S01E01 Bluray-1080p",
@@ -438,6 +499,7 @@ export const legacyStandIns = {
       "Example Usenet Client",
       "Example Usenet Indexer",
     ],
+    text: ["English"],
     title: [
       "Example Anime S01E14 WEBDL-720p",
       "Example Series S01E01 Bluray-1080p",
@@ -455,6 +517,7 @@ export const legacyStandIns = {
     ],
     releaseGroup: ["EXAMPLEGRP", "OTHERGRP"],
     service: ["Example Indexer A", "Example Indexer B"],
+    text: ["English"],
     title: [
       "Example Series",
       "Example Series S01 COMPLETE 1080p WEB-DL x264-EXAMPLEGRP",

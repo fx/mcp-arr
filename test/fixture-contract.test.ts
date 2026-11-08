@@ -50,6 +50,15 @@ function validFixture(): Record<string, unknown> {
   };
 }
 
+/**
+ * Text placed where the fixture contract accepts any text as structure — a
+ * provider's settings description — so a test of the other screens reaches
+ * them rather than the rule that free text elsewhere is identifying.
+ */
+function asDescriptorText(texts: readonly string[]): Record<string, unknown>[] {
+  return texts.map((helpText) => ({ name: "example", helpText }));
+}
+
 function validate(value: unknown, relativePath = approvedFixtureInventory[0] ?? "") {
   return validateFixture(value, {
     fixtureRoot,
@@ -312,11 +321,11 @@ describe("versioned fixture contract", () => {
 
   it("allows a media file name but still rejects a hostname wearing one", () => {
     const fixture = validFixture();
-    (fixture.body as Record<string, unknown>).nested = [
+    (fixture.body as Record<string, unknown>).fields = asDescriptorText([
       "Season 01/Example Series - S01E01 - Example Pilot Bluray-1080p.mkv",
       "/media/example/movies/Example Movie (2021) Bluray-1080p.mkv",
       "Example Subtitle Track.srt",
-    ];
+    ]);
     expect(() => validate(fixture)).not.toThrow();
 
     for (const disguised of [
@@ -383,7 +392,7 @@ describe("versioned fixture contract", () => {
       ["title", { title: "Love Begins in Another World" }],
       ["title", { title: "An Example of a Real Title" }],
       ["title", { originalTitle: "Another World" }],
-      ["title", { sourceTitle: "Another.World.S01E01.1080p" }],
+      ["title", { sourceTitle: "Another World S01E01 1080p" }],
       ["title", { sceneName: "Another World S01E01" }],
       ["titles", { movieTitles: ["Example Title 1", "Another World"] }],
       ["sortTitle", { sortTitle: "example title of the world" }],
@@ -412,8 +421,8 @@ describe("versioned fixture contract", () => {
       ["tagLabel", { label: "private-tracker" }],
       ["tagLabel", { label: "example-of-mine" }],
       ["diskLabel", { path: "/media/example", label: "My Big Disk", freeSpace: 1 }],
-      ["artwork", { coverType: "poster", url: "poster.jpg" }],
-      ["artwork", { coverType: "poster", url: "/media/example/poster.jpg" }],
+      ["artwork", { coverType: "poster", url: "poster" }],
+      ["artwork", { coverType: "poster", url: "/media/example/poster" }],
       ["path", { relativePath: "Season 01/Another World - S01E01.mkv" }],
       ["path", { path: "/media/example/series/Another World" }],
       ["path", { folderName: "Another World", name: "x" }],
@@ -436,6 +445,16 @@ describe("versioned fixture contract", () => {
       ["formatName", { implementation: "ReleaseTitleSpecification", negate: false, name: "x" }],
       ["profileName", { items: [], cutoff: 1, name: "Max Ultra HD" }],
       ["profileName", { enableRss: true, name: "Example of My Profile" }],
+      // A quality group's label inside a profile is the operator's.
+      ["profileGroup", { allowed: true, items: [], name: "My Private Collection" }],
+      // Text no rule recognizes is identifying: a failure reason in history,
+      // a profile's language, a field nobody has classified, and free text
+      // under a key whose rule accepts only an enumeration word.
+      ["text", { data: { reason: "The download of Another World failed" } }],
+      ["text", { language: { id: 1, name: "English" } }],
+      ["text", { someFieldNoOneHasSeen: "Another World" }],
+      ["text", { status: "Another World is downloading" }],
+      ["text", { indexerFlags: ["freeleech", "Another World only"] }],
     ];
     for (const [field, nested] of identifying) {
       const fixture = validFixture();
@@ -493,8 +512,8 @@ describe("versioned fixture contract", () => {
       // Structural: a quality's own title, a provider field's label and name,
       // a language's and a command's names.
       { quality: { id: 7, name: "Bluray-1080p" }, title: "Bluray-1080p" },
-      { name: "apiPath", label: "API Path", value: "" },
-      { id: 1, name: "English" },
+      { fields: [{ name: "apiPath", label: "API Path", value: "" }] },
+      { id: 1, name: "English", nameLower: "english" },
       { name: "RefreshSeries", commandName: "Refresh Series" },
     ];
     expect(() => validate(fixture)).not.toThrow();
@@ -542,14 +561,6 @@ describe("versioned fixture contract", () => {
         { ...shifted, ratings: { votes: 8_123, value: 8.9 } },
       ],
       ["Identifying popularity is not neutralized", { ...shifted, popularity: 12.5 }],
-      [
-        "Identifying language is not neutralized",
-        { ...shifted, languages: [{ id: 8, name: "Japanese" }] },
-      ],
-      [
-        "Identifying language is not neutralized",
-        { ...shifted, series: { originalLanguage: { id: 8, name: "Japanese" } } },
-      ],
     ];
     for (const [refusal, row] of unshifted) {
       expect(
@@ -562,16 +573,32 @@ describe("versioned fixture contract", () => {
         validate(fixtureAt("4.0.19.2979", row), "sonarr/v3/4.0.19.2979/qualityprofile.json"),
       ).not.toThrow();
     }
+
+    // A language's name is text no rule recognizes, so it is refused at every
+    // version unless the one fixture it was recorded in lists it.
+    for (const row of [
+      { ...shifted, languages: [{ id: 8, name: "Japanese" }] },
+      { ...shifted, series: { originalLanguage: { id: 8, name: "Japanese" } } },
+    ]) {
+      for (const [version, file] of [
+        ["4.0.20.3014", "sonarr/v3/4.0.20.3014/qualityprofile.json"],
+        ["4.0.19.2979", "sonarr/v3/4.0.19.2979/qualityprofile.json"],
+      ] as const) {
+        expect(() => validate(fixtureAt(version, row), file), version).toThrow(
+          "Identifying text is not neutralized",
+        );
+      }
+    }
   });
 
   it("keeps a relative path a name rather than a path", () => {
     // The boundary the path screens anchor on never includes a character a path
     // segment can end in, so an ordinary relative file name still passes.
     const fixture = validFixture();
-    (fixture.body as Record<string, unknown>).nested = [
+    (fixture.body as Record<string, unknown>).fields = asDescriptorText([
       "Season 01/Example Series - S01E01 - Example Pilot Bluray-1080p.mkv",
       "Example Movie (2021)/Example Movie (2021) Bluray-1080p.mkv",
-    ];
+    ]);
 
     expect(() => validate(fixture)).not.toThrow();
   });

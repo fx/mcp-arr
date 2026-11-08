@@ -286,7 +286,9 @@ describe("fixture capture procedure", () => {
     expect(written).not.toContain("apiKey");
     expect(written).not.toContain("/srv/private");
     expect(written).not.toContain("tracker.invalid");
-    expect(record).toMatchObject({ id: 7, label: "Example Tag" });
+    // A label beside other fields is no tag's, and text no rule recognizes is
+    // replaced; the record's shape survives.
+    expect(record).toMatchObject({ id: 7, label: expect.stringMatching(/^Example text \d+$/u) });
     // The subtree under a prototype-named key is kept rather than silently lost.
     expect(Object.values(record)).toContainEqual({ retained: true });
   });
@@ -458,7 +460,7 @@ describe("fixture capture procedure", () => {
    * not carry: what each route's body says about a library or its services,
    * and the stand-in a capture writes for it.
    */
-  const identifyingSites: ReadonlyArray<{
+  const identifyingSites: Array<{
     readonly site: string;
     readonly application: "sonarr" | "radarr" | "prowlarr";
     readonly route: string;
@@ -539,18 +541,29 @@ describe("fixture capture procedure", () => {
           id: 4,
           name: "Max Ultra HD",
           cutoff: 1,
-          items: [{ quality: { id: 1, name: "Bluray-2160p" }, allowed: true }],
+          items: [
+            { quality: { id: 1, name: "Bluray-2160p" }, allowed: true },
+            { id: 1001, name: "My Private Collection", allowed: true, items: [] },
+            { id: 1002, name: "WEB 1080p", allowed: true, items: [] },
+          ],
           formatItems: [{ format: 3, name: "DV Boost", score: 100 }],
+          language: { id: 8, name: "Japanese" },
         },
       ],
-      originals: ["Max Ultra HD", "DV Boost"],
+      originals: ["Max Ultra HD", "DV Boost", "My Private Collection", "Japanese"],
       expected: [
         {
           id: 4,
           name: "Example Profile 1",
           cutoff: 1,
-          items: [{ quality: { id: 1, name: "Bluray-2160p" }, allowed: true }],
+          items: [
+            { quality: { id: 1, name: "Bluray-2160p" }, allowed: true },
+            { id: 1001, name: "Example Group 1", allowed: true, items: [] },
+            // A group the application creates keeps its own name.
+            { id: 1002, name: "WEB 1080p", allowed: true, items: [] },
+          ],
           formatItems: [{ format: 3, name: "Example Format 1", score: 100 }],
+          language: { id: 1, name: "Example Language 1" },
         },
       ],
     },
@@ -614,6 +627,7 @@ describe("fixture capture procedure", () => {
               torrentInfoHash: "abcdef0123456789abcdef0123456789abcdef01",
               guid: "tm-123456",
               message: "Grabbed from Treasure Maps",
+              reason: "The download of Another World failed",
             },
           },
         ],
@@ -643,6 +657,7 @@ describe("fixture capture procedure", () => {
               torrentInfoHash: "example-download-1",
               guid: "example-guid-1",
               message: "Example message 1",
+              reason: "Example text 1",
             },
           },
         ],
@@ -703,6 +718,34 @@ describe("fixture capture procedure", () => {
       ],
     },
   ];
+
+  identifyingSites.push({
+    site: "a field no rule recognizes, and free text under an enumeration's key",
+    application: "sonarr",
+    route: "series",
+    body: [
+      {
+        id: 12,
+        status: "continuing",
+        seriesType: "Another World's own type",
+        someFieldNoOneHasSeen: "Another World",
+        someNewList: ["Another World", "Love Begins"],
+        someNewPath: "/srv/library/Another World",
+      },
+    ],
+    originals: ["Another World", "Love Begins", "/srv/library"],
+    expected: [
+      {
+        id: 12,
+        status: "continuing",
+        seriesType: "Example text 1",
+        someFieldNoOneHasSeen: "Example text 2",
+        someNewList: ["Example text 2", "Example text 3"],
+        // Text that is a path keeps its shape.
+        someNewPath: "/media/example/example-1/example-2/example-3",
+      },
+    ],
+  });
 
   for (const { site, application, route, body, originals, expected } of identifyingSites) {
     it(`replaces ${site}`, async () => {
