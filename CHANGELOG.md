@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.0](https://github.com/fx/mcp-arr/compare/v0.3.0...v0.4.0) (2026-11-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* **toolsets:** a process started without ARR_MCP_TOOLSET now publishes the media tools instead of the fourteen arr tools. Set ARR_MCP_TOOLSET=arr to keep the previous tools, or ARR_MCP_TOOLSET=all to publish both.
+
+### Features
+
+* **docker:** publish a container image to GHCR from CI ([#74](https://github.com/fx/mcp-arr/issues/74)) ([c4abf44](https://github.com/fx/mcp-arr/commit/c4abf44d0a8c7d263333add20903c670735294f8))
+* **fixtures:** record fixtures at more than one version per application ([#75](https://github.com/fx/mcp-arr/issues/75)) ([29a07bc](https://github.com/fx/mcp-arr/commit/29a07bcfe0f52d84378236f9e61c75b2b494d838))
+* **media:** add an opt-in media toolset with find and add ([#72](https://github.com/fx/mcp-arr/issues/72)) ([37e9ff8](https://github.com/fx/mcp-arr/commit/37e9ff83c9ea63d4be456220b4d8a8075e1d1946))
+* **media:** add media status, fix, search again and opt-in remove ([#73](https://github.com/fx/mcp-arr/issues/73)) ([6db1740](https://github.com/fx/mcp-arr/commit/6db1740696743c3d1ae4cdf213f8230b0f9d691a))
+* **toolsets:** publish the media toolset by default ([#76](https://github.com/fx/mcp-arr/issues/76)) ([101587a](https://github.com/fx/mcp-arr/commit/101587a5ded7a329211f0379af44d882c25e08ed))
+* **transport:** serve MCP over Streamable HTTP behind a bearer token ([#70](https://github.com/fx/mcp-arr/issues/70)) ([3f7d08d](https://github.com/fx/mcp-arr/commit/3f7d08d9552a007b1942451373654c46822d89b3))
+
 ## [0.3.0](https://github.com/fx/mcp-arr/compare/v0.2.0...v0.3.0) (2026-08-29)
 
 
