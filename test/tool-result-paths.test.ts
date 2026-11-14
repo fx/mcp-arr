@@ -298,13 +298,17 @@ describe("published payload paths", () => {
         toolResultSchema({ data: z.strictObject({ pair: z.tuple([z.string(), z.number()]) }) }),
         /bottom out at a value/u,
       ],
+      // Since zod 4.6, `z.toJSONSchema` merges an intersection of objects into
+      // one object, which this walk names like any other. What it still leaves
+      // as a bare `allOf` with no type is an intersection on one field, which
+      // is the shape refused here.
       [
         "intersection",
         toolResultSchema({
           data: z.strictObject({
             both: z.intersection(
               z.strictObject({ x: z.string() }),
-              z.strictObject({ y: z.string() }),
+              z.strictObject({ x: z.string().min(1) }),
             ),
           }),
         }),

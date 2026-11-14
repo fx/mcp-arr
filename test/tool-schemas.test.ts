@@ -727,10 +727,13 @@ const unrecognizedKey = 'Unrecognized key: "unexpectedProperty"';
 
 /**
  * A plain `z.union` reporting that no member matched. It is the same string
- * whatever went wrong inside the members, which is exactly why the eight
+ * for most of what can go wrong inside the members, which is why the eight
  * mutation tools — whose intents are a discriminated union nested inside a
  * union with the plan-reference form — say this where the five read variant
- * tools name the property or the discriminator.
+ * tools name the discriminator or a missing property. An unknown property is
+ * the exception: since zod 4.6 a union whose members refuse the input only for
+ * keys they do not declare reports those keys, as a single `strictObject`
+ * does.
  */
 const noAlternativeMatched = "Invalid input";
 
@@ -795,9 +798,7 @@ describe("input rejection messages", () => {
   it("words an unknown property the way the form that refused it does", () => {
     for (const name of toolNames) {
       const withExtra = { ...sampleFor(name), unexpectedProperty: "value" };
-      expect(rejectionMessages(name, withExtra), name).toEqual(
-        isPlanReferenceTool(name) ? [noAlternativeMatched] : [unrecognizedKey],
-      );
+      expect(rejectionMessages(name, withExtra), name).toEqual([unrecognizedKey]);
     }
   });
 
