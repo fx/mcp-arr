@@ -8,15 +8,18 @@
 # or development dependencies reach it.
 #
 # Pinned toolchain. Node.js 22 is a maintained LTS line inside the package's
-# `engines` range of >=20; bump the exact patch deliberately. ARGs declared
-# before the first FROM are global, and each stage that reads one redeclares it.
-ARG NODE_VERSION=22.23.4
+# `engines` range of >=20; bump the exact patch deliberately. The base is
+# pinned by tag and by its multi-arch index digest, so bump the two together.
+# ARGs declared before the first FROM are global, and each stage that reads one
+# redeclares it.
+ARG NODE_VERSION=22.23.5
+ARG NODE_DIGEST=sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee
 
 # ── Stage 1: build ───────────────────────────────────────────────────────────
 # Its output is JavaScript and a tarball, identical on every platform, so it
 # runs natively on the build host and only the runtime stage is built per
 # target platform.
-FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-bookworm-slim AS build
+FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-bookworm-slim@${NODE_DIGEST} AS build
 WORKDIR /build
 
 # Manifests first, so a source edit does not reinstall dependencies. `.npmrc`
@@ -33,7 +36,7 @@ RUN npm run build \
  && mv /pack/mcp-arr-*.tgz /pack/mcp-arr.tgz
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
-FROM node:${NODE_VERSION}-bookworm-slim AS runtime
+FROM node:${NODE_VERSION}-bookworm-slim@${NODE_DIGEST} AS runtime
 
 # tini runs as PID 1 so SIGTERM reaches the server and orphans are reaped.
 # Installed unpinned on purpose: Debian removes superseded versions from the
